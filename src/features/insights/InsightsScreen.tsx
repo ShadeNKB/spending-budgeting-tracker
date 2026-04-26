@@ -51,7 +51,7 @@ export function InsightsScreen() {
             <EmptyState
               icon={Info}
               title="Not enough data yet"
-              description="Add a handful of expenses and come back — we'll surface patterns here."
+              description="Add a handful of expenses and come back - we'll surface patterns here."
             />
           </div>
         ) : (
@@ -92,7 +92,7 @@ export function InsightsScreen() {
           )}
         </div>
         {(() => {
-          const BAR_H = 56; // px — fixed container height for bars
+          const BAR_H = 56; // px - fixed container height for bars
           const maxVal = Math.max(...weekAnalytics.dailyThisWeek.map((x) => x.total), 1);
           return (
             <div className="flex items-end gap-1.5 mb-3">
@@ -234,7 +234,7 @@ export function InsightsScreen() {
                 <div className="min-w-0 flex-1">
                   <div className="truncate text-[13px] text-white">{r.displayName}</div>
                   <div className="text-[11px] text-[var(--text-tertiary)]">
-                    {r.periodicity} · next ~{format(r.nextEstimatedDate, "MMM d")} · {r.occurrences.length} hits
+                    {r.periodicity} / next ~{format(r.nextEstimatedDate, "MMM d")} / {r.occurrences.length} hits
                   </div>
                 </div>
                 <div className="text-right">

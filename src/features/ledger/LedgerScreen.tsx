@@ -172,22 +172,22 @@ export function LedgerScreen() {
         return format(now, "MMMM d, yyyy");
       case "week": {
         const weekStart = subDays(now, 6);
-        return `${format(weekStart, "MMM d")} – ${format(now, "MMM d, yyyy")}`;
+        return `${format(weekStart, "MMM d")} - ${format(now, "MMM d, yyyy")}`;
       }
       case "month": {
         const ms = startOfMonth(now);
         const me = endOfMonth(now);
         if (now.getDate() === me.getDate()) return format(ms, "MMMM yyyy");
-        return `${format(ms, "MMM d")} – ${format(now, "MMM d, yyyy")}`;
+        return `${format(ms, "MMM d")} - ${format(now, "MMM d, yyyy")}`;
       }
       case "year": {
         const ys = startOfYear(now);
         const ye = endOfYear(now);
-        return `${format(ys, "MMM d")} – ${format(ye, "MMM d, yyyy")}`;
+        return `${format(ys, "MMM d")} - ${format(ye, "MMM d, yyyy")}`;
       }
       case "custom": {
         if (customStart && customEnd)
-          return `${format(parseISO(customStart), "MMM d, yyyy")} – ${format(parseISO(customEnd), "MMM d, yyyy")}`;
+          return `${format(parseISO(customStart), "MMM d, yyyy")} - ${format(parseISO(customEnd), "MMM d, yyyy")}`;
         if (customStart) return `From ${format(parseISO(customStart), "MMM d, yyyy")}`;
         if (customEnd) return `Until ${format(parseISO(customEnd), "MMM d, yyyy")}`;
         return "Custom range";
@@ -254,7 +254,7 @@ export function LedgerScreen() {
                   placeholder="Start date"
                 />
               </div>
-              <div className="shrink-0 mt-4 text-[var(--text-tertiary)]">→</div>
+              <div className="shrink-0 mt-4 text-[var(--text-tertiary)]">to</div>
               <div className="flex-1 flex flex-col gap-1">
                 <span className="text-[10px] text-[var(--text-tertiary)] font-medium uppercase tracking-wider pl-0.5">To</span>
                 <DatePicker
@@ -273,7 +273,7 @@ export function LedgerScreen() {
             <div className="flex-1 min-w-0">
               <Input
                 prefix={<Search size={13} />}
-                placeholder="Search…"
+                placeholder="Search..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 suffix={
@@ -331,7 +331,7 @@ export function LedgerScreen() {
           <AnimatePresence initial={false}>
             {groups.map((g) => {
               const d = parseISO(g.date);
-              const label = isToday(d) ? "Today" : isYesterday(d) ? "Yesterday" : format(d, "EEE · MMM d");
+              const label = isToday(d) ? "Today" : isYesterday(d) ? "Yesterday" : format(d, "EEE / MMM d");
               return (
                 <motion.section
                   key={g.date}

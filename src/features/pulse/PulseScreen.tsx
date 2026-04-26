@@ -43,6 +43,7 @@ export function PulseScreen() {
   const trendDown = a.changePct < 0;
   const hasPrev = a.prevTotal > 0;
   const hasBudgets = monthData.categoryBudgets.length > 0;
+  const hasExpenses = expenses.length > 0;
 
   const container = { initial: {}, animate: { transition: { staggerChildren: 0.05 } } };
   const item = { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 } };
@@ -122,7 +123,7 @@ export function PulseScreen() {
                       {monthOffset === 0 ? (
                         <>
                           <span>Today <span className="text-white font-mono tabular-nums">{formatMoney(monthData.todayTotal)}</span></span>
-                          <span className="text-[var(--text-tertiary)]">·</span>
+                          <span className="text-[var(--text-tertiary)]">/</span>
                           <span>Avg <span className="text-white font-mono tabular-nums">
                             {formatMoney(monthData.periodTotal / Math.max(1, monthData.daysElapsed))}
                           </span>/day</span>
@@ -132,7 +133,7 @@ export function PulseScreen() {
                           <span>Daily avg <span className="text-white font-mono tabular-nums">
                             {formatMoney(monthData.periodTotal / Math.max(1, monthData.daysElapsed))}
                           </span></span>
-                          <span className="text-[var(--text-tertiary)]">·</span>
+                          <span className="text-[var(--text-tertiary)]">/</span>
                           <span><span className="text-white">{monthData.daysElapsed}</span> days</span>
                         </>
                       )}
@@ -144,7 +145,7 @@ export function PulseScreen() {
                       <span>Monthly avg <span className="text-white font-mono tabular-nums">
                         {formatMoney(yearData.periodTotal / Math.max(1, yearOffset === 0 ? new Date().getMonth() + 1 : 12))}
                       </span></span>
-                      <span className="text-[var(--text-tertiary)]">·</span>
+                      <span className="text-[var(--text-tertiary)]">/</span>
                       <span>
                         {yearOffset === 0
                           ? <><span className="text-white">{new Date().getMonth() + 1}</span> of 12 months</>
@@ -157,7 +158,7 @@ export function PulseScreen() {
                   <div className="mt-4">
                     <div className="flex items-center justify-between mb-1.5">
                       <span className="text-[10px] uppercase tracking-[0.07em] text-[var(--text-tertiary)]">
-                        {view === "month" ? "Daily · 30 days" : "Monthly · 12 months"}
+                        {view === "month" ? "Daily / 30 days" : "Monthly / 12 months"}
                       </span>
                     </div>
                     <Sparkline
@@ -192,6 +193,11 @@ export function PulseScreen() {
                       )}
                     </div>
                   </div>
+                  {!hasExpenses && (
+                    <div className="mt-4 max-w-sm rounded-xl border border-accent/15 bg-accent/[0.06] px-3 py-2 text-[12px] leading-relaxed text-[var(--text-secondary)]">
+                      Start with quick entry: <span className="font-mono text-white">coffee 4.50 yesterday</span>
+                    </div>
+                  )}
                 </motion.div>
               </AnimatePresence>
             </div>

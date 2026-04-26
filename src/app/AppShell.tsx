@@ -1,4 +1,3 @@
-import { useEffect } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { WifiOff } from "lucide-react";
@@ -12,8 +11,18 @@ import { useExpenseStore, installPersistence } from "../stores/useExpenseStore";
 import { useUIStore } from "../stores/useUIStore";
 import { useHotkeys } from "../hooks/useHotkeys";
 
+let storeBootstrapped = false;
+
+function bootstrapClientStore() {
+  if (storeBootstrapped || typeof window === "undefined") return;
+  storeBootstrapped = true;
+  useExpenseStore.getState().hydrate();
+  installPersistence();
+}
+
+bootstrapClientStore();
+
 export function AppShell() {
-  const hydrate = useExpenseStore((s) => s.hydrate);
   const hydrated = useExpenseStore((s) => s.hydrated);
   const isOffline = useExpenseStore((s) => s.isOffline);
   const setPaletteOpen = useUIStore((s) => s.setPaletteOpen);
@@ -23,11 +32,6 @@ export function AppShell() {
   const undoStack = useExpenseStore((s) => s.undoStack);
   const consumeUndo = useExpenseStore((s) => s.consumeUndo);
   const location = useLocation();
-
-  useEffect(() => {
-    installPersistence();
-    hydrate();
-  }, [hydrate]);
 
   useHotkeys({
     "mod+k": () => setPaletteOpen(true),
@@ -78,7 +82,7 @@ export function AppShell() {
         <TopBar />
 
         <main className="mx-auto w-full max-w-[1200px] flex-1 px-4 py-5 md:px-8 md:py-8 pb-[calc(env(safe-area-inset-bottom,0px)+96px)] md:pb-10">
-          <AnimatePresence mode="wait">
+          <AnimatePresence mode="wait" initial={false}>
             {hydrated && (
               <motion.div
                 key={location.pathname}

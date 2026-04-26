@@ -120,7 +120,7 @@ src/
 - Add focused tests for parsing, analytics, storage, and recurring detection.
 - Code-split chart-heavy routes.
 - Add deployed demo link and real product screenshots.
-- Add GitHub Actions for lint, typecheck, and build.
+- Expand CI with browser smoke tests.
 
 ## Privacy
 

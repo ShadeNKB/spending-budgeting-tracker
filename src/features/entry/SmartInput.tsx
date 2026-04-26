@@ -13,7 +13,7 @@ import { AddExpenseSheet } from "./AddExpenseSheet";
 export function SmartInput({
   autoFocus,
   onCommit,
-  placeholder = "e.g. coffee 4.50  ·  grab 12 yesterday",
+  placeholder = "e.g. coffee 4.50, grab 12 yesterday",
   className,
   dense,
 }: {
@@ -54,7 +54,7 @@ export function SmartInput({
     });
     vibrate(10);
     toast.success(
-      `${parsedDateLabel ? `${parsedDateLabel} · ` : ""}Added "${created.itemName}" · $${created.amount.toFixed(2)}`,
+      `${parsedDateLabel ? `${parsedDateLabel} / ` : ""}Added "${created.itemName}" - $${created.amount.toFixed(2)}`,
       {
         action: {
           label: "Undo",

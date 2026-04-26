@@ -9,6 +9,9 @@ import { useExpenseStore } from "../../stores/useExpenseStore";
 import { SmartInput } from "./SmartInput";
 import { formatMoney } from "../../lib/format";
 import { format as fmtDate, parseISO } from "date-fns";
+import { parseExpense } from "../../utils/parseExpense";
+import { useToast } from "../../hooks/useToast";
+import { useHaptic } from "../../hooks/useHaptic";
 
 type Action = {
   id: string;
@@ -25,7 +28,11 @@ export function CommandPalette() {
   const setAddSheetOpen = useUIStore((s) => s.setAddSheetOpen);
   const navigate = useNavigate();
   const expenses = useExpenseStore((s) => s.expenses);
+  const categoryMappings = useExpenseStore((s) => s.categoryMappings);
+  const addExpense = useExpenseStore((s) => s.addExpense);
   const exportBackup = useExpenseStore((s) => s.exportBackup);
+  const toast = useToast();
+  const vibrate = useHaptic();
 
   const [query, setQuery] = useState("");
   const [activeIdx, setActiveIdx] = useState(0);
@@ -39,9 +46,36 @@ export function CommandPalette() {
     }
   }, [open]);
 
+  const parsedQuery = useMemo(() => parseExpense(query, categoryMappings), [query, categoryMappings]);
+  const canQuickAdd = Boolean(parsedQuery.itemName && parsedQuery.amount && parsedQuery.amount > 0);
+
+  const quickAddAction: Action | null = useMemo(() => {
+    if (!canQuickAdd) return null;
+
+    return {
+      id: "quick-add-query",
+      label: `Add "${parsedQuery.itemName}" - $${parsedQuery.amount!.toFixed(2)}`,
+      hint: "Enter",
+      icon: Plus,
+      onRun: () => {
+        const created = addExpense({
+          itemName: parsedQuery.itemName,
+          amount: parsedQuery.amount!,
+          category: parsedQuery.suggestedCategory,
+          date: parsedQuery.parsedDate
+            ? new Date(parsedQuery.parsedDate + "T12:00:00").toISOString()
+            : undefined,
+        });
+        vibrate(10);
+        toast.success(`Added "${created.itemName}" - $${created.amount.toFixed(2)}`);
+        setQuery("");
+      },
+    };
+  }, [addExpense, canQuickAdd, parsedQuery, toast, vibrate]);
+
   const actions: Action[] = useMemo(
     () => [
-      { id: "add-expense", label: "Add expense", hint: "⌘N", icon: PenLine, onRun: () => setAddSheetOpen(true) },
+      { id: "add-expense", label: "Add expense", hint: "Ctrl+N", icon: PenLine, onRun: () => setAddSheetOpen(true) },
       { id: "nav-pulse", label: "Go to Pulse", icon: Activity, onRun: () => navigate("/pulse") },
       { id: "nav-ledger", label: "Go to Ledger", icon: ListOrdered, onRun: () => navigate("/ledger") },
       { id: "nav-insights", label: "Go to Insights", icon: LineChart, onRun: () => navigate("/insights") },
@@ -76,10 +110,11 @@ export function CommandPalette() {
   }, [expenses, query]);
 
   const filteredActions = useMemo(() => {
+    if (quickAddAction) return [quickAddAction, ...actions];
     if (!query) return actions;
     const q = query.toLowerCase();
     return actions.filter((a) => a.label.toLowerCase().includes(q));
-  }, [actions, query]);
+  }, [actions, query, quickAddAction]);
 
   const totalItems = filteredActions.length + expenseHits.length;
 
@@ -144,7 +179,7 @@ export function CommandPalette() {
                   setQuery(e.target.value);
                   setActiveIdx(0);
                 }}
-                placeholder="Search actions & expenses…"
+                placeholder="Search actions, expenses, or quick-add..."
                 className="flex-1 bg-transparent text-sm text-white placeholder:text-[var(--text-tertiary)] outline-none"
               />
               <kbd className="rounded bg-surface-2 border border-white/[0.06] px-1.5 py-0.5 text-[10px] text-[var(--text-tertiary)]">ESC</kbd>
@@ -200,7 +235,7 @@ export function CommandPalette() {
                         <div className="flex-1 min-w-0">
                           <div className="truncate text-white">{e.itemName}</div>
                           <div className="text-[11px] text-[var(--text-tertiary)]">
-                            {e.category} · {fmtDate(parseISO(e.date), "MMM d")}
+                            {e.category} / {fmtDate(parseISO(e.date), "MMM d")}
                           </div>
                         </div>
                         <span className="font-mono text-[13px] tabular-nums text-white">
@@ -214,7 +249,7 @@ export function CommandPalette() {
 
               {totalItems === 0 && (
                 <div className="px-4 py-8 text-center text-sm text-[var(--text-tertiary)]">
-                  No matches — try typing an expense like <span className="text-white">coffee 4.50</span>
+                  No matches - try an action or expense like <span className="text-white">coffee 4.50</span>
                 </div>
               )}
             </div>
@@ -224,7 +259,7 @@ export function CommandPalette() {
                 <Plus size={11} /> Type to add fast
               </span>
               <span className="inline-flex items-center gap-2">
-                <kbd className="rounded bg-surface-2 border border-white/[0.06] px-1.5 py-0.5 text-[10px]">↵</kbd>
+                <kbd className="rounded bg-surface-2 border border-white/[0.06] px-1.5 py-0.5 text-[10px]">Enter</kbd>
                 run
               </span>
             </div>

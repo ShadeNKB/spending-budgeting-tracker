@@ -56,7 +56,7 @@ export function TopBar() {
         >
           <Command size={13} />
           <span className="hidden sm:inline">Search</span>
-          <kbd className="hidden sm:inline rounded bg-surface-2 border border-white/[0.06] px-1.5 py-0.5 text-[10px] text-[var(--text-tertiary)]">⌘K</kbd>
+          <kbd className="hidden sm:inline rounded bg-surface-2 border border-white/[0.06] px-1.5 py-0.5 text-[10px] text-[var(--text-tertiary)]">Ctrl+K</kbd>
         </button>
 
         <button
