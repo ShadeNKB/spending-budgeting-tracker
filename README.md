@@ -6,7 +6,7 @@
 
 <p align="center">
   <strong>Know where your money goes. Without the noise.</strong><br/>
-  A fast, local-first expense tracker built for daily use — no account, no sync, no friction.
+  A fast, local-first expense tracker built for daily use - no account, no sync, no friction.
 </p>
 
 <p align="center">
@@ -17,12 +17,7 @@
   <img src="https://img.shields.io/badge/License-MIT-22D3EE?style=flat-square" alt="MIT" />
 </p>
 
-<p align="center">
-  <a href="#-quick-start">Quick Start</a> ·
-  <a href="#-features">Features</a> ·
-  <a href="#%EF%B8%8F-how-it-works">How It Works</a> ·
-  <a href="#-tech-stack">Stack</a>
-</p>
+**[Quick Start](#quick-start) / [Features](#features) / [How It Works](#how-it-works) / [Stack](#stack)**
 
 <br/>
 
@@ -38,30 +33,36 @@
 
 Most budgeting apps are built around syncing, subscriptions, and dashboards you open once and forget. SpendTrack is built for one thing: making it effortless to log an expense and understand where your money is going.
 
-- **Local-first** — your data never leaves the browser
-- **Friction-free entry** — natural language parsing gets out of your way
-- **Meaningful feedback** — pace tracking, category breakdowns, and recurring detection surface insights without effort
+- **Local-first** - your data never leaves the browser
+- **Friction-free entry** - natural language parsing gets out of your way
+- **Meaningful feedback** - pace tracking, category breakdowns, and recurring detection surface insights without effort
 
 ---
 
 ## Features
 
 ### Pulse Dashboard
+
 At-a-glance spending visibility: current month total, daily pace, category breakdown, activity heatmap, and recent entries.
 
 ### Ledger
+
 Full transaction history with fast search, date/category filters, inline editing, and bulk delete.
 
 ### Budget Tracking
+
 Set monthly budgets per category. See planned vs actual side-by-side with progress indicators.
 
 ### Insights
-Trend analysis, spending forecasts, recurring expense detection, and anomaly signals — automatically surfaced from your history.
+
+Trend analysis, spending forecasts, recurring expense detection, and anomaly signals - automatically surfaced from your history.
 
 ### Smart Entry
+
 Type natural inputs like `coffee 4.50 yesterday` or `netflix 15 monthly`. The parser infers category, amount, and date.
 
 ### Private & Portable
+
 No backend. No account. Data lives in `localStorage`. Export JSON backups or CSV for spreadsheets anytime.
 
 ---
@@ -71,7 +72,7 @@ No backend. No account. Data lives in `localStorage`. Export JSON backups or CSV
 | Pulse | Ledger | Insights |
 |:---:|:---:|:---:|
 | ![Pulse](docs/screenshots/pulse.png) | ![Ledger](docs/screenshots/ledger.png) | ![Insights](docs/screenshots/insights.png) |
-| Dashboard, pace, heatmap | Searchable history | Trends & forecasts |
+| Dashboard, pace, heatmap | Searchable history | Trends and forecasts |
 
 ---
 
@@ -86,7 +87,7 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173) — no environment variables needed.
+Open [http://localhost:5173](http://localhost:5173). No environment variables are needed.
 
 ---
 
@@ -105,7 +106,7 @@ npm run test:run   # Run tests once
 
 ## How It Works
 
-SpendTrack is entirely browser-side. On load, it hydrates from `localStorage`. Every action — adding an expense, updating a budget, changing a category — writes back immediately. No server, no latency, no auth.
+SpendTrack is entirely browser-side. On load, it hydrates from `localStorage`. Every action - adding an expense, updating a budget, changing a category - writes back immediately. No server, no latency, no auth.
 
 Three screens cover the full workflow:
 
@@ -117,7 +118,7 @@ Three screens cover the full workflow:
 
 ---
 
-## Tech Stack
+## Stack
 
 | Layer | Tools |
 |-------|-------|
@@ -135,7 +136,7 @@ Three screens cover the full workflow:
 
 ## Project Structure
 
-```
+```text
 src/
   app/          Shell, routing, navigation, sync status
   features/     Entry, pulse, ledger, insights, settings
@@ -167,4 +168,4 @@ SpendTrack does not transmit data anywhere. All expenses, budgets, and settings 
 
 ## License
 
-[MIT](LICENSE) — built by [ShadeNKB](https://github.com/ShadeNKB)
+[MIT](LICENSE) - built by [ShadeNKB](https://github.com/ShadeNKB)
