@@ -1,59 +1,83 @@
 <p align="center">
-  <img src="public/favicon.svg" alt="SpendTrack logo" width="72" height="72" />
+  <img src="public/favicon.svg" alt="SpendTrack" width="80" height="80" />
 </p>
 
 <h1 align="center">SpendTrack</h1>
 
 <p align="center">
-  A fast, local-first spending tracker for logging expenses, spotting patterns, and staying close to your budget.
+  <strong>Know where your money goes. Without the noise.</strong><br/>
+  A fast, local-first expense tracker built for daily use — no account, no sync, no friction.
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/github/actions/workflow/status/ShadeNKB/spending-budgeting-tracker/ci.yml?branch=main&label=ci" alt="CI status" />
-  <img src="https://img.shields.io/badge/license-MIT-22D3EE" alt="MIT license" />
-  <img src="https://img.shields.io/badge/local--first-yes-22C55E" alt="Local-first app" />
+  <img src="https://img.shields.io/github/actions/workflow/status/ShadeNKB/spending-budgeting-tracker/ci.yml?branch=main&label=CI&style=flat-square" alt="CI" />
+  <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React 19" />
+  <img src="https://img.shields.io/badge/TypeScript-Strict-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/Local--First-No%20Backend-22C55E?style=flat-square" alt="Local-first" />
+  <img src="https://img.shields.io/badge/License-MIT-22D3EE?style=flat-square" alt="MIT" />
 </p>
 
 <p align="center">
-  <a href="#quick-start">Quick Start</a>
-  |
-  <a href="#features">Features</a>
-  |
-  <a href="#how-it-works">How It Works</a>
+  <a href="#-quick-start">Quick Start</a> ·
+  <a href="#-features">Features</a> ·
+  <a href="#%EF%B8%8F-how-it-works">How It Works</a> ·
+  <a href="#-tech-stack">Stack</a>
 </p>
 
-## Preview
+<br/>
 
-![SpendTrack dashboard preview](docs/preview.svg)
+<p align="center">
+  <img src="docs/screenshots/pulse.png" alt="SpendTrack dashboard" width="100%" />
+</p>
+
+<br/>
+
+---
 
 ## Why SpendTrack
 
-Most personal finance tools are either too heavy or too slow for daily use. SpendTrack is built for the opposite: quick entry, clean feedback, and private data that stays in your browser.
+Most budgeting apps are built around syncing, subscriptions, and dashboards you open once and forget. SpendTrack is built for one thing: making it effortless to log an expense and understand where your money is going.
 
-It works well as a personal daily tracker, a portfolio project reference, or a starting point for a local-first finance app.
+- **Local-first** — your data never leaves the browser
+- **Friction-free entry** — natural language parsing gets out of your way
+- **Meaningful feedback** — pace tracking, category breakdowns, and recurring detection surface insights without effort
+
+---
 
 ## Features
 
-- **Fast expense entry** - type natural entries like `coffee 4.50 yesterday` and let the app parse the details.
-- **Pulse dashboard** - see month/year spend, pace, category mix, heatmap activity, and recent entries.
-- **Ledger view** - filter by range, category, or search text; edit and delete transactions quickly.
-- **Budget tracking** - set category budgets and compare planned vs actual spending.
-- **Insights** - review trends, recurring patterns, forecasts, and spending signals.
-- **Private by default** - no backend, no account, no API keys; data lives in localStorage.
-- **Portable data** - export/import JSON backups and export CSV for spreadsheets.
+### Pulse Dashboard
+At-a-glance spending visibility: current month total, daily pace, category breakdown, activity heatmap, and recent entries.
+
+### Ledger
+Full transaction history with fast search, date/category filters, inline editing, and bulk delete.
+
+### Budget Tracking
+Set monthly budgets per category. See planned vs actual side-by-side with progress indicators.
+
+### Insights
+Trend analysis, spending forecasts, recurring expense detection, and anomaly signals — automatically surfaced from your history.
+
+### Smart Entry
+Type natural inputs like `coffee 4.50 yesterday` or `netflix 15 monthly`. The parser infers category, amount, and date.
+
+### Private & Portable
+No backend. No account. Data lives in `localStorage`. Export JSON backups or CSV for spreadsheets anytime.
+
+---
 
 ## Screenshots
 
 | Pulse | Ledger | Insights |
-| --- | --- | --- |
-| Dashboard, pace, categories, heatmap | Searchable transaction history | Trends, forecasts, recurring patterns |
+|:---:|:---:|:---:|
+| ![Pulse](docs/screenshots/pulse.png) | ![Ledger](docs/screenshots/ledger.png) | ![Insights](docs/screenshots/insights.png) |
+| Dashboard, pace, heatmap | Searchable history | Trends & forecasts |
+
+---
 
 ## Quick Start
 
-Requirements:
-
-- Node.js 20 or newer
-- npm
+**Requirements:** Node.js 20+, npm
 
 ```bash
 git clone https://github.com/ShadeNKB/spending-budgeting-tracker.git
@@ -62,36 +86,42 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`.
+Open [http://localhost:5173](http://localhost:5173) — no environment variables needed.
 
-No environment variables are required.
+---
 
 ## Scripts
 
 ```bash
-npm run dev        # Start local development
-npm run build      # Create a production build
-npm run preview    # Preview the production build
-npm run lint       # Run ESLint
-npm run typecheck  # Check TypeScript
+npm run dev        # Local dev server
+npm run build      # Production build
+npm run preview    # Preview production build locally
+npm run lint       # ESLint
+npm run typecheck  # TypeScript check
 npm run test:run   # Run tests once
 ```
 
+---
+
 ## How It Works
 
-SpendTrack stores expenses, categories, budgets, and learned category mappings in the browser. The app hydrates from localStorage on load, writes changes automatically, and lets you export a full JSON backup when needed.
+SpendTrack is entirely browser-side. On load, it hydrates from `localStorage`. Every action — adding an expense, updating a budget, changing a category — writes back immediately. No server, no latency, no auth.
 
-The interface is split into three main screens:
+Three screens cover the full workflow:
 
-- `Pulse` for dashboard-level spending visibility.
-- `Ledger` for transaction management.
-- `Insights` for patterns, forecasts, and recurring expense detection.
+| Screen | Purpose |
+|--------|---------|
+| **Pulse** | Spending overview: totals, pace, category mix, heatmap |
+| **Ledger** | Transaction management: search, filter, edit, delete |
+| **Insights** | Pattern analysis: trends, forecasts, recurring detection |
+
+---
 
 ## Tech Stack
 
-| Area | Tools |
-| --- | --- |
-| App | React 19, TypeScript, Vite |
+| Layer | Tools |
+|-------|-------|
+| Framework | React 19, TypeScript, Vite |
 | Styling | Tailwind CSS, CSS custom properties |
 | State | Zustand |
 | Routing | React Router |
@@ -101,31 +131,40 @@ The interface is split into three main screens:
 | Dates | date-fns |
 | Testing | Vitest, Testing Library |
 
+---
+
 ## Project Structure
 
-```text
+```
 src/
-  app/          Shell, routes, navigation, sync status
+  app/          Shell, routing, navigation, sync status
   features/     Entry, pulse, ledger, insights, settings
   hooks/        Shared React hooks
   lib/          Analytics and formatting helpers
-  services/     Browser storage layer
+  services/     localStorage layer
   stores/       Zustand stores
   ui/           Reusable UI components
   utils/        Parsing, insights, recurring expense helpers
 ```
 
+---
+
 ## Roadmap
 
-- Add focused tests for parsing, analytics, storage, and recurring detection.
-- Code-split chart-heavy routes.
-- Add deployed demo link and real product screenshots.
-- Expand CI with browser smoke tests.
+- [x] Real product screenshots in `docs/screenshots/`
+- [ ] Deployed demo link
+- [ ] Code-split chart-heavy routes
+- [ ] Expand test coverage: parsing, analytics, storage, recurring detection
+- [ ] Browser smoke tests in CI
+
+---
 
 ## Privacy
 
-SpendTrack does not send spending data anywhere. Everything stays in the browser unless you export a backup manually.
+SpendTrack does not transmit data anywhere. All expenses, budgets, and settings stay in your browser until you choose to export them.
+
+---
 
 ## License
 
-MIT
+[MIT](LICENSE) — built by [ShadeNKB](https://github.com/ShadeNKB)
