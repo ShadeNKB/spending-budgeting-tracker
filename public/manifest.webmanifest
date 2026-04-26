@@ -1,0 +1,13 @@
+{
+  "name": "SpendTrack",
+  "short_name": "SpendTrack",
+  "description": "Minimal personal spending tracker with smart categorisation.",
+  "start_url": "/pulse",
+  "display": "standalone",
+  "background_color": "#07090D",
+  "theme_color": "#07090D",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
