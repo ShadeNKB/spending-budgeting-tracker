@@ -2,7 +2,7 @@
 @tailwind components;
 @tailwind utilities;
 
-/* ─── Design tokens ──────────────────────────────────────────────── */
+/* --- Design tokens ------------------------------------------------ */
 @layer base {
   :root {
     /* Surfaces (OLED-near-black) */
@@ -23,14 +23,14 @@
     --border-strong:  rgba(255, 255, 255, 0.10);
     --border-subtle:  rgba(255, 255, 255, 0.04);
 
-    /* Accent — primary brand/data accent */
+    /* Accent - primary brand/data accent */
     --accent:         #22D3EE;
     --accent-hover:   #67E8F9;
     --accent-dim:     rgba(34, 211, 238, 0.12);
     --accent-border:  rgba(34, 211, 238, 0.28);
     --accent-ring:    rgba(34, 211, 238, 0.25);
 
-    /* Trust blue — financial data callouts (ui-ux-pro-max: Financial Dashboard) */
+    /* Trust blue - financial data callouts */
     --trust-blue:        #3B82F6;
     --trust-blue-dim:    rgba(59, 130, 246, 0.10);
     --trust-blue-border: rgba(59, 130, 246, 0.25);
@@ -101,7 +101,7 @@
     min-height: 100dvh;
   }
 
-  /* Prevent iOS zoom on focus (needs ≥16px) */
+  /* Prevent iOS zoom on focus (needs >=16px) */
   input, select, textarea, button { font-family: inherit; }
   input, select, textarea {
     font-size: 16px;
@@ -110,7 +110,7 @@
     input, select, textarea { font-size: 14px; }
   }
 
-  /* Focus-visible — accessible ring */
+  /* Focus-visible - accessible ring */
   *:focus { outline: none; }
   *:focus-visible {
     outline: 2px solid var(--accent);
@@ -149,14 +149,14 @@
   }
   input[type="number"] { -moz-appearance: textfield; }
 
-  /* Headline numerics — tabular everywhere */
+  /* Headline numerics - tabular everywhere */
   .tabular { font-variant-numeric: tabular-nums; }
 }
 
-/* ─── Component layer ────────────────────────────────────────────── */
+/* --- Component layer ---------------------------------------------- */
 @layer components {
 
-  /* ── Card ─────────────────────────────────────────────────────── */
+  /* -- Card ------------------------------------------------------- */
   .card {
     background: var(--surface-1);
     border: 1px solid var(--border);
@@ -181,7 +181,7 @@
     transform: translateY(-1px);
   }
 
-  /* Highlighted card — subtle top-edge glow line */
+  /* Highlighted card - subtle top-edge glow line */
   .card-glow {
     @apply card;
     border-color: rgba(34, 211, 238, 0.12);
@@ -192,7 +192,7 @@
     box-shadow: 0 0 48px -8px rgba(34, 211, 238, 0.20), 0 4px 24px rgba(0, 0, 0, 0.4);
   }
 
-  /* Insight card — top accent line via ::before */
+  /* Insight card - top accent line via ::before */
   .card-insight {
     @apply card;
     overflow: hidden;
@@ -208,7 +208,7 @@
   }
   .card-insight:hover::before { opacity: 0.70; }
 
-  /* Stat card — compact metric tile */
+  /* Stat card - compact metric tile */
   .card-stat {
     @apply card;
     display: flex;
@@ -223,7 +223,7 @@
   .card-neon { @apply card; }
   .card-neon:hover { border-color: var(--border-strong); }
 
-  /* ── Buttons ──────────────────────────────────────────────────── */
+  /* -- Buttons ---------------------------------------------------- */
   .btn-primary {
     display: inline-flex;
     align-items: center;
@@ -320,7 +320,7 @@
   }
   .btn-danger-ghost:hover { background: var(--negative-dim); color: var(--negative); }
 
-  /* ── Inputs ───────────────────────────────────────────────────── */
+  /* -- Inputs ----------------------------------------------------- */
   .input-base {
     display: block;
     width: 100%;
@@ -358,7 +358,7 @@
   .input-error { border-color: rgba(239, 68, 68, 0.5) !important; }
   .input-error:focus { box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15) !important; }
 
-  /* ── Typography ───────────────────────────────────────────────── */
+  /* -- Typography ------------------------------------------------- */
   .text-label {
     font-size: 0.6875rem;
     font-weight: 500;
@@ -411,7 +411,7 @@
   .text-positive { color: var(--positive); }
   .text-negative { color: var(--negative); }
 
-  /* ── Badges ───────────────────────────────────────────────────── */
+  /* -- Badges ----------------------------------------------------- */
   .badge {
     display: inline-flex;
     align-items: center;
@@ -462,7 +462,7 @@
     border-color: var(--trust-blue-border);
   }
 
-  /* ── Filter pills ─────────────────────────────────────────────── */
+  /* -- Filter pills ----------------------------------------------- */
   .filter-pill {
     padding: 7px 14px;
     min-height: 34px;
@@ -488,7 +488,7 @@
     box-shadow: 0 0 14px -4px rgba(34, 211, 238, 0.22);
   }
 
-  /* ── Progress ─────────────────────────────────────────────────── */
+  /* -- Progress --------------------------------------------------- */
   .progress-track {
     height: 6px;
     background: var(--surface-3);
@@ -529,7 +529,7 @@
     box-shadow: 0 0 6px 2px rgba(34, 211, 238, 0.5);
   }
 
-  /* ── Glass surface (header/nav) ───────────────────────────────── */
+  /* -- Glass surface (header/nav) --------------------------------- */
   .glass {
     background: rgba(7, 9, 13, 0.82);
     backdrop-filter: blur(20px) saturate(1.6);
@@ -544,7 +544,7 @@
     border-top: 1px solid rgba(255, 255, 255, 0.07);
   }
 
-  /* ── Rows & lists ─────────────────────────────────────────────── */
+  /* -- Rows & lists ----------------------------------------------- */
   .row-divider > * + * {
     border-top: 1px solid var(--border-subtle);
   }
@@ -562,13 +562,13 @@
   }
   .list-row:hover { background: rgba(255, 255, 255, 0.02); }
 
-  /* ── Touch target utility ─────────────────────────────────────── */
+  /* -- Touch target utility --------------------------------------- */
   .tap-target {
     min-width: 44px;
     min-height: 44px;
   }
 
-  /* ── Skeleton ─────────────────────────────────────────────────── */
+  /* -- Skeleton --------------------------------------------------- */
   .skeleton {
     background: linear-gradient(
       90deg,
@@ -581,7 +581,7 @@
     border-radius: 6px;
   }
 
-  /* ── Category color dot ───────────────────────────────────────── */
+  /* -- Category color dot ----------------------------------------- */
   .cat-dot {
     width: 8px;
     height: 8px;
@@ -596,7 +596,7 @@
     align-self: stretch;
   }
 
-  /* ── Legacy color utilities (keep existing UI readable) ───────── */
+  /* -- Legacy color utilities (keep existing UI readable) --------- */
   .text-neon-cyan   { color: var(--accent); }
   .text-neon-pink   { color: var(--neon-pink); }
   .text-neon-green  { color: var(--positive); }
@@ -637,7 +637,7 @@
   .animate-glow { animation: glowBreath 3s ease-in-out infinite; }
   .animate-float { animation: none; }
 
-  /* AI surface chip */
+  /* Suggestion chip */
   .chip-ai {
     display: inline-flex;
     align-items: center;
@@ -653,7 +653,7 @@
     color: #A5B4FC;
   }
 
-  /* ── Premium card — deep radial glow hero surface (ref: FTMO focal tile) ── */
+  /* -- Premium card - deep radial glow hero surface -- */
   .card-premium {
     @apply card;
     background:
@@ -677,7 +677,7 @@
     mix-blend-mode: overlay;
   }
 
-  /* ── Premium badge — angled offset flag (ref image: "Best value / -19%") ── */
+  /* -- Premium badge - angled status flag -- */
   .badge-flag {
     display: inline-flex;
     align-items: center;
@@ -696,7 +696,7 @@
   .badge-flag-over  { background: linear-gradient(135deg, #F97316, #EF4444); }
   .badge-flag-good  { background: linear-gradient(135deg, #22C55E, #10B981); }
 
-  /* ── Keyboard key chip ── */
+  /* -- Keyboard key chip -- */
   .kbd {
     display: inline-flex;
     align-items: center;
@@ -714,7 +714,7 @@
     line-height: 1;
   }
 
-  /* ── Sticky day divider (ExpenseList groups) ── */
+  /* -- Sticky day divider (ExpenseList groups) -- */
   .day-header {
     position: sticky;
     top: 0;
@@ -746,7 +746,7 @@
     font-variant-numeric: tabular-nums;
   }
 
-  /* ── Smart-add bar wrapper (fixed on mobile, static on desktop) ── */
+  /* -- Smart-add bar wrapper (fixed on mobile, static on desktop) -- */
   .smart-bar-mobile {
     position: fixed;
     left: 12px;
@@ -758,7 +758,7 @@
     .smart-bar-mobile { position: static; left: auto; right: auto; bottom: auto; }
   }
 
-  /* Container widths — consistent app-wide */
+  /* Container widths - consistent app-wide */
   .app-container {
     width: 100%;
     max-width: 1100px;
@@ -794,7 +794,7 @@
     .btn-primary, .btn-secondary { border-width: 2px; }
   }
 
-  /* ── Touch optimisation ───────────────────────────────────────── */
+  /* -- Touch optimisation ----------------------------------------- */
   /* Removes 300ms tap delay on interactive elements (UX rule: tap-delay) */
   .btn-primary, .btn-secondary, .btn-ghost, .btn-icon,
   .btn-danger-ghost, .btn-neon {
@@ -802,7 +802,7 @@
     -webkit-tap-highlight-color: transparent;
   }
 
-  /* ── Scrollbar utility ────────────────────────────────────────── */
+  /* -- Scrollbar utility ------------------------------------------ */
   .no-scrollbar {
     scrollbar-width: none;       /* Firefox */
     -ms-overflow-style: none;    /* IE 10+ */

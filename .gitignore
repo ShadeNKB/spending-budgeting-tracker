@@ -6,6 +6,10 @@ dist/
 dist-ssr/
 build/
 coverage/
+.vite/
+*.tsbuildinfo
+playwright-report/
+test-results/
 
 # Environment and local configuration
 .env

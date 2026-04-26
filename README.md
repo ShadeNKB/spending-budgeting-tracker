@@ -28,12 +28,23 @@ SpendTrack is a personal spending tracker built with React, TypeScript, Vite, an
 
 ## Getting Started
 
+Requirements:
+
+- Node.js 20 or newer
+- npm
+
 ```bash
+git clone https://github.com/ShadeNKB/spending-budgeting-tracker.git
+cd spending-budgeting-tracker
 npm install
 npm run dev
 ```
 
-The app runs locally at `http://localhost:5173` by default. No environment variables are required.
+The app runs locally at `http://localhost:5173` by default.
+
+## Environment Variables
+
+No environment variables are required. SpendTrack runs entirely in the browser and stores data locally.
 
 ## Scripts
 
