@@ -73,8 +73,6 @@ No backend. No account. Data lives in `localStorage`. Export JSON backups or CSV
 | ![Pulse](docs/screenshots/pulse.png) | ![Ledger](docs/screenshots/ledger.png) | ![Insights](docs/screenshots/insights.png) |
 | Dashboard, pace, heatmap | Searchable history | Trends & forecasts |
 
-> **Note:** Replace placeholder paths with real screenshots once captured. See [Roadmap](#-roadmap).
-
 ---
 
 ## Quick Start
@@ -153,7 +151,7 @@ src/
 
 ## Roadmap
 
-- [ ] Real product screenshots in `docs/screenshots/`
+- [x] Real product screenshots in `docs/screenshots/`
 - [ ] Deployed demo link
 - [ ] Code-split chart-heavy routes
 - [ ] Expand test coverage: parsing, analytics, storage, recurring detection
