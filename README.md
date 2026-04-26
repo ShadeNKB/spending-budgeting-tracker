@@ -27,7 +27,7 @@
 <br/>
 
 <p align="center">
-  <img src="docs/preview.svg" alt="SpendTrack dashboard" width="100%" />
+  <img src="docs/screenshots/pulse.png" alt="SpendTrack dashboard" width="100%" />
 </p>
 
 <br/>
