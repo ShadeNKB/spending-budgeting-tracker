@@ -9,6 +9,18 @@
     "type": "git",
     "url": "https://github.com/ShadeNKB/spending-budgeting-tracker.git"
   },
+  "homepage": "https://github.com/ShadeNKB/spending-budgeting-tracker#readme",
+  "bugs": {
+    "url": "https://github.com/ShadeNKB/spending-budgeting-tracker/issues"
+  },
+  "keywords": [
+    "spending-tracker",
+    "budgeting",
+    "personal-finance",
+    "react",
+    "typescript",
+    "local-first"
+  ],
   "engines": {
     "node": ">=20"
   },

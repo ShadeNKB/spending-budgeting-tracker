@@ -70,7 +70,7 @@ export function AppShell() {
             >
               <div className="flex items-center justify-center gap-2 bg-warning/10 border-b border-warning/20 px-4 py-1.5 text-[12px] text-warning">
                 <WifiOff size={12} />
-                You're offline — changes will sync when connection is restored
+                You're offline - changes will sync when connection is restored
               </div>
             </motion.div>
           )}

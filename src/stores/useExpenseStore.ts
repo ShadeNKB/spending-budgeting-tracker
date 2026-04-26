@@ -21,22 +21,22 @@ interface UndoEntry {
 }
 
 interface ExpenseState {
-  // ── data ────────────────────────────────────────
+  // Data
   expenses: Expense[];
   categories: string[];
   categoryMappings: CategoryMappings;
   budgets: CategoryBudgets;
 
-  // ── lifecycle ───────────────────────────────────
+  // Lifecycle
   hydrated: boolean;
   syncStatus: SyncStatus;
   lastSavedAt: number | null;
   isOffline: boolean;
 
-  // ── undo stack ──────────────────────────────────
+  // Undo stack
   undoStack: UndoEntry[];
 
-  // ── actions ─────────────────────────────────────
+  // Actions
   hydrate: () => void;
   addExpense: (input: Partial<Expense> & { itemName: string; amount: number }) => Expense;
   updateExpense: (id: string, patch: Partial<Expense>) => void;
@@ -274,7 +274,7 @@ export const useExpenseStore = create<ExpenseState>()(
   }))
 );
 
-// ── Persistence side-effect: write to localStorage on any data change ────────
+// Persistence side-effect: write to localStorage on data changes.
 let saveTimer: ReturnType<typeof setTimeout> | null = null;
 let initialized = false;
 
