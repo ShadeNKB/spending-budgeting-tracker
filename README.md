@@ -15,9 +15,16 @@
   <img src="https://img.shields.io/badge/TypeScript-Strict-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Local--First-No%20Backend-22C55E?style=flat-square" alt="Local-first" />
   <img src="https://img.shields.io/badge/License-MIT-22D3EE?style=flat-square" alt="MIT" />
+  <img src="https://img.shields.io/badge/PWA-Installable-8B5CF6?style=flat-square" alt="PWA" />
 </p>
 
-**[Quick Start](#quick-start) / [Features](#features) / [Daily Use](#daily-use) / [How It Works](#how-it-works) / [Data & Privacy](#data--privacy) / [Stack](#stack)**
+<p align="center">
+  <a href="https://spending-tracker-omega.vercel.app"><strong>🚀 Live Demo</strong></a> &nbsp;·&nbsp;
+  <a href="#-quick-start">Quick Start</a> &nbsp;·&nbsp;
+  <a href="#-features">Features</a> &nbsp;·&nbsp;
+  <a href="#%EF%B8%8F-how-it-works">How It Works</a> &nbsp;·&nbsp;
+  <a href="#-tech-stack">Stack</a>
+</p>
 
 <br/>
 
@@ -199,7 +206,7 @@ src/
 
 - [x] Real product screenshots in `docs/screenshots/`
 - [x] CI for install, typecheck, lint, tests, and build
-- [ ] Live hosted demo
+- [x] [Live hosted demo](https://spending-tracker-omega.vercel.app)
 - [ ] Browser smoke tests in CI
 - [ ] Code-split chart-heavy routes for smaller initial bundles
 - [ ] Expand test coverage for parsing, analytics, storage, and recurring detection
