@@ -19,12 +19,14 @@
 </p>
 
 <p align="center">
-  <a href="https://spending-tracker-omega.vercel.app"><strong>🚀 Live Demo</strong></a> &nbsp;·&nbsp;
+  <a href="https://spendtrack-demo.vercel.app"><strong>▶ Try the Demo</strong></a> &nbsp;·&nbsp;
   <a href="#-quick-start">Quick Start</a> &nbsp;·&nbsp;
   <a href="#-features">Features</a> &nbsp;·&nbsp;
   <a href="#%EF%B8%8F-how-it-works">How It Works</a> &nbsp;·&nbsp;
   <a href="#-tech-stack">Stack</a>
 </p>
+
+> **Demo:** pre-loaded with sample data — your changes stay on your device only, no data is shared.
 
 <br/>
 
@@ -206,7 +208,7 @@ src/
 
 - [x] Real product screenshots in `docs/screenshots/`
 - [x] CI for install, typecheck, lint, tests, and build
-- [x] [Live hosted demo](https://spending-tracker-omega.vercel.app)
+- [x] [Live demo](https://spendtrack-demo.vercel.app) — pre-loaded, data stays local per visitor
 - [ ] Browser smoke tests in CI
 - [ ] Code-split chart-heavy routes for smaller initial bundles
 - [ ] Expand test coverage for parsing, analytics, storage, and recurring detection
