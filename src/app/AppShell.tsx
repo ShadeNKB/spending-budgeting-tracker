@@ -1,13 +1,13 @@
 import { Outlet, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
-import { WifiOff } from "lucide-react";
+import { WifiOff, FlaskConical } from "lucide-react";
 import { TopBar } from "./TopBar";
 import { TabBar } from "./TabBar";
 import { ToastHost } from "../ui/ToastHost";
 import { CommandPalette } from "../features/entry/CommandPalette";
 import { SettingsDrawer } from "../features/settings/SettingsDrawer";
 import { AddExpenseSheet } from "../features/entry/AddExpenseSheet";
-import { useExpenseStore, installPersistence } from "../stores/useExpenseStore";
+import { useExpenseStore, installPersistence, IS_DEMO } from "../stores/useExpenseStore";
 import { useUIStore } from "../stores/useUIStore";
 import { useHotkeys } from "../hooks/useHotkeys";
 
@@ -63,6 +63,12 @@ export function AppShell() {
       </div>
 
       <div className="relative z-10 flex min-h-dvh flex-col">
+        {IS_DEMO && (
+          <div className="flex items-center justify-center gap-2 bg-accent/10 border-b border-accent/20 px-4 py-1.5 text-[12px] text-accent">
+            <FlaskConical size={12} />
+            Demo mode — data is yours alone, stored locally on this device
+          </div>
+        )}
         <AnimatePresence>
           {isOffline && (
             <motion.div

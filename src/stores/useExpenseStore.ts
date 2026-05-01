@@ -4,12 +4,20 @@ import Fuse from "fuse.js";
 import { storage } from "../services/storage";
 import { DEFAULT_CATEGORIES, FUSE_THRESHOLD, FUSE_SCORE_CUTOFF } from "../constants";
 import { generateId, migrateExpenses } from "../utils/helpers";
+import {
+  DEMO_EXPENSES,
+  DEMO_CATEGORIES,
+  DEMO_BUDGETS,
+  DEMO_MAPPINGS,
+} from "../demo/seedData";
 import type {
   Expense,
   CategoryMappings,
   CategoryBudgets,
   BackupData,
 } from "../types";
+
+export const IS_DEMO = import.meta.env.VITE_DEMO_MODE === "true";
 
 export type SyncStatus = "idle" | "saving" | "saved" | "error";
 
@@ -82,10 +90,23 @@ export const useExpenseStore = create<ExpenseState>()(
 
     hydrate: () => {
       try {
-        const expenses = migrateExpenses(storage.getExpenses());
-        const categories = storage.getCategories() ?? DEFAULT_CATEGORIES;
-        const categoryMappings = storage.getCategoryMappings();
-        const budgets = storage.getBudgets();
+        let expenses = migrateExpenses(storage.getExpenses());
+        let categories = storage.getCategories() ?? DEFAULT_CATEGORIES;
+        let categoryMappings = storage.getCategoryMappings();
+        let budgets = storage.getBudgets();
+
+        // In demo mode, seed sample data on first visit (empty storage)
+        if (IS_DEMO && expenses.length === 0) {
+          expenses = DEMO_EXPENSES;
+          categories = DEMO_CATEGORIES;
+          categoryMappings = DEMO_MAPPINGS;
+          budgets = DEMO_BUDGETS;
+          storage.saveExpenses(expenses);
+          storage.saveCategories(categories);
+          storage.saveCategoryMappings(categoryMappings);
+          storage.saveBudgets(budgets);
+        }
+
         set({ expenses, categories, categoryMappings, budgets, hydrated: true });
       } catch (err) {
         console.error("hydrate error", err);
