@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   format,
   startOfMonth,
@@ -48,23 +49,65 @@ export function DatePicker({
   const [viewDate, setViewDate] = useState<Date>(() =>
     value ? new Date(value + "T12:00:00") : new Date()
   );
+  const [popoverStyle, setPopoverStyle] = useState<React.CSSProperties>({});
   const containerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
 
   // Sync view when value changes externally
   useEffect(() => {
     if (value) setViewDate(new Date(value + "T12:00:00"));
   }, [value]);
 
-  // Close on outside click
+  // Position the popover relative to the trigger button
+  useEffect(() => {
+    if (!open || !triggerRef.current) return;
+    const rect = triggerRef.current.getBoundingClientRect();
+    const POPOVER_WIDTH = 248;
+    const POPOVER_APPROX_HEIGHT = 320;
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    // Prefer below; flip above if not enough space
+    const spaceBelow = viewportHeight - rect.bottom - 8;
+    const spaceAbove = rect.top - 8;
+    const openAbove = spaceBelow < POPOVER_APPROX_HEIGHT && spaceAbove > spaceBelow;
+
+    // Prefer left-aligned; flip right if it would overflow
+    let left = rect.left;
+    if (left + POPOVER_WIDTH > viewportWidth - 8) {
+      left = rect.right - POPOVER_WIDTH;
+    }
+    if (left < 8) left = 8;
+
+    setPopoverStyle({
+      position: "fixed",
+      top: openAbove ? undefined : rect.bottom + 6,
+      bottom: openAbove ? viewportHeight - rect.top + 6 : undefined,
+      left,
+      width: variant === "input" ? rect.width : POPOVER_WIDTH,
+      minWidth: POPOVER_WIDTH,
+      zIndex: 9999,
+    });
+  }, [open, variant]);
+
+  // Close on outside click/touch — covers both popover and trigger
   useEffect(() => {
     if (!open) return;
-    const handler = (e: MouseEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+    const handler = (e: MouseEvent | TouchEvent) => {
+      const target = e.target as Node;
+      const insideTrigger = containerRef.current?.contains(target);
+      const insidePopover = popoverRef.current?.contains(target);
+      if (!insideTrigger && !insidePopover) {
         setOpen(false);
       }
     };
     document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener("touchstart", handler);
+    return () => {
+      document.removeEventListener("mousedown", handler);
+      document.removeEventListener("touchstart", handler);
+    };
   }, [open]);
 
   const maxDate = max ? startOfDay(parseISO(max)) : null;
@@ -104,6 +147,7 @@ export function DatePicker({
       {/* Trigger */}
       {variant === "pill" ? (
         <button
+          ref={triggerRef}
           type="button"
           onClick={() => setOpen((o) => !o)}
           className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-medium transition cursor-pointer ${
@@ -117,6 +161,7 @@ export function DatePicker({
         </button>
       ) : (
         <button
+          ref={triggerRef}
           type="button"
           onClick={() => setOpen((o) => !o)}
           className={`w-full inline-flex items-center gap-2.5 rounded-[10px] border bg-surface-2 px-3 h-10 text-[13px] transition hover:border-accent/40 focus:outline-none ${
@@ -130,15 +175,12 @@ export function DatePicker({
         </button>
       )}
 
-      {/* Calendar popover */}
-      {open && (
+      {/* Calendar popover — rendered in a portal so it escapes overflow:hidden/scroll containers */}
+      {open && createPortal(
         <div
-          className="absolute z-[200] mt-2 rounded-[14px] border border-white/[0.1] bg-[#0f1117] shadow-2xl shadow-black/70 p-3 select-none"
-          style={{
-            width: 248,
-            // Flip left if pill is near right edge (pill variant only)
-            ...(variant === "pill" ? { left: 0 } : { left: 0, right: 0, width: "auto" }),
-          }}
+          ref={popoverRef}
+          className="rounded-[14px] border border-white/[0.1] bg-[#0f1117] shadow-2xl shadow-black/70 p-3 select-none"
+          style={popoverStyle}
         >
           {/* Month navigation */}
           <div className="flex items-center justify-between mb-3 px-1">
@@ -227,7 +269,8 @@ export function DatePicker({
               Today
             </button>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
