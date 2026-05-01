@@ -11,7 +11,7 @@ export interface RecurringGroup {
   avgGapDays: number;       // average spacing between instances
   periodicity: "weekly" | "biweekly" | "monthly" | "irregular";
   nextEstimatedDate: Date;  // predicted next hit
-  confidence: number;       // 0–1 based on gap variance
+  confidence: number;       // 0-1 based on gap variance
 }
 
 const norm = (s: string) => s.toLowerCase().trim().replace(/\s+/g, " ");
@@ -69,7 +69,7 @@ export function detectRecurring(expenses: Expense[]): RecurringGroup[] {
     const variance =
       gaps.reduce((s, g) => s + (g - avgGap) ** 2, 0) / gaps.length;
     const stdDev = Math.sqrt(variance);
-    // Confidence: low variance relative to mean → higher confidence
+    // Confidence: low variance relative to mean gives higher confidence.
     const relativeStdDev = avgGap > 0 ? stdDev / avgGap : 1;
     const confidence = Math.max(0, Math.min(1, 1 - relativeStdDev));
 

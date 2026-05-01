@@ -1,7 +1,7 @@
 {
   "name": "spendtrack",
   "private": true,
-  "description": "A local-first personal spending and budgeting tracker.",
+  "description": "A fast, local-first spending tracker for daily expense logging, budgeting, and insights.",
   "version": "0.1.0",
   "type": "module",
   "license": "MIT",
@@ -15,11 +15,13 @@
   },
   "keywords": [
     "spending-tracker",
+    "expense-tracker",
     "budgeting",
     "personal-finance",
+    "finance-dashboard",
+    "local-first",
     "react",
-    "typescript",
-    "local-first"
+    "typescript"
   ],
   "engines": {
     "node": ">=20"
@@ -56,7 +58,6 @@
     "@types/react-dom": "^19.2.2",
     "@vitejs/plugin-react": "^5.1.0",
     "autoprefixer": "^10.4.22",
-    "baseline-browser-mapping": "^2.9.14",
     "eslint": "^9.39.1",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-react-refresh": "^0.4.24",

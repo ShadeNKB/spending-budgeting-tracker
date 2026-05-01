@@ -1,26 +1,25 @@
-# Spending Tracker - Project Context
+# Repository Notes
 
-## Stack
-- React + TypeScript + Vite
-- Component structure: `src/components/`, `src/hooks/`, `src/services/`, `src/utils/`
+SpendTrack is a React, TypeScript, and Vite spending tracker.
 
-## Rules
-- Upgrade existing code - never rebuild unless structurally broken
-- UI/UX: dark mode, modern, production-grade - use 21st.dev patterns
-- Code: clean, typed, component-driven - no shortcuts
-- Every change must improve functionality AND UX in the same pass
+## Project Standards
 
-## Priorities
-1. Functionality - does it work correctly and completely?
-2. UX - is it intuitive, fast, and visually clean?
-3. Structure - is the code maintainable and scalable?
+- Preserve local-first privacy.
+- Keep expense entry fast and low-friction.
+- Keep UI changes responsive across desktop and mobile.
+- Prefer small, typed components with clear ownership.
+- Avoid broad rewrites unless the current structure blocks a meaningful improvement.
+- Do not commit real spending exports, local backups, browser profiles, or environment files.
 
-## Standards
-- TypeScript strict - no `any`
-- Components: single responsibility
-- No dead code, no commented-out blocks
-- Consistent naming: PascalCase components, camelCase utils/hooks
+## Validation
 
-## Owner
-Shade (Ng Kee Boon) - NSF, building during limited free time
-Treat sessions as high-value - maximise output per session
+Run these before committing:
+
+```bash
+npm run typecheck
+npm run lint
+npm run test:run
+npm run build
+```
+
+For UI changes, include a browser smoke check and screenshots when practical.

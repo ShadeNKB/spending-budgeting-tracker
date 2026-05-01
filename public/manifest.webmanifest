@@ -1,7 +1,7 @@
 {
   "name": "SpendTrack",
   "short_name": "SpendTrack",
-  "description": "Minimal personal spending tracker with smart categorisation.",
+  "description": "A fast, local-first spending tracker for daily expense logging, budgeting, and insights.",
   "start_url": "/pulse",
   "display": "standalone",
   "background_color": "#07090D",

@@ -17,7 +17,7 @@
   <img src="https://img.shields.io/badge/License-MIT-22D3EE?style=flat-square" alt="MIT" />
 </p>
 
-**[Quick Start](#quick-start) / [Features](#features) / [How It Works](#how-it-works) / [Stack](#stack)**
+**[Quick Start](#quick-start) / [Features](#features) / [Daily Use](#daily-use) / [How It Works](#how-it-works) / [Data & Privacy](#data--privacy) / [Stack](#stack)**
 
 <br/>
 
@@ -36,6 +36,7 @@ Most budgeting apps are built around syncing, subscriptions, and dashboards you 
 - **Local-first** - your data never leaves the browser
 - **Friction-free entry** - natural language parsing gets out of your way
 - **Meaningful feedback** - pace tracking, category breakdowns, and recurring detection surface insights without effort
+- **Simple enough to keep using** - log quickly, review clearly, export anytime
 
 ---
 
@@ -76,6 +77,34 @@ No backend. No account. Data lives in `localStorage`. Export JSON backups or CSV
 
 ---
 
+## Daily Use
+
+SpendTrack is designed around a simple loop:
+
+1. Open the app.
+2. Type an expense naturally, for example `coffee 4.50 yesterday`.
+3. Check Pulse to see how the month is pacing.
+4. Use Ledger when you need to clean up, filter, or export records.
+5. Review Insights for recurring charges and spending patterns.
+
+Good fit:
+
+- Personal daily spending logs
+- Simple budgeting without a bank connection
+- Local-first finance tracking
+- Portfolio reference for a polished React finance app
+
+Not a fit yet:
+
+- Multi-device sync
+- Shared household budgets
+- Bank imports
+- Investment tracking
+
+For a practical walkthrough, see the [user guide](docs/USER_GUIDE.md).
+
+---
+
 ## Quick Start
 
 **Requirements:** Node.js 20+, npm
@@ -87,7 +116,9 @@ npm install
 npm run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173). No environment variables are needed.
+Open [http://localhost:5173](http://localhost:5173).
+
+No environment variables are needed.
 
 ---
 
@@ -115,6 +146,20 @@ Three screens cover the full workflow:
 | **Pulse** | Spending overview: totals, pace, category mix, heatmap |
 | **Ledger** | Transaction management: search, filter, edit, delete |
 | **Insights** | Pattern analysis: trends, forecasts, recurring detection |
+
+---
+
+## Data & Privacy
+
+SpendTrack stores data in your browser's `localStorage`.
+
+- No account is required.
+- No spending data is sent to a backend.
+- Clearing browser storage can delete your data.
+- Use JSON export before switching devices, clearing storage, or testing major changes.
+- CSV export is available when you want to analyse spending in a spreadsheet.
+
+See [SECURITY.md](SECURITY.md) for reporting security issues.
 
 ---
 
@@ -153,16 +198,24 @@ src/
 ## Roadmap
 
 - [x] Real product screenshots in `docs/screenshots/`
-- [ ] Deployed demo link
-- [ ] Code-split chart-heavy routes
-- [ ] Expand test coverage: parsing, analytics, storage, recurring detection
+- [x] CI for install, typecheck, lint, tests, and build
+- [ ] Live hosted demo
 - [ ] Browser smoke tests in CI
+- [ ] Code-split chart-heavy routes for smaller initial bundles
+- [ ] Expand test coverage for parsing, analytics, storage, and recurring detection
 
 ---
 
-## Privacy
+## Contributing
 
-SpendTrack does not transmit data anywhere. All expenses, budgets, and settings stay in your browser until you choose to export them.
+Issues and pull requests are welcome. Start with:
+
+- [User guide](docs/USER_GUIDE.md)
+- [Contributing guide](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Changelog](CHANGELOG.md)
+
+Please avoid sharing real spending data in public issues, screenshots, or exports.
 
 ---
 
