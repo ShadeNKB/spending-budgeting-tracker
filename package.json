@@ -26,6 +26,9 @@
   "engines": {
     "node": ">=20"
   },
+  "overrides": {
+    "serialize-javascript": "^7.0.5"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",

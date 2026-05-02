@@ -2,8 +2,16 @@
 
 ## Unreleased
 
-- Planned: focused tests for parsing, analytics, storage, and recurring detection.
-- Planned: browser smoke tests in CI.
+_Roadmap empty — open an issue if there's something to add._
+
+## 0.3.0 — 2026-05-02
+
+### Added
+- **Browser smoke test in CI** — boots `vite preview`, asserts all four routes (`/`, `/pulse`, `/ledger`, `/insights`) plus the service worker and PWA manifest.
+- **Test suite expansion** — focused unit tests for analytics (`computeMonthAnalytics`, `computeWeekAnalytics`, `colorFromString`), storage (round-trip, corruption recovery), formatting (`formatMoney`, `formatInt`), and helpers (validation, migration, color hashing). Total: 36 tests across 6 files.
+
+### Security
+- Resolved 4 high-severity advisories in the `vite-plugin-pwa → workbox-build → @rollup/plugin-terser → serialize-javascript` chain by pinning `serialize-javascript@^7.0.5` via npm `overrides`. `npm audit` now reports 0 vulnerabilities.
 
 ## 0.2.0 — 2026-05-02
 
