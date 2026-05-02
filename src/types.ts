@@ -46,6 +46,7 @@ export interface BackupData {
   categories: string[];
   categoryMappings: CategoryMappings;
   budgets?: CategoryBudgets;
+  deletedIds?: string[];
   exportDate: string;
   version: string;
 }

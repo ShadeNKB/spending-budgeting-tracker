@@ -34,6 +34,7 @@ interface ExpenseState {
   categories: string[];
   categoryMappings: CategoryMappings;
   budgets: CategoryBudgets;
+  deletedIds: string[];
 
   // Lifecycle
   hydrated: boolean;
@@ -61,6 +62,7 @@ interface ExpenseState {
 
   importBackup: (data: BackupData) => void;
   exportBackup: () => BackupData;
+  applySync: (data: BackupData) => void;
 
   setOffline: (v: boolean) => void;
   consumeUndo: (id: string) => void;
@@ -72,6 +74,7 @@ const persistSelectors = (s: ExpenseState) => ({
   categories: s.categories,
   categoryMappings: s.categoryMappings,
   budgets: s.budgets,
+  deletedIds: s.deletedIds,
 });
 
 export const useExpenseStore = create<ExpenseState>()(
@@ -80,6 +83,7 @@ export const useExpenseStore = create<ExpenseState>()(
     categories: DEFAULT_CATEGORIES,
     categoryMappings: {},
     budgets: {},
+    deletedIds: [],
 
     hydrated: false,
     syncStatus: "idle",
@@ -193,20 +197,30 @@ export const useExpenseStore = create<ExpenseState>()(
       if (!prev) return;
       set((s) => ({
         expenses: s.expenses.filter((e) => e.id !== id),
+        deletedIds: [...new Set([...s.deletedIds, id])],
         undoStack: [
           ...s.undoStack,
           {
             id: `del-${id}-${Date.now()}`,
             label: `Deleted "${prev.itemName}"`,
             expiresAt: Date.now() + 5000,
-            undo: () => set((st) => ({ expenses: [prev, ...st.expenses] })),
+            undo: () =>
+              set((st) => ({
+                expenses: [prev, ...st.expenses],
+                deletedIds: st.deletedIds.filter((d) => d !== id),
+              })),
           },
         ].slice(-5),
       }));
     },
 
     clearAllExpenses: () => {
-      set({ expenses: [], undoStack: [] });
+      const ids = get().expenses.map((e) => e.id);
+      set((s) => ({
+        expenses: [],
+        deletedIds: [...new Set([...s.deletedIds, ...ids])],
+        undoStack: [],
+      }));
     },
 
     addCategory: (name) => {
@@ -251,6 +265,7 @@ export const useExpenseStore = create<ExpenseState>()(
         categories: data.categories?.length ? data.categories : DEFAULT_CATEGORIES,
         categoryMappings: data.categoryMappings ?? {},
         budgets: data.budgets ?? {},
+        deletedIds: data.deletedIds ?? [],
       });
     },
 
@@ -261,9 +276,20 @@ export const useExpenseStore = create<ExpenseState>()(
         categories: s.categories,
         categoryMappings: s.categoryMappings,
         budgets: s.budgets,
+        deletedIds: s.deletedIds,
         exportDate: new Date().toISOString(),
         version: "3.0",
       };
+    },
+
+    applySync: (data) => {
+      set({
+        expenses: data.expenses ? migrateExpenses(data.expenses) : [],
+        categories: data.categories?.length ? data.categories : DEFAULT_CATEGORIES,
+        categoryMappings: data.categoryMappings ?? {},
+        budgets: data.budgets ?? {},
+        deletedIds: data.deletedIds ?? [],
+      });
     },
 
     setOffline: (v) => set({ isOffline: v }),
@@ -304,7 +330,14 @@ export function installPersistence() {
         }
       }, 400);
     },
-    { equalityFn: (a, b) => a.expenses === b.expenses && a.categories === b.categories && a.categoryMappings === b.categoryMappings && a.budgets === b.budgets }
+    {
+      equalityFn: (a, b) =>
+        a.expenses === b.expenses &&
+        a.categories === b.categories &&
+        a.categoryMappings === b.categoryMappings &&
+        a.budgets === b.budgets &&
+        a.deletedIds === b.deletedIds,
+    }
   );
 
   if (typeof window !== "undefined") {

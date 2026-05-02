@@ -8,6 +8,8 @@ import { CommandPalette } from "../features/entry/CommandPalette";
 import { SettingsDrawer } from "../features/settings/SettingsDrawer";
 import { AddExpenseSheet } from "../features/entry/AddExpenseSheet";
 import { useExpenseStore, installPersistence, IS_DEMO } from "../stores/useExpenseStore";
+import { useSyncStore } from "../stores/useSyncStore";
+import { syncApplying } from "../services/syncService";
 import { useUIStore } from "../stores/useUIStore";
 import { useHotkeys } from "../hooks/useHotkeys";
 
@@ -18,6 +20,27 @@ function bootstrapClientStore() {
   storeBootstrapped = true;
   useExpenseStore.getState().hydrate();
   installPersistence();
+
+  // Wire data changes → scheduled cloud push (skipped when applying remote data).
+  useExpenseStore.subscribe(
+    (s) => ({ expenses: s.expenses, categories: s.categories, categoryMappings: s.categoryMappings, budgets: s.budgets, deletedIds: s.deletedIds }),
+    () => {
+      if (!useExpenseStore.getState().hydrated) return;
+      if (syncApplying.value) return;
+      useSyncStore.getState().scheduleSyncPush();
+    },
+    {
+      equalityFn: (a, b) =>
+        a.expenses === b.expenses &&
+        a.categories === b.categories &&
+        a.categoryMappings === b.categoryMappings &&
+        a.budgets === b.budgets &&
+        a.deletedIds === b.deletedIds,
+    }
+  );
+
+  // Init sync from stored sync code (fires after hydrate so local data is ready).
+  useSyncStore.getState().initSync();
 }
 
 bootstrapClientStore();

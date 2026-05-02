@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { format } from "date-fns";
-import { Plus, Trash2, Download, Upload, FileDown, Wallet, Tags, Database, Check, X, Smartphone, Monitor, AlertTriangle } from "lucide-react";
+import { Plus, Trash2, Download, Upload, FileDown, Wallet, Tags, Database, Check, X, Smartphone, Monitor, AlertTriangle, Cloud } from "lucide-react";
 import { Sheet } from "../../ui/Sheet";
 import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Input";
@@ -10,9 +10,10 @@ import { useExpenseStore } from "../../stores/useExpenseStore";
 import { useToast } from "../../hooks/useToast";
 import { formatMoney } from "../../lib/format";
 import { colorFromString } from "../../lib/analytics";
+import { SyncPanel } from "./SyncPanel";
 import type { BackupData } from "../../types";
 
-type Tab = "categories" | "budgets" | "backup";
+type Tab = "categories" | "budgets" | "backup" | "sync";
 
 export function SettingsDrawer() {
   const open = useUIStore((s) => s.settingsOpen);
@@ -27,6 +28,7 @@ export function SettingsDrawer() {
             ["categories", Tags, "Categories"],
             ["budgets", Wallet, "Budgets"],
             ["backup", Database, "Backup"],
+            ["sync", Cloud, "Sync"],
           ] as const).map(([key, Icon, label]) => (
             <button
               key={key}
@@ -49,6 +51,7 @@ export function SettingsDrawer() {
         {tab === "categories" && <CategoriesPanel />}
         {tab === "budgets" && <BudgetsPanel />}
         {tab === "backup" && <BackupPanel />}
+        {tab === "sync" && <SyncPanel />}
       </div>
     </Sheet>
   );

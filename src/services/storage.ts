@@ -5,6 +5,7 @@ const KEY_CATEGORIES = "categories";
 const KEY_MAPPINGS = "categoryMappings";
 const KEY_COLORS = "categoryColors";
 const KEY_BUDGETS = "categoryBudgets";
+const KEY_SYNC_ID = "syncId";
 
 export const storage = {
   getExpenses(): Expense[] {
@@ -100,5 +101,17 @@ export const storage = {
     this.saveCategories(categories);
     this.saveCategoryMappings(mappings);
     if (budgets !== undefined) this.saveBudgets(budgets);
+  },
+
+  getSyncId(): string | null {
+    return localStorage.getItem(KEY_SYNC_ID);
+  },
+
+  saveSyncId(id: string | null): void {
+    if (id === null) {
+      localStorage.removeItem(KEY_SYNC_ID);
+    } else {
+      localStorage.setItem(KEY_SYNC_ID, id);
+    }
   },
 };
