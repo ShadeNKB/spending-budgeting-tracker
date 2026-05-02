@@ -49,7 +49,6 @@ interface ExpenseState {
   addExpense: (input: Partial<Expense> & { itemName: string; amount: number }) => Expense;
   updateExpense: (id: string, patch: Partial<Expense>) => void;
   deleteExpense: (id: string) => void;
-  deleteMany: (ids: string[]) => void;
   clearAllExpenses: () => void;
 
   addCategory: (name: string) => void;
@@ -201,24 +200,6 @@ export const useExpenseStore = create<ExpenseState>()(
             label: `Deleted "${prev.itemName}"`,
             expiresAt: Date.now() + 5000,
             undo: () => set((st) => ({ expenses: [prev, ...st.expenses] })),
-          },
-        ].slice(-5),
-      }));
-    },
-
-    deleteMany: (ids) => {
-      const set_ = new Set(ids);
-      const prev = get().expenses.filter((e) => set_.has(e.id));
-      if (!prev.length) return;
-      set((s) => ({
-        expenses: s.expenses.filter((e) => !set_.has(e.id)),
-        undoStack: [
-          ...s.undoStack,
-          {
-            id: `delMany-${Date.now()}`,
-            label: `Deleted ${prev.length} items`,
-            expiresAt: Date.now() + 6000,
-            undo: () => set((st) => ({ expenses: [...prev, ...st.expenses] })),
           },
         ].slice(-5),
       }));
