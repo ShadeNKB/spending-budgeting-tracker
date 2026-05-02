@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import { format } from "date-fns";
-import { Plus, Trash2, Download, Upload, FileDown, Wallet, Tags, Database, Check, X } from "lucide-react";
+import { Plus, Trash2, Download, Upload, FileDown, Wallet, Tags, Database, Check, X, Smartphone, Monitor, AlertTriangle } from "lucide-react";
 import { Sheet } from "../../ui/Sheet";
 import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Input";
@@ -206,9 +206,11 @@ function BackupPanel() {
   const expenses = useExpenseStore((s) => s.expenses);
   const exportBackup = useExpenseStore((s) => s.exportBackup);
   const importBackup = useExpenseStore((s) => s.importBackup);
+  const clearAllExpenses = useExpenseStore((s) => s.clearAllExpenses);
   const fileRef = useRef<HTMLInputElement>(null);
   const toast = useToast();
   const [pendingImport, setPendingImport] = useState<{ data: BackupData; count: number } | null>(null);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   const exportJson = () => {
     const data = exportBackup();
@@ -261,9 +263,25 @@ function BackupPanel() {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="rounded-lg border border-white/[0.06] bg-surface-1 p-4">
-        <div className="text-[13px] font-semibold text-white">{expenses.length} expenses</div>
-        <div className="text-[12px] text-[var(--text-tertiary)]">All data is stored locally in this browser.</div>
+      <div className="rounded-lg border border-white/[0.06] bg-surface-1 p-4 flex flex-col gap-2">
+        <div className="text-[13px] font-semibold text-white">{expenses.length} expenses stored locally</div>
+        <div className="text-[12px] text-[var(--text-tertiary)] leading-relaxed">
+          All data lives in <strong className="text-white/70">this browser on this device</strong>. No account, no cloud, no sharing across devices automatically.
+        </div>
+        <div className="mt-1 flex flex-col gap-2">
+          <div className="flex items-start gap-2 text-[12px] text-[var(--text-tertiary)]">
+            <Monitor size={12} className="mt-0.5 shrink-0 text-accent/60" />
+            <span><strong className="text-white/70">Laptop:</strong> Use in browser, or run locally for full offline ownership.</span>
+          </div>
+          <div className="flex items-start gap-2 text-[12px] text-[var(--text-tertiary)]">
+            <Smartphone size={12} className="mt-0.5 shrink-0 text-accent/60" />
+            <span><strong className="text-white/70">Phone:</strong> Open the URL in mobile browser → tap Share → Add to Home Screen to install as an app.</span>
+          </div>
+          <div className="flex items-start gap-2 text-[12px] text-[var(--text-tertiary)]">
+            <Database size={12} className="mt-0.5 shrink-0 text-accent/60" />
+            <span><strong className="text-white/70">Multiple devices:</strong> Export a JSON backup here, then import it on the other device.</span>
+          </div>
+        </div>
       </div>
 
       {pendingImport && (
@@ -299,6 +317,46 @@ function BackupPanel() {
       <Button onClick={() => fileRef.current?.click()} variant="ghost">
         <Upload size={14} /> Import JSON backup
       </Button>
+
+      <div className="border-t border-white/[0.06] pt-3 mt-1">
+        {confirmClear ? (
+          <div className="rounded-lg border border-negative/30 bg-negative/[0.07] p-4 flex flex-col gap-3">
+            <div className="flex items-start gap-2">
+              <AlertTriangle size={14} className="text-negative shrink-0 mt-0.5" />
+              <div>
+                <div className="text-[13px] font-semibold text-white">Delete all {expenses.length} expenses?</div>
+                <div className="text-[12px] text-[var(--text-tertiary)] mt-0.5 leading-relaxed">
+                  This permanently removes all locally stored expense data. Your categories, budgets, and settings are kept. <strong className="text-white/60">This cannot be undone.</strong>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                onClick={() => {
+                  clearAllExpenses();
+                  setConfirmClear(false);
+                  toast.info("All expenses cleared");
+                }}
+                variant="primary"
+                className="flex-1 !bg-negative/80 hover:!bg-negative border-transparent"
+              >
+                Yes, delete all
+              </Button>
+              <Button onClick={() => setConfirmClear(false)} variant="ghost" className="flex-1">
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <Button
+            onClick={() => setConfirmClear(true)}
+            variant="ghost"
+            className="w-full text-negative/70 hover:text-negative hover:!border-negative/30 hover:!bg-negative/10"
+          >
+            <Trash2 size={14} /> Clear all expenses
+          </Button>
+        )}
+      </div>
     </div>
   );
 }

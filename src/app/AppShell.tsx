@@ -66,7 +66,11 @@ export function AppShell() {
         {IS_DEMO && (
           <div className="flex items-center justify-center gap-2 bg-accent/10 border-b border-accent/20 px-4 py-1.5 text-[12px] text-accent">
             <FlaskConical size={12} />
-            Demo mode — data is yours alone, stored locally on this device
+            <span>
+              Demo mode — sample data loaded.{" "}
+              <span className="text-accent/70">Data is stored locally on this device only.</span>{" "}
+              Clear it in Settings → Backup and use for your own expenses.
+            </span>
           </div>
         )}
         <AnimatePresence>

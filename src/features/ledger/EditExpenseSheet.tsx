@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { format, parseISO } from "date-fns";
+import { Trash2 } from "lucide-react";
 import { Sheet } from "../../ui/Sheet";
 import { Input } from "../../ui/Input";
 import { Button } from "../../ui/Button";
@@ -17,8 +18,10 @@ export function EditExpenseSheet({
   onClose: () => void;
 }) {
   const updateExpense = useExpenseStore((s) => s.updateExpense);
+  const deleteExpense = useExpenseStore((s) => s.deleteExpense);
   const categories = useExpenseStore((s) => s.categories);
   const toast = useToast();
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const [form, setForm] = useState<{ itemName: string; amount: string; category: string; date: string; notes: string }>({
     itemName: "",
@@ -175,6 +178,36 @@ export function EditExpenseSheet({
         <div className="flex gap-2 pt-1">
           <Button variant="ghost" onClick={onClose} className="flex-1">Cancel</Button>
           <Button onClick={save} className="flex-1">Save changes</Button>
+        </div>
+
+        <div className="border-t border-white/[0.06] pt-3">
+          {confirmDelete ? (
+            <div className="rounded-lg border border-negative/30 bg-negative/[0.07] p-3 flex flex-col gap-2">
+              <div className="text-[12px] text-[var(--text-tertiary)]">Delete this expense? This cannot be undone.</div>
+              <div className="flex gap-2">
+                <Button
+                  onClick={() => {
+                    if (!expense) return;
+                    deleteExpense(expense.id);
+                    toast.info(`Deleted "${expense.itemName}"`);
+                    onClose();
+                  }}
+                  variant="primary"
+                  className="flex-1 !bg-negative/80 hover:!bg-negative border-transparent"
+                >
+                  Delete
+                </Button>
+                <Button onClick={() => setConfirmDelete(false)} variant="ghost" className="flex-1">Cancel</Button>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmDelete(true)}
+              className="w-full flex items-center justify-center gap-1.5 rounded-[10px] border border-white/[0.06] py-2.5 text-[12px] text-[var(--text-tertiary)] hover:border-negative/30 hover:bg-negative/10 hover:text-negative transition"
+            >
+              <Trash2 size={13} /> Delete expense
+            </button>
+          )}
         </div>
       </div>
     </Sheet>

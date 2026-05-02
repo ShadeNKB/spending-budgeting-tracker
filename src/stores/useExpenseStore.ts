@@ -50,6 +50,7 @@ interface ExpenseState {
   updateExpense: (id: string, patch: Partial<Expense>) => void;
   deleteExpense: (id: string) => void;
   deleteMany: (ids: string[]) => void;
+  clearAllExpenses: () => void;
 
   addCategory: (name: string) => void;
   renameCategory: (from: string, to: string) => void;
@@ -221,6 +222,10 @@ export const useExpenseStore = create<ExpenseState>()(
           },
         ].slice(-5),
       }));
+    },
+
+    clearAllExpenses: () => {
+      set({ expenses: [], undoStack: [] });
     },
 
     addCategory: (name) => {
