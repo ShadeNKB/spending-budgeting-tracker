@@ -46,7 +46,8 @@
 |--|------|---------|
 | **▶ Demo** | [spendtrack-demo.vercel.app](https://spendtrack-demo.vercel.app) | Pre-loaded with realistic data. Your changes stay on your device only — no data is shared between visitors. |
 | **📱 Install** | Open the demo in your phone browser → Share → **Add to Home Screen** | Installs as a PWA — works offline, opens fullscreen like a native app. |
-| **💻 Self-host** | [Quick Start ↓](#-quick-start) | Clone and run locally in under a minute. |
+| **🧹 Use it daily** | Settings → Backup → **Clear all expenses** | Wipes the demo seed data so you can start logging your own expenses. Categories and budgets are kept. |
+| **💻 Self-host** | [Quick Start ↓](#-quick-start) | Clone and run locally in under a minute — full offline ownership, no third-party hosting. |
 
 ---
 
