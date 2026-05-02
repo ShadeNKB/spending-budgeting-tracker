@@ -568,19 +568,6 @@
     min-height: 44px;
   }
 
-  /* -- Skeleton --------------------------------------------------- */
-  .skeleton {
-    background: linear-gradient(
-      90deg,
-      var(--surface-2) 0%,
-      var(--surface-3) 50%,
-      var(--surface-2) 100%
-    );
-    background-size: 200% 100%;
-    animation: shimmer 1.8s infinite;
-    border-radius: 6px;
-  }
-
   /* -- Category color dot ----------------------------------------- */
   .cat-dot {
     width: 8px;
@@ -786,7 +773,6 @@
       transition-duration: 0.01ms !important;
       scroll-behavior: auto !important;
     }
-    .skeleton { animation: none; }
   }
 
   @media (prefers-contrast: more) {
