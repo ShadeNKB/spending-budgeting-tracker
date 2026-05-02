@@ -21,13 +21,13 @@
 <p align="center">
   <a href="https://spendtrack-demo.vercel.app"><strong>▶ Try the Demo</strong></a>
   &nbsp;·&nbsp;
-  <a href="#-quick-start">Quick Start</a>
+  <a href="#quick-start">Quick Start</a>
   &nbsp;·&nbsp;
-  <a href="#-features">Features</a>
+  <a href="#features">Features</a>
   &nbsp;·&nbsp;
-  <a href="#%EF%B8%8F-how-it-works">How It Works</a>
+  <a href="#how-it-works">How It Works</a>
   &nbsp;·&nbsp;
-  <a href="#-tech-stack">Stack</a>
+  <a href="#tech-stack">Stack</a>
 </p>
 
 <br/>
@@ -47,7 +47,7 @@
 | **▶ Demo** | [spendtrack-demo.vercel.app](https://spendtrack-demo.vercel.app) | Pre-loaded with realistic data. Your changes stay on your device only — no data is shared between visitors. |
 | **📱 Install** | Open the demo in your phone browser → Share → **Add to Home Screen** | Installs as a PWA — works offline, opens fullscreen like a native app. |
 | **🧹 Use it daily** | Settings → Backup → **Clear all expenses** | Wipes the demo seed data so you can start logging your own expenses. Categories and budgets are kept. |
-| **💻 Self-host** | [Quick Start ↓](#-quick-start) | Clone and run locally in under a minute — full offline ownership, no third-party hosting. |
+| **💻 Self-host** | [Quick Start ↓](#quick-start) | Clone and run locally in under a minute — full offline ownership, no third-party hosting. |
 
 ---
 
@@ -222,9 +222,12 @@ src/
 - [x] CI — install, typecheck, lint, tests, build
 - [x] [Live demo](https://spendtrack-demo.vercel.app) — pre-loaded, data isolated per visitor
 - [x] PWA — installable on phone, works offline
+- [x] Code-split heavy routes — Ledger and Insights lazy-loaded; vendor chunks split
+- [x] Mobile delete UX — visible row button + confirm in edit drawer
+- [x] Clear-all expenses — Settings → Backup with confirmation
 - [ ] Browser smoke tests in CI
-- [ ] Code-split chart-heavy routes
 - [ ] Expand test coverage: parsing, analytics, storage, recurring detection
+- [ ] Resolve `vite-plugin-pwa` devDep audit (build-time only; needs major version bump)
 
 ---
 
