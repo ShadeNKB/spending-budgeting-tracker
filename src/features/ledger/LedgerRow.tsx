@@ -90,6 +90,7 @@ export function LedgerRow({
           {formatMoney(expense.amount)}
         </span>
 
+        {/* Desktop: hover-revealed buttons */}
         <div className="hidden md:flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition shrink-0">
           <button
             onClick={(e) => { e.stopPropagation(); onEdit(expense); }}
@@ -106,6 +107,14 @@ export function LedgerRow({
             <Trash2 size={13} />
           </button>
         </div>
+        {/* Mobile: always-visible delete button (edit via row tap) */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete(expense.id); }}
+          className="md:hidden h-8 w-8 inline-flex items-center justify-center rounded-md text-[var(--text-tertiary)] active:bg-negative/10 active:text-negative transition shrink-0"
+          aria-label="Delete"
+        >
+          <Trash2 size={15} />
+        </button>
       </motion.div>
     </motion.div>
   );
