@@ -219,15 +219,15 @@ src/
 ## Roadmap
 
 - [x] Real product screenshots
-- [x] CI — install, typecheck, lint, tests, build
+- [x] CI — install, typecheck, lint, tests, build, smoke test
 - [x] [Live demo](https://spendtrack-demo.vercel.app) — pre-loaded, data isolated per visitor
 - [x] PWA — installable on phone, works offline
 - [x] Code-split heavy routes — Ledger and Insights lazy-loaded; vendor chunks split
 - [x] Mobile delete UX — visible row button + confirm in edit drawer
 - [x] Clear-all expenses — Settings → Backup with confirmation
-- [ ] Browser smoke tests in CI
-- [ ] Expand test coverage: parsing, analytics, storage, recurring detection
-- [ ] Resolve `vite-plugin-pwa` devDep audit (build-time only; needs major version bump)
+- [x] Browser smoke tests in CI — boots `vite preview`, asserts all four routes + service worker + manifest
+- [x] Expanded test coverage — parsing, analytics, storage, recurring, helpers, formatting (36 tests)
+- [x] Resolved `vite-plugin-pwa` devDep audit via npm `overrides` — `npm audit` now reports 0 vulnerabilities
 
 ---
 

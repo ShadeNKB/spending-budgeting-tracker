@@ -35,3 +35,31 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Smoke test (preview server)
+        run: |
+          npx vite preview --port 4173 &
+          PREVIEW_PID=$!
+          # Wait up to 30s for preview server to respond
+          for i in $(seq 1 30); do
+            if curl -s -o /dev/null -w "%{http_code}" http://localhost:4173/ | grep -q "200"; then
+              break
+            fi
+            sleep 1
+          done
+          set -e
+          # Each route must return 200 and the HTML must contain "SpendTrack"
+          for path in "/" "/pulse" "/ledger" "/insights"; do
+            CODE=$(curl -sL -o /tmp/page.html -w "%{http_code}" "http://localhost:4173${path}")
+            if [ "$CODE" != "200" ]; then
+              echo "FAIL: $path returned $CODE"; kill $PREVIEW_PID; exit 1
+            fi
+            if ! grep -q "SpendTrack" /tmp/page.html; then
+              echo "FAIL: $path HTML missing SpendTrack title"; kill $PREVIEW_PID; exit 1
+            fi
+            echo "OK: $path -> 200"
+          done
+          # Service worker + manifest sanity
+          curl -sf http://localhost:4173/sw.js > /dev/null && echo "OK: /sw.js"
+          curl -sf http://localhost:4173/manifest.webmanifest > /dev/null && echo "OK: /manifest.webmanifest"
+          kill $PREVIEW_PID
