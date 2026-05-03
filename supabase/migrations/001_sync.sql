@@ -13,6 +13,10 @@ CREATE TABLE IF NOT EXISTS public.sync_buckets (
 -- Allow the realtime extension to track changes on this table.
 ALTER TABLE public.sync_buckets REPLICA IDENTITY FULL;
 
+-- Disable RLS — the 122-bit UUID sync_id acts as the shared secret.
+-- No policies needed; open access is intentional for this relay table.
+ALTER TABLE public.sync_buckets DISABLE ROW LEVEL SECURITY;
+
 -- Grant anon access (required for the Supabase anon key to read/write).
 GRANT SELECT, INSERT, UPDATE ON public.sync_buckets TO anon;
 GRANT SELECT, INSERT, UPDATE ON public.sync_buckets TO authenticated;
