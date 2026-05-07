@@ -34,7 +34,7 @@
 <br/>
 
 <p align="center">
-  <img src="docs/screenshots/pulse.png" alt="SpendTrack — Pulse dashboard" width="100%" />
+  <img src="docs/screenshots/pulse-full.png" alt="SpendTrack — Pulse dashboard with monthly pace, top categories, activity heatmap, and budget vs actual" width="100%" />
 </p>
 
 ---
@@ -79,10 +79,18 @@ Most personal-finance apps are built around syncing, subscriptions, and dashboar
 
 ## Screenshots
 
-| Pulse | Ledger | Insights |
-|:---:|:---:|:---:|
-| ![Pulse](docs/screenshots/pulse.png) | ![Ledger](docs/screenshots/ledger.png) | ![Insights](docs/screenshots/insights.png) |
-| Live pace ring, sparkline, heatmap | Searchable history with URL-driven filters | Recurring detection, forecasts, week trends |
+<table>
+<tr>
+  <td width="33%" align="center"><b>Pulse</b><br/><sub>Live pace ring · sparkline · heatmap · budgets</sub></td>
+  <td width="33%" align="center"><b>Ledger</b><br/><sub>Searchable history · URL-driven filters · undo</sub></td>
+  <td width="33%" align="center"><b>Insights</b><br/><sub>Recurring detection · 14-day forecast · trends</sub></td>
+</tr>
+<tr>
+  <td><img src="docs/screenshots/pulse.png" alt="Pulse"/></td>
+  <td><img src="docs/screenshots/ledger.png" alt="Ledger"/></td>
+  <td><img src="docs/screenshots/insights.png" alt="Insights"/></td>
+</tr>
+</table>
 
 ---
 

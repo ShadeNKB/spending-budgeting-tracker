@@ -47,6 +47,8 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
       });
       setErrors({});
     }
+    // Intentionally only resets when the sheet opens. Re-running on every
+    // `prefill`/`today` change would clobber whatever the user was typing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
 
