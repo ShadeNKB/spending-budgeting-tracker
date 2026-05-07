@@ -58,7 +58,7 @@ export function Heatmap({ data }: { data: { date: string; total: number }[] }) {
           {/* Spacer for month label row */}
           <div className="h-[14px]" />
           {dayRows.map((di) => (
-            <div key={di} className="h-[13px] flex items-center">
+            <div key={di} className="h-[11px] sm:h-[13px] flex items-center">
               {(di === 1 || di === 3 || di === 5) ? (
                 <span className="text-[9px] text-[var(--text-tertiary)] leading-none w-6 text-right pr-1">
                   {DAY_LABELS[di]}
@@ -85,7 +85,7 @@ export function Heatmap({ data }: { data: { date: string; total: number }[] }) {
               {/* Day cells */}
               {Array.from({ length: 7 }).map((_, di) => {
                 const d = week[di];
-                if (!d) return <div key={di} className="h-[13px] w-[13px]" />;
+                if (!d) return <div key={di} className="h-[11px] w-[11px] sm:h-[13px] sm:w-[13px]" />;
                 const todayCell = isToday(parseISO(d.date));
                 const dayOfWeek = getDay(parseISO(d.date));
                 const dayName = DAY_LABELS[dayOfWeek];
@@ -95,7 +95,7 @@ export function Heatmap({ data }: { data: { date: string; total: number }[] }) {
                     title={`${dayName}, ${format(parseISO(d.date), "MMM d")} · ${d.total > 0 ? formatMoney(d.total) : "No spending"}`}
                     onClick={() => d.total > 0 && navigate(`/ledger?date=${d.date}`)}
                     className={clsx(
-                      "h-[13px] w-[13px] rounded-[3px] border transition-transform hover:scale-125",
+                      "h-[11px] w-[11px] sm:h-[13px] sm:w-[13px] rounded-[3px] border transition-transform hover:scale-125",
                       colors[level(d.total)],
                       todayCell && "ring-1 ring-offset-1 ring-offset-surface-1 ring-white/70",
                       d.total > 0 ? "cursor-pointer" : "cursor-default"

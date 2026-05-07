@@ -1,3 +1,4 @@
+import { Suspense, lazy, useEffect } from "react";
 import { Outlet, useLocation } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { WifiOff, FlaskConical } from "lucide-react";
@@ -5,7 +6,6 @@ import { TopBar } from "./TopBar";
 import { TabBar } from "./TabBar";
 import { ToastHost } from "../ui/ToastHost";
 import { CommandPalette } from "../features/entry/CommandPalette";
-import { SettingsDrawer } from "../features/settings/SettingsDrawer";
 import { AddExpenseSheet } from "../features/entry/AddExpenseSheet";
 import { useExpenseStore, installPersistence, IS_DEMO } from "../stores/useExpenseStore";
 import { useSyncStore } from "../stores/useSyncStore";
@@ -13,17 +13,32 @@ import { syncApplying } from "../services/syncService";
 import { useUIStore } from "../stores/useUIStore";
 import { useHotkeys } from "../hooks/useHotkeys";
 
-let storeBootstrapped = false;
+// Lazy-load the Settings drawer — it's hidden by default and contains 4 panels
+// (Categories, Budgets, Backup, Sync) plus the Supabase-aware SyncPanel, so
+// shaving it from the initial bundle is a real win.
+const SettingsDrawer = lazy(() =>
+  import("../features/settings/SettingsDrawer").then((m) => ({ default: m.SettingsDrawer }))
+);
 
-function bootstrapClientStore() {
-  if (storeBootstrapped || typeof window === "undefined") return;
-  storeBootstrapped = true;
+// Bootstrap runs once per page load — wired in a top-level useEffect rather than
+// at module scope so React is fully mounted before we touch localStorage.
+let bootstrapped = false;
+function bootstrap() {
+  if (bootstrapped || typeof window === "undefined") return;
+  bootstrapped = true;
+
   useExpenseStore.getState().hydrate();
   installPersistence();
 
-  // Wire data changes → scheduled cloud push (skipped when applying remote data).
+  // Wire data changes → debounced cloud push (skipped while applying remote data).
   useExpenseStore.subscribe(
-    (s) => ({ expenses: s.expenses, categories: s.categories, categoryMappings: s.categoryMappings, budgets: s.budgets, deletedIds: s.deletedIds }),
+    (s) => ({
+      expenses: s.expenses,
+      categories: s.categories,
+      categoryMappings: s.categoryMappings,
+      budgets: s.budgets,
+      deletedIds: s.deletedIds,
+    }),
     () => {
       if (!useExpenseStore.getState().hydrated) return;
       if (syncApplying.value) return;
@@ -39,11 +54,9 @@ function bootstrapClientStore() {
     }
   );
 
-  // Init sync from stored sync code (fires after hydrate so local data is ready).
+  // Init sync from stored sync code (after hydrate so local data is ready).
   useSyncStore.getState().initSync();
 }
-
-bootstrapClientStore();
 
 export function AppShell() {
   const hydrated = useExpenseStore((s) => s.hydrated);
@@ -55,6 +68,8 @@ export function AppShell() {
   const undoStack = useExpenseStore((s) => s.undoStack);
   const consumeUndo = useExpenseStore((s) => s.consumeUndo);
   const location = useLocation();
+
+  useEffect(bootstrap, []);
 
   useHotkeys({
     "mod+k": () => setPaletteOpen(true),
@@ -107,7 +122,7 @@ export function AppShell() {
             >
               <div className="flex items-center justify-center gap-2 bg-warning/10 border-b border-warning/20 px-4 py-1.5 text-[12px] text-warning">
                 <WifiOff size={12} />
-                You're offline - changes will sync when connection is restored
+                You're offline — changes will sync when connection is restored
               </div>
             </motion.div>
           )}
@@ -115,36 +130,38 @@ export function AppShell() {
         <TopBar />
 
         <main className="mx-auto w-full max-w-[1200px] flex-1 px-4 py-5 md:px-8 md:py-8 pb-[calc(env(safe-area-inset-bottom,0px)+96px)] md:pb-10">
-          <AnimatePresence mode="wait" initial={false}>
-            {hydrated && (
+          {!hydrated ? (
+            <div className="flex items-center justify-center py-32">
+              <div className="h-7 w-7 animate-spin rounded-full border-2 border-accent/20 border-t-accent" />
+            </div>
+          ) : (
+            // One AnimatePresence with a single keyed child = no nested-mode-wait edge cases.
+            // Routes cross-fade instead of mode="wait" exit-then-enter, which previously
+            // could leave Pulse in a half-mounted state after a route round-trip.
+            <AnimatePresence initial={false}>
               <motion.div
                 key={location.pathname}
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -4 }}
-                transition={{ duration: 0.2, ease: [0.2, 0, 0, 1] }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.18, ease: [0.2, 0, 0, 1] }}
               >
                 <Outlet />
               </motion.div>
-            )}
-            {!hydrated && (
-              <motion.div
-                key="loading"
-                exit={{ opacity: 0 }}
-                className="flex items-center justify-center py-32"
-              >
-                <div className="h-7 w-7 animate-spin rounded-full border-2 border-accent/20 border-t-accent" />
-              </motion.div>
-            )}
-          </AnimatePresence>
+            </AnimatePresence>
+          )}
         </main>
 
         <TabBar />
       </div>
 
       <CommandPalette />
-      <SettingsDrawer />
+
+      <Suspense fallback={null}>
+        <SettingsDrawer />
+      </Suspense>
       <AddExpenseSheet open={addSheetOpen} onClose={() => setAddSheetOpen(false)} />
+
       <ToastHost />
     </div>
   );

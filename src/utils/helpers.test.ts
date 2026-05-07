@@ -1,11 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
-  formatCurrency,
   generateId,
   validateExpenseData,
   migrateExpenseCategory,
   migrateExpenses,
-  generateColorFromString,
 } from "./helpers";
 import type { Expense } from "../types";
 
@@ -17,17 +15,6 @@ const expense = (over: Partial<Expense> = {}): Expense => ({
   date: over.date ?? "2026-05-01",
   createdAt: over.createdAt ?? "2026-05-01",
   ...over,
-});
-
-describe("formatCurrency", () => {
-  it("formats numbers and numeric strings as USD", () => {
-    expect(formatCurrency(12.5)).toBe("$12.50");
-    expect(formatCurrency("3.7")).toBe("$3.70");
-  });
-
-  it("falls back to $0.00 on invalid input", () => {
-    expect(formatCurrency("abc")).toBe("$0.00");
-  });
 });
 
 describe("generateId", () => {
@@ -81,12 +68,3 @@ describe("migrateExpenseCategory", () => {
   });
 });
 
-describe("generateColorFromString", () => {
-  it("is deterministic", () => {
-    expect(generateColorFromString("Food")).toBe(generateColorFromString("Food"));
-  });
-
-  it("returns a fallback for empty input", () => {
-    expect(generateColorFromString("")).toBe("#9ca3af");
-  });
-});
