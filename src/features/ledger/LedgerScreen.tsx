@@ -149,7 +149,10 @@ export function LedgerScreen() {
     }
   };
 
-  // Sync search param
+  // Sync search param. Intentionally only depends on `search` — adding `params`
+  // / `setParams` to the deps would re-arm the debounce on every URL change
+  // and we'd never settle. The latest `params` is captured fresh inside the
+  // setTimeout closure when it fires.
   useEffect(() => {
     const t = setTimeout(() => {
       const n = new URLSearchParams(params);
