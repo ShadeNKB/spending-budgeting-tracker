@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Cloud, CloudOff, Copy, Check, Link2, Link2Off, RefreshCw, AlertCircle, Loader2 } from "lucide-react";
+import { Cloud, CloudOff, Copy, Check, Link2, Link2Off, RefreshCw, AlertCircle, Loader2, Smartphone, Monitor, ShieldCheck } from "lucide-react";
 import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Input";
 import { useSyncStore } from "../../stores/useSyncStore";
@@ -130,15 +130,30 @@ function SyncContent() {
   if (!syncId) {
     return (
       <div className="flex flex-col gap-4">
-        <div className="rounded-lg border border-white/[0.06] bg-surface-1 p-4 flex flex-col gap-2">
+        <div className="rounded-lg border border-accent/15 bg-accent/[0.04] p-4 flex flex-col gap-3">
           <div className="flex items-center gap-2 text-[13px] font-semibold text-white">
-            <Cloud size={14} className="text-accent/60" />
-            Set up cross-device sync
+            <Cloud size={14} className="text-accent" />
+            Link your devices
           </div>
-          <p className="text-[12px] text-[var(--text-tertiary)] leading-relaxed">
-            Generate a sync code on this device, then enter it on your other devices.
-            No account required — the code is your shared secret.
+          <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed">
+            Generate a sync code on one device, then paste it on every other device you want to keep in sync. There are no accounts and no passwords — the code itself is the shared secret.
           </p>
+          <div className="grid grid-cols-2 gap-2 mt-1">
+            <div className="rounded-md bg-surface-1 border border-white/[0.06] p-2.5 flex items-start gap-2">
+              <span className="shrink-0 mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-accent/15 text-accent text-[10px] font-semibold">1</span>
+              <div className="min-w-0">
+                <div className="text-[11px] font-medium text-white">On this device</div>
+                <div className="text-[10px] text-[var(--text-tertiary)] leading-snug">Generate a sync code</div>
+              </div>
+            </div>
+            <div className="rounded-md bg-surface-1 border border-white/[0.06] p-2.5 flex items-start gap-2">
+              <span className="shrink-0 mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-accent/15 text-accent text-[10px] font-semibold">2</span>
+              <div className="min-w-0">
+                <div className="text-[11px] font-medium text-white">On other devices</div>
+                <div className="text-[10px] text-[var(--text-tertiary)] leading-snug">Settings → Sync → paste it</div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <Button onClick={handleGenerate} variant="primary" disabled={connecting}>
@@ -148,7 +163,7 @@ function SyncContent() {
 
         <div className="flex items-center gap-3">
           <div className="flex-1 h-px bg-white/[0.06]" />
-          <span className="text-[11px] text-[var(--text-tertiary)]">or join existing</span>
+          <span className="text-[11px] text-[var(--text-tertiary)]">or join an existing one</span>
           <div className="flex-1 h-px bg-white/[0.06]" />
         </div>
 
@@ -172,6 +187,13 @@ function SyncContent() {
             {connecting ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
             Connect
           </Button>
+        </div>
+
+        <div className="flex items-start gap-2 text-[11px] text-[var(--text-tertiary)] leading-relaxed pt-1">
+          <ShieldCheck size={12} className="shrink-0 mt-0.5 text-positive/70" />
+          <span>
+            Treat the sync code like a password. Anyone with it can read &amp; write your synced data. Don't share it in chats or screenshots.
+          </span>
         </div>
       </div>
     );
@@ -226,25 +248,44 @@ function SyncContent() {
           </div>
         )}
 
-        <div className="flex flex-col gap-1">
-          <span className="text-[11px] text-[var(--text-tertiary)]">Your sync code</span>
-          <div className="flex items-center gap-2 rounded-md border border-white/[0.06] bg-surface-2 px-3 py-2">
-            <span className="flex-1 font-mono text-[11px] text-white/70 truncate select-all">
-              {syncId}
-            </span>
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-[var(--text-tertiary)]">Your sync code</span>
             <button
               onClick={handleCopy}
-              className="shrink-0 h-6 w-6 inline-flex items-center justify-center rounded text-[var(--text-tertiary)] hover:text-white transition"
-              title="Copy sync code"
+              className="text-[11px] inline-flex items-center gap-1 text-accent/80 hover:text-accent transition"
             >
-              {copied ? <Check size={12} className="text-positive" /> : <Copy size={12} />}
+              {copied ? <><Check size={11} /> Copied</> : <><Copy size={11} /> Copy</>}
             </button>
           </div>
-          <p className="text-[11px] text-[var(--text-tertiary)]">
-            Enter this code in Settings → Sync on your other devices to link them.
-          </p>
+          <button
+            onClick={handleCopy}
+            className="text-left flex items-center gap-2 rounded-md border border-white/[0.06] bg-surface-2 px-3 py-2 hover:border-accent/30 transition"
+            title="Tap to copy"
+          >
+            <span className="flex-1 font-mono text-[11px] text-white/80 truncate select-all">
+              {syncId}
+            </span>
+          </button>
         </div>
       </div>
+
+      {/* Step-by-step "now what" panel — shown only when no remote sync has happened yet */}
+      {!lastSyncAt && (
+        <div className="rounded-lg border border-accent/15 bg-accent/[0.04] p-3.5 flex flex-col gap-2.5">
+          <div className="text-[12px] font-semibold text-white inline-flex items-center gap-1.5">
+            <Smartphone size={12} className="text-accent" /> Link your phone in 3 steps
+          </div>
+          <ol className="flex flex-col gap-1.5 text-[11px] text-[var(--text-secondary)] leading-relaxed">
+            <li className="flex gap-2"><span className="shrink-0 inline-flex h-4 w-4 items-center justify-center rounded-full bg-accent/15 text-accent text-[10px] font-semibold">1</span> Open <span className="font-mono text-white/80">{typeof window !== "undefined" ? window.location.host : "this site"}</span> on your phone browser.</li>
+            <li className="flex gap-2"><span className="shrink-0 inline-flex h-4 w-4 items-center justify-center rounded-full bg-accent/15 text-accent text-[10px] font-semibold">2</span> Go to Settings → <strong className="text-white/90">Sync</strong>.</li>
+            <li className="flex gap-2"><span className="shrink-0 inline-flex h-4 w-4 items-center justify-center rounded-full bg-accent/15 text-accent text-[10px] font-semibold">3</span> Paste the code above into <strong className="text-white/90">Connect</strong>.</li>
+          </ol>
+          <div className="text-[10px] text-[var(--text-tertiary)] inline-flex items-center gap-1.5 pt-1 border-t border-white/[0.04] mt-1">
+            <Monitor size={10} /> Same flow on any other laptop, tablet, or browser profile.
+          </div>
+        </div>
+      )}
 
       <div className="border-t border-white/[0.06] pt-3">
         {confirmDisconnect ? (
