@@ -22,7 +22,7 @@ export default defineConfig({
       // Take control of all clients immediately on activation — prevents
       // the old SW serving stale shells while the new one waits.
       injectRegister: 'auto',
-      includeAssets: ['favicon.svg'],
+      includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png'],
       manifest: {
         name: 'SpendTrack — Local-first spending tracker',
         short_name: 'SpendTrack',
@@ -36,12 +36,9 @@ export default defineConfig({
         categories: ['finance', 'productivity'],
         lang: 'en',
         icons: [
-          {
-            src: '/favicon.svg',
-            sizes: 'any',
-            type: 'image/svg+xml',
-            purpose: 'any maskable',
-          },
+          { src: '/favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' },
+          { src: '/icon-192.png', sizes: '192x192', type: 'image/png', purpose: 'any maskable' },
+          { src: '/icon-512.png', sizes: '512x512', type: 'image/png', purpose: 'any maskable' },
         ],
       },
       workbox: {
