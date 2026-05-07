@@ -1,15 +1,8 @@
 import { CATEGORY_MIGRATIONS, ITEM_CATEGORY_PATTERNS } from "../constants";
 import type { Expense, ValidationResult } from "../types";
 
-export const formatCurrency = (amount: number | string): string => {
-  const num = typeof amount === "string" ? parseFloat(amount) : amount;
-  if (isNaN(num)) return "$0.00";
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-  }).format(num);
-};
+// NOTE: For currency display, use `formatMoney` from `src/lib/format.ts` (the canonical formatter).
+// For category colours, use `colorFromString` from `src/lib/analytics.ts`.
 
 export const generateId = (): string => {
   return Date.now().toString(36) + Math.random().toString(36).substr(2);
@@ -72,15 +65,3 @@ export const migrateExpenseCategory = (expense: Expense): Expense => {
 
 export const migrateExpenses = (expenses: Expense[]): Expense[] =>
   expenses.map(migrateExpenseCategory);
-
-export const generateColorFromString = (str: string): string => {
-  if (!str) return "#9ca3af";
-
-  let hash = 0;
-  for (let i = 0; i < str.length; i++) {
-    hash = str.charCodeAt(i) + ((hash << 5) - hash);
-  }
-
-  const hue = Math.abs(hash) % 360;
-  return `hsl(${hue}, 70%, 60%)`;
-};

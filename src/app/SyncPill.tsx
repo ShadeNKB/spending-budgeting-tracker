@@ -24,6 +24,7 @@ export function SyncPill() {
   const syncId = useSyncStore((s) => s.syncId);
   const cloudStatus = useSyncStore((s) => s.cloudStatus);
   const lastSyncAt = useSyncStore((s) => s.lastSyncAt);
+  const triggerSync = useSyncStore((s) => s.triggerSync);
 
   const [tick, setTick] = useState(0);
 
@@ -51,8 +52,8 @@ export function SyncPill() {
     } else if (cloudStatus === "error") {
       tone = "text-negative border-negative/30 bg-negative/10";
       Icon = CloudOff;
-      label = "Sync failed";
-      title = "Changes saved locally — will retry when connected";
+      label = "Retry sync";
+      title = "Sync failed — tap to retry. Changes are safe locally.";
     } else if (cloudStatus === "synced" && lastSyncAt) {
       tone = "text-positive border-positive/25 bg-positive/5";
       Icon = Cloud;
@@ -79,6 +80,12 @@ export function SyncPill() {
   }
 
   const spinning = Icon === Loader2;
+  const isRetryable = cloudActive && cloudStatus === "error";
+  const baseClasses = clsx(
+    "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium",
+    tone,
+    isRetryable && "transition hover:bg-negative/15 cursor-pointer"
+  );
 
   return (
     <AnimatePresence mode="wait">
@@ -88,14 +95,26 @@ export function SyncPill() {
         animate={{ opacity: 1, y: 0 }}
         exit={{ opacity: 0, y: -4 }}
         transition={{ duration: 0.15 }}
-        className={clsx(
-          "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium",
-          tone
-        )}
-        title={title}
+        role="status"
+        aria-live="polite"
       >
-        <Icon size={12} className={spinning ? "animate-spin" : ""} />
-        <span>{label}</span>
+        {isRetryable ? (
+          <button
+            type="button"
+            onClick={() => { void triggerSync(); }}
+            title={title ?? "Retry sync"}
+            className={baseClasses}
+            aria-label="Retry sync"
+          >
+            <Icon size={12} className={spinning ? "animate-spin" : ""} />
+            <span>{label}</span>
+          </button>
+        ) : (
+          <div className={baseClasses} title={title}>
+            <Icon size={12} className={spinning ? "animate-spin" : ""} />
+            <span>{label}</span>
+          </div>
+        )}
       </motion.div>
     </AnimatePresence>
   );

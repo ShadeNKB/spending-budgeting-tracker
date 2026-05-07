@@ -1,4 +1,10 @@
-import { createClient } from "@supabase/supabase-js";
+// Cross-device sync layer.
+// - Local-first: localStorage is source of truth, Supabase is a stateless relay.
+// - Per-expense Last-Write-Wins merge by `updatedAt ?? createdAt`.
+// - Tombstone set (`deletedIds`) is unioned across devices.
+// - The Supabase JS SDK is lazy-loaded so unconfigured users never pay for it.
+
+import type { RealtimeChannel, SupabaseClient } from "@supabase/supabase-js";
 import type { BackupData, Expense } from "../types";
 import { DEFAULT_CATEGORIES } from "../constants";
 
@@ -7,36 +13,50 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string | und
 
 export const syncEnabled = !!(SUPABASE_URL && SUPABASE_ANON_KEY);
 
-const supabase = syncEnabled
-  ? createClient(SUPABASE_URL!, SUPABASE_ANON_KEY!, {
-      realtime: { params: { eventsPerSecond: 2 } },
-    })
-  : null;
-
 const TABLE = "sync_buckets";
+const PAYLOAD_WARN_BYTES = 800 * 1024; // 800 KB — below Supabase free-tier 1 MB row limit
+const TOMBSTONE_CAP = 1000; // cap the deletedIds array; oldest pruned first
+const REALTIME_RECONNECT_DELAY = 2000;
 
 // Module-level flag: prevents circular push when applying remote data locally.
 export const syncApplying = { value: false };
 
 // ---------------------------------------------------------------------------
+// Lazy-loaded Supabase client
+// ---------------------------------------------------------------------------
+
+let clientPromise: Promise<SupabaseClient | null> | null = null;
+
+function getClient(): Promise<SupabaseClient | null> {
+  if (!syncEnabled) return Promise.resolve(null);
+  if (clientPromise) return clientPromise;
+  clientPromise = import("@supabase/supabase-js").then((m) =>
+    m.createClient(SUPABASE_URL!, SUPABASE_ANON_KEY!, {
+      realtime: { params: { eventsPerSecond: 2 } },
+    })
+  );
+  return clientPromise;
+}
+
+// ---------------------------------------------------------------------------
 // Merge logic
 // ---------------------------------------------------------------------------
 
-function newerTimestamp(a: string | undefined, b: string | undefined): number {
-  return new Date(a ?? "1970-01-01").getTime() - new Date(b ?? "1970-01-01").getTime();
+function ts(value: string | undefined): number {
+  return value ? new Date(value).getTime() : 0;
 }
 
 export function mergeBackups(local: BackupData, remote: BackupData): BackupData {
   const localMap = new Map<string, Expense>(local.expenses.map((e) => [e.id, e]));
   const remoteMap = new Map<string, Expense>(remote.expenses.map((e) => [e.id, e]));
 
-  // Union tombstones — a deleted ID is permanently gone on all devices.
+  // Union tombstones — once an ID is deleted on any device it stays deleted.
   const tombstones = new Set<string>([
     ...(local.deletedIds ?? []),
     ...(remote.deletedIds ?? []),
   ]);
 
-  // Union of all expense IDs, keep whichever copy is newer.
+  // Union of all expense IDs, keep whichever copy has the newer timestamp.
   const allIds = new Set<string>([...localMap.keys(), ...remoteMap.keys()]);
   const merged: Expense[] = [];
 
@@ -46,30 +66,32 @@ export function mergeBackups(local: BackupData, remote: BackupData): BackupData 
     const r = remoteMap.get(id);
     if (!l) { merged.push(r!); continue; }
     if (!r) { merged.push(l); continue; }
-    const lTime = newerTimestamp(l.updatedAt ?? l.createdAt, undefined);
-    const rTime = newerTimestamp(r.updatedAt ?? r.createdAt, undefined);
+    const lTime = ts(l.updatedAt ?? l.createdAt);
+    const rTime = ts(r.updatedAt ?? r.createdAt);
     merged.push(lTime >= rTime ? l : r);
   }
 
-  // Sort descending by date so the store stays consistently ordered.
+  // Keep store consistently sorted by date desc.
   merged.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
 
-  // Categories: union, deduplicated, preserve order (local first).
-  const categories = [
-    ...new Set([...local.categories, ...remote.categories]),
-  ];
+  // Categories: union, deduped, preserving local order first.
+  const categories = [...new Set([...local.categories, ...remote.categories])];
   if (!categories.length) categories.push(...DEFAULT_CATEGORIES);
 
-  // Mappings + budgets: remote wins on key conflict (most-recently-synced device wins).
+  // Mappings + budgets: remote wins on key conflict (most-recently-synced device).
   const categoryMappings = { ...local.categoryMappings, ...remote.categoryMappings };
   const budgets = { ...local.budgets, ...remote.budgets };
+
+  // Cap tombstones — only the most recently deleted IDs we still need to broadcast.
+  // Tombstones older than the cap are assumed to have propagated to all devices already.
+  const cappedTombstones = [...tombstones].slice(-TOMBSTONE_CAP);
 
   return {
     expenses: merged,
     categories,
     categoryMappings,
     budgets,
-    deletedIds: [...tombstones],
+    deletedIds: cappedTombstones,
     exportDate: new Date().toISOString(),
     version: "3.0",
   };
@@ -79,17 +101,35 @@ export function mergeBackups(local: BackupData, remote: BackupData): BackupData 
 // Remote operations
 // ---------------------------------------------------------------------------
 
+export class PayloadTooLargeError extends Error {
+  constructor(public bytes: number) {
+    super(`Sync payload is ${(bytes / 1024).toFixed(0)} KB — too large to safely sync.`);
+  }
+}
+
 export async function pushSync(syncId: string, data: BackupData): Promise<void> {
-  if (!supabase) throw new Error("Sync not configured");
-  const { error } = await supabase
+  const client = await getClient();
+  if (!client) throw new Error("Sync not configured");
+
+  // Pre-flight payload size check — Supabase free tier caps rows at ~1 MB.
+  const serialized = JSON.stringify(data);
+  if (serialized.length > PAYLOAD_WARN_BYTES) {
+    if (typeof console !== "undefined") {
+      console.warn(`[sync] payload is ${(serialized.length / 1024).toFixed(0)} KB — approaching row limit`);
+    }
+    if (serialized.length > 1024 * 1024) throw new PayloadTooLargeError(serialized.length);
+  }
+
+  const { error } = await client
     .from(TABLE)
     .upsert({ sync_id: syncId, payload: data, updated_at: new Date().toISOString() });
   if (error) throw error;
 }
 
 export async function pullSync(syncId: string): Promise<BackupData | null> {
-  if (!supabase) throw new Error("Sync not configured");
-  const { data, error } = await supabase
+  const client = await getClient();
+  if (!client) throw new Error("Sync not configured");
+  const { data, error } = await client
     .from(TABLE)
     .select("payload")
     .eq("sync_id", syncId)
@@ -98,25 +138,48 @@ export async function pullSync(syncId: string): Promise<BackupData | null> {
   return data ? (data.payload as BackupData) : null;
 }
 
-export function subscribeSync(
+/**
+ * Subscribe to remote changes. Auto-reconnects if the channel drops.
+ * Returns a Promise<unsub> because the SDK is lazy-loaded.
+ */
+export async function subscribeSync(
   syncId: string,
   onUpdate: () => void
-): () => void {
-  if (!supabase) return () => {};
+): Promise<() => void> {
+  const client = await getClient();
+  if (!client) return () => {};
 
-  const channel = supabase
-    .channel(`sync:${syncId}`)
-    .on(
-      "postgres_changes",
-      { event: "UPDATE", schema: "public", table: TABLE, filter: `sync_id=eq.${syncId}` },
-      () => onUpdate()
-    )
-    .on(
-      "postgres_changes",
-      { event: "INSERT", schema: "public", table: TABLE, filter: `sync_id=eq.${syncId}` },
-      () => onUpdate()
-    )
-    .subscribe();
+  let active = true;
+  let channel: RealtimeChannel | null = null;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
-  return () => { supabase.removeChannel(channel); };
+  const open = () => {
+    if (!active || !client) return;
+    channel = client
+      .channel(`sync:${syncId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: TABLE, filter: `sync_id=eq.${syncId}` }, () => {
+        if (active) onUpdate();
+      })
+      .subscribe((status) => {
+        // Realtime sometimes drops silently on flaky networks — re-arm if so.
+        if (active && (status === "CLOSED" || status === "CHANNEL_ERROR" || status === "TIMED_OUT")) {
+          if (reconnectTimer) clearTimeout(reconnectTimer);
+          reconnectTimer = setTimeout(() => {
+            if (!active || !client) return;
+            client.removeChannel(channel!);
+            channel = null;
+            open();
+          }, REALTIME_RECONNECT_DELAY);
+        }
+      });
+  };
+
+  open();
+
+  return () => {
+    active = false;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
+    if (channel && client) client.removeChannel(channel);
+    channel = null;
+  };
 }

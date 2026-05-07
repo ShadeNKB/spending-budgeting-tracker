@@ -9,6 +9,7 @@ import { useUIStore } from "../../stores/useUIStore";
 import { useExpenseStore } from "../../stores/useExpenseStore";
 import { useToast } from "../../hooks/useToast";
 import { formatMoney } from "../../lib/format";
+import { downloadJSON, downloadCSV } from "../../lib/download";
 import { colorFromString } from "../../lib/analytics";
 import { SyncPanel } from "./SyncPanel";
 import type { BackupData } from "../../types";
@@ -216,14 +217,7 @@ function BackupPanel() {
   const [confirmClear, setConfirmClear] = useState(false);
 
   const exportJson = () => {
-    const data = exportBackup();
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `spendtrack-backup-${format(new Date(), "yyyy-MM-dd")}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadJSON(`spendtrack-backup-${format(new Date(), "yyyy-MM-dd")}.json`, exportBackup());
     toast.success("Backup downloaded");
   };
 
@@ -233,13 +227,7 @@ function BackupPanel() {
       [format(new Date(e.date), "yyyy-MM-dd"), `"${e.itemName}"`, e.category, e.amount, `"${e.notes ?? ""}"`].join(",")
     );
     const csv = [headers.join(","), ...rows].join("\n");
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `spendtrack-${format(new Date(), "yyyy-MM-dd")}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    downloadCSV(`spendtrack-${format(new Date(), "yyyy-MM-dd")}.csv`, csv);
     toast.success("CSV exported");
   };
 

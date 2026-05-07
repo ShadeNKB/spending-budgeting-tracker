@@ -8,6 +8,7 @@ import { useUIStore } from "../../stores/useUIStore";
 import { useExpenseStore } from "../../stores/useExpenseStore";
 import { SmartInput } from "./SmartInput";
 import { formatMoney } from "../../lib/format";
+import { downloadJSON } from "../../lib/download";
 import { format as fmtDate, parseISO } from "date-fns";
 import { parseExpense } from "../../utils/parseExpense";
 import { useToast } from "../../hooks/useToast";
@@ -85,14 +86,7 @@ export function CommandPalette() {
         label: "Export backup (JSON)",
         icon: Download,
         onRun: () => {
-          const data = exportBackup();
-          const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement("a");
-          a.href = url;
-          a.download = `spendtrack-backup-${fmtDate(new Date(), "yyyy-MM-dd")}.json`;
-          a.click();
-          URL.revokeObjectURL(url);
+          downloadJSON(`spendtrack-backup-${fmtDate(new Date(), "yyyy-MM-dd")}.json`, exportBackup());
         },
       },
     ],
