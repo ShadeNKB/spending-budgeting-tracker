@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import { ArrowDown, ArrowUp, Wallet, BarChart3, CalendarRange, Target, ChevronLeft, ChevronRight } from "lucide-react";
-import { motion, AnimatePresence } from "framer-motion";
 import { format, subDays } from "date-fns";
 import { useExpenseStore } from "../../stores/useExpenseStore";
 import { computeMonthAnalytics, computeYearAnalytics } from "../../lib/analytics";
@@ -45,18 +44,15 @@ export function PulseScreen() {
   const hasBudgets = monthData.categoryBudgets.length > 0;
   const hasExpenses = expenses.length > 0;
 
-  const container = { initial: {}, animate: { transition: { staggerChildren: 0.05 } } };
-  const item = { initial: { opacity: 0, y: 8 }, animate: { opacity: 1, y: 0 } };
-
   return (
-    <motion.div variants={container} initial="initial" animate="animate" className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4">
       {/* Mobile quick-add */}
-      <motion.div variants={item} className="md:hidden">
+      <div className="md:hidden">
         <SmartInput />
-      </motion.div>
+      </div>
 
       {/* Hero card */}
-      <motion.div variants={item}>
+      <div>
         <Card glow className="relative overflow-hidden md:p-7">
           <div className="absolute -top-24 -right-16 h-72 w-72 rounded-full bg-accent/[0.07] blur-3xl pointer-events-none" />
           <div className="relative flex items-start justify-between gap-4">
@@ -95,14 +91,7 @@ export function PulseScreen() {
                 </div>
               </div>
 
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={view}
-                  initial={{ opacity: 0, y: 4 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -4 }}
-                  transition={{ duration: 0.15 }}
-                >
+              <div key={view}>
                   <div className="flex items-baseline gap-3 flex-wrap">
                     <AnimatedNumber
                       value={a.periodTotal}
@@ -198,8 +187,7 @@ export function PulseScreen() {
                       Start with quick entry: <span className="font-mono text-white">coffee 4.50 yesterday</span>
                     </div>
                   )}
-                </motion.div>
-              </AnimatePresence>
+              </div>
             </div>
 
             {view === "month" && monthData.totalBudget > 0 && (
@@ -209,93 +197,62 @@ export function PulseScreen() {
             )}
           </div>
         </Card>
-      </motion.div>
+      </div>
 
       {/* Year: monthly bars */}
-      <AnimatePresence>
-        {view === "year" && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            transition={{ duration: 0.2 }}
-          >
-            <Card>
-              <div className="mb-3 flex items-center gap-2">
-                <BarChart3 size={13} className="text-accent/70" />
-                <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
-                  Monthly breakdown
-                </h2>
-              </div>
-              <MonthlyBars data={yearData.monthlyTotals} />
-            </Card>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {view === "year" && (
+        <Card>
+          <div className="mb-3 flex items-center gap-2">
+            <BarChart3 size={13} className="text-accent/70" />
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+              Monthly breakdown
+            </h2>
+          </div>
+          <MonthlyBars data={yearData.monthlyTotals} />
+        </Card>
+      )}
 
       {/* Top categories + heatmap */}
       <div className="grid gap-4 md:grid-cols-2">
-        <motion.div variants={item}>
-          <Card>
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">Top categories</h2>
-              <span className="text-[11px] text-[var(--text-tertiary)]">{a.label}</span>
-            </div>
-            <TopCategories items={a.topCategories} />
-          </Card>
-        </motion.div>
+        <Card>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">Top categories</h2>
+            <span className="text-[11px] text-[var(--text-tertiary)]">{a.label}</span>
+          </div>
+          <TopCategories items={a.topCategories} />
+        </Card>
 
-        <motion.div variants={item}>
-          <Card>
-            <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">Activity</h2>
-              <span className="text-[11px] text-[var(--text-tertiary)] inline-flex items-center gap-1">
-                <CalendarRange size={10} /> 14 weeks
-              </span>
-            </div>
-            <Heatmap data={monthData.heatmap} />
-          </Card>
-        </motion.div>
+        <Card>
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">Activity</h2>
+            <span className="text-[11px] text-[var(--text-tertiary)] inline-flex items-center gap-1">
+              <CalendarRange size={10} /> 14 weeks
+            </span>
+          </div>
+          <Heatmap data={monthData.heatmap} />
+        </Card>
       </div>
 
       {/* Budget vs actual — only when month view and budgets exist */}
-      <AnimatePresence>
-        {view === "month" && hasBudgets && (
-          <motion.div
-            variants={item}
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0 }}
-          >
-            <Card>
-              <div className="mb-3 flex items-center gap-2">
-                <Target size={13} className="text-accent/70" />
-                <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
-                  Budget vs actual
-                </h2>
-                <span className="ml-auto text-[11px] text-[var(--text-tertiary)]">
-                  {monthData.daysLeft}d left in {monthData.label.split(" ")[0]}
-                </span>
-              </div>
-              <BudgetActual items={monthData.categoryBudgets} daysLeft={monthData.daysLeft} />
-            </Card>
-          </motion.div>
-        )}
-      </AnimatePresence>
+      {view === "month" && hasBudgets && (
+        <Card>
+          <div className="mb-3 flex items-center gap-2">
+            <Target size={13} className="text-accent/70" />
+            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+              Budget vs actual
+            </h2>
+            <span className="ml-auto text-[11px] text-[var(--text-tertiary)]">
+              {monthData.daysLeft}d left in {monthData.label.split(" ")[0]}
+            </span>
+          </div>
+          <BudgetActual items={monthData.categoryBudgets} daysLeft={monthData.daysLeft} />
+        </Card>
+      )}
 
       {/* Today strip — only in month view */}
-      <AnimatePresence>
-        {view === "month" && (
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -4 }}
-            transition={{ duration: 0.2 }}
-          >
-            <TodayStrip entries={monthData.todayEntries} total={monthData.todayTotal} />
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </motion.div>
+      {view === "month" && (
+        <TodayStrip entries={monthData.todayEntries} total={monthData.todayTotal} />
+      )}
+    </div>
   );
 }

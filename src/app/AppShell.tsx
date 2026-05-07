@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect } from "react";
-import { Outlet, useLocation } from "react-router-dom";
+import { Outlet } from "react-router-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import { WifiOff, FlaskConical } from "lucide-react";
 import { TopBar } from "./TopBar";
@@ -67,7 +67,6 @@ export function AppShell() {
   const setAddSheetOpen = useUIStore((s) => s.setAddSheetOpen);
   const undoStack = useExpenseStore((s) => s.undoStack);
   const consumeUndo = useExpenseStore((s) => s.consumeUndo);
-  const location = useLocation();
 
   useEffect(bootstrap, []);
 
@@ -135,20 +134,15 @@ export function AppShell() {
               <div className="h-7 w-7 animate-spin rounded-full border-2 border-accent/20 border-t-accent" />
             </div>
           ) : (
-            // One AnimatePresence with a single keyed child = no nested-mode-wait edge cases.
-            // Routes cross-fade instead of mode="wait" exit-then-enter, which previously
-            // could leave Pulse in a half-mounted state after a route round-trip.
-            <AnimatePresence initial={false}>
-              <motion.div
-                key={location.pathname}
-                initial={{ opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0 }}
-                transition={{ duration: 0.18, ease: [0.2, 0, 0, 1] }}
-              >
-                <Outlet />
-              </motion.div>
-            </AnimatePresence>
+            // No AnimatePresence around routes — rapid navigation could leave
+            // motion.divs stranded with `initial: opacity 0` when framer-motion's
+            // exit/enter lifecycle overlapped, blanking Pulse + Insights.
+            // Routes now render synchronously; subtle CSS fade-in is applied
+            // via the `route-fade-in` keyframe so transitions still feel polished
+            // without any React-state animation that can fail.
+            <div key="route-content" className="route-fade-in">
+              <Outlet />
+            </div>
           )}
         </main>
 
