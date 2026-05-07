@@ -97,7 +97,7 @@ export function Heatmap({ data }: { data: { date: string; total: number }[] }) {
                     className={clsx(
                       "h-[11px] w-[11px] sm:h-[13px] sm:w-[13px] rounded-[3px] border transition-transform hover:scale-125",
                       colors[level(d.total)],
-                      todayCell && "ring-1 ring-offset-1 ring-offset-surface-1 ring-white/70",
+                      todayCell && "ring-2 ring-offset-2 ring-offset-surface-1 ring-accent shadow-[0_0_8px_-2px_rgba(34,211,238,0.55)]",
                       d.total > 0 ? "cursor-pointer" : "cursor-default"
                     )}
                   />
