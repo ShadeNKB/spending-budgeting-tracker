@@ -38,7 +38,7 @@ export function TabBar() {
 
         <button
           onClick={() => setAddSheetOpen(true)}
-          className="mx-2 -mt-5 flex h-12 w-12 items-center justify-center rounded-full bg-accent text-surface-0 shadow-[0_10px_30px_-6px_rgba(34,211,238,0.6)] active:scale-95 transition"
+          className="mx-2 -mt-5 flex h-12 w-12 items-center justify-center rounded-full bg-accent text-surface-0 shadow-[0_8px_24px_-6px_rgba(34,211,238,0.55),0_0_48px_-12px_rgba(34,211,238,0.35)] active:scale-95 transition hover:bg-accent-hover"
           aria-label="Add expense"
         >
           <Plus size={22} strokeWidth={2.5} />

@@ -137,13 +137,21 @@ export const useExpenseStore = create<ExpenseState>()(
     },
 
     addExpense: (input) => {
-      const smart = get().getSmartCategory(input.itemName);
+      const amount = Number(input.amount);
+      // Reject invalid/negative amounts at the store boundary so corrupted
+      // imports or programmatic mutations cannot leave bad data in storage.
+      if (!Number.isFinite(amount) || amount <= 0) {
+        throw new Error("Amount must be a finite number greater than 0.");
+      }
+      const itemName = input.itemName.trim();
+      if (!itemName) throw new Error("Item name is required.");
+      const smart = get().getSmartCategory(itemName);
       const category = input.category || smart || "Other";
       const now = new Date().toISOString();
       const expense: Expense = {
         id: generateId(),
-        itemName: input.itemName.trim(),
-        amount: Number(input.amount),
+        itemName,
+        amount,
         category,
         date: input.date || now,
         notes: input.notes,
@@ -232,12 +240,23 @@ export const useExpenseStore = create<ExpenseState>()(
     renameCategory: (from, to) => {
       const target = to.trim();
       if (!target || from === target) return;
+      const existing = get().categories;
+      // If the target name already exists, this becomes a merge. Drop the
+      // old category from the list (don't add a duplicate) and reassign all
+      // expenses + budget keys from `from` to the existing `target`.
+      const targetExists = existing.includes(target);
       set((s) => ({
-        categories: s.categories.map((c) => (c === from ? target : c)),
+        categories: targetExists
+          ? s.categories.filter((c) => c !== from)
+          : s.categories.map((c) => (c === from ? target : c)),
         expenses: s.expenses.map((e) => (e.category === from ? { ...e, category: target } : e)),
         budgets:
           s.budgets[from] !== undefined
-            ? { ...Object.fromEntries(Object.entries(s.budgets).filter(([k]) => k !== from)), [target]: s.budgets[from] }
+            ? {
+                ...Object.fromEntries(Object.entries(s.budgets).filter(([k]) => k !== from)),
+                // Prefer existing target budget if there's a conflict (don't clobber).
+                [target]: s.budgets[target] ?? s.budgets[from],
+              }
             : s.budgets,
       }));
     },
@@ -295,10 +314,16 @@ export const useExpenseStore = create<ExpenseState>()(
     setOffline: (v) => set({ isOffline: v }),
 
     consumeUndo: (id) => {
+      // Prune any expired entries while we're here — keeps the stack tidy
+      // even when the user never explicitly undoes.
+      const now = Date.now();
       const entry = get().undoStack.find((u) => u.id === id);
-      if (!entry) return;
+      if (!entry || entry.expiresAt < now) {
+        set((s) => ({ undoStack: s.undoStack.filter((u) => u.expiresAt >= now && u.id !== id) }));
+        return;
+      }
       entry.undo();
-      set((s) => ({ undoStack: s.undoStack.filter((u) => u.id !== id) }));
+      set((s) => ({ undoStack: s.undoStack.filter((u) => u.expiresAt >= now && u.id !== id) }));
     },
 
     clearUndo: (id) => {

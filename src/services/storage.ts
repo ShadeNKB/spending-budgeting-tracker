@@ -7,6 +7,39 @@ const KEY_COLORS = "categoryColors";
 const KEY_BUDGETS = "categoryBudgets";
 const KEY_SYNC_ID = "syncId";
 
+/**
+ * Quota-aware setItem — every persistence write goes through this.
+ * If quota is exhausted (5 MB on most browsers, sometimes 2 MB on iOS Safari),
+ * we surface the error to subscribers so the app can warn the user instead of
+ * silently losing data. The custom event fires once per quota incident.
+ */
+export class StorageQuotaError extends Error {
+  constructor(public key: string, public bytes: number) {
+    super(`localStorage quota exceeded while writing "${key}" (${bytes} bytes).`);
+    this.name = "StorageQuotaError";
+  }
+}
+
+let quotaWarned = false;
+function safeSet(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value);
+  } catch (err) {
+    const isQuota =
+      err instanceof DOMException &&
+      // 22 = QuotaExceededError; 1014 = NS_ERROR_DOM_QUOTA_REACHED (Firefox)
+      (err.code === 22 || err.code === 1014 || err.name === "QuotaExceededError" || err.name === "NS_ERROR_DOM_QUOTA_REACHED");
+    if (isQuota) {
+      if (!quotaWarned && typeof window !== "undefined") {
+        quotaWarned = true;
+        window.dispatchEvent(new CustomEvent("spendtrack:quota-exceeded", { detail: { key, bytes: value.length } }));
+      }
+      throw new StorageQuotaError(key, value.length);
+    }
+    throw err;
+  }
+}
+
 export const storage = {
   getExpenses(): Expense[] {
     try {
@@ -30,7 +63,7 @@ export const storage = {
   },
 
   saveExpenses(data: Expense[]): void {
-    localStorage.setItem(KEY_EXPENSES, JSON.stringify(data));
+    safeSet(KEY_EXPENSES, JSON.stringify(data));
   },
 
   getCategories(): string[] | null {
@@ -46,7 +79,7 @@ export const storage = {
   },
 
   saveCategories(data: string[]): void {
-    localStorage.setItem(KEY_CATEGORIES, JSON.stringify(data));
+    safeSet(KEY_CATEGORIES, JSON.stringify(data));
   },
 
   getCategoryMappings(): CategoryMappings {
@@ -60,7 +93,7 @@ export const storage = {
   },
 
   saveCategoryMappings(data: CategoryMappings): void {
-    localStorage.setItem(KEY_MAPPINGS, JSON.stringify(data));
+    safeSet(KEY_MAPPINGS, JSON.stringify(data));
   },
 
   getCategoryColors(): CategoryColors {
@@ -74,7 +107,7 @@ export const storage = {
   },
 
   saveCategoryColors(data: CategoryColors): void {
-    localStorage.setItem(KEY_COLORS, JSON.stringify(data));
+    safeSet(KEY_COLORS, JSON.stringify(data));
   },
 
   getBudgets(): CategoryBudgets {
@@ -88,7 +121,7 @@ export const storage = {
   },
 
   saveBudgets(data: CategoryBudgets): void {
-    localStorage.setItem(KEY_BUDGETS, JSON.stringify(data));
+    safeSet(KEY_BUDGETS, JSON.stringify(data));
   },
 
   saveAll(
@@ -111,7 +144,7 @@ export const storage = {
     if (id === null) {
       localStorage.removeItem(KEY_SYNC_ID);
     } else {
-      localStorage.setItem(KEY_SYNC_ID, id);
+      safeSet(KEY_SYNC_ID, id);
     }
   },
 };

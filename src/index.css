@@ -151,6 +151,11 @@
 
   /* Headline numerics - tabular everywhere */
   .tabular { font-variant-numeric: tabular-nums; }
+
+  /* Default tabular numerals across the entire app — everything that
+     contains digits aligns vertically (totals, dates, counts). One of
+     the cheapest premium-feel upgrades. */
+  body { font-variant-numeric: tabular-nums; }
 }
 
 /* --- Component layer ---------------------------------------------- */

@@ -1,12 +1,15 @@
 {
-  "name": "SpendTrack",
+  "name": "SpendTrack — Local-first spending tracker",
   "short_name": "SpendTrack",
-  "description": "A fast, local-first spending tracker for daily expense logging, budgeting, and insights.",
+  "description": "A fast, local-first spending tracker with smart categorisation, real-time budgets, and optional cross-device sync.",
   "start_url": "/pulse",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#07090D",
   "theme_color": "#07090D",
   "orientation": "portrait",
+  "categories": ["finance", "productivity"],
+  "lang": "en",
   "icons": [
     { "src": "/favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
   ]

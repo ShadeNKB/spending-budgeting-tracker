@@ -5,82 +5,75 @@
 <h1 align="center">SpendTrack</h1>
 
 <p align="center">
-  <strong>Know where your money goes. Without the noise.</strong><br/>
-  A fast, local-first expense tracker built for daily use — no account, no sync, no friction.
+  <strong>Know where your money goes — without the noise.</strong><br/>
+  A fast, local-first spending tracker with smart categorisation, real-time budgets, and optional cross-device sync.
 </p>
 
 <p align="center">
   <img src="https://img.shields.io/github/actions/workflow/status/ShadeNKB/spending-budgeting-tracker/ci.yml?branch=main&label=CI&style=flat-square" alt="CI" />
   <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React 19" />
   <img src="https://img.shields.io/badge/TypeScript-Strict-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
-  <img src="https://img.shields.io/badge/Local--First-No%20Backend-22C55E?style=flat-square" alt="Local-first" />
   <img src="https://img.shields.io/badge/PWA-Installable-8B5CF6?style=flat-square" alt="PWA" />
-  <img src="https://img.shields.io/badge/License-MIT-22D3EE?style=flat-square" alt="MIT" />
+  <img src="https://img.shields.io/badge/bundle-83.7%20KB%20gzip-22C55E?style=flat-square" alt="Bundle 83.7 KB gzip" />
+  <img src="https://img.shields.io/badge/tests-140%20passing-22C55E?style=flat-square" alt="140 tests" />
+  <img src="https://img.shields.io/badge/license-MIT-22D3EE?style=flat-square" alt="MIT" />
 </p>
 
 <p align="center">
-  <a href="https://spendtrack-demo.vercel.app"><strong>▶ Try the Demo</strong></a>
+  <a href="https://spendtrack-demo.vercel.app"><strong>▶ Try the demo</strong></a>
   &nbsp;·&nbsp;
-  <a href="#quick-start">Quick Start</a>
+  <a href="#highlights">Highlights</a>
   &nbsp;·&nbsp;
-  <a href="#features">Features</a>
+  <a href="#quick-start">Quick start</a>
   &nbsp;·&nbsp;
-  <a href="#how-it-works">How It Works</a>
+  <a href="#architecture">Architecture</a>
   &nbsp;·&nbsp;
-  <a href="#tech-stack">Stack</a>
+  <a href="#cross-device-sync">Sync</a>
 </p>
 
 <br/>
 
 <p align="center">
-  <img src="docs/screenshots/pulse.png" alt="SpendTrack dashboard" width="100%" />
+  <img src="docs/screenshots/pulse.png" alt="SpendTrack — Pulse dashboard" width="100%" />
 </p>
-
-<br/>
-
----
-
-## Try It
-
-| | Link | Details |
-|--|------|---------|
-| **▶ Demo** | [spendtrack-demo.vercel.app](https://spendtrack-demo.vercel.app) | Pre-loaded with realistic data. Your changes stay on your device only — no data is shared between visitors. |
-| **📱 Install** | Open the demo in your phone browser → Share → **Add to Home Screen** | Installs as a PWA — works offline, opens fullscreen like a native app. |
-| **🧹 Use it daily** | Settings → Backup → **Clear all expenses** | Wipes the demo seed data so you can start logging your own expenses. Categories and budgets are kept. |
-| **💻 Self-host** | [Quick Start ↓](#quick-start) | Clone and run locally in under a minute — full offline ownership, no third-party hosting. |
 
 ---
 
 ## Why SpendTrack
 
-Most budgeting apps are built around syncing, subscriptions, and dashboards you open once and forget. SpendTrack is built for one thing: making it effortless to log an expense and understand where your money is going.
+Most personal-finance apps are built around syncing, subscriptions, and dashboards you open once and forget. SpendTrack is built for one thing: **making it effortless to log an expense and instantly see where your money is going.**
 
-- **Local-first** — your data never leaves the browser
-- **Friction-free entry** — natural language parsing gets out of your way
-- **Meaningful feedback** — pace tracking, category breakdowns, and recurring detection surface insights without effort
-- **Simple enough to keep using** — log quickly, review clearly, export anytime
+- **Local-first.** Your data lives in your browser. No account, no telemetry, no cloud — until you opt in.
+- **Friction-free entry.** Type `coffee 4.50 yesterday` and it's in. Smart parser infers item, amount, date, and category.
+- **Real-time pacing.** A live "month pace" ring tells you whether you're on track without opening a spreadsheet.
+- **Optional cross-device sync.** A single UUID code pairs your phone and laptop — no accounts, no passwords, just paste once.
+- **Production-grade.** Strict TypeScript, 140 passing tests, sub-100 KB gzipped initial JS, fully PWA-installable.
 
 ---
 
-## Features
+## Highlights
 
-### Pulse Dashboard
-At-a-glance spending visibility: current month total, daily pace, category breakdown, activity heatmap, and recent entries.
+| | |
+|---|---|
+| **Smart entry** | Natural-language parser → category, amount, date inferred from one line |
+| **Pulse dashboard** | Month/year totals, daily-pace ring, sparkline trend, category mix, 14-week activity heatmap |
+| **Ledger** | Search, filter, edit, undo. Multi-criteria filters live in the URL so views are bookmarkable |
+| **Insights** | Recurring-charge detection, 14-day forecast, week-over-week comparisons, anomaly callouts |
+| **Budgets** | Per-category monthly caps with side-by-side actual-vs-budget bars |
+| **Cross-device sync** | Optional. UUID code pairs devices. Per-expense Last-Write-Wins merge. Tombstone-safe deletes. Realtime push. |
+| **PWA** | Installable on iOS & Android. Works fully offline. CSS-keyframe route transitions (no React-state animations that can stall) |
+| **Privacy** | No account. No analytics. No tracking. Data is local unless you generate a sync code |
 
-### Ledger
-Full transaction history with fast search, date/category filters, inline editing, and bulk delete.
+---
 
-### Budget Tracking
-Set monthly budgets per category. See planned vs actual side-by-side with progress indicators.
+## Try it in 30 seconds
 
-### Insights
-Trend analysis, spending forecasts, recurring expense detection, and anomaly signals — automatically surfaced from your history.
-
-### Smart Entry
-Type natural inputs like `coffee 4.50 yesterday` or `netflix 15`. The parser infers category, amount, and date — then drops you straight into the add flow with fields pre-filled.
-
-### Private & Portable
-No backend. No account. Data lives in `localStorage`. Export JSON backups or CSV for spreadsheets anytime.
+| | Where | Notes |
+|--|------|-------|
+| **▶ Demo** | [spendtrack-demo.vercel.app](https://spendtrack-demo.vercel.app) | Pre-loaded with realistic data — your changes stay on your device |
+| **📱 Install** | Open the demo on your phone → Share → **Add to Home Screen** | Behaves exactly like a native app, fully offline |
+| **🧹 Make it yours** | Settings → Backup → **Clear all expenses** | Wipes the demo seed; categories and budgets remain |
+| **💻 Self-host** | [Quick start ↓](#quick-start) | Clone & run in under a minute — full ownership, zero third-parties |
 
 ---
 
@@ -89,35 +82,11 @@ No backend. No account. Data lives in `localStorage`. Export JSON backups or CSV
 | Pulse | Ledger | Insights |
 |:---:|:---:|:---:|
 | ![Pulse](docs/screenshots/pulse.png) | ![Ledger](docs/screenshots/ledger.png) | ![Insights](docs/screenshots/insights.png) |
-| Dashboard, pace, heatmap | Searchable history | Trends & forecasts |
+| Live pace ring, sparkline, heatmap | Searchable history with URL-driven filters | Recurring detection, forecasts, week trends |
 
 ---
 
-## Daily Use
-
-SpendTrack is designed around a simple loop:
-
-1. Open the app
-2. Type an expense — e.g. `coffee 4.50 yesterday`
-3. Check **Pulse** to see how the month is pacing
-4. Use **Ledger** to filter, edit, or export records
-5. Review **Insights** for recurring charges and spending patterns
-
-**Good fit:**
-- Personal daily spending logs
-- Simple budgeting without a bank connection
-- Local-first finance tracking
-
-**Not a fit yet:**
-- Multi-device sync (use JSON export/import to move data between devices)
-- Shared household budgets
-- Bank or card imports
-
-For a full walkthrough, see the [User Guide](docs/USER_GUIDE.md).
-
----
-
-## Quick Start
+## Quick start
 
 **Requirements:** Node.js 20+, npm
 
@@ -130,117 +99,154 @@ npm run dev
 
 Open [http://localhost:5173](http://localhost:5173). No environment variables needed.
 
+To enable cross-device sync (optional):
+
+```bash
+cp .env.example .env.local
+# fill VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY,
+# then run supabase/migrations/001_sync.sql in your Supabase SQL editor.
+```
+
+See [`.env.example`](.env.example) for the 3-step setup.
+
 ---
 
 ## Scripts
 
 ```bash
-npm run dev        # Local dev server
+npm run dev        # Local dev server with HMR
 npm run build      # Production build
 npm run preview    # Preview production build locally
 npm run lint       # ESLint
-npm run typecheck  # TypeScript check
-npm run test:run   # Run tests once
+npm run typecheck  # tsc --noEmit (strict)
+npm run test:run   # Vitest, single run
 ```
 
 ---
 
-## How It Works
+## Architecture
 
-SpendTrack is entirely browser-side. On load, it hydrates from `localStorage`. Every action — adding an expense, updating a budget, changing a category — writes back immediately. No server, no latency, no auth.
+### Local-first by default
 
-| Screen | Purpose |
-|--------|---------|
-| **Pulse** | Spending overview: totals, pace, category mix, heatmap |
-| **Ledger** | Transaction management: search, filter, edit, delete |
-| **Insights** | Pattern analysis: trends, forecasts, recurring detection |
+On load, the app hydrates from `localStorage`. Every action — adding an expense, changing a budget, renaming a category — writes back immediately. There is no server in the hot path; latency is zero.
+
+```
+┌──────────────────────────────────────────────────┐
+│  React app (Pulse / Ledger / Insights)           │
+│       │                                          │
+│       ▼                                          │
+│  Zustand stores (expense, sync, ui)              │
+│       │                                          │
+│       ▼                                          │
+│  storage.ts  →  localStorage  (always available) │
+│       │                                          │
+│       ▼                                          │
+│  syncService.ts  ⇆  Supabase (optional relay)    │
+└──────────────────────────────────────────────────┘
+```
+
+### Cross-device sync (opt-in)
+
+When sync is configured (Supabase env vars + a UUID sync code paired between devices):
+
+- **localStorage is still the source of truth.** Cloud is a stateless relay.
+- **Per-expense Last-Write-Wins merge** using `updatedAt ?? createdAt`.
+- **Tombstone set** unioned across devices — deletions are permanent everywhere.
+- **3 s debounced push** on local changes; **Supabase Realtime subscription** for instant pull on remote changes.
+- **Single in-flight Promise lock** prevents push-during-pull races.
+- **Exponential backoff** on push failure (1.5 s × 2ⁿ, cap 2 min); resets on success.
+- **Realtime auto-reconnect** on `CLOSED / CHANNEL_ERROR / TIMED_OUT`.
+- **Payload guard** rejects writes >1 MB (Supabase row limit) with a clear error.
+- **No accounts.** The 122-bit UUID is the security boundary.
+
+See [`src/services/syncService.ts`](src/services/syncService.ts) for the merge logic.
+
+### Performance
+
+| | |
+|---|---|
+| Main bundle (gzip) | **83.7 KB** |
+| Total initial download (gzip) | ~190 KB |
+| Settings drawer | code-split (lazy) |
+| Supabase JS SDK | lazy `import()` — only loaded when sync is configured |
+| Hydration | deferred to `useEffect` to keep first paint unblocked |
+| Route transitions | CSS keyframe (no React-state animations that can stall) |
+
+### Stability
+
+- Strict TypeScript, no `any`
+- 140 passing unit tests across 24 files
+- CI smoke test boots `vite preview` and asserts all 4 routes + service worker + manifest
+- Storage quota errors are caught and surfaced as a user toast (never silent data loss)
+- JSON import: 8 MB file cap, deep schema validation, hostile-data-safe
+- Rapid-navigation stress-tested across mobile / desktop / production / 4× CPU-throttled — 290 iterations, 0 blank renders
 
 ---
 
-## PWA — Install on Your Phone
+## Cross-device sync
 
-SpendTrack is a fully installable Progressive Web App.
+Open Settings → **Sync** on Device 1, hit **Generate sync code**, copy the UUID. On Device 2, paste it. Data merges in <3 seconds. Add an expense on either device — it appears on the other within a second via Realtime.
 
-1. Open [spendtrack-demo.vercel.app](https://spendtrack-demo.vercel.app) in your phone browser
-2. **iOS Safari:** tap Share → **Add to Home Screen**
-3. **Android Chrome:** tap Menu → **Add to Home Screen**
-
-The app opens fullscreen, loads instantly, and works offline. Data is stored locally on your device.
+Architecture in detail: [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) and [`src/services/syncService.ts`](src/services/syncService.ts).
 
 ---
 
-## Data & Privacy
-
-- No account required
-- No spending data sent anywhere
-- All data lives in your browser's `localStorage`
-- Use **Settings → Export JSON** before switching devices or clearing storage
-- CSV export available for spreadsheet analysis
-
-See [SECURITY.md](SECURITY.md) for the security policy.
-
----
-
-## Tech Stack
+## Tech stack
 
 | Layer | Tools |
 |-------|-------|
-| Framework | React 19, TypeScript, Vite |
-| Styling | Tailwind CSS, CSS custom properties |
-| State | Zustand |
-| Routing | React Router |
-| Animation | Framer Motion |
-| Charts | Chart.js, react-chartjs-2 |
-| Search | Fuse.js |
+| Framework | React 19, TypeScript (strict), Vite |
+| Styling | Tailwind CSS, CSS custom properties (OLED-near-black theme) |
+| State | Zustand + `subscribeWithSelector` |
+| Routing | React Router v6 |
+| Animation | framer-motion (sparingly — CSS keyframes for route transitions) |
+| Search | Fuse.js (smart-entry parser) |
 | Dates | date-fns |
+| Sync | Supabase Postgres + Realtime (lazy-loaded, opt-in) |
 | PWA | vite-plugin-pwa, Workbox |
-| Testing | Vitest, Testing Library |
+| Testing | Vitest, Testing Library, Playwright (smoke) |
 | Deploy | Vercel |
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
 src/
-  app/          Shell, routing, navigation, sync status
-  demo/         Demo mode seed data
-  features/     Entry, pulse, ledger, insights, settings
-  hooks/        Shared React hooks
-  lib/          Analytics and formatting helpers
-  services/     localStorage layer
-  stores/       Zustand stores
-  ui/           Reusable UI components
-  utils/        Parsing, insights, recurring expense helpers
+  app/          Shell, routing, top/tab bar, sync status pill
+  features/     pulse · ledger · insights · entry · settings
+  ui/           Reusable primitives (Card, Button, Sheet, Pill, …)
+  stores/       Zustand stores (expense, sync, ui)
+  services/     storage layer, syncService (Supabase relay)
+  lib/          analytics, format, download helpers
+  utils/        parseExpense, insights, recurring, helpers
+  hooks/        useToast, useHotkeys, useHaptic
+public/         favicon, manifest
+supabase/       sync migrations
+docs/           user guide, screenshots
 ```
 
 ---
 
-## Roadmap
+## Roadmap & changelog
 
-- [x] Real product screenshots
-- [x] CI — install, typecheck, lint, tests, build, smoke test
-- [x] [Live demo](https://spendtrack-demo.vercel.app) — pre-loaded, data isolated per visitor
-- [x] PWA — installable on phone, works offline
-- [x] Code-split heavy routes — Ledger and Insights lazy-loaded; vendor chunks split
-- [x] Mobile delete UX — visible row button + confirm in edit drawer
-- [x] Clear-all expenses — Settings → Backup with confirmation
-- [x] Browser smoke tests in CI — boots `vite preview`, asserts all four routes + service worker + manifest
-- [x] Expanded test coverage — parsing, analytics, storage, recurring, helpers, formatting (36 tests)
-- [x] Resolved `vite-plugin-pwa` devDep audit via npm `overrides` — `npm audit` now reports 0 vulnerabilities
+- ✅ Cross-device sync (Supabase relay, UUID pairing, LWW merge, tombstones)
+- ✅ Performance pass — main bundle 83.7 KB gzip (−41% from initial); Supabase + Settings lazy-loaded
+- ✅ Rapid-nav blank-render bug eliminated — 290 stress-test iterations, 0 blanks
+- ✅ Storage quota toast + JSON import schema validation
+- ✅ Production CI smoke test on every route + service worker + manifest
+
+Full history: [`CHANGELOG.md`](CHANGELOG.md).
 
 ---
 
 ## Contributing
 
-Issues and pull requests are welcome.
+PRs and issues welcome. Please don't share real spending data in public issues or screenshots.
 
-- [User Guide](docs/USER_GUIDE.md)
-- [Contributing Guide](CONTRIBUTING.md)
-- [Security Policy](SECURITY.md)
-- [Changelog](CHANGELOG.md)
-
-Please avoid sharing real spending data in public issues or screenshots.
+- [User guide](docs/USER_GUIDE.md)
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
 
 ---
 

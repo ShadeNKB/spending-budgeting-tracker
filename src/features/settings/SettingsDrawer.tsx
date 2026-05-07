@@ -231,17 +231,52 @@ function BackupPanel() {
     toast.success("CSV exported");
   };
 
+  const MAX_IMPORT_BYTES = 8 * 1024 * 1024; // 8 MB safety cap
+  const MAX_IMPORT_EXPENSES = 50_000; // sanity cap to avoid freezing the browser
+
   const onFile = (f: File) => {
+    if (f.size > MAX_IMPORT_BYTES) {
+      toast.error(`File too large (${(f.size / 1024 / 1024).toFixed(1)} MB). Max 8 MB.`);
+      return;
+    }
     const reader = new FileReader();
     reader.onload = (e) => {
       try {
-        const data = JSON.parse(e.target!.result as string) as BackupData;
-        if (!data.expenses || !Array.isArray(data.expenses)) throw new Error();
+        const raw = JSON.parse(e.target!.result as string) as Partial<BackupData>;
+        if (!raw || typeof raw !== "object") throw new Error("not an object");
+        if (!Array.isArray(raw.expenses)) throw new Error("missing expenses[]");
+        if (raw.expenses.length > MAX_IMPORT_EXPENSES) {
+          toast.error(`Backup has ${raw.expenses.length.toLocaleString()} entries — too large to import safely.`);
+          return;
+        }
+        // Shallow schema validation on every expense — reject anything that
+        // would corrupt analytics/sync downstream.
+        for (const x of raw.expenses) {
+          if (!x || typeof x !== "object") throw new Error("malformed expense");
+          if (typeof x.id !== "string" || !x.id) throw new Error("missing id");
+          if (typeof x.itemName !== "string") throw new Error("missing itemName");
+          if (typeof x.amount !== "number" || !Number.isFinite(x.amount) || x.amount <= 0) {
+            throw new Error(`bad amount on "${x.itemName ?? x.id}"`);
+          }
+          if (typeof x.date !== "string") throw new Error("missing date");
+          if (typeof x.category !== "string") throw new Error("missing category");
+        }
+        const data: BackupData = {
+          expenses: raw.expenses,
+          categories: Array.isArray(raw.categories) ? raw.categories : [],
+          categoryMappings: (raw.categoryMappings ?? {}) as BackupData["categoryMappings"],
+          budgets: (raw.budgets ?? {}) as BackupData["budgets"],
+          deletedIds: Array.isArray(raw.deletedIds) ? raw.deletedIds : [],
+          exportDate: typeof raw.exportDate === "string" ? raw.exportDate : new Date().toISOString(),
+          version: typeof raw.version === "string" ? raw.version : "3.0",
+        };
         setPendingImport({ data, count: data.expenses.length });
-      } catch {
-        toast.error("Invalid backup file");
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "parse error";
+        toast.error(`Invalid backup file — ${msg}`);
       }
     };
+    reader.onerror = () => toast.error("Could not read the file");
     reader.readAsText(f);
   };
 

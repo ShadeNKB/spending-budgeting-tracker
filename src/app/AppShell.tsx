@@ -12,6 +12,7 @@ import { useSyncStore } from "../stores/useSyncStore";
 import { syncApplying } from "../services/syncService";
 import { useUIStore } from "../stores/useUIStore";
 import { useHotkeys } from "../hooks/useHotkeys";
+import { useToast } from "../hooks/useToast";
 
 // Lazy-load the Settings drawer — it's hidden by default and contains 4 panels
 // (Categories, Budgets, Backup, Sync) plus the Supabase-aware SyncPanel, so
@@ -67,8 +68,20 @@ export function AppShell() {
   const setAddSheetOpen = useUIStore((s) => s.setAddSheetOpen);
   const undoStack = useExpenseStore((s) => s.undoStack);
   const consumeUndo = useExpenseStore((s) => s.consumeUndo);
+  const toast = useToast();
 
   useEffect(bootstrap, []);
+
+  // Surface storage quota errors to the user — without this the app would
+  // silently fail to persist, which is the worst possible UX for a finance
+  // tracker. Listener fires once per session per quota incident.
+  useEffect(() => {
+    const onQuota = () => {
+      toast.error("Storage is full — export a backup and clear old data to keep saving.", { duration: 12000 });
+    };
+    window.addEventListener("spendtrack:quota-exceeded", onQuota);
+    return () => window.removeEventListener("spendtrack:quota-exceeded", onQuota);
+  }, [toast]);
 
   useHotkeys({
     "mod+k": () => setPaletteOpen(true),
