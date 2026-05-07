@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { motion } from "framer-motion";
 import { format, addDays, subDays } from "date-fns";
 import { TrendingUp, TrendingDown, AlertTriangle, CheckCircle2, Info, Repeat, Calendar, ArrowUp, ArrowDown } from "lucide-react";
 import { useExpenseStore } from "../../stores/useExpenseStore";
@@ -59,7 +58,7 @@ export function InsightsScreen() {
             const tc = toneIcon[ins.tone] ?? toneIcon.info;
             const { Icon } = tc;
             return (
-              <motion.div key={ins.id} initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }}>
+              <div key={ins.id}>
                 <Card>
                   <div className="flex items-start gap-3">
                     <Pill tone={tc.tone}>
@@ -71,7 +70,7 @@ export function InsightsScreen() {
                     </div>
                   </div>
                 </Card>
-              </motion.div>
+              </div>
             );
           })
         )}

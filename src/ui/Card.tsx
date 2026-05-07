@@ -8,13 +8,22 @@ type Props = HTMLMotionProps<"div"> & {
   children?: React.ReactNode;
 };
 
+/**
+ * Reliable Card primitive.
+ *
+ * Uses `initial={false}` so framer-motion never starts the card hidden —
+ * Cards are always visible immediately. Previously `initial={{ opacity: 0 }}`
+ * could leave Cards stuck invisible if the parent `AnimatePresence` lifecycle
+ * was interrupted by rapid route navigation.
+ *
+ * The hover lift is preserved via `whileHover`.
+ */
 export function Card({ className, interactive, glow, padded = true, children, ...p }: Props) {
   return (
     <motion.div
-      initial={{ opacity: 0, y: 6 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.22, ease: [0.2, 0, 0, 1] }}
+      initial={false}
       whileHover={interactive ? { y: -1 } : undefined}
+      transition={{ duration: 0.18, ease: [0.2, 0, 0, 1] }}
       className={clsx(
         "rounded-[14px] border border-white/[0.06] bg-surface-1 transition-colors",
         padded && "p-5 md:p-6",
