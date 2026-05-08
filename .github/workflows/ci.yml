@@ -6,6 +6,12 @@ on:
   pull_request:
     branches: [main]
 
+# Cancel in-flight runs when a new commit is pushed to the same branch / PR.
+# Keeps CI minutes lean and gives faster feedback on the latest push.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   validate:
     name: Validate
