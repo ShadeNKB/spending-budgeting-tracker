@@ -44,6 +44,9 @@ export function Sheet({
           />
           <motion.aside
             key="panel"
+            role="dialog"
+            aria-modal="true"
+            aria-label={title}
             className={
               "fixed z-[97] bg-surface-1 border-white/[0.07] shadow-[0_40px_80px_-20px_rgba(0,0,0,0.7)] overflow-hidden flex flex-col " +
               (isBottom

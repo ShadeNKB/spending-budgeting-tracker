@@ -74,17 +74,19 @@ export function PulseScreen() {
                 {/* Period navigation */}
                 <div className="flex items-center gap-0.5 ml-auto">
                   <button
+                    type="button"
                     onClick={() => view === "month" ? setMonthOffset((o) => o + 1) : setYearOffset((o) => o + 1)}
                     className="h-6 w-6 inline-flex items-center justify-center rounded-md text-[var(--text-tertiary)] hover:bg-surface-2 hover:text-white transition"
-                    aria-label="Previous period"
+                    aria-label={`View previous ${view}`}
                   >
                     <ChevronLeft size={14} />
                   </button>
                   <button
+                    type="button"
                     onClick={() => view === "month" ? setMonthOffset((o) => Math.max(0, o - 1)) : setYearOffset((o) => Math.max(0, o - 1))}
                     disabled={isCurrentPeriod}
                     className="h-6 w-6 inline-flex items-center justify-center rounded-md text-[var(--text-tertiary)] hover:bg-surface-2 hover:text-white transition disabled:opacity-30 disabled:cursor-not-allowed"
-                    aria-label="Next period"
+                    aria-label={`View next ${view}`}
                   >
                     <ChevronRight size={14} />
                   </button>

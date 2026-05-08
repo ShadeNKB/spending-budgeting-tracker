@@ -1,8 +1,8 @@
 {
   "name": "spendtrack",
   "private": true,
-  "description": "A fast, local-first spending tracker for daily expense logging, budgeting, and insights.",
-  "version": "0.1.0",
+  "description": "A fast, local-first spending tracker with smart categorisation, real-time budgets, and optional cross-device sync.",
+  "version": "0.5.0",
   "type": "module",
   "license": "MIT",
   "repository": {

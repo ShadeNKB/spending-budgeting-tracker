@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Cloud, CloudOff, Copy, Check, Link2, Link2Off, RefreshCw, AlertCircle, Loader2, Smartphone, Monitor, ShieldCheck } from "lucide-react";
 import { Button } from "../../ui/Button";
 import { Input } from "../../ui/Input";
@@ -77,6 +77,11 @@ function SyncContent() {
   const [copied, setCopied] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const copyResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Clear any pending "Copied" reset timer on unmount so we don't update
+  // state on an unmounted component if the panel closes mid-feedback.
+  useEffect(() => () => { if (copyResetTimer.current) clearTimeout(copyResetTimer.current); }, []);
 
   const handleGenerate = async () => {
     const id = crypto.randomUUID();
@@ -115,7 +120,11 @@ function SyncContent() {
     if (!syncId) return;
     await navigator.clipboard.writeText(syncId);
     setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    if (copyResetTimer.current) clearTimeout(copyResetTimer.current);
+    copyResetTimer.current = setTimeout(() => {
+      setCopied(false);
+      copyResetTimer.current = null;
+    }, 2000);
   };
 
   const handleManualSync = async () => {
