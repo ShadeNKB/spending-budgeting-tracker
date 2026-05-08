@@ -43,11 +43,17 @@
 
 Most personal-finance apps are built around syncing, subscriptions, and dashboards you open once and forget. SpendTrack is built for one thing: **making it effortless to log an expense and instantly see where your money is going.**
 
-- **Local-first.** Your data lives in your browser. No account, no telemetry, no cloud — until you opt in.
-- **Friction-free entry.** Type `coffee 4.50 yesterday` and it's in. Smart parser infers item, amount, date, and category.
-- **Real-time pacing.** A live "month pace" ring tells you whether you're on track without opening a spreadsheet.
-- **Optional cross-device sync.** A single UUID code pairs your phone and laptop — no accounts, no passwords, just paste once.
+- **Offline-first.** Your data lives on your device, in your browser — not on a server. No account, no telemetry, no cloud (until *you* opt in).
+- **Friction-free entry.** Type `coffee 4.50 yesterday` and it's in. The smart parser infers item, amount, date, and category from one line.
+- **Real-time pacing.** A live month-pace ring tells you whether you're on track without opening a spreadsheet.
+- **Optional cross-device sync.** A single UUID code pairs your phone and laptop — no accounts, no passwords, paste once and you're done.
 - **Production-grade.** Strict TypeScript, 140 passing tests, sub-100 KB gzipped initial JS, fully PWA-installable.
+
+### Design choices
+
+- **Why offline-first?** Your finances are private. The default should be no servers, no accounts, no tracking. Sync is opt-in and runs against *your own* Supabase project.
+- **Why Supabase?** It's free for personal use, the JS SDK is small enough to lazy-load, and Postgres + Realtime gives instant cross-device updates without writing a backend.
+- **Why a PWA, not a native app?** Same code on every device, install in one tap, no app-store gatekeepers, full offline support via service worker.
 
 ---
 

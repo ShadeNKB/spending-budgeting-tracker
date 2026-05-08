@@ -26,7 +26,7 @@ export function EmptyState({
       </div>
       <div>
         <h3 className="text-[15px] font-semibold text-white">{title}</h3>
-        {description && <p className="mt-1 text-[13px] text-[var(--text-tertiary)] max-w-[320px]">{description}</p>}
+        {description && <p className="mt-1 text-[13px] text-[var(--text-tertiary)] max-w-full sm:max-w-[320px] mx-auto">{description}</p>}
       </div>
       {action && (
         <Button variant="ghost" size="sm" onClick={action.onClick} className="mt-1">

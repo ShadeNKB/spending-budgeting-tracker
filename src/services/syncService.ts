@@ -112,9 +112,10 @@ export async function pushSync(syncId: string, data: BackupData): Promise<void> 
   if (!client) throw new Error("Sync not configured");
 
   // Pre-flight payload size check — Supabase free tier caps rows at ~1 MB.
+  // Warn only in dev (Vite replaces import.meta.env.DEV with a static boolean).
   const serialized = JSON.stringify(data);
   if (serialized.length > PAYLOAD_WARN_BYTES) {
-    if (typeof console !== "undefined") {
+    if (import.meta.env.DEV) {
       console.warn(`[sync] payload is ${(serialized.length / 1024).toFixed(0)} KB — approaching row limit`);
     }
     if (serialized.length > 1024 * 1024) throw new PayloadTooLargeError(serialized.length);
