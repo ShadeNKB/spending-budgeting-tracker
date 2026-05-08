@@ -197,11 +197,170 @@ See [`src/services/syncService.ts`](src/services/syncService.ts) for the merge l
 
 ---
 
-## Cross-device sync
+## Sync your phone & laptop
 
-Open Settings → **Sync** on Device 1, hit **Generate sync code**, copy the UUID. On Device 2, paste it. Data merges in <3 seconds. Add an expense on either device — it appears on the other within a second via Realtime.
+Sync is **optional**. Skip this section if you only use one device — your data is already saved locally and you can export JSON backups anytime.
 
-Architecture in detail: [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) and [`src/services/syncService.ts`](src/services/syncService.ts).
+If you do want phone ↔ laptop sync, here's the full flow:
+
+### 0 · One-time setup (do this once, on any device)
+
+You need your own free Supabase project. This is what stores the synced data — no third-party sees it. Plan ~5 minutes.
+
+1. Sign up at [supabase.com](https://supabase.com) and create a project.
+2. In the project's **SQL Editor**, paste and run [`supabase/migrations/001_sync.sql`](supabase/migrations/001_sync.sql). Optionally also run [`002_sync_indexes.sql`](supabase/migrations/002_sync_indexes.sql) for retention helpers.
+3. From **Project Settings → API**, copy the **Project URL** and the **anon public** key.
+4. Add them as env vars on Vercel (or in `.env.local` if you self-host):
+   ```bash
+   VITE_SUPABASE_URL=https://your-project.supabase.co
+   VITE_SUPABASE_ANON_KEY=eyJhbGc...
+   ```
+5. Redeploy. The app now offers sync in Settings.
+
+### 1 · Generate a sync code (Device A — typically your laptop)
+
+Settings → **Sync** → **Generate sync code for this device**. Copy the UUID that appears.
+
+### 2 · Connect Device B (your phone)
+
+Open the same site on your phone. Settings → **Sync** → paste the code into **Connect**. Within ~3 seconds your laptop's data appears on your phone.
+
+### 3 · Use either device
+
+Add an expense on Device A. It appears on Device B within a second via Supabase Realtime. Same in the other direction. Delete on either, it's deleted everywhere. Each device works fully offline; pending changes sync the moment connection is restored.
+
+### 4 · Add a third device — repeat step 2
+
+Tablet, work browser, partner's laptop — paste the same UUID into Settings → Sync → Connect. There's no device limit.
+
+> **Treat the sync code like a password.** Anyone with it can read & write your synced data. Don't share it in chats or screenshots. If you ever lose or leak it, generate a new one — old buckets auto-prune after 90 days.
+
+### How sync actually works
+
+```
+Device A                                    Device B
+  │                                            │
+  │  add expense "Coffee 4.50"                 │
+  ├──────────► localStorage (instant)          │
+  │                                            │
+  │  3 s debounce ──► Supabase ──── push       │
+  │                       │                    │
+  │                       │   Realtime         │
+  │                       └──────────► pull ───┤
+  │                                            │
+  │                                  add expense "Lunch 12"
+  │                                            ├──► localStorage
+  │                                            │
+  │  Realtime ◄──── push ◄──── Supabase ◄──── 3 s debounce
+  ├──────────► merge + apply                   │
+  │  (Last-Write-Wins per expense)             │
+```
+
+- **localStorage is always the source of truth.** Cloud is a stateless relay.
+- **Per-expense Last-Write-Wins** using `updatedAt ?? createdAt`.
+- **Tombstone set** unioned across devices — deletions are permanent everywhere.
+- **Single in-flight Promise lock** prevents push-during-pull races.
+- **Exponential backoff** on push failure (1.5 s × 2ⁿ, cap 2 min).
+- **Realtime auto-reconnect** on `CLOSED / CHANNEL_ERROR / TIMED_OUT`.
+- **Payload guard** rejects writes >1 MB (Supabase row limit).
+- **No accounts.** The 122-bit UUID is the security boundary.
+
+Full architecture: [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) · [`src/services/syncService.ts`](src/services/syncService.ts).
+
+---
+
+## FAQ
+
+<details>
+<summary><b>Do I need an account?</b></summary>
+<br/>
+No. SpendTrack has no built-in account system. Sync is opt-in and runs against <i>your own</i> Supabase project — you own the data, end-to-end.
+</details>
+
+<details>
+<summary><b>Where is my data stored?</b></summary>
+<br/>
+By default: in your browser's <code>localStorage</code> on the device you're using. Nothing leaves the device. If you opt into sync, an encrypted-in-transit copy is also stored in your Supabase project's <code>sync_buckets</code> table — under a row keyed by your UUID sync code.
+</details>
+
+<details>
+<summary><b>What happens if I edit on two devices at the same time?</b></summary>
+<br/>
+Each expense has an <code>updatedAt</code> timestamp. The newer edit wins (last-write-wins) per expense. Deletes propagate via a tombstone list, so a deleted expense never resurrects.
+</details>
+
+<details>
+<summary><b>What if I'm offline?</b></summary>
+<br/>
+The app works fully offline — every action writes to <code>localStorage</code> immediately. Cloud sync waits patiently. The moment you're online again, queued changes push and any remote changes merge in.
+</details>
+
+<details>
+<summary><b>What if I lose my sync code?</b></summary>
+<br/>
+Generate a new one in Settings → Sync. The old bucket stays in your Supabase project for 90 days then auto-prunes (if you scheduled <code>prune_stale_sync_buckets()</code>; otherwise it persists harmlessly).
+</details>
+
+<details>
+<summary><b>Can I install it on my phone like a real app?</b></summary>
+<br/>
+Yes — it's a PWA. <b>iOS:</b> open the site in Safari → Share → <i>Add to Home Screen</i>. <b>Android:</b> Chrome menu → <i>Install app</i>. The installed version runs fullscreen, has its own home-screen icon, and works offline exactly like a native app.
+</details>
+
+<details>
+<summary><b>Does this work on multiple platforms? (iOS / Android / desktop)</b></summary>
+<br/>
+Yes. One codebase, every platform. The PWA is installable from any modern browser; sync works the same across all of them.
+</details>
+
+<details>
+<summary><b>How do I move my data to a new browser without sync?</b></summary>
+<br/>
+Settings → Backup → <b>Download JSON backup</b>. On the new browser, Settings → Backup → <b>Import JSON backup</b>. Categories, budgets, and expenses transfer in full.
+</details>
+
+<details>
+<summary><b>Is my data encrypted?</b></summary>
+<br/>
+In transit (HTTPS to Supabase): yes. At rest in <code>localStorage</code> or Supabase: no, it's plain JSON. Treat your sync code as a password — that's the security boundary.
+</details>
+
+---
+
+## Troubleshooting
+
+<details>
+<summary><b>"Sync failed" — what now?</b></summary>
+<br/>
+The pill in the top bar is tappable when sync fails. Tap it to retry. Local data is always safe — the failure only means the cloud copy is behind. The app also retries automatically with exponential backoff.
+</details>
+
+<details>
+<summary><b>I generated a sync code but my phone says "Could not reach sync server"</b></summary>
+<br/>
+
+1. Confirm both devices have <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> set (env vars must match on both deployments).
+2. Confirm <code>supabase/migrations/001_sync.sql</code> ran without errors. <i>Important:</i> the migration ends with a "RLS not enabled" prompt — choose <b>Run without RLS</b>. The 122-bit UUID is the security boundary; row-level security would block anon writes.
+3. Reload both devices. The Supabase JS SDK is lazy-loaded only when sync is configured, so an offline cold start looks like silent failure — a refresh re-triggers the load.
+</details>
+
+<details>
+<summary><b>"Storage is full — export a backup and clear old data"</b></summary>
+<br/>
+Browser <code>localStorage</code> caps around 5–10 MB. SpendTrack catches the quota error and shows this toast. Export a JSON backup, then either clear old expenses (Settings → Backup → Clear all expenses) or move to a different browser profile.
+</details>
+
+<details>
+<summary><b>The app feels stale after I deploy a new version</b></summary>
+<br/>
+Service workers occasionally serve a cached shell. Hard reload (Ctrl+Shift+R / Cmd+Shift+R), or close and reopen the installed PWA. The new SW activates immediately on next visit thanks to <code>skipWaiting</code>.
+</details>
+
+<details>
+<summary><b>Pulse / Insights flash blank momentarily?</b></summary>
+<br/>
+This was a real bug fixed in v0.5.0 (PR #9). If you see it on the deployed site, you may be on a cached old SW — hard reload to pick up the fix.
+</details>
 
 ---
 

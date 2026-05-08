@@ -22,7 +22,7 @@ export default defineConfig({
       // Take control of all clients immediately on activation — prevents
       // the old SW serving stale shells while the new one waits.
       injectRegister: 'auto',
-      includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png'],
+      includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png', 'og.png'],
       manifest: {
         name: 'SpendTrack — Local-first spending tracker',
         short_name: 'SpendTrack',
