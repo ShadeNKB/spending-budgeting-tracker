@@ -78,9 +78,20 @@ export function mergeBackups(local: BackupData, remote: BackupData): BackupData 
   const categories = [...new Set([...local.categories, ...remote.categories])];
   if (!categories.length) categories.push(...DEFAULT_CATEGORIES);
 
-  // Mappings + budgets: remote wins on key conflict (most-recently-synced device).
-  const categoryMappings = { ...local.categoryMappings, ...remote.categoryMappings };
-  const budgets = { ...local.budgets, ...remote.budgets };
+  // Mappings + budgets: LOCAL-wins on key conflict.
+  //
+  // These are non-versioned objects (no per-key timestamps), so we can't do
+  // true per-key Last-Write-Wins. Local-wins ensures user edits survive the
+  // sync round-trip — otherwise the very next push would pull a stale remote
+  // value and clobber what the user just typed (e.g. budget set to $200
+  // reverts to $150 three seconds later).
+  //
+  // Trade-off: in a true concurrent-edit race across two devices within the
+  // same sync window, the most-recently-pushing device wins. For budgets and
+  // category mappings (rare edits), this is acceptable — and crucially, the
+  // single-device case (the common one) works correctly.
+  const categoryMappings = { ...remote.categoryMappings, ...local.categoryMappings };
+  const budgets = { ...remote.budgets, ...local.budgets };
 
   // Cap tombstones — only the most recently deleted IDs we still need to broadcast.
   // Tombstones older than the cap are assumed to have propagated to all devices already.

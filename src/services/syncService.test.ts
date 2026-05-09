@@ -175,18 +175,34 @@ describe("mergeBackups", () => {
       expect(out.categories.length).toBeGreaterThan(0);
     });
 
-    it("merges budgets with remote-wins on key conflict", () => {
+    it("merges budgets with LOCAL-wins on key conflict (user edit must survive sync round-trip)", () => {
+      // The user just edited Food=100 on this device. The remote bucket
+      // is stale and still has Food=150. The merge must NOT clobber the
+      // user's local edit — otherwise budget changes appear to "revert"
+      // 3 seconds after editing, which is the bug we're fixing.
       const local = backup({ budgets: { Food: 100, Travel: 200 } });
       const remote = backup({ budgets: { Food: 150, Subscriptions: 50 } });
       const out = mergeBackups(local, remote);
-      expect(out.budgets).toEqual({ Food: 150, Travel: 200, Subscriptions: 50 });
+      expect(out.budgets).toEqual({ Food: 100, Travel: 200, Subscriptions: 50 });
     });
 
-    it("merges categoryMappings with remote-wins on key conflict", () => {
+    it("merges categoryMappings with LOCAL-wins on key conflict (mapping edits survive sync round-trip)", () => {
       const local = backup({ categoryMappings: { coffee: "Food", uber: "Travel" } });
       const remote = backup({ categoryMappings: { coffee: "Beverages" } });
       const out = mergeBackups(local, remote);
-      expect(out.categoryMappings).toEqual({ coffee: "Beverages", uber: "Travel" });
+      expect(out.categoryMappings).toEqual({ coffee: "Food", uber: "Travel" });
+    });
+
+    it("regression: budget edit does not revert when sync pushes pull a stale remote first", () => {
+      // Reproduces the user-reported bug exactly:
+      //   1. Budget was previously $150 (stored remotely).
+      //   2. User changes it locally to $200.
+      //   3. Sync push fires 3 s later: pull remote (still $150) → merge.
+      //   4. Merged value must be $200 (local-wins), not $150.
+      const local = backup({ budgets: { Food: 200 } });   // user just typed $200
+      const remote = backup({ budgets: { Food: 150 } });  // stale cloud copy
+      const merged = mergeBackups(local, remote);
+      expect(merged.budgets!.Food).toBe(200);
     });
   });
 
