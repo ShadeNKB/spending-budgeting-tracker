@@ -14,8 +14,9 @@
   <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React 19" />
   <img src="https://img.shields.io/badge/TypeScript-Strict-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
   <img src="https://img.shields.io/badge/PWA-Installable-8B5CF6?style=flat-square" alt="PWA" />
-  <img src="https://img.shields.io/badge/bundle-83.7%20KB%20gzip-22C55E?style=flat-square" alt="Bundle 83.7 KB gzip" />
-  <img src="https://img.shields.io/badge/tests-140%20passing-22C55E?style=flat-square" alt="140 tests" />
+  <img src="https://img.shields.io/badge/bundle-86%20KB%20gzip-22C55E?style=flat-square" alt="Bundle 86 KB gzip" />
+  <img src="https://img.shields.io/badge/tests-53%20passing-22C55E?style=flat-square" alt="53 tests passing" />
+  <img src="https://img.shields.io/badge/audit-0%20vulns-22C55E?style=flat-square" alt="0 vulnerabilities" />
   <img src="https://img.shields.io/badge/license-MIT-22D3EE?style=flat-square" alt="MIT" />
 </p>
 
@@ -47,7 +48,7 @@ Most personal-finance apps are built around syncing, subscriptions, and dashboar
 - **Friction-free entry.** Type `coffee 4.50 yesterday` and it's in. The smart parser infers item, amount, date, and category from one line.
 - **Real-time pacing.** A live month-pace ring tells you whether you're on track without opening a spreadsheet.
 - **Optional cross-device sync.** A single UUID code pairs your phone and laptop — no accounts, no passwords, paste once and you're done.
-- **Production-grade.** Strict TypeScript, 140 passing tests, sub-100 KB gzipped initial JS, fully PWA-installable.
+- **Production-grade.** Strict TypeScript, a passing Vitest suite, sub-100 KB gzipped initial JS, fully PWA-installable.
 
 ### Design choices
 
@@ -107,7 +108,7 @@ Most personal-finance apps are built around syncing, subscriptions, and dashboar
 ```bash
 git clone https://github.com/ShadeNKB/spending-budgeting-tracker.git
 cd spending-budgeting-tracker
-npm install
+npm ci
 npm run dev
 ```
 
@@ -165,13 +166,14 @@ When sync is configured (Supabase env vars + a UUID sync code paired between dev
 
 - **localStorage is still the source of truth.** Cloud is a stateless relay.
 - **Per-expense Last-Write-Wins merge** using `updatedAt ?? createdAt`.
-- **Tombstone set** unioned across devices — deletions are permanent everywhere.
+- **Per-budget Last-Write-Wins merge** using category-level set/delete timestamps.
+- **Tombstone sets** unioned across devices — deleted expenses and removed budgets stay deleted unless a newer set wins.
 - **3 s debounced push** on local changes; **Supabase Realtime subscription** for instant pull on remote changes.
 - **Single in-flight Promise lock** prevents push-during-pull races.
 - **Exponential backoff** on push failure (1.5 s × 2ⁿ, cap 2 min); resets on success.
 - **Realtime auto-reconnect** on `CLOSED / CHANNEL_ERROR / TIMED_OUT`.
 - **Payload guard** rejects writes >1 MB (Supabase row limit) with a clear error.
-- **No accounts.** The 122-bit UUID is the security boundary.
+- **No accounts.** The 122-bit UUID is the practical security boundary for a personal Supabase relay. Because the anon key is public and this table grants broad anon access, do not treat this model as hardened multi-user SaaS security.
 
 See [`src/services/syncService.ts`](src/services/syncService.ts) for the merge logic.
 
@@ -189,7 +191,7 @@ See [`src/services/syncService.ts`](src/services/syncService.ts) for the merge l
 ### Stability
 
 - Strict TypeScript, no `any`
-- 140 passing unit tests across 24 files
+- Passing Vitest unit suite across core parsing, analytics, storage, and sync logic
 - CI smoke test boots `vite preview` and asserts all 4 routes + service worker + manifest
 - Storage quota errors are caught and surfaced as a user toast (never silent data loss)
 - JSON import: 8 MB file cap, deep schema validation, hostile-data-safe
@@ -208,7 +210,7 @@ If you do want phone ↔ laptop sync, here's the full flow:
 You need your own free Supabase project. This is what stores the synced data — no third-party sees it. Plan ~5 minutes.
 
 1. Sign up at [supabase.com](https://supabase.com) and create a project.
-2. In the project's **SQL Editor**, paste and run [`supabase/migrations/001_sync.sql`](supabase/migrations/001_sync.sql). Optionally also run [`002_sync_indexes.sql`](supabase/migrations/002_sync_indexes.sql) for retention helpers.
+2. In the project's **SQL Editor**, paste and run [`supabase/migrations/001_sync.sql`](supabase/migrations/001_sync.sql). Optionally also run [`002_sync_indexes.sql`](supabase/migrations/002_sync_indexes.sql) for retention helpers. The helper only creates a manual pruning function; schedule it yourself if you want automatic 90-day cleanup.
 3. From **Project Settings → API**, copy the **Project URL** and the **anon public** key.
 4. Add them as env vars on Vercel (or in `.env.local` if you self-host):
    ```bash
@@ -258,12 +260,13 @@ Device A                                    Device B
 
 - **localStorage is always the source of truth.** Cloud is a stateless relay.
 - **Per-expense Last-Write-Wins** using `updatedAt ?? createdAt`.
-- **Tombstone set** unioned across devices — deletions are permanent everywhere.
+- **Per-budget Last-Write-Wins** using category-level set/delete timestamps, so stale tabs cannot revert newer budget edits.
+- **Tombstone sets** are unioned across devices — deleted expenses and removed budgets stay deleted unless a newer set wins.
 - **Single in-flight Promise lock** prevents push-during-pull races.
 - **Exponential backoff** on push failure (1.5 s × 2ⁿ, cap 2 min).
 - **Realtime auto-reconnect** on `CLOSED / CHANNEL_ERROR / TIMED_OUT`.
 - **Payload guard** rejects writes >1 MB (Supabase row limit).
-- **No accounts.** The 122-bit UUID is the security boundary.
+- **No accounts.** The 122-bit UUID is the practical security boundary for a personal Supabase relay, not a hardened multi-user SaaS boundary.
 
 Full architecture: [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) · [`src/services/syncService.ts`](src/services/syncService.ts).
 
@@ -340,7 +343,7 @@ The pill in the top bar is tappable when sync fails. Tap it to retry. Local data
 <br/>
 
 1. Confirm both devices have <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> set (env vars must match on both deployments).
-2. Confirm <code>supabase/migrations/001_sync.sql</code> ran without errors. <i>Important:</i> the migration ends with a "RLS not enabled" prompt — choose <b>Run without RLS</b>. The 122-bit UUID is the security boundary; row-level security would block anon writes.
+2. Confirm <code>supabase/migrations/001_sync.sql</code> ran without errors. <i>Important:</i> the migration intentionally disables RLS for this simple personal relay model; enabling RLS without replacing the sync access layer will block anon writes.
 3. Reload both devices. The Supabase JS SDK is lazy-loaded only when sync is configured, so an offline cold start looks like silent failure — a refresh re-triggers the load.
 </details>
 
@@ -371,13 +374,13 @@ This was a real bug fixed in v0.5.0 (PR #9). If you see it on the deployed site,
 | Framework | React 19, TypeScript (strict), Vite |
 | Styling | Tailwind CSS, CSS custom properties (OLED-near-black theme) |
 | State | Zustand + `subscribeWithSelector` |
-| Routing | React Router v6 |
+| Routing | React Router v7 |
 | Animation | framer-motion (sparingly — CSS keyframes for route transitions) |
 | Search | Fuse.js (smart-entry parser) |
 | Dates | date-fns |
 | Sync | Supabase Postgres + Realtime (lazy-loaded, opt-in) |
 | PWA | vite-plugin-pwa, Workbox |
-| Testing | Vitest, Testing Library, Playwright (smoke) |
+| Testing | Vitest, Testing Library, curl-based preview smoke |
 | Deploy | Vercel |
 
 ---
