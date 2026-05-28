@@ -78,20 +78,67 @@ export function mergeBackups(local: BackupData, remote: BackupData): BackupData 
   const categories = [...new Set([...local.categories, ...remote.categories])];
   if (!categories.length) categories.push(...DEFAULT_CATEGORIES);
 
-  // Mappings + budgets: LOCAL-wins on key conflict.
-  //
-  // These are non-versioned objects (no per-key timestamps), so we can't do
-  // true per-key Last-Write-Wins. Local-wins ensures user edits survive the
-  // sync round-trip — otherwise the very next push would pull a stale remote
-  // value and clobber what the user just typed (e.g. budget set to $200
-  // reverts to $150 three seconds later).
-  //
-  // Trade-off: in a true concurrent-edit race across two devices within the
-  // same sync window, the most-recently-pushing device wins. For budgets and
-  // category mappings (rare edits), this is acceptable — and crucially, the
-  // single-device case (the common one) works correctly.
+  // Mappings: LOCAL-wins on key conflict (rare edits, no per-key timestamps yet).
   const categoryMappings = { ...remote.categoryMappings, ...local.categoryMappings };
-  const budgets = { ...remote.budgets, ...local.budgets };
+
+  // Budgets v4.0: per-key Last-Write-Wins via budgetUpdatedAt / budgetDeletedAt.
+  //
+  // When both sides carry timestamps we compare them directly.
+  // When a side has no timestamp (old backup / first sync), we fall back to
+  // the backup's exportDate as a proxy — so an old local $150 does not silently
+  // win over a freshly-pushed remote $200 just because it lacks a timestamp.
+  //
+  // Priority order per key:
+  //   1. If a deletion tombstone (budgetDeletedAt) is newer → key absent from budgets.
+  //   2. If a set timestamp (budgetUpdatedAt) is newer → keep that value.
+  //   3. No timestamps on either side → LOCAL-wins (legacy safe-default).
+  const allBudgetKeys = new Set<string>([
+    ...Object.keys(local.budgets ?? {}),
+    ...Object.keys(remote.budgets ?? {}),
+    ...Object.keys(local.budgetUpdatedAt ?? {}),
+    ...Object.keys(remote.budgetUpdatedAt ?? {}),
+    ...Object.keys(local.budgetDeletedAt ?? {}),
+    ...Object.keys(remote.budgetDeletedAt ?? {}),
+  ]);
+
+  const mergedBudgets: Record<string, number> = {};
+  const mergedBudgetUpdatedAt: Record<string, string> = {};
+  const mergedBudgetDeletedAt: Record<string, string> = {};
+
+  for (const key of allBudgetKeys) {
+    // Resolve "set" timestamp: explicit budgetUpdatedAt, or fallback to exportDate if value exists.
+    const localSetTs  = ts(local.budgetUpdatedAt?.[key]  ?? (local.budgets?.[key]  !== undefined ? local.exportDate  : undefined));
+    const remoteSetTs = ts(remote.budgetUpdatedAt?.[key] ?? (remote.budgets?.[key] !== undefined ? remote.exportDate : undefined));
+    const localDelTs  = ts(local.budgetDeletedAt?.[key]);
+    const remoteDelTs = ts(remote.budgetDeletedAt?.[key]);
+
+    const winningDelTs = Math.max(localDelTs, remoteDelTs);
+    const winningSetTs = Math.max(localSetTs, remoteSetTs);
+
+    if (winningDelTs > 0 && winningDelTs >= winningSetTs) {
+      // Deletion wins — key is absent from budgets.
+      const delSrc = localDelTs >= remoteDelTs ? local : remote;
+      mergedBudgetDeletedAt[key] = delSrc.budgetDeletedAt![key];
+      continue;
+    }
+
+    if (winningSetTs > 0) {
+      // Set wins — keep the newer value; losing deletion tombstone is discarded.
+      const setSrc = localSetTs >= remoteSetTs ? local : remote;
+      const val = setSrc.budgets?.[key];
+      if (val !== undefined) mergedBudgets[key] = val;
+      const setTs = setSrc.budgetUpdatedAt?.[key] ?? setSrc.exportDate;
+      if (setTs) mergedBudgetUpdatedAt[key] = setTs;
+      continue;
+    }
+
+    // No timestamps on either side: LOCAL-wins (safe legacy default).
+    if (local.budgets?.[key] !== undefined) {
+      mergedBudgets[key] = local.budgets[key];
+    } else if (remote.budgets?.[key] !== undefined) {
+      mergedBudgets[key] = remote.budgets[key];
+    }
+  }
 
   // Cap tombstones — only the most recently deleted IDs we still need to broadcast.
   // Tombstones older than the cap are assumed to have propagated to all devices already.
@@ -101,10 +148,12 @@ export function mergeBackups(local: BackupData, remote: BackupData): BackupData 
     expenses: merged,
     categories,
     categoryMappings,
-    budgets,
+    budgets: mergedBudgets,
+    budgetUpdatedAt: mergedBudgetUpdatedAt,
+    budgetDeletedAt: mergedBudgetDeletedAt,
     deletedIds: cappedTombstones,
     exportDate: new Date().toISOString(),
-    version: "3.0",
+    version: "4.0",
   };
 }
 
