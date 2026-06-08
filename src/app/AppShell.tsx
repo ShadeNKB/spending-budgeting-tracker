@@ -8,12 +8,14 @@ import { ToastHost } from '../ui/ToastHost'
 import { CommandPalette } from '../features/entry/CommandPalette'
 import { AddExpenseSheet } from '../features/entry/AddExpenseSheet'
 import { useExpenseStore, installPersistence, IS_DEMO } from '../stores/useExpenseStore'
+import { useSyncStore } from '../stores/useSyncStore'
+import { syncApplying } from '../services/syncService'
 import { useUIStore } from '../stores/useUIStore'
 import { useHotkeys } from '../hooks/useHotkeys'
 import { useToast } from '../hooks/useToast'
 
-// Lazy-load the Settings drawer — it's hidden by default and contains 3 panels
-// (Categories, Budgets, Backup), so shaving it from the initial bundle is a real win.
+// Lazy-load the Settings drawer — it's hidden by default and contains 4 panels
+// (Categories, Budgets, Backup, Sync), so shaving it from the initial bundle is a real win.
 const SettingsDrawer = lazy(() =>
   import('../features/settings/SettingsDrawer').then((m) => ({ default: m.SettingsDrawer })),
 )
@@ -29,6 +31,30 @@ function bootstrap() {
   installPersistence()
 
   // Wire data changes → debounced cloud push (skipped while applying remote data).
+  useExpenseStore.subscribe(
+    (s) => ({
+      expenses: s.expenses,
+      categories: s.categories,
+      categoryMappings: s.categoryMappings,
+      budgets: s.budgets,
+      deletedIds: s.deletedIds,
+    }),
+    () => {
+      if (!useExpenseStore.getState().hydrated) return
+      if (syncApplying.value) return
+      useSyncStore.getState().scheduleSyncPush()
+    },
+    {
+      equalityFn: (a, b) =>
+        a.expenses === b.expenses &&
+        a.categories === b.categories &&
+        a.categoryMappings === b.categoryMappings &&
+        a.budgets === b.budgets &&
+        a.deletedIds === b.deletedIds,
+    },
+  )
+
+  useSyncStore.getState().initSync()
 }
 
 export function AppShell() {
