@@ -38,34 +38,33 @@ export function SyncPanel() {
 function NotConfigured() {
   return (
     <div className="flex flex-col gap-4">
-      <div className="rounded-lg border border-white/[0.06] bg-surface-1 p-4 flex flex-col gap-2">
+      <div className="flex flex-col gap-2 rounded-lg border border-white/[0.06] bg-surface-1 p-4">
         <div className="flex items-center gap-2 text-[13px] font-semibold text-white">
           <CloudOff size={14} className="text-[var(--text-tertiary)]" />
           Cloud sync not configured
         </div>
-        <p className="text-[12px] text-[var(--text-tertiary)] leading-relaxed">
-          To enable cross-device sync, add Supabase credentials to your environment. Your data
-          stays local-first — Supabase is only used as a relay.
+        <p className="text-[12px] leading-relaxed text-[var(--text-tertiary)]">
+          To enable cross-device sync, add Supabase credentials to your environment. Your data stays
+          local-first — Supabase is only used as a relay.
         </p>
         <ol className="mt-1 flex flex-col gap-1.5 text-[12px] text-[var(--text-tertiary)]">
           <li className="flex gap-2">
-            <span className="text-accent font-mono">1.</span>
-            Create a free project at{' '}
-            <span className="font-mono text-white/60">supabase.com</span>
+            <span className="font-mono text-accent">1.</span>
+            Create a free project at <span className="font-mono text-white/60">supabase.com</span>
           </li>
           <li className="flex gap-2">
-            <span className="text-accent font-mono">2.</span>
+            <span className="font-mono text-accent">2.</span>
             Run the SQL migration from{' '}
             <span className="font-mono text-white/60">supabase/migrations/001_sync.sql</span>
           </li>
           <li className="flex gap-2">
-            <span className="text-accent font-mono">3.</span>
+            <span className="font-mono text-accent">3.</span>
             Add <span className="font-mono text-white/60">VITE_SUPABASE_URL</span> and{' '}
             <span className="font-mono text-white/60">VITE_SUPABASE_ANON_KEY</span> to Vercel and
             your local <span className="font-mono text-white/60">.env.local</span>
           </li>
           <li className="flex gap-2">
-            <span className="text-accent font-mono">4.</span>
+            <span className="font-mono text-accent">4.</span>
             Redeploy — sync activates automatically
           </li>
         </ol>
@@ -152,35 +151,34 @@ function SyncContent() {
   if (!syncId) {
     return (
       <div className="flex flex-col gap-4">
-        <div className="rounded-lg border border-accent/15 bg-accent/[0.04] p-4 flex flex-col gap-3">
+        <div className="flex flex-col gap-3 rounded-lg border border-accent/15 bg-accent/[0.04] p-4">
           <div className="flex items-center gap-2 text-[13px] font-semibold text-white">
             <Cloud size={14} className="text-accent" />
             Link your devices
           </div>
-          <p className="text-[12px] text-[var(--text-secondary)] leading-relaxed">
-            Generate a sync code on one device, then paste it on every other device you want to
-            keep in sync. There are no accounts and no passwords — the code itself is the shared
-            secret.
+          <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
+            Generate a sync code on one device, then paste it on every other device you want to keep
+            in sync. There are no accounts and no passwords — the code itself is the shared secret.
           </p>
-          <div className="grid grid-cols-2 gap-2 mt-1">
-            <div className="rounded-md bg-surface-1 border border-white/[0.06] p-2.5 flex items-start gap-2">
-              <span className="shrink-0 mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-accent/15 text-accent text-[10px] font-semibold">
+          <div className="mt-1 grid grid-cols-2 gap-2">
+            <div className="flex items-start gap-2 rounded-md border border-white/[0.06] bg-surface-1 p-2.5">
+              <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[10px] font-semibold text-accent">
                 1
               </span>
               <div className="min-w-0">
                 <div className="text-[11px] font-medium text-white">On this device</div>
-                <div className="text-[10px] text-[var(--text-tertiary)] leading-snug">
+                <div className="text-[10px] leading-snug text-[var(--text-tertiary)]">
                   Generate a sync code
                 </div>
               </div>
             </div>
-            <div className="rounded-md bg-surface-1 border border-white/[0.06] p-2.5 flex items-start gap-2">
-              <span className="shrink-0 mt-0.5 inline-flex h-5 w-5 items-center justify-center rounded-full bg-accent/15 text-accent text-[10px] font-semibold">
+            <div className="flex items-start gap-2 rounded-md border border-white/[0.06] bg-surface-1 p-2.5">
+              <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[10px] font-semibold text-accent">
                 2
               </span>
               <div className="min-w-0">
                 <div className="text-[11px] font-medium text-white">On other devices</div>
-                <div className="text-[10px] text-[var(--text-tertiary)] leading-snug">
+                <div className="text-[10px] leading-snug text-[var(--text-tertiary)]">
                   Settings → Sync → paste it
                 </div>
               </div>
@@ -194,9 +192,9 @@ function SyncContent() {
         </Button>
 
         <div className="flex items-center gap-3">
-          <div className="flex-1 h-px bg-white/[0.06]" />
+          <div className="h-px flex-1 bg-white/[0.06]" />
           <span className="text-[11px] text-[var(--text-tertiary)]">or join an existing one</span>
-          <div className="flex-1 h-px bg-white/[0.06]" />
+          <div className="h-px flex-1 bg-white/[0.06]" />
         </div>
 
         <div className="flex gap-2">
@@ -221,8 +219,8 @@ function SyncContent() {
           </Button>
         </div>
 
-        <div className="flex items-start gap-2 text-[11px] text-[var(--text-tertiary)] leading-relaxed pt-1">
-          <ShieldCheck size={12} className="shrink-0 mt-0.5 text-positive/70" />
+        <div className="flex items-start gap-2 pt-1 text-[11px] leading-relaxed text-[var(--text-tertiary)]">
+          <ShieldCheck size={12} className="mt-0.5 shrink-0 text-positive/70" />
           <span>
             Treat the sync code like a password. Anyone with it can read &amp; write your synced
             data. Don&apos;t share it in chats or screenshots.
@@ -248,14 +246,14 @@ function SyncContent() {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="rounded-lg border border-white/[0.06] bg-surface-1 p-4 flex flex-col gap-3">
+      <div className="flex flex-col gap-3 rounded-lg border border-white/[0.06] bg-surface-1 p-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <div
               className={clsx(
                 'h-2 w-2 rounded-full',
                 cloudStatus === 'synced' && 'bg-positive',
-                cloudStatus === 'syncing' && 'bg-accent animate-pulse',
+                cloudStatus === 'syncing' && 'animate-pulse bg-accent',
                 cloudStatus === 'error' && 'bg-negative',
                 cloudStatus === 'idle' && 'bg-white/20',
               )}
@@ -267,7 +265,7 @@ function SyncContent() {
           <button
             onClick={handleManualSync}
             disabled={cloudStatus === 'syncing'}
-            className="h-7 w-7 inline-flex items-center justify-center rounded-md text-[var(--text-tertiary)] hover:text-white hover:bg-surface-2 transition disabled:opacity-40"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-tertiary)] transition hover:bg-surface-2 hover:text-white disabled:opacity-40"
             title="Sync now"
           >
             <RefreshCw size={13} className={cloudStatus === 'syncing' ? 'animate-spin' : ''} />
@@ -275,7 +273,7 @@ function SyncContent() {
         </div>
 
         {cloudStatus === 'error' && (
-          <div className="flex items-center gap-2 rounded-md bg-negative/10 border border-negative/20 px-2.5 py-2 text-[11px] text-negative">
+          <div className="flex items-center gap-2 rounded-md border border-negative/20 bg-negative/10 px-2.5 py-2 text-[11px] text-negative">
             <AlertCircle size={12} className="shrink-0" />
             Could not reach sync server. Changes saved locally and will push when connection is
             restored.
@@ -287,7 +285,7 @@ function SyncContent() {
             <span className="text-[11px] text-[var(--text-tertiary)]">Your sync code</span>
             <button
               onClick={handleCopy}
-              className="text-[11px] inline-flex items-center gap-1 text-accent/80 hover:text-accent transition"
+              className="inline-flex items-center gap-1 text-[11px] text-accent/80 transition hover:text-accent"
             >
               {copied ? (
                 <>
@@ -302,10 +300,10 @@ function SyncContent() {
           </div>
           <button
             onClick={handleCopy}
-            className="text-left flex items-center gap-2 rounded-md border border-white/[0.06] bg-surface-2 px-3 py-2 hover:border-accent/30 transition"
+            className="flex items-center gap-2 rounded-md border border-white/[0.06] bg-surface-2 px-3 py-2 text-left transition hover:border-accent/30"
             title="Tap to copy"
           >
-            <span className="flex-1 font-mono text-[11px] text-white/80 truncate select-all">
+            <span className="flex-1 select-all truncate font-mono text-[11px] text-white/80">
               {syncId}
             </span>
           </button>
@@ -313,13 +311,13 @@ function SyncContent() {
       </div>
 
       {!lastSyncAt && (
-        <div className="rounded-lg border border-accent/15 bg-accent/[0.04] p-3.5 flex flex-col gap-2.5">
-          <div className="text-[12px] font-semibold text-white inline-flex items-center gap-1.5">
+        <div className="flex flex-col gap-2.5 rounded-lg border border-accent/15 bg-accent/[0.04] p-3.5">
+          <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-white">
             <Smartphone size={12} className="text-accent" /> Link your phone in 3 steps
           </div>
-          <ol className="flex flex-col gap-1.5 text-[11px] text-[var(--text-secondary)] leading-relaxed">
+          <ol className="flex flex-col gap-1.5 text-[11px] leading-relaxed text-[var(--text-secondary)]">
             <li className="flex gap-2">
-              <span className="shrink-0 inline-flex h-4 w-4 items-center justify-center rounded-full bg-accent/15 text-accent text-[10px] font-semibold">
+              <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[10px] font-semibold text-accent">
                 1
               </span>{' '}
               Open{' '}
@@ -329,19 +327,19 @@ function SyncContent() {
               on your phone browser.
             </li>
             <li className="flex gap-2">
-              <span className="shrink-0 inline-flex h-4 w-4 items-center justify-center rounded-full bg-accent/15 text-accent text-[10px] font-semibold">
+              <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[10px] font-semibold text-accent">
                 2
               </span>{' '}
               Go to Settings → <strong className="text-white/90">Sync</strong>.
             </li>
             <li className="flex gap-2">
-              <span className="shrink-0 inline-flex h-4 w-4 items-center justify-center rounded-full bg-accent/15 text-accent text-[10px] font-semibold">
+              <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[10px] font-semibold text-accent">
                 3
               </span>{' '}
               Paste the code above into <strong className="text-white/90">Connect</strong>.
             </li>
           </ol>
-          <div className="text-[10px] text-[var(--text-tertiary)] inline-flex items-center gap-1.5 pt-1 border-t border-white/[0.04] mt-1">
+          <div className="mt-1 inline-flex items-center gap-1.5 border-t border-white/[0.04] pt-1 text-[10px] text-[var(--text-tertiary)]">
             <Monitor size={10} /> Same flow on any other laptop, tablet, or browser profile.
           </div>
         </div>
@@ -349,7 +347,7 @@ function SyncContent() {
 
       <div className="border-t border-white/[0.06] pt-3">
         {confirmDisconnect ? (
-          <div className="rounded-lg border border-warning/30 bg-warning/[0.07] p-3 flex flex-col gap-2">
+          <div className="flex flex-col gap-2 rounded-lg border border-warning/30 bg-warning/[0.07] p-3">
             <p className="text-[12px] text-[var(--text-tertiary)]">
               Disconnect sync? Your local data stays intact — other devices stop syncing.
             </p>
@@ -361,7 +359,7 @@ function SyncContent() {
                   toast.info('Sync disconnected')
                 }}
                 variant="primary"
-                className="flex-1 !bg-warning/20 !text-warning border-warning/30 hover:!bg-warning/30"
+                className="flex-1 border-warning/30 !bg-warning/20 !text-warning hover:!bg-warning/30"
               >
                 Disconnect
               </Button>

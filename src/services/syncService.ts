@@ -52,10 +52,7 @@ export function mergeBackups(local: BackupData, remote: BackupData): BackupData 
   const remoteMap = new Map<string, Expense>(remote.expenses.map((e) => [e.id, e]))
 
   // Union tombstones — once an ID is deleted on any device it stays deleted.
-  const tombstones = new Set<string>([
-    ...(local.deletedIds ?? []),
-    ...(remote.deletedIds ?? []),
-  ])
+  const tombstones = new Set<string>([...(local.deletedIds ?? []), ...(remote.deletedIds ?? [])])
 
   // Union of all expense IDs, keep whichever copy has the newer timestamp.
   const allIds = new Set<string>([...localMap.keys(), ...remoteMap.keys()])
@@ -188,7 +185,9 @@ export async function pushSync(syncId: string, data: BackupData): Promise<void> 
   const serialized = JSON.stringify(data)
   if (serialized.length > PAYLOAD_WARN_BYTES) {
     if (import.meta.env.DEV) {
-      console.warn(`[sync] payload is ${(serialized.length / 1024).toFixed(0)} KB — approaching row limit`)
+      console.warn(
+        `[sync] payload is ${(serialized.length / 1024).toFixed(0)} KB — approaching row limit`,
+      )
     }
     if (serialized.length > 1024 * 1024) throw new PayloadTooLargeError(serialized.length)
   }
@@ -215,10 +214,7 @@ export async function pullSync(syncId: string): Promise<BackupData | null> {
  * Subscribe to remote changes. Auto-reconnects if the channel drops.
  * Returns a Promise<unsub> because the SDK is lazy-loaded.
  */
-export async function subscribeSync(
-  syncId: string,
-  onUpdate: () => void,
-): Promise<() => void> {
+export async function subscribeSync(syncId: string, onUpdate: () => void): Promise<() => void> {
   const client = await getClient()
   if (!client) return () => {}
 
