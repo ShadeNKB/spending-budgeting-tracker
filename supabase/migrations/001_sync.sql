@@ -13,6 +13,20 @@ CREATE TABLE IF NOT EXISTS public.sync_buckets (
 -- Allow the realtime extension to track changes on this table.
 ALTER TABLE public.sync_buckets REPLICA IDENTITY FULL;
 
+-- Ensure Supabase Realtime broadcasts row changes for this table.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1
+      FROM pg_publication_tables
+     WHERE pubname = 'supabase_realtime'
+       AND schemaname = 'public'
+       AND tablename = 'sync_buckets'
+  ) THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE public.sync_buckets;
+  END IF;
+END $$;
+
 -- Disable RLS — the 122-bit UUID sync_id acts as the shared secret.
 -- No policies needed; open access is intentional for this relay table.
 ALTER TABLE public.sync_buckets DISABLE ROW LEVEL SECURITY;

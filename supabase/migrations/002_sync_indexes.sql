@@ -33,8 +33,7 @@ DECLARE
   removed BIGINT;
 BEGIN
   DELETE FROM public.sync_buckets
-   WHERE updated_at < NOW() - stale_after
-  RETURNING 1 INTO removed;
+   WHERE updated_at < NOW() - stale_after;
   GET DIAGNOSTICS removed = ROW_COUNT;
   RETURN removed;
 END;

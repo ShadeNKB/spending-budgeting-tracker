@@ -1,64 +1,85 @@
-import { useNavigate } from "react-router-dom";
-import { AlertTriangle, TrendingUp } from "lucide-react";
-import { formatMoney } from "../../lib/format";
-import { colorFromString } from "../../lib/analytics";
-import type { CategoryStat } from "../../lib/analytics";
+import { useNavigate } from 'react-router-dom'
+import { AlertTriangle, TrendingUp } from 'lucide-react'
+import { formatMoney } from '../../lib/format'
+import { colorFromString } from '../../lib/analytics'
+import type { CategoryStat } from '../../lib/analytics'
 
 export function BudgetActual({ items, daysLeft }: { items: CategoryStat[]; daysLeft: number }) {
-  const navigate = useNavigate();
-  if (!items.length) return null;
+  const navigate = useNavigate()
+  if (!items.length) return null
 
   return (
     <ul className="flex flex-col gap-2.5">
       {items.map((it) => {
-        const ratio = it.paceRatio ?? 0;
-        const pct = Math.min(100, (it.total / (it.budget ?? 1)) * 100);
-        const over = ratio >= 1.05;
-        const warn = ratio >= 0.85 && ratio < 1.05;
-        const barColor = over ? "var(--negative)" : warn ? "var(--warning)" : colorFromString(it.category);
+        const ratio = it.paceRatio ?? 0
+        const budget = it.budget ?? 1
+        const pct = Math.min(100, (it.total / budget) * 100)
+        const expectedPct = Math.min(100, ((it.expected ?? 0) / budget) * 100)
+        const projected = it.projected ?? it.total
+        const over = ratio >= 1.05
+        const warn = ratio >= 0.85 && ratio < 1.05
+        const barColor = over
+          ? 'var(--negative)'
+          : warn
+            ? 'var(--warning)'
+            : colorFromString(it.category)
 
         return (
           <li key={it.category}>
             <button
+              type="button"
               onClick={() => navigate(`/ledger?category=${encodeURIComponent(it.category)}`)}
-              className="group w-full text-left"
+              className="group w-full rounded-lg px-1.5 py-1 text-left transition hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+              aria-label={`${it.category}: ${formatMoney(it.total)} used of ${formatMoney(budget)} budget`}
             >
-              <div className="flex items-center justify-between gap-2 mb-1">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: barColor }} />
-                  <span className="text-[13px] text-white truncate">{it.category}</span>
-                  {over && <AlertTriangle size={11} className="text-negative shrink-0" />}
-                  {warn && !over && <TrendingUp size={11} className="text-warning shrink-0" />}
+              <div className="mb-1 flex items-center justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-1.5">
+                  <span
+                    className="h-1.5 w-1.5 shrink-0 rounded-full"
+                    style={{ background: barColor }}
+                  />
+                  <span className="truncate text-[13px] text-white">{it.category}</span>
+                  {over && <AlertTriangle size={11} className="shrink-0 text-negative" />}
+                  {warn && !over && <TrendingUp size={11} className="shrink-0 text-warning" />}
                 </div>
-                <div className="flex items-center gap-2 text-[12px] font-mono tabular-nums shrink-0">
-                  <span className={over ? "text-negative" : warn ? "text-warning" : "text-white"}>
+                <div className="flex shrink-0 items-center gap-2 font-mono text-[12px] tabular-nums">
+                  <span className={over ? 'text-negative' : warn ? 'text-warning' : 'text-white'}>
                     {formatMoney(it.total)}
                   </span>
-                  <span className="text-[var(--text-tertiary)]">/ {formatMoney(it.budget!)}</span>
+                  <span className="text-[var(--text-tertiary)]">/ {formatMoney(budget)}</span>
                 </div>
               </div>
-              <div className="h-1.5 rounded-full bg-surface-3 overflow-hidden">
+
+              <div className="relative h-2 overflow-hidden rounded-full bg-surface-3">
                 <div
                   className="h-full rounded-full transition-[width] duration-700"
                   style={{ width: `${Math.max(2, pct)}%`, background: barColor }}
                 />
+                <span
+                  className="absolute top-0 h-full w-px bg-white/70 shadow-[0_0_0_1px_rgba(0,0,0,0.35)]"
+                  style={{ left: `${expectedPct}%` }}
+                  aria-hidden
+                />
               </div>
-              {over && (
-                <div className="mt-1 text-[10px] text-negative">
-                  {it.total > it.budget!
-                    ? `Over by ${formatMoney(it.total - it.budget!)} · ${daysLeft}d left`
-                    : `On pace to exceed · ${daysLeft}d left`}
-                </div>
-              )}
-              {warn && !over && (
-                <div className="mt-1 text-[10px] text-warning">
-                  {Math.round(pct)}% used · {daysLeft}d left
-                </div>
-              )}
+
+              <div className="mt-1 flex items-center justify-between gap-2 text-[10px]">
+                <span
+                  className={
+                    over ? 'text-negative' : warn ? 'text-warning' : 'text-[var(--text-tertiary)]'
+                  }
+                >
+                  {over
+                    ? it.total > budget
+                      ? `Over by ${formatMoney(it.total - budget)}`
+                      : `Projected ${formatMoney(projected)}`
+                    : `${Math.round(pct)}% used`}
+                </span>
+                <span className="text-[var(--text-tertiary)]">{daysLeft}d left</span>
+              </div>
             </button>
           </li>
-        );
+        )
       })}
     </ul>
-  );
+  )
 }

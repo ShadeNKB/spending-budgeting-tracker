@@ -1,6 +1,6 @@
 # Security
 
-SpendTrack is a local-first browser app. It does not run a backend service and does not transmit user spending data.
+SpendTrack is a local-first browser app. By default it does not run a backend service or transmit user spending data. If optional Supabase sync is enabled, the app stores plaintext JSON in the user's own Supabase project and uses a UUID sync code as the shared secret.
 
 ## Supported Versions
 

@@ -8,9 +8,9 @@ export default defineConfig({
     rollupOptions: {
       output: {
         manualChunks: {
-          "vendor-react": ["react", "react-dom", "react-router-dom"],
-          "vendor-motion": ["framer-motion"],
-          "vendor-utils": ["date-fns", "fuse.js", "zustand"],
+          'vendor-react': ['react', 'react-dom', 'react-router-dom'],
+          'vendor-motion': ['framer-motion'],
+          'vendor-utils': ['date-fns', 'fuse.js', 'zustand'],
         },
       },
     },
@@ -22,11 +22,18 @@ export default defineConfig({
       // Take control of all clients immediately on activation — prevents
       // the old SW serving stale shells while the new one waits.
       injectRegister: 'auto',
-      includeAssets: ['favicon.svg', 'apple-touch-icon.png', 'icon-192.png', 'icon-512.png', 'og.png'],
+      includeAssets: [
+        'favicon.svg',
+        'apple-touch-icon.png',
+        'icon-192.png',
+        'icon-512.png',
+        'og.png',
+      ],
       manifest: {
         name: 'SpendTrack — Local-first spending tracker',
         short_name: 'SpendTrack',
-        description: 'A fast, local-first spending tracker with smart categorisation, real-time budgets, and optional cross-device sync.',
+        description:
+          'A fast, local-first spending tracker with smart categorisation, real-time budgets, and optional cross-device sync.',
         start_url: '/pulse',
         scope: '/',
         display: 'standalone',

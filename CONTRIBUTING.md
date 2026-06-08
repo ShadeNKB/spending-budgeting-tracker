@@ -13,9 +13,11 @@ Thanks for taking a look at SpendTrack. The project is intentionally small, loca
 ## Local Setup
 
 ```bash
-npm install
+npm ci
 npm run dev
 ```
+
+Optional cloud sync needs a local `.env.local` with `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`, plus the SQL in `supabase/migrations/001_sync.sql` applied to your own Supabase project. Leave those variables unset when you only need local-first behavior.
 
 Before opening a pull request, run:
 
@@ -24,6 +26,7 @@ npm run typecheck
 npm run lint
 npm run test:run
 npm run build
+npm run smoke
 ```
 
 ## Pull Requests

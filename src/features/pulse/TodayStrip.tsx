@@ -1,29 +1,29 @@
-import { ArrowRight, Sun } from "lucide-react";
-import { useNavigate } from "react-router-dom";
-import { formatMoney } from "../../lib/format";
-import { colorFromString } from "../../lib/analytics";
-import type { Expense } from "../../types";
+import { ArrowRight, Sun } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { formatMoney } from '../../lib/format'
+import { colorFromString } from '../../lib/analytics'
+import type { Expense } from '../../types'
 
 export function TodayStrip({ entries, total }: { entries: Expense[]; total: number }) {
-  const navigate = useNavigate();
+  const navigate = useNavigate()
 
   return (
     <div className="rounded-[14px] border border-white/[0.06] bg-surface-1 p-4 md:p-5">
-      <div className="flex items-center justify-between mb-3">
+      <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Sun size={14} className="text-accent/80" />
           <h3 className="text-[13px] font-semibold text-white">Today</h3>
           <span className="text-[11px] text-[var(--text-tertiary)]">
-            {entries.length} {entries.length === 1 ? "entry" : "entries"}
+            {entries.length} {entries.length === 1 ? 'entry' : 'entries'}
           </span>
         </div>
         <div className="flex items-center gap-3">
-          <span className="font-mono text-[15px] tabular-nums font-semibold text-white">
+          <span className="font-mono text-[15px] font-semibold tabular-nums text-white">
             {formatMoney(total)}
           </span>
           <button
-            onClick={() => navigate("/ledger?range=today")}
-            className="inline-flex items-center gap-1 text-[12px] text-[var(--text-secondary)] hover:text-white transition"
+            onClick={() => navigate('/ledger?range=today')}
+            className="inline-flex items-center gap-1 text-[12px] text-[var(--text-secondary)] transition hover:text-white"
           >
             View <ArrowRight size={12} />
           </button>
@@ -39,7 +39,7 @@ export function TodayStrip({ entries, total }: { entries: Expense[]; total: numb
           {entries.slice(0, 5).map((e) => (
             <li key={e.id} className="flex items-center gap-3 py-2.5">
               <span
-                className="h-7 w-7 shrink-0 rounded-full flex items-center justify-center text-[11px] font-bold"
+                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
                 style={{
                   background: `${colorFromString(e.category)}1E`,
                   color: colorFromString(e.category),
@@ -48,10 +48,11 @@ export function TodayStrip({ entries, total }: { entries: Expense[]; total: numb
               >
                 {e.itemName.charAt(0).toUpperCase()}
               </span>
-              <div className="flex-1 min-w-0">
+              <div className="min-w-0 flex-1">
                 <div className="truncate text-[13px] text-white">{e.itemName}</div>
-                <div className="text-[11px] text-[var(--text-tertiary)] truncate">
-                  {e.category}{e.notes ? ` · ${e.notes}` : ""}
+                <div className="truncate text-[11px] text-[var(--text-tertiary)]">
+                  {e.category}
+                  {e.notes ? ` · ${e.notes}` : ''}
                 </div>
               </div>
               <span className="font-mono text-[13px] tabular-nums text-white">
@@ -62,8 +63,8 @@ export function TodayStrip({ entries, total }: { entries: Expense[]; total: numb
           {entries.length > 5 && (
             <li className="pt-2 text-center">
               <button
-                onClick={() => navigate("/ledger?range=today")}
-                className="text-[11px] text-accent hover:text-accent-hover transition"
+                onClick={() => navigate('/ledger?range=today')}
+                className="text-[11px] text-accent transition hover:text-accent-hover"
               >
                 +{entries.length - 5} more
               </button>
@@ -72,5 +73,5 @@ export function TodayStrip({ entries, total }: { entries: Expense[]; total: numb
         </ul>
       )}
     </div>
-  );
+  )
 }

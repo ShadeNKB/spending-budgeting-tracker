@@ -1,0 +1,2773 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>spending-tracker — Complete Call Flow &amp; Architecture Documentation</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+:root {
+  --bg: #0f172a; --surface: #1e293b; --border: #334155;
+  --text: #e2e8f0; --muted: #94a3b8; --accent: #38bdf8;
+  --warn: #fbbf24; --err: #f87171; --ok: #34d399;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: 'Segoe UI', system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); line-height: 1.7; }
+.container { max-width: 1200px; margin: 0 auto; padding: 40px 24px; }
+h1 { font-size: 2.4rem; margin-bottom: 8px; background: linear-gradient(135deg, var(--accent), #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+h2 { font-size: 1.7rem; margin: 48px 0 16px; padding-bottom: 8px; border-bottom: 2px solid var(--accent); }
+h3 { font-size: 1.25rem; margin: 32px 0 12px; color: var(--accent); }
+h4 { font-size: 1.05rem; margin: 20px 0 8px; color: var(--warn); }
+p { margin: 8px 0; color: var(--muted); }
+.subtitle { color: var(--muted); font-size: 1.1rem; margin-bottom: 32px; }
+.mermaid { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 24px; margin: 20px 0; overflow-x: auto; position: relative; }
+.mermaid.is-enhanced { padding: 0; overflow: hidden; min-height: 260px; }
+.mermaid-viewport { padding: 54px 24px 24px; overflow: hidden; cursor: grab; touch-action: none; min-height: 260px; }
+.mermaid-viewport.is-dragging { cursor: grabbing; }
+.mermaid-viewport svg { max-width: none !important; height: auto; transform-origin: 0 0; transition: transform 120ms ease; }
+.mermaid-toolbar { position: absolute; top: 10px; right: 10px; z-index: 3; display: flex; align-items: center; gap: 6px; padding: 6px; background: rgba(15,23,42,0.92); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,0,0,0.28); }
+.mermaid-toolbar button, .mermaid-toolbar .zoom-level { height: 28px; min-width: 32px; border: 1px solid var(--border); border-radius: 6px; background: #1e293b; color: var(--text); font: 600 0.78rem system-ui, sans-serif; display: inline-flex; align-items: center; justify-content: center; }
+.mermaid-toolbar button { cursor: pointer; }
+.mermaid-toolbar button:hover { border-color: var(--accent); color: var(--accent); }
+.mermaid-toolbar .zoom-level { min-width: 52px; color: var(--muted); background: transparent; }
+.call-table { width: 100%; border-collapse: collapse; margin: 16px 0; font-size: 0.92rem; }
+.call-table th { background: #1a2744; color: var(--accent); text-align: left; padding: 10px 14px; border: 1px solid var(--border); }
+.call-table td { padding: 8px 14px; border: 1px solid var(--border); vertical-align: top; }
+.call-table tr:nth-child(even) { background: rgba(255,255,255,0.02); }
+.tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.8rem; font-weight: 600; }
+.tag-async { background: #7c3aed33; color: #a78bfa; }
+.tag-class { background: #05966933; color: var(--ok); }
+.tag-func { background: #2563eb33; color: var(--accent); }
+.tag-cmd { background: #d9770633; color: var(--warn); }
+.tag-endpoint { background: #dc262633; color: var(--err); }
+.tag-hook { background: #db277733; color: #f472b6; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 20px; margin: 16px 0; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 16px; margin: 16px 0; }
+.arrow-chain { font-family: 'Fira Code', monospace; font-size: 0.85rem; color: var(--accent); padding: 10px; background: rgba(56,189,248,0.06); border-radius: 6px; }
+code { font-family: 'Fira Code', 'Cascadia Code', monospace; background: rgba(255,255,255,0.06); padding: 1px 6px; border-radius: 3px; font-size: 0.88em; }
+ul, ol { margin: 8px 0 8px 24px; color: var(--muted); }
+li { margin: 4px 0; }
+a { color: var(--accent); }
+hr { border: none; border-top: 1px solid var(--border); margin: 40px 0; }
+.nav { position: sticky; top: 0; background: var(--bg); z-index: 10; padding: 12px 0; border-bottom: 1px solid var(--border); display: flex; gap: 20px; flex-wrap: wrap; font-size: 0.9rem; }
+.nav a { text-decoration: none; }
+.nav a:hover { text-decoration: underline; }
+@media (max-width: 768px) { .container { padding: 16px; } h1 { font-size: 1.8rem; } }
+
+</style>
+</head>
+<body>
+<div class="container">
+
+<h1>spending-tracker — Complete Call Flow &amp; Architecture Documentation</h1>
+<p class="subtitle">Generated from graphify knowledge graph: 348 nodes, 607 edges, 36 communities. Commit: 6459467</p>
+
+<div class="nav">
+    <a href="#overview">Architecture Overview</a>
+    <a href="#build-graph">Graph Build</a>
+    <a href="#cli-skills">CLI &amp; Skill Installers</a>
+    <a href="#ingest-cache-update">Ingestion &amp; Updates</a>
+    <a href="#security-global">Security &amp; Global Graph</a>
+    <a href="#tests-fixtures">Tests &amp; Fixtures</a>
+    <a href="#features-datepickertsx-settings">Features Datepickertsx Settings</a>
+    <a href="#insightsts-utils-insighttone">Insightsts Utils Insighttone</a>
+    <a href="#check-bundle-sizemjs">Check Bundle Sizemjs</a>
+    <a href="#smoke-previewmjs-scripts">Smoke Previewmjs Scripts</a>
+    <a href="#paceringtsx-ringtsx-features">Paceringtsx Ringtsx Features</a>
+    <a href="#spendtrack-conductor-tech">Spendtrack Conductor Tech</a>
+    <a href="#spendtrack-docs-brain">Spendtrack Docs Brain</a>
+    <a href="#spendtrack-design-anti">Spendtrack Design Anti</a>
+    <a href="#spendtrack-readme-readmemd">Spendtrack Readme Readmemd</a>
+    <a href="#other">Other</a>
+</div>
+
+<!-- ====== Architecture Overview ====== -->
+<h2 id="overview">1. Architecture Overview</h2>
+
+<div class="mermaid">
+
+%%{init: {"theme": "dark", "themeVariables": {"fontSize": "15.0px", "fontFamily": "Segoe UI, system-ui, sans-serif", "primaryColor": "#1e293b", "primaryTextColor": "#e2e8f0", "primaryBorderColor": "#38bdf8", "secondaryColor": "#0f172a", "tertiaryColor": "#334155", "lineColor": "#64748b", "textColor": "#e2e8f0"}, "flowchart": {"htmlLabels": true, "curve": "basis", "nodeSpacing": 48, "rankSpacing": 64, "padding": 14, "diagramPadding": 10, "useMaxWidth": true}}}%%
+flowchart LR
+    BUILD_GRAPH_321CBB04("Graph Build<br/><small>104 nodes</small>")
+    class BUILD_GRAPH_321CBB04 module;
+    CLI_SKILLS_9964CBB8("CLI &amp; Skill Installers<br/><small>7 nodes</small>")
+    class CLI_SKILLS_9964CBB8 module;
+    INGEST_CACHE_UPDATE_FF457338("Ingestion &amp; Updates<br/><small>36 nodes</small>")
+    class INGEST_CACHE_UPDATE_FF457338 module;
+    SECURITY_GLOBAL_5B9C6A04("Security &amp; Global Graph<br/><small>1 nodes</small>")
+    class SECURITY_GLOBAL_5B9C6A04 module;
+    TESTS_FIXTURES_B84B1DCC("Tests &amp; Fixtures<br/><small>135 nodes</small>")
+    class TESTS_FIXTURES_B84B1DCC module;
+    FEATURES_DATEPICKERTSX_SETTINGS_68F51874("Features Datepickertsx Settings<br/><small>21 nodes</small>")
+    class FEATURES_DATEPICKERTSX_SETTINGS_68F51874 module;
+    INSIGHTSTS_UTILS_INSIGHTTONE_DAF4B82D("Insightsts Utils Insighttone<br/><small>7 nodes</small>")
+    class INSIGHTSTS_UTILS_INSIGHTTONE_DAF4B82D module;
+    CHECK_BUNDLE_SIZEMJS_62C19C7A("Check Bundle Sizemjs<br/><small>6 nodes</small>")
+    class CHECK_BUNDLE_SIZEMJS_62C19C7A module;
+    SMOKE_PREVIEWMJS_SCRIPTS_9263883E("Smoke Previewmjs Scripts<br/><small>5 nodes</small>")
+    class SMOKE_PREVIEWMJS_SCRIPTS_9263883E module;
+    PACERINGTSX_RINGTSX_FEATURES_2FB9D969("Paceringtsx Ringtsx Features<br/><small>4 nodes</small>")
+    class PACERINGTSX_RINGTSX_FEATURES_2FB9D969 module;
+    SPENDTRACK_CONDUCTOR_TECH_0B7142B7("Spendtrack Conductor Tech<br/><small>4 nodes</small>")
+    class SPENDTRACK_CONDUCTOR_TECH_0B7142B7 module;
+    SPENDTRACK_DOCS_BRAIN_F23F4CA5("Spendtrack Docs Brain<br/><small>3 nodes</small>")
+    class SPENDTRACK_DOCS_BRAIN_F23F4CA5 module;
+    SPENDTRACK_DESIGN_ANTI_08CE0574("Spendtrack Design Anti<br/><small>2 nodes</small>")
+    class SPENDTRACK_DESIGN_ANTI_08CE0574 module;
+    SPENDTRACK_README_READMEMD_7F321718("Spendtrack Readme Readmemd<br/><small>2 nodes</small>")
+    class SPENDTRACK_README_READMEMD_7F321718 module;
+    OTHER_D0941E68("Other<br/><small>11 nodes</small>")
+    class OTHER_D0941E68 module;
+    TESTS_FIXTURES_B84B1DCC -->|imports x18| INGEST_CACHE_UPDATE_FF457338
+    INGEST_CACHE_UPDATE_FF457338 -->|imports x18| TESTS_FIXTURES_B84B1DCC
+    TESTS_FIXTURES_B84B1DCC -->|imports x11| FEATURES_DATEPICKERTSX_SETTINGS_68F51874
+    INGEST_CACHE_UPDATE_FF457338 -->|imports x8| FEATURES_DATEPICKERTSX_SETTINGS_68F51874
+    FEATURES_DATEPICKERTSX_SETTINGS_68F51874 -->|imports x8| TESTS_FIXTURES_B84B1DCC
+    FEATURES_DATEPICKERTSX_SETTINGS_68F51874 -->|imports x7| INGEST_CACHE_UPDATE_FF457338
+    TESTS_FIXTURES_B84B1DCC -->|imports x5| INSIGHTSTS_UTILS_INSIGHTTONE_DAF4B82D
+    CLI_SKILLS_9964CBB8 -->|contains x4| TESTS_FIXTURES_B84B1DCC
+    INGEST_CACHE_UPDATE_FF457338 -->|imports x2| CLI_SKILLS_9964CBB8
+    PACERINGTSX_RINGTSX_FEATURES_2FB9D969 -->|imports x2| TESTS_FIXTURES_B84B1DCC
+    classDef entry fill:#422006,stroke:#fbbf24,color:#fde68a,stroke-width:1px;
+    classDef api fill:#450a0a,stroke:#f87171,color:#fee2e2,stroke-width:1px;
+    classDef async fill:#2e1065,stroke:#a78bfa,color:#ede9fe,stroke-width:1px;
+    classDef klass fill:#064e3b,stroke:#34d399,color:#d1fae5,stroke-width:1px;
+    classDef ui fill:#831843,stroke:#f472b6,color:#fce7f3,stroke-width:1px;
+    classDef module fill:#172554,stroke:#60a5fa,color:#dbeafe,stroke-width:1px;
+    classDef test fill:#3f3f46,stroke:#a1a1aa,color:#f4f4f5,stroke-width:1px;
+    classDef concept fill:#292524,stroke:#a8a29e,color:#fafaf9,stroke-dasharray:4 3;
+    classDef function fill:#0f172a,stroke:#38bdf8,color:#e0f2fe,stroke-width:1px;
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h4>Architecture Layers</h4>
+    <table style="width:100%;font-size:0.85rem;">
+      <tr><th>Layer</th><th>Nodes</th><th>Communities</th></tr>
+      <tr><td>Graph Build</td><td>104</td><td><code>3, 4, 7, 8, 9, 10, 20</code></td></tr><tr><td>CLI &amp; Skill Installers</td><td>7</td><td><code>12</code></td></tr><tr><td>Ingestion &amp; Updates</td><td>36</td><td><code>2</code></td></tr><tr><td>Security &amp; Global Graph</td><td>1</td><td><code>34</code></td></tr><tr><td>Tests &amp; Fixtures</td><td>135</td><td><code>0, 1, 5, 11, 16, 29</code></td></tr><tr><td>Features Datepickertsx Settings</td><td>21</td><td><code>6</code></td></tr><tr><td>Insightsts Utils Insighttone</td><td>7</td><td><code>13</code></td></tr><tr><td>Check Bundle Sizemjs</td><td>6</td><td><code>14</code></td></tr><tr><td>Smoke Previewmjs Scripts</td><td>5</td><td><code>15</code></td></tr><tr><td>Paceringtsx Ringtsx Features</td><td>4</td><td><code>17</code></td></tr><tr><td>Spendtrack Conductor Tech</td><td>4</td><td><code>18</code></td></tr><tr><td>Spendtrack Docs Brain</td><td>3</td><td><code>19</code></td></tr><tr><td>Spendtrack Design Anti</td><td>2</td><td><code>21</code></td></tr><tr><td>Spendtrack Readme Readmemd</td><td>2</td><td><code>22</code></td></tr><tr><td>Other</td><td>11</td><td><code>23, 24, 25, 26, 27, 28, 30, 31, 32, 33, 35</code></td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h4>Core Flow</h4>
+    <div class="arrow-chain">Graph Build -&gt; CLI &amp; Skill Installers -&gt; Tests &amp; Fixtures -&gt; Ingestion &amp; Updates -&gt; Features Datepickertsx Settings -&gt; Security &amp; Global Graph -&gt; Insightsts Utils Insighttone</div>
+  </div>
+</div>
+<hr>
+<!-- ====== 2. Graph Build ====== -->
+<h2 id="build-graph">2. Graph Build</h2>
+<p>Graph Build groups implementation around packagejson, tsconfigjson, tsconfignodejson, react, mostly in package.json, tsconfig.json, tsconfig.node.json. This section covers 104 nodes and 101 internal edges; the diagram shows only representative relationships to stay readable.</p>
+
+<div class="mermaid">
+%%{init: {"theme": "dark", "themeVariables": {"fontSize": "15.0px", "fontFamily": "Segoe UI, system-ui, sans-serif", "primaryColor": "#1e293b", "primaryTextColor": "#e2e8f0", "primaryBorderColor": "#38bdf8", "secondaryColor": "#0f172a", "tertiaryColor": "#334155", "lineColor": "#64748b", "textColor": "#e2e8f0"}, "flowchart": {"htmlLabels": true, "curve": "basis", "nodeSpacing": 48, "rankSpacing": 64, "padding": 14, "diagramPadding": 10, "useMaxWidth": true}}}%%
+flowchart LR
+    %% Section: Graph Build (104 nodes, 101 edges)
+    subgraph build_graph_prettierrc_json_68095dbe[".prettierrc.json"]
+        prettierrc_json_653ca8eb(".prettierrc.json")
+        spending_tracker_prettierrc_semi_41188335("semi<br/><small>.prettierrc.json</small>")
+        spending_tracker_prettierrc_singlequote_b24d549f("singleQuote<br/><small>.prettierrc.json</small>")
+        spending_tracker_prettierrc_trailingcomma_267273d3("trailingComma<br/><small>.prettierrc.json</small>")
+        spending_tracker_prettierrc_printwidth_7b079057("printWidth<br/><small>.prettierrc.json</small>")
+        spending_tracker_prettierrc_tabwidth_d5abd929("tabWidth<br/><small>.prettierrc.json</small>")
+        spending_tracker_prettierrc_endofline_0c898416("endOfLine<br/><small>.prettierrc.json</small>")
+        spending_tracker_prettierrc_plugins_5d11457b("plugins<br/><small>.prettierrc.json</small>")
+    end
+    subgraph build_graph_package_json_4e40bfbd["package.json"]
+        spending_tracker_package_devdependencies_0517bda2("devDependencies<br/><small>package.json</small>")
+        package_json_ae96f451("package.json")
+        spending_tracker_package_scripts_13091aa5("scripts<br/><small>package.json</small>")
+        spending_tracker_package_dependencies_4bb13f50("dependencies<br/><small>package.json</small>")
+        spending_tracker_package_name_d1324149("name<br/><small>package.json</small>")
+        spending_tracker_package_private_da4cde96("private<br/><small>package.json</small>")
+        spending_tracker_package_description_cb16ccaf("description<br/><small>package.json</small>")
+        spending_tracker_package_version_ff16686a("version<br/><small>package.json</small>")
+    end
+    spending_tracker_tsconfig_compileroptions_cbe288ac("compilerOptions<br/><small>tsconfig.json</small>")
+    spending_tracker_tsconfig_node_compileroptions_970bf94d("compilerOptions<br/><small>tsconfig.node.json</small>")
+    prettierrc_json_653ca8eb -->|contains| spending_tracker_prettierrc_semi_41188335
+    prettierrc_json_653ca8eb -->|contains| spending_tracker_prettierrc_singlequote_b24d549f
+    prettierrc_json_653ca8eb -->|contains| spending_tracker_prettierrc_trailingcomma_267273d3
+    prettierrc_json_653ca8eb -->|contains| spending_tracker_prettierrc_printwidth_7b079057
+    prettierrc_json_653ca8eb -->|contains| spending_tracker_prettierrc_tabwidth_d5abd929
+    prettierrc_json_653ca8eb -->|contains| spending_tracker_prettierrc_endofline_0c898416
+    prettierrc_json_653ca8eb -->|contains| spending_tracker_prettierrc_plugins_5d11457b
+    package_json_ae96f451 -->|contains| spending_tracker_package_name_d1324149
+    package_json_ae96f451 -->|contains| spending_tracker_package_private_da4cde96
+    package_json_ae96f451 -->|contains| spending_tracker_package_description_cb16ccaf
+    package_json_ae96f451 -->|contains| spending_tracker_package_version_ff16686a
+    package_json_ae96f451 -->|contains| spending_tracker_package_scripts_13091aa5
+    package_json_ae96f451 -->|contains| spending_tracker_package_dependencies_4bb13f50
+    package_json_ae96f451 -->|contains| spending_tracker_package_devdependencies_0517bda2
+    %% Omitted for readability: 86 nodes, 0 edges
+    class prettierrc_json_653ca8eb function;
+    class spending_tracker_prettierrc_semi_41188335 function;
+    class spending_tracker_prettierrc_singlequote_b24d549f function;
+    class spending_tracker_prettierrc_trailingcomma_267273d3 function;
+    class spending_tracker_prettierrc_printwidth_7b079057 function;
+    class spending_tracker_prettierrc_tabwidth_d5abd929 function;
+    class spending_tracker_prettierrc_endofline_0c898416 function;
+    class spending_tracker_prettierrc_plugins_5d11457b function;
+    class spending_tracker_package_devdependencies_0517bda2 function;
+    class package_json_ae96f451 function;
+    class spending_tracker_package_scripts_13091aa5 function;
+    class spending_tracker_package_dependencies_4bb13f50 function;
+    class spending_tracker_package_name_d1324149 function;
+    class spending_tracker_package_private_da4cde96 function;
+    class spending_tracker_package_description_cb16ccaf function;
+    class spending_tracker_package_version_ff16686a function;
+    class spending_tracker_tsconfig_compileroptions_cbe288ac function;
+    class spending_tracker_tsconfig_node_compileroptions_970bf94d function;
+    classDef entry fill:#422006,stroke:#fbbf24,color:#fde68a,stroke-width:1px;
+    classDef api fill:#450a0a,stroke:#f87171,color:#fee2e2,stroke-width:1px;
+    classDef async fill:#2e1065,stroke:#a78bfa,color:#ede9fe,stroke-width:1px;
+    classDef klass fill:#064e3b,stroke:#34d399,color:#d1fae5,stroke-width:1px;
+    classDef ui fill:#831843,stroke:#f472b6,color:#fce7f3,stroke-width:1px;
+    classDef module fill:#172554,stroke:#60a5fa,color:#dbeafe,stroke-width:1px;
+    classDef test fill:#3f3f46,stroke:#a1a1aa,color:#f4f4f5,stroke-width:1px;
+    classDef concept fill:#292524,stroke:#a8a29e,color:#fafaf9,stroke-dasharray:4 3;
+    classDef function fill:#0f172a,stroke:#38bdf8,color:#e0f2fe,stroke-width:1px;
+</div>
+
+<h3>Call Details</h3>
+<table class="call-table">
+<tr>
+  <th style="width:5%">#</th>
+  <th style="width:28%">Node</th>
+  <th style="width:10%">Type</th>
+  <th style="width:17%">Caller</th>
+  <th style="width:20%">Callees</th>
+  <th style="width:20%">Description</th>
+</tr>
+<tr>
+  <td>1</td>
+  <td><code>package.json</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>package.json node in package.json.</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td><code>name</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>name node in package.json.</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td><code>private</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>private node in package.json.</td>
+</tr>
+<tr>
+  <td>4</td>
+  <td><code>description</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>description node in package.json.</td>
+</tr>
+<tr>
+  <td>5</td>
+  <td><code>version</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>version node in package.json.</td>
+</tr>
+<tr>
+  <td>6</td>
+  <td><code>type</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>type node in package.json.</td>
+</tr>
+<tr>
+  <td>7</td>
+  <td><code>license</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>license node in package.json.</td>
+</tr>
+<tr>
+  <td>8</td>
+  <td><code>repository</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>repository node in package.json.</td>
+</tr>
+<tr>
+  <td>9</td>
+  <td><code>homepage</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Organizes documentation pages, navigation, or content lookup.</td>
+</tr>
+<tr>
+  <td>10</td>
+  <td><code>bugs</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>bugs node in package.json.</td>
+</tr>
+<tr>
+  <td>11</td>
+  <td><code>url</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>url node in package.json.</td>
+</tr>
+<tr>
+  <td>12</td>
+  <td><code>keywords</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>keywords node in package.json.</td>
+</tr>
+<tr>
+  <td>13</td>
+  <td><code>engines</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>engines node in package.json.</td>
+</tr>
+<tr>
+  <td>14</td>
+  <td><code>node</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>node node in package.json.</td>
+</tr>
+<tr>
+  <td>15</td>
+  <td><code>overrides</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>overrides node in package.json.</td>
+</tr>
+<tr>
+  <td>16</td>
+  <td><code>serialize-javascript</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>serialize-javascript node in package.json.</td>
+</tr>
+<tr>
+  <td>17</td>
+  <td><code>dependencies</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>dependencies node in package.json.</td>
+</tr>
+<tr>
+  <td>18</td>
+  <td><code>@supabase/supabase-js</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>@supabase/supabase-js node in package.json.</td>
+</tr>
+<tr>
+  <td>19</td>
+  <td><code>class-variance-authority</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>class-variance-authority node in package.json.</td>
+</tr>
+<tr>
+  <td>20</td>
+  <td><code>clsx</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>clsx node in package.json.</td>
+</tr>
+<tr>
+  <td>21</td>
+  <td><code>date-fns</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>date-fns node in package.json.</td>
+</tr>
+<tr>
+  <td>22</td>
+  <td><code>framer-motion</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>framer-motion node in package.json.</td>
+</tr>
+<tr>
+  <td>23</td>
+  <td><code>fuse.js</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-class">Module</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>fuse.js node in package.json.</td>
+</tr>
+<tr>
+  <td>24</td>
+  <td><code>lucide-react</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>lucide-react node in package.json.</td>
+</tr>
+<tr>
+  <td>25</td>
+  <td><code>react</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>react node in package.json.</td>
+</tr>
+<tr>
+  <td>26</td>
+  <td><code>react-dom</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>react-dom node in package.json.</td>
+</tr>
+<tr>
+  <td>27</td>
+  <td><code>react-router-dom</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-endpoint">API</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>react-router-dom node in package.json.</td>
+</tr>
+<tr>
+  <td>28</td>
+  <td><code>zustand</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>zustand node in package.json.</td>
+</tr>
+<tr>
+  <td>29</td>
+  <td><code>devDependencies</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>devDependencies node in package.json.</td>
+</tr>
+<tr>
+  <td>30</td>
+  <td><code>@axe-core/cli</code><br><small style="color:var(--muted)">package.json</small></td>
+  <td><span class="tag tag-cmd">Entry</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>@axe-core/cli node in package.json.</td>
+</tr>
+</table>
+
+<div class="grid">
+  <div class="card">
+    <h4>Key Files</h4>
+    <table style="width:100%;font-size:0.85rem;">
+      <tr><th>File</th><th>Coverage</th></tr>
+      <tr><td><code>package.json</code></td><td>63 nodes</td></tr>
+<tr><td><code>tsconfig.json</code></td><td>19 nodes</td></tr>
+<tr><td><code>tsconfig.node.json</code></td><td>11 nodes</td></tr>
+<tr><td><code>.prettierrc.json</code></td><td>8 nodes</td></tr>
+<tr><td><code>vercel.json</code></td><td>3 nodes</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h4>Design Notes</h4>
+    <p>This section comes from graphify community clustering. Relationship summary: contains x101. The diagram prioritizes high-confidence calls or usage relationships; the table keeps the broader node inventory.</p>
+  </div>
+</div>
+<hr>
+
+<!-- ====== 3. CLI & Skill Installers ====== -->
+<h2 id="cli-skills">3. CLI &amp; Skill Installers</h2>
+<p>CLI &amp; Skill Installers groups implementation around app, routestsx, apptsx, maintsx, mostly in src/app/routes.tsx, src/App.tsx, src/main.tsx. This section covers 7 nodes and 7 internal edges; the diagram shows only representative relationships to stay readable.</p>
+
+<div class="mermaid">
+%%{init: {"theme": "dark", "themeVariables": {"fontSize": "15.0px", "fontFamily": "Segoe UI, system-ui, sans-serif", "primaryColor": "#1e293b", "primaryTextColor": "#e2e8f0", "primaryBorderColor": "#38bdf8", "secondaryColor": "#0f172a", "tertiaryColor": "#334155", "lineColor": "#64748b", "textColor": "#e2e8f0"}, "flowchart": {"htmlLabels": true, "curve": "basis", "nodeSpacing": 48, "rankSpacing": 64, "padding": 14, "diagramPadding": 10, "useMaxWidth": true}}}%%
+flowchart LR
+    %% Section: CLI &amp; Skill Installers (7 nodes, 7 edges)
+    subgraph cli_skills_src_app_routes_tsx_ad1d3e8c["src/app/routes.tsx"]
+        src_app_routes_tsx_dc52ffbd("routes.tsx")
+        app_routes_router_6f0db047("router<br/><small>src/app/routes.tsx</small>")
+        app_routes_lazyscreen_242ff5ee("LazyScreen()<br/><small>src/app/routes.tsx</small>")
+        app_routes_screenskeleton_b8a00697("ScreenSkeleton()<br/><small>src/app/routes.tsx</small>")
+    end
+    subgraph cli_skills_src_App_tsx_6e733dc5["src/App.tsx"]
+        src_app_tsx_7809c3b0("App.tsx")
+        src_app_app_f316b20d("App()<br/><small>src/App.tsx</small>")
+    end
+    src_main_tsx_4bfa9e1b("main.tsx")
+    src_app_tsx_7809c3b0 -->|imports| src_app_routes_tsx_dc52ffbd
+    src_app_tsx_7809c3b0 -->|imports| app_routes_router_6f0db047
+    src_app_tsx_7809c3b0 -->|imports| src_main_tsx_4bfa9e1b
+    class src_app_routes_tsx_dc52ffbd api;
+    class app_routes_router_6f0db047 api;
+    class app_routes_lazyscreen_242ff5ee ui;
+    class app_routes_screenskeleton_b8a00697 ui;
+    class src_app_tsx_7809c3b0 ui;
+    class src_app_app_f316b20d ui;
+    class src_main_tsx_4bfa9e1b ui;
+    classDef entry fill:#422006,stroke:#fbbf24,color:#fde68a,stroke-width:1px;
+    classDef api fill:#450a0a,stroke:#f87171,color:#fee2e2,stroke-width:1px;
+    classDef async fill:#2e1065,stroke:#a78bfa,color:#ede9fe,stroke-width:1px;
+    classDef klass fill:#064e3b,stroke:#34d399,color:#d1fae5,stroke-width:1px;
+    classDef ui fill:#831843,stroke:#f472b6,color:#fce7f3,stroke-width:1px;
+    classDef module fill:#172554,stroke:#60a5fa,color:#dbeafe,stroke-width:1px;
+    classDef test fill:#3f3f46,stroke:#a1a1aa,color:#f4f4f5,stroke-width:1px;
+    classDef concept fill:#292524,stroke:#a8a29e,color:#fafaf9,stroke-dasharray:4 3;
+    classDef function fill:#0f172a,stroke:#38bdf8,color:#e0f2fe,stroke-width:1px;
+</div>
+
+<h3>Call Details</h3>
+<table class="call-table">
+<tr>
+  <th style="width:5%">#</th>
+  <th style="width:28%">Node</th>
+  <th style="width:10%">Type</th>
+  <th style="width:17%">Caller</th>
+  <th style="width:20%">Callees</th>
+  <th style="width:20%">Description</th>
+</tr>
+<tr>
+  <td>1</td>
+  <td><code>App.tsx</code><br><small style="color:var(--muted)">src/App.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>main.tsx</code><br><small style="color:var(--muted)">src/main.tsx</small><br><code>router</code><br><small style="color:var(--muted)">src/app/routes.tsx</small><br><code>routes.tsx</code><br><small style="color:var(--muted)">src/app/routes.tsx</small></td>
+  <td>Module file in src/App.tsx.</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td><code>App()</code><br><small style="color:var(--muted)">src/App.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>App() node in src/App.tsx.</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td><code>main.tsx</code><br><small style="color:var(--muted)">src/main.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>App.tsx</code><br><small style="color:var(--muted)">src/App.tsx</small></td>
+  <td>No direct outbound edge</td>
+  <td>Module file in src/main.tsx.</td>
+</tr>
+<tr>
+  <td>4</td>
+  <td><code>routes.tsx</code><br><small style="color:var(--muted)">src/app/routes.tsx</small></td>
+  <td><span class="tag tag-endpoint">API</span></td>
+  <td><code>App.tsx</code><br><small style="color:var(--muted)">src/App.tsx</small></td>
+  <td>No direct outbound edge</td>
+  <td>Module file in src/app/routes.tsx.</td>
+</tr>
+<tr>
+  <td>5</td>
+  <td><code>LazyScreen()</code><br><small style="color:var(--muted)">src/app/routes.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>LazyScreen() node in src/app/routes.tsx.</td>
+</tr>
+<tr>
+  <td>6</td>
+  <td><code>ScreenSkeleton()</code><br><small style="color:var(--muted)">src/app/routes.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>ScreenSkeleton() node in src/app/routes.tsx.</td>
+</tr>
+<tr>
+  <td>7</td>
+  <td><code>router</code><br><small style="color:var(--muted)">src/app/routes.tsx</small></td>
+  <td><span class="tag tag-endpoint">API</span></td>
+  <td><code>App.tsx</code><br><small style="color:var(--muted)">src/App.tsx</small></td>
+  <td>No direct outbound edge</td>
+  <td>router node in src/app/routes.tsx.</td>
+</tr>
+</table>
+
+<div class="grid">
+  <div class="card">
+    <h4>Key Files</h4>
+    <table style="width:100%;font-size:0.85rem;">
+      <tr><th>File</th><th>Coverage</th></tr>
+      <tr><td><code>src/app/routes.tsx</code></td><td>4 nodes</td></tr>
+<tr><td><code>src/App.tsx</code></td><td>2 nodes</td></tr>
+<tr><td><code>src/main.tsx</code></td><td>1 nodes</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h4>Design Notes</h4>
+    <p>This section comes from graphify community clustering. Relationship summary: contains x4, imports x2, imports x1. The diagram prioritizes high-confidence calls or usage relationships; the table keeps the broader node inventory.</p>
+  </div>
+</div>
+<hr>
+
+<!-- ====== 4. Ingestion & Updates ====== -->
+<h2 id="ingest-cache-update">4. Ingestion &amp; Updates</h2>
+<p>Ingestion &amp; Updates groups implementation around app, features, toasthosttsx, appshelltsx, mostly in features/settings/SettingsDrawer.tsx, src/ui/ToastHost.tsx, src/app/AppShell.tsx. This section covers 36 nodes and 78 internal edges; the diagram shows only representative relationships to stay readable.</p>
+
+<div class="mermaid">
+%%{init: {"theme": "dark", "themeVariables": {"fontSize": "15.0px", "fontFamily": "Segoe UI, system-ui, sans-serif", "primaryColor": "#1e293b", "primaryTextColor": "#e2e8f0", "primaryBorderColor": "#38bdf8", "secondaryColor": "#0f172a", "tertiaryColor": "#334155", "lineColor": "#64748b", "textColor": "#e2e8f0"}, "flowchart": {"htmlLabels": true, "curve": "basis", "nodeSpacing": 48, "rankSpacing": 64, "padding": 14, "diagramPadding": 10, "useMaxWidth": true}}}%%
+flowchart LR
+    %% Section: Ingestion &amp; Updates (36 nodes, 78 edges)
+    subgraph ingest_cache_update_features_settings_SettingsDr_e8bb9e34["features/settings/SettingsDrawer.tsx"]
+        settings_settingsdrawer_settingsdrawer_18b85f64("SettingsDrawer()<br/><small>features/settings/SettingsDrawer.tsx</small>")
+        settings_settingsdrawer_categoriespanel_15bf56c6("CategoriesPanel()<br/><small>features/settings/SettingsDrawer.tsx</small>")
+        settings_settingsdrawer_budgetspanel_19e0e428("BudgetsPanel()<br/><small>features/settings/SettingsDrawer.tsx</small>")
+        settings_settingsdrawer_backuppanel_ee894e11("BackupPanel()<br/><small>features/settings/SettingsDrawer.tsx</small>")
+    end
+    subgraph ingest_cache_update_src_app_AppShell_tsx_adab0bb7["src/app/AppShell.tsx"]
+        src_app_appshell_tsx_8236be79("AppShell.tsx")
+        app_appshell_settingsdrawer_6e93f16d("SettingsDrawer<br/><small>src/app/AppShell.tsx</small>")
+        app_appshell_appshell_6dbbb3f4("AppShell()<br/><small>src/app/AppShell.tsx</small>")
+        app_appshell_bootstrap_310925b2("bootstrap()<br/><small>src/app/AppShell.tsx</small>")
+    end
+    subgraph ingest_cache_update_src_app_TopBar_tsx_c3818db9["src/app/TopBar.tsx"]
+        src_app_topbar_tsx_2ec7df14("TopBar.tsx")
+        app_topbar_topbar_7443f159("TopBar()<br/><small>src/app/TopBar.tsx</small>")
+    end
+    subgraph ingest_cache_update_src_lib_download_ts_88df4506["src/lib/download.ts"]
+        lib_download_triggerdownload_92bc1507("triggerDownload()<br/><small>src/lib/download.ts</small>")
+        lib_download_downloadjson_40943d09("downloadJSON()<br/><small>src/lib/download.ts</small>")
+    end
+    entry_commandpalette_commandpalette_99e53901("CommandPalette()<br/><small>features/entry/CommandPalette.tsx</small>")
+    app_tabbar_tabbar_d98e4a46("TabBar()<br/><small>src/app/TabBar.tsx</small>")
+    src_hooks_usehotkeys_ts_772bec67("useHotkeys.ts")
+    hooks_usetoast_usetoast_fbde6d61("useToast()<br/><small>src/hooks/useToast.ts</small>")
+    stores_useexpensestore_installpersistence_180ea691("installPersistence()<br/><small>src/stores/useExpenseStore.ts</small>")
+    stores_useuistore_useuistore_87255b59("useUIStore<br/><small>src/stores/useUIStore.ts</small>")
+    app_appshell_bootstrap_310925b2 -->|calls| stores_useexpensestore_installpersistence_180ea691
+    app_appshell_appshell_6dbbb3f4 -->|calls| stores_useuistore_useuistore_87255b59
+    app_appshell_appshell_6dbbb3f4 -->|calls| hooks_usetoast_usetoast_fbde6d61
+    app_appshell_appshell_6dbbb3f4 -->|calls| src_hooks_usehotkeys_ts_772bec67
+    app_tabbar_tabbar_d98e4a46 -->|calls| stores_useuistore_useuistore_87255b59
+    app_topbar_topbar_7443f159 -->|calls| stores_useuistore_useuistore_87255b59
+    entry_commandpalette_commandpalette_99e53901 -->|calls| stores_useuistore_useuistore_87255b59
+    entry_commandpalette_commandpalette_99e53901 -->|calls| hooks_usetoast_usetoast_fbde6d61
+    settings_settingsdrawer_settingsdrawer_18b85f64 -->|calls| stores_useuistore_useuistore_87255b59
+    settings_settingsdrawer_categoriespanel_15bf56c6 -->|calls| hooks_usetoast_usetoast_fbde6d61
+    settings_settingsdrawer_budgetspanel_19e0e428 -->|calls| hooks_usetoast_usetoast_fbde6d61
+    settings_settingsdrawer_backuppanel_ee894e11 -->|calls| hooks_usetoast_usetoast_fbde6d61
+    hooks_usetoast_usetoast_fbde6d61 -->|calls| stores_useuistore_useuistore_87255b59
+    lib_download_triggerdownload_92bc1507 -->|calls| lib_download_downloadjson_40943d09
+    src_app_appshell_tsx_8236be79 -->|imports| src_app_topbar_tsx_2ec7df14
+    src_app_appshell_tsx_8236be79 -->|imports| app_topbar_topbar_7443f159
+    src_app_appshell_tsx_8236be79 -->|imports| app_tabbar_tabbar_d98e4a46
+    src_app_appshell_tsx_8236be79 -->|imports| entry_commandpalette_commandpalette_99e53901
+    src_app_appshell_tsx_8236be79 -->|imports| stores_useexpensestore_installpersistence_180ea691
+    src_app_appshell_tsx_8236be79 -->|imports| stores_useuistore_useuistore_87255b59
+    src_app_appshell_tsx_8236be79 -->|imports| src_hooks_usehotkeys_ts_772bec67
+    src_app_appshell_tsx_8236be79 -->|imports| hooks_usetoast_usetoast_fbde6d61
+    app_appshell_settingsdrawer_6e93f16d -->|imports| stores_useuistore_useuistore_87255b59
+    app_appshell_settingsdrawer_6e93f16d -->|imports| hooks_usetoast_usetoast_fbde6d61
+    %% Omitted for readability: 18 nodes, 3 edges
+    class settings_settingsdrawer_settingsdrawer_18b85f64 ui;
+    class settings_settingsdrawer_categoriespanel_15bf56c6 ui;
+    class settings_settingsdrawer_budgetspanel_19e0e428 ui;
+    class settings_settingsdrawer_backuppanel_ee894e11 ui;
+    class src_app_appshell_tsx_8236be79 ui;
+    class app_appshell_settingsdrawer_6e93f16d ui;
+    class app_appshell_appshell_6dbbb3f4 ui;
+    class app_appshell_bootstrap_310925b2 ui;
+    class src_app_topbar_tsx_2ec7df14 ui;
+    class app_topbar_topbar_7443f159 ui;
+    class lib_download_triggerdownload_92bc1507 function;
+    class lib_download_downloadjson_40943d09 function;
+    class entry_commandpalette_commandpalette_99e53901 entry;
+    class app_tabbar_tabbar_d98e4a46 ui;
+    class src_hooks_usehotkeys_ts_772bec67 ui;
+    class hooks_usetoast_usetoast_fbde6d61 ui;
+    class stores_useexpensestore_installpersistence_180ea691 function;
+    class stores_useuistore_useuistore_87255b59 ui;
+    classDef entry fill:#422006,stroke:#fbbf24,color:#fde68a,stroke-width:1px;
+    classDef api fill:#450a0a,stroke:#f87171,color:#fee2e2,stroke-width:1px;
+    classDef async fill:#2e1065,stroke:#a78bfa,color:#ede9fe,stroke-width:1px;
+    classDef klass fill:#064e3b,stroke:#34d399,color:#d1fae5,stroke-width:1px;
+    classDef ui fill:#831843,stroke:#f472b6,color:#fce7f3,stroke-width:1px;
+    classDef module fill:#172554,stroke:#60a5fa,color:#dbeafe,stroke-width:1px;
+    classDef test fill:#3f3f46,stroke:#a1a1aa,color:#f4f4f5,stroke-width:1px;
+    classDef concept fill:#292524,stroke:#a8a29e,color:#fafaf9,stroke-dasharray:4 3;
+    classDef function fill:#0f172a,stroke:#38bdf8,color:#e0f2fe,stroke-width:1px;
+</div>
+
+<h3>Call Details</h3>
+<table class="call-table">
+<tr>
+  <th style="width:5%">#</th>
+  <th style="width:28%">Node</th>
+  <th style="width:10%">Type</th>
+  <th style="width:17%">Caller</th>
+  <th style="width:20%">Callees</th>
+  <th style="width:20%">Description</th>
+</tr>
+<tr>
+  <td>1</td>
+  <td><code>AppShell.tsx</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>CommandPalette()</code><br><small style="color:var(--muted)">features/entry/CommandPalette.tsx</small><br><code>installPersistence()</code><br><small style="color:var(--muted)">src/stores/useExpenseStore.ts</small><br><code>TabBar()</code><br><small style="color:var(--muted)">src/app/TabBar.tsx</small><br>+10 more</td>
+  <td>Module file in src/app/AppShell.tsx.</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td><code>SettingsDrawer</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>download.ts</code><br><small style="color:var(--muted)">src/lib/download.ts</small><br><code>downloadCSV()</code><br><small style="color:var(--muted)">src/lib/download.ts</small><br><code>downloadJSON()</code><br><small style="color:var(--muted)">src/lib/download.ts</small><br>+4 more</td>
+  <td>SettingsDrawer node in src/app/AppShell.tsx.</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td><code>bootstrap()</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>installPersistence()</code><br><small style="color:var(--muted)">src/stores/useExpenseStore.ts</small></td>
+  <td>bootstrap() node in src/app/AppShell.tsx.</td>
+</tr>
+<tr>
+  <td>4</td>
+  <td><code>AppShell()</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>useHotkeys.ts</code><br><small style="color:var(--muted)">src/hooks/useHotkeys.ts</small><br><code>useToast()</code><br><small style="color:var(--muted)">src/hooks/useToast.ts</small><br><code>useUIStore</code><br><small style="color:var(--muted)">src/stores/useUIStore.ts</small></td>
+  <td>AppShell() node in src/app/AppShell.tsx.</td>
+</tr>
+<tr>
+  <td>5</td>
+  <td><code>TabBar.tsx</code><br><small style="color:var(--muted)">src/app/TabBar.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>AppShell.tsx</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small></td>
+  <td><code>useUIStore</code><br><small style="color:var(--muted)">src/stores/useUIStore.ts</small><br><code>useUIStore.ts</code><br><small style="color:var(--muted)">src/stores/useUIStore.ts</small></td>
+  <td>Module file in src/app/TabBar.tsx.</td>
+</tr>
+<tr>
+  <td>6</td>
+  <td><code>TabBar()</code><br><small style="color:var(--muted)">src/app/TabBar.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>AppShell.tsx</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small></td>
+  <td><code>Tab</code><br><small style="color:var(--muted)">features/settings/SettingsDrawer.tsx</small><br><code>useUIStore</code><br><small style="color:var(--muted)">src/stores/useUIStore.ts</small></td>
+  <td>TabBar() node in src/app/TabBar.tsx.</td>
+</tr>
+<tr>
+  <td>7</td>
+  <td><code>TopBar.tsx</code><br><small style="color:var(--muted)">src/app/TopBar.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>AppShell.tsx</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small></td>
+  <td><code>SpendLogo.tsx</code><br><small style="color:var(--muted)">src/ui/SpendLogo.tsx</small><br><code>useUIStore</code><br><small style="color:var(--muted)">src/stores/useUIStore.ts</small><br><code>useUIStore.ts</code><br><small style="color:var(--muted)">src/stores/useUIStore.ts</small></td>
+  <td>Module file in src/app/TopBar.tsx.</td>
+</tr>
+<tr>
+  <td>8</td>
+  <td><code>links</code><br><small style="color:var(--muted)">src/app/TopBar.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>links node in src/app/TopBar.tsx.</td>
+</tr>
+<tr>
+  <td>9</td>
+  <td><code>TopBar()</code><br><small style="color:var(--muted)">src/app/TopBar.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>AppShell.tsx</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small></td>
+  <td><code>useUIStore</code><br><small style="color:var(--muted)">src/stores/useUIStore.ts</small></td>
+  <td>TopBar() node in src/app/TopBar.tsx.</td>
+</tr>
+<tr>
+  <td>10</td>
+  <td><code>Action</code><br><small style="color:var(--muted)">features/entry/CommandPalette.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Action node in features/entry/CommandPalette.tsx.</td>
+</tr>
+<tr>
+  <td>11</td>
+  <td><code>CommandPalette()</code><br><small style="color:var(--muted)">features/entry/CommandPalette.tsx</small></td>
+  <td><span class="tag tag-cmd">Entry</span></td>
+  <td><code>AppShell.tsx</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small></td>
+  <td><code>download.ts</code><br><small style="color:var(--muted)">src/lib/download.ts</small><br><code>downloadJSON()</code><br><small style="color:var(--muted)">src/lib/download.ts</small><br><code>useToast()</code><br><small style="color:var(--muted)">src/hooks/useToast.ts</small><br>+3 more</td>
+  <td>CommandPalette() node in features/entry/CommandPalette.tsx.</td>
+</tr>
+<tr>
+  <td>12</td>
+  <td><code>Tab</code><br><small style="color:var(--muted)">features/settings/SettingsDrawer.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>TabBar()</code><br><small style="color:var(--muted)">src/app/TabBar.tsx</small></td>
+  <td>No direct outbound edge</td>
+  <td>Tab node in features/settings/SettingsDrawer.tsx.</td>
+</tr>
+<tr>
+  <td>13</td>
+  <td><code>SettingsDrawer()</code><br><small style="color:var(--muted)">features/settings/SettingsDrawer.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>useUIStore</code><br><small style="color:var(--muted)">src/stores/useUIStore.ts</small></td>
+  <td>SettingsDrawer() node in features/settings/SettingsDrawer.tsx.</td>
+</tr>
+<tr>
+  <td>14</td>
+  <td><code>CategoriesPanel()</code><br><small style="color:var(--muted)">features/settings/SettingsDrawer.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>useToast()</code><br><small style="color:var(--muted)">src/hooks/useToast.ts</small></td>
+  <td>CategoriesPanel() node in features/settings/SettingsDrawer.tsx.</td>
+</tr>
+<tr>
+  <td>15</td>
+  <td><code>BudgetsPanel()</code><br><small style="color:var(--muted)">features/settings/SettingsDrawer.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>useToast()</code><br><small style="color:var(--muted)">src/hooks/useToast.ts</small></td>
+  <td>BudgetsPanel() node in features/settings/SettingsDrawer.tsx.</td>
+</tr>
+<tr>
+  <td>16</td>
+  <td><code>BackupPanel()</code><br><small style="color:var(--muted)">features/settings/SettingsDrawer.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>useToast()</code><br><small style="color:var(--muted)">src/hooks/useToast.ts</small></td>
+  <td>BackupPanel() node in features/settings/SettingsDrawer.tsx.</td>
+</tr>
+<tr>
+  <td>17</td>
+  <td><code>useHotkeys.ts</code><br><small style="color:var(--muted)">src/hooks/useHotkeys.ts</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>AppShell()</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small><br><code>AppShell.tsx</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small></td>
+  <td>No direct outbound edge</td>
+  <td>Module file in src/hooks/useHotkeys.ts.</td>
+</tr>
+<tr>
+  <td>18</td>
+  <td><code>Bind</code><br><small style="color:var(--muted)">src/hooks/useHotkeys.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Bind node in src/hooks/useHotkeys.ts.</td>
+</tr>
+<tr>
+  <td>19</td>
+  <td><code>shouldIgnore()</code><br><small style="color:var(--muted)">src/hooks/useHotkeys.ts</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>shouldIgnore() node in src/hooks/useHotkeys.ts.</td>
+</tr>
+<tr>
+  <td>20</td>
+  <td><code>useToast.ts</code><br><small style="color:var(--muted)">src/hooks/useToast.ts</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>AppShell.tsx</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small><br><code>CommandPalette()</code><br><small style="color:var(--muted)">features/entry/CommandPalette.tsx</small><br><code>SettingsDrawer</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small></td>
+  <td><code>useUIStore</code><br><small style="color:var(--muted)">src/stores/useUIStore.ts</small><br><code>useUIStore.ts</code><br><small style="color:var(--muted)">src/stores/useUIStore.ts</small></td>
+  <td>Module file in src/hooks/useToast.ts.</td>
+</tr>
+<tr>
+  <td>21</td>
+  <td><code>useToast()</code><br><small style="color:var(--muted)">src/hooks/useToast.ts</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>AppShell()</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small><br><code>AppShell.tsx</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small><br><code>BackupPanel()</code><br><small style="color:var(--muted)">features/settings/SettingsDrawer.tsx</small><br>+4 more</td>
+  <td><code>useUIStore</code><br><small style="color:var(--muted)">src/stores/useUIStore.ts</small></td>
+  <td>useToast() node in src/hooks/useToast.ts.</td>
+</tr>
+<tr>
+  <td>22</td>
+  <td><code>download.ts</code><br><small style="color:var(--muted)">src/lib/download.ts</small></td>
+  <td><span class="tag tag-class">Module</span></td>
+  <td><code>CommandPalette()</code><br><small style="color:var(--muted)">features/entry/CommandPalette.tsx</small><br><code>SettingsDrawer</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small></td>
+  <td>No direct outbound edge</td>
+  <td>Module file in src/lib/download.ts.</td>
+</tr>
+<tr>
+  <td>23</td>
+  <td><code>triggerDownload()</code><br><small style="color:var(--muted)">src/lib/download.ts</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>downloadCSV()</code><br><small style="color:var(--muted)">src/lib/download.ts</small><br><code>downloadJSON()</code><br><small style="color:var(--muted)">src/lib/download.ts</small></td>
+  <td>triggerDownload() node in src/lib/download.ts.</td>
+</tr>
+<tr>
+  <td>24</td>
+  <td><code>downloadJSON()</code><br><small style="color:var(--muted)">src/lib/download.ts</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td><code>CommandPalette()</code><br><small style="color:var(--muted)">features/entry/CommandPalette.tsx</small><br><code>SettingsDrawer</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small><br><code>triggerDownload()</code><br><small style="color:var(--muted)">src/lib/download.ts</small></td>
+  <td>No direct outbound edge</td>
+  <td>downloadJSON() node in src/lib/download.ts.</td>
+</tr>
+<tr>
+  <td>25</td>
+  <td><code>downloadCSV()</code><br><small style="color:var(--muted)">src/lib/download.ts</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td><code>SettingsDrawer</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small><br><code>triggerDownload()</code><br><small style="color:var(--muted)">src/lib/download.ts</small></td>
+  <td>No direct outbound edge</td>
+  <td>downloadCSV() node in src/lib/download.ts.</td>
+</tr>
+<tr>
+  <td>26</td>
+  <td><code>installPersistence()</code><br><small style="color:var(--muted)">src/stores/useExpenseStore.ts</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td><code>AppShell.tsx</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small><br><code>bootstrap()</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small></td>
+  <td>No direct outbound edge</td>
+  <td>installPersistence() node in src/stores/useExpenseStore.ts.</td>
+</tr>
+<tr>
+  <td>27</td>
+  <td><code>useUIStore.ts</code><br><small style="color:var(--muted)">src/stores/useUIStore.ts</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>AppShell.tsx</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small><br><code>CommandPalette()</code><br><small style="color:var(--muted)">features/entry/CommandPalette.tsx</small><br><code>SettingsDrawer</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small><br>+3 more</td>
+  <td><code>ToastHost.tsx</code><br><small style="color:var(--muted)">src/ui/ToastHost.tsx</small></td>
+  <td>Module file in src/stores/useUIStore.ts.</td>
+</tr>
+<tr>
+  <td>28</td>
+  <td><code>Toast</code><br><small style="color:var(--muted)">src/stores/useUIStore.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>ToastHost.tsx</code><br><small style="color:var(--muted)">src/ui/ToastHost.tsx</small></td>
+  <td>Toast node in src/stores/useUIStore.ts.</td>
+</tr>
+<tr>
+  <td>29</td>
+  <td><code>UIState</code><br><small style="color:var(--muted)">src/stores/useUIStore.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>UIState node in src/stores/useUIStore.ts.</td>
+</tr>
+<tr>
+  <td>30</td>
+  <td><code>useUIStore</code><br><small style="color:var(--muted)">src/stores/useUIStore.ts</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>AppShell()</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small><br><code>AppShell.tsx</code><br><small style="color:var(--muted)">src/app/AppShell.tsx</small><br><code>CommandPalette()</code><br><small style="color:var(--muted)">features/entry/CommandPalette.tsx</small><br>+8 more</td>
+  <td><code>ToastHost()</code><br><small style="color:var(--muted)">src/ui/ToastHost.tsx</small><br><code>ToastHost.tsx</code><br><small style="color:var(--muted)">src/ui/ToastHost.tsx</small><br><code>ToastItem()</code><br><small style="color:var(--muted)">src/ui/ToastHost.tsx</small></td>
+  <td>useUIStore node in src/stores/useUIStore.ts.</td>
+</tr>
+</table>
+
+<div class="grid">
+  <div class="card">
+    <h4>Key Files</h4>
+    <table style="width:100%;font-size:0.85rem;">
+      <tr><th>File</th><th>Coverage</th></tr>
+      <tr><td><code>features/settings/SettingsDrawer.tsx</code></td><td>5 nodes</td></tr>
+<tr><td><code>src/ui/ToastHost.tsx</code></td><td>5 nodes</td></tr>
+<tr><td><code>src/app/AppShell.tsx</code></td><td>4 nodes</td></tr>
+<tr><td><code>src/lib/download.ts</code></td><td>4 nodes</td></tr>
+<tr><td><code>src/stores/useUIStore.ts</code></td><td>4 nodes</td></tr>
+<tr><td><code>src/app/TopBar.tsx</code></td><td>3 nodes</td></tr>
+<tr><td><code>src/hooks/useHotkeys.ts</code></td><td>3 nodes</td></tr>
+<tr><td><code>src/app/TabBar.tsx</code></td><td>2 nodes</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h4>Design Notes</h4>
+    <p>This section comes from graphify community clustering. Relationship summary: contains x25, imports x19, calls x18, imports x15. The diagram prioritizes high-confidence calls or usage relationships; the table keeps the broader node inventory.</p>
+  </div>
+</div>
+<hr>
+
+<!-- ====== 5. Security & Global Graph ====== -->
+<h2 id="security-global">5. Security &amp; Global Graph</h2>
+<p>Security &amp; Global Graph groups implementation around spendtrack, security, policy, securitymd, mostly in SECURITY.md. This section covers 1 nodes and 0 internal edges; the diagram shows only representative relationships to stay readable.</p>
+
+<div class="mermaid">
+%%{init: {"theme": "dark", "themeVariables": {"fontSize": "15.0px", "fontFamily": "Segoe UI, system-ui, sans-serif", "primaryColor": "#1e293b", "primaryTextColor": "#e2e8f0", "primaryBorderColor": "#38bdf8", "secondaryColor": "#0f172a", "tertiaryColor": "#334155", "lineColor": "#64748b", "textColor": "#e2e8f0"}, "flowchart": {"htmlLabels": true, "curve": "basis", "nodeSpacing": 48, "rankSpacing": 64, "padding": 14, "diagramPadding": 10, "useMaxWidth": true}}}%%
+flowchart LR
+    %% Section: Security &amp; Global Graph (1 nodes, 0 edges)
+    spendtrack_security_4878713c("SpendTrack Security Policy<br/><small>SECURITY.md</small>")
+    class spendtrack_security_4878713c concept;
+    classDef entry fill:#422006,stroke:#fbbf24,color:#fde68a,stroke-width:1px;
+    classDef api fill:#450a0a,stroke:#f87171,color:#fee2e2,stroke-width:1px;
+    classDef async fill:#2e1065,stroke:#a78bfa,color:#ede9fe,stroke-width:1px;
+    classDef klass fill:#064e3b,stroke:#34d399,color:#d1fae5,stroke-width:1px;
+    classDef ui fill:#831843,stroke:#f472b6,color:#fce7f3,stroke-width:1px;
+    classDef module fill:#172554,stroke:#60a5fa,color:#dbeafe,stroke-width:1px;
+    classDef test fill:#3f3f46,stroke:#a1a1aa,color:#f4f4f5,stroke-width:1px;
+    classDef concept fill:#292524,stroke:#a8a29e,color:#fafaf9,stroke-dasharray:4 3;
+    classDef function fill:#0f172a,stroke:#38bdf8,color:#e0f2fe,stroke-width:1px;
+</div>
+
+<h3>Call Details</h3>
+<table class="call-table">
+<tr>
+  <th style="width:5%">#</th>
+  <th style="width:28%">Node</th>
+  <th style="width:10%">Type</th>
+  <th style="width:17%">Caller</th>
+  <th style="width:20%">Callees</th>
+  <th style="width:20%">Description</th>
+</tr>
+<tr>
+  <td>1</td>
+  <td><code>SpendTrack Security Policy</code><br><small style="color:var(--muted)">SECURITY.md</small></td>
+  <td><span class="tag tag-func">Concept</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Documentation node describing SpendTrack Security Policy.</td>
+</tr>
+</table>
+
+<div class="grid">
+  <div class="card">
+    <h4>Key Files</h4>
+    <table style="width:100%;font-size:0.85rem;">
+      <tr><th>File</th><th>Coverage</th></tr>
+      <tr><td><code>SECURITY.md</code></td><td>1 nodes</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h4>Design Notes</h4>
+    <p>This section comes from graphify community clustering. Relationship summary: No high-confidence call edges detected. The diagram prioritizes high-confidence calls or usage relationships; the table keeps the broader node inventory.</p>
+  </div>
+</div>
+<hr>
+
+<!-- ====== 6. Tests & Fixtures ====== -->
+<h2 id="tests-fixtures">6. Tests &amp; Fixtures</h2>
+<p>Tests &amp; Fixtures groups implementation around utils, features, services, typests, mostly in src/types.ts, src/demo/seedData.ts, src/lib/analytics.ts. This section covers 135 nodes and 276 internal edges; the diagram shows only representative relationships to stay readable.</p>
+
+<div class="mermaid">
+%%{init: {"theme": "dark", "themeVariables": {"fontSize": "15.0px", "fontFamily": "Segoe UI, system-ui, sans-serif", "primaryColor": "#1e293b", "primaryTextColor": "#e2e8f0", "primaryBorderColor": "#38bdf8", "secondaryColor": "#0f172a", "tertiaryColor": "#334155", "lineColor": "#64748b", "textColor": "#e2e8f0"}, "flowchart": {"htmlLabels": true, "curve": "basis", "nodeSpacing": 48, "rankSpacing": 64, "padding": 14, "diagramPadding": 10, "useMaxWidth": true}}}%%
+flowchart LR
+    %% Section: Tests &amp; Fixtures (135 nodes, 276 edges)
+    subgraph tests_fixtures_src_types_ts_a3d92d6b["src/types.ts"]
+        src_types_expense_50635060("Expense<br/><small>src/types.ts</small>")
+        src_types_ts_e96e7baa("types.ts")
+        src_types_analytics_8294da32("Analytics<br/><small>src/types.ts</small>")
+    end
+    subgraph tests_fixtures_src_app_SyncPill_tsx_cdc641d0["src/app/SyncPill.tsx"]
+        app_syncpill_timeago_6d80cb7e("timeAgo()<br/><small>src/app/SyncPill.tsx</small>")
+        app_syncpill_syncpill_c9f4ee8a("SyncPill()<br/><small>src/app/SyncPill.tsx</small>")
+    end
+    subgraph tests_fixtures_src_app_routes_tsx_37958cba["src/app/routes.tsx"]
+        app_routes_insightsscreen_fedecd5a("InsightsScreen<br/><small>src/app/routes.tsx</small>")
+        app_routes_ledgerscreen_a6904872("LedgerScreen<br/><small>src/app/routes.tsx</small>")
+    end
+    subgraph tests_fixtures_src_demo_seedData_ts_063a2e9d["src/demo/seedData.ts"]
+        demo_seeddata_d_ae2c923a("d()<br/><small>src/demo/seedData.ts</small>")
+        demo_seeddata_ts_14fa6075("ts()<br/><small>src/demo/seedData.ts</small>")
+    end
+    entry_smartinput_smartinput_61633a34("SmartInput()<br/><small>features/entry/SmartInput.tsx</small>")
+    insights_insightsscreen_insightsscreen_55acb62b("InsightsScreen()<br/><small>features/insights/InsightsScreen.tsx</small>")
+    ledger_ledgerrow_ledgerrow_52d88e45("LedgerRow()<br/><small>features/ledger/LedgerRow.tsx</small>")
+    ledger_ledgerscreen_isvalidymd_b6ba3f29("isValidYmd()<br/><small>features/ledger/LedgerScreen.tsx</small>")
+    src_features_pulse_pulsescreen_tsx_70469bca("PulseScreen.tsx")
+    src_hooks_usehaptic_ts_094cb6a2("useHaptic.ts")
+    lib_analytics_colorfromstring_07c7dad9("colorFromString()<br/><small>src/lib/analytics.ts</small>")
+    lib_format_formatmoney_007438f8("formatMoney()<br/><small>src/lib/format.ts</small>")
+    src_stores_useexpensestore_ts_a55ca050("useExpenseStore.ts")
+    app_syncpill_timeago_6d80cb7e -->|calls| app_syncpill_syncpill_c9f4ee8a
+    app_syncpill_syncpill_c9f4ee8a -->|calls| src_stores_useexpensestore_ts_a55ca050
+    demo_seeddata_d_ae2c923a -->|calls| demo_seeddata_ts_14fa6075
+    entry_smartinput_smartinput_61633a34 -->|calls| src_stores_useexpensestore_ts_a55ca050
+    entry_smartinput_smartinput_61633a34 -->|calls| src_hooks_usehaptic_ts_094cb6a2
+    entry_smartinput_smartinput_61633a34 -->|calls| lib_analytics_colorfromstring_07c7dad9
+    insights_insightsscreen_insightsscreen_55acb62b -->|calls| src_stores_useexpensestore_ts_a55ca050
+    insights_insightsscreen_insightsscreen_55acb62b -->|calls| lib_format_formatmoney_007438f8
+    ledger_ledgerrow_ledgerrow_52d88e45 -->|calls| lib_format_formatmoney_007438f8
+    ledger_ledgerrow_ledgerrow_52d88e45 -->|calls| lib_analytics_colorfromstring_07c7dad9
+    src_types_ts_e96e7baa -->|imports| src_types_analytics_8294da32
+    src_types_ts_e96e7baa -->|imports| app_routes_ledgerscreen_a6904872
+    src_types_ts_e96e7baa -->|imports| src_stores_useexpensestore_ts_a55ca050
+    src_types_expense_50635060 -->|imports| app_routes_ledgerscreen_a6904872
+    src_types_expense_50635060 -->|imports| src_types_analytics_8294da32
+    src_types_expense_50635060 -->|imports| src_stores_useexpensestore_ts_a55ca050
+    src_types_analytics_8294da32 -->|imports| app_routes_insightsscreen_fedecd5a
+    src_types_analytics_8294da32 -->|imports| src_features_pulse_pulsescreen_tsx_70469bca
+    app_routes_ledgerscreen_a6904872 -->|imports| src_stores_useexpensestore_ts_a55ca050
+    app_routes_ledgerscreen_a6904872 -->|imports| lib_format_formatmoney_007438f8
+    app_routes_ledgerscreen_a6904872 -->|imports| entry_smartinput_smartinput_61633a34
+    app_routes_ledgerscreen_a6904872 -->|imports| ledger_ledgerrow_ledgerrow_52d88e45
+    app_routes_insightsscreen_fedecd5a -->|imports| src_stores_useexpensestore_ts_a55ca050
+    app_routes_insightsscreen_fedecd5a -->|imports| lib_format_formatmoney_007438f8
+    %% Omitted for readability: 117 nodes, 4 edges
+    class src_types_expense_50635060 klass;
+    class src_types_ts_e96e7baa module;
+    class src_types_analytics_8294da32 klass;
+    class app_syncpill_timeago_6d80cb7e ui;
+    class app_syncpill_syncpill_c9f4ee8a ui;
+    class app_routes_insightsscreen_fedecd5a ui;
+    class app_routes_ledgerscreen_a6904872 ui;
+    class demo_seeddata_d_ae2c923a function;
+    class demo_seeddata_ts_14fa6075 function;
+    class entry_smartinput_smartinput_61633a34 ui;
+    class insights_insightsscreen_insightsscreen_55acb62b ui;
+    class ledger_ledgerrow_ledgerrow_52d88e45 ui;
+    class ledger_ledgerscreen_isvalidymd_b6ba3f29 ui;
+    class src_features_pulse_pulsescreen_tsx_70469bca ui;
+    class src_hooks_usehaptic_ts_094cb6a2 ui;
+    class lib_analytics_colorfromstring_07c7dad9 function;
+    class lib_format_formatmoney_007438f8 function;
+    class src_stores_useexpensestore_ts_a55ca050 ui;
+    classDef entry fill:#422006,stroke:#fbbf24,color:#fde68a,stroke-width:1px;
+    classDef api fill:#450a0a,stroke:#f87171,color:#fee2e2,stroke-width:1px;
+    classDef async fill:#2e1065,stroke:#a78bfa,color:#ede9fe,stroke-width:1px;
+    classDef klass fill:#064e3b,stroke:#34d399,color:#d1fae5,stroke-width:1px;
+    classDef ui fill:#831843,stroke:#f472b6,color:#fce7f3,stroke-width:1px;
+    classDef module fill:#172554,stroke:#60a5fa,color:#dbeafe,stroke-width:1px;
+    classDef test fill:#3f3f46,stroke:#a1a1aa,color:#f4f4f5,stroke-width:1px;
+    classDef concept fill:#292524,stroke:#a8a29e,color:#fafaf9,stroke-dasharray:4 3;
+    classDef function fill:#0f172a,stroke:#38bdf8,color:#e0f2fe,stroke-width:1px;
+</div>
+
+<h3>Call Details</h3>
+<table class="call-table">
+<tr>
+  <th style="width:5%">#</th>
+  <th style="width:28%">Node</th>
+  <th style="width:10%">Type</th>
+  <th style="width:17%">Caller</th>
+  <th style="width:20%">Callees</th>
+  <th style="width:20%">Description</th>
+</tr>
+<tr>
+  <td>1</td>
+  <td><code>constants.ts</code><br><small style="color:var(--muted)">src/constants.ts</small></td>
+  <td><span class="tag tag-class">Module</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>helpers.ts</code><br><small style="color:var(--muted)">src/utils/helpers.ts</small><br><code>types.ts</code><br><small style="color:var(--muted)">src/types.ts</small><br><code>useExpenseStore.ts</code><br><small style="color:var(--muted)">src/stores/useExpenseStore.ts</small></td>
+  <td>Module file in src/constants.ts.</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td><code>DEFAULT_CATEGORIES</code><br><small style="color:var(--muted)">src/constants.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>useExpenseStore.ts</code><br><small style="color:var(--muted)">src/stores/useExpenseStore.ts</small></td>
+  <td>DEFAULT_CATEGORIES node in src/constants.ts.</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td><code>CATEGORY_MIGRATIONS</code><br><small style="color:var(--muted)">src/constants.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>helpers.ts</code><br><small style="color:var(--muted)">src/utils/helpers.ts</small></td>
+  <td>CATEGORY_MIGRATIONS node in src/constants.ts.</td>
+</tr>
+<tr>
+  <td>4</td>
+  <td><code>types.ts</code><br><small style="color:var(--muted)">src/types.ts</small></td>
+  <td><span class="tag tag-class">Module</span></td>
+  <td><code>constants.ts</code><br><small style="color:var(--muted)">src/constants.ts</small></td>
+  <td><code>Analytics</code><br><small style="color:var(--muted)">src/types.ts</small><br><code>helpers.test.ts</code><br><small style="color:var(--muted)">src/utils/helpers.test.ts</small><br><code>helpers.ts</code><br><small style="color:var(--muted)">src/utils/helpers.ts</small><br>+10 more</td>
+  <td>Module file in src/types.ts.</td>
+</tr>
+<tr>
+  <td>5</td>
+  <td><code>Filters</code><br><small style="color:var(--muted)">src/types.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Filters node in src/types.ts.</td>
+</tr>
+<tr>
+  <td>6</td>
+  <td><code>Notification</code><br><small style="color:var(--muted)">src/types.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Notification node in src/types.ts.</td>
+</tr>
+<tr>
+  <td>7</td>
+  <td><code>CategoryMappings</code><br><small style="color:var(--muted)">src/types.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>seedData.ts</code><br><small style="color:var(--muted)">src/demo/seedData.ts</small><br><code>storage.ts</code><br><small style="color:var(--muted)">src/services/storage.ts</small><br><code>useExpenseStore.ts</code><br><small style="color:var(--muted)">src/stores/useExpenseStore.ts</small></td>
+  <td>CategoryMappings node in src/types.ts.</td>
+</tr>
+<tr>
+  <td>8</td>
+  <td><code>CategoryColors</code><br><small style="color:var(--muted)">src/types.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>storage.ts</code><br><small style="color:var(--muted)">src/services/storage.ts</small></td>
+  <td>CategoryColors node in src/types.ts.</td>
+</tr>
+<tr>
+  <td>9</td>
+  <td><code>CategoryBudgets</code><br><small style="color:var(--muted)">src/types.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td><code>Analytics</code><br><small style="color:var(--muted)">src/types.ts</small></td>
+  <td><code>seedData.ts</code><br><small style="color:var(--muted)">src/demo/seedData.ts</small><br><code>storage.ts</code><br><small style="color:var(--muted)">src/services/storage.ts</small><br><code>useExpenseStore.ts</code><br><small style="color:var(--muted)">src/stores/useExpenseStore.ts</small></td>
+  <td>CategoryBudgets node in src/types.ts.</td>
+</tr>
+<tr>
+  <td>10</td>
+  <td><code>CategoryBudgetTimestamps</code><br><small style="color:var(--muted)">src/types.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>storage.ts</code><br><small style="color:var(--muted)">src/services/storage.ts</small><br><code>useExpenseStore.ts</code><br><small style="color:var(--muted)">src/stores/useExpenseStore.ts</small></td>
+  <td>CategoryBudgetTimestamps node in src/types.ts.</td>
+</tr>
+<tr>
+  <td>11</td>
+  <td><code>BackupData</code><br><small style="color:var(--muted)">src/types.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>syncService.test.ts</code><br><small style="color:var(--muted)">src/services/syncService.test.ts</small><br><code>useExpenseStore.ts</code><br><small style="color:var(--muted)">src/stores/useExpenseStore.ts</small></td>
+  <td>BackupData node in src/types.ts.</td>
+</tr>
+<tr>
+  <td>12</td>
+  <td><code>DrillPeriod</code><br><small style="color:var(--muted)">src/types.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>DrillPeriod node in src/types.ts.</td>
+</tr>
+<tr>
+  <td>13</td>
+  <td><code>ValidationResult</code><br><small style="color:var(--muted)">src/types.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>helpers.ts</code><br><small style="color:var(--muted)">src/utils/helpers.ts</small></td>
+  <td>ValidationResult node in src/types.ts.</td>
+</tr>
+<tr>
+  <td>14</td>
+  <td><code>ItemCategoryPattern</code><br><small style="color:var(--muted)">src/types.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>helpers.ts</code><br><small style="color:var(--muted)">src/utils/helpers.ts</small></td>
+  <td>ItemCategoryPattern node in src/types.ts.</td>
+</tr>
+<tr>
+  <td>15</td>
+  <td><code>SyncPill.tsx</code><br><small style="color:var(--muted)">src/app/SyncPill.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>useExpenseStore.ts</code><br><small style="color:var(--muted)">src/stores/useExpenseStore.ts</small></td>
+  <td>Module file in src/app/SyncPill.tsx.</td>
+</tr>
+<tr>
+  <td>16</td>
+  <td><code>timeAgo()</code><br><small style="color:var(--muted)">src/app/SyncPill.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>SyncPill()</code><br><small style="color:var(--muted)">src/app/SyncPill.tsx</small></td>
+  <td>timeAgo() node in src/app/SyncPill.tsx.</td>
+</tr>
+<tr>
+  <td>17</td>
+  <td><code>SyncPill()</code><br><small style="color:var(--muted)">src/app/SyncPill.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>timeAgo()</code><br><small style="color:var(--muted)">src/app/SyncPill.tsx</small></td>
+  <td><code>useExpenseStore.ts</code><br><small style="color:var(--muted)">src/stores/useExpenseStore.ts</small></td>
+  <td>SyncPill() node in src/app/SyncPill.tsx.</td>
+</tr>
+<tr>
+  <td>18</td>
+  <td><code>seedData.ts</code><br><small style="color:var(--muted)">src/demo/seedData.ts</small></td>
+  <td><span class="tag tag-class">Module</span></td>
+  <td><code>CategoryBudgets</code><br><small style="color:var(--muted)">src/types.ts</small><br><code>CategoryMappings</code><br><small style="color:var(--muted)">src/types.ts</small><br><code>Expense</code><br><small style="color:var(--muted)">src/types.ts</small><br>+1 more</td>
+  <td><code>useExpenseStore.ts</code><br><small style="color:var(--muted)">src/stores/useExpenseStore.ts</small></td>
+  <td>Module file in src/demo/seedData.ts.</td>
+</tr>
+<tr>
+  <td>19</td>
+  <td><code>today</code><br><small style="color:var(--muted)">src/demo/seedData.ts</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>today node in src/demo/seedData.ts.</td>
+</tr>
+<tr>
+  <td>20</td>
+  <td><code>d()</code><br><small style="color:var(--muted)">src/demo/seedData.ts</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>ts()</code><br><small style="color:var(--muted)">src/demo/seedData.ts</small></td>
+  <td>d() node in src/demo/seedData.ts.</td>
+</tr>
+<tr>
+  <td>21</td>
+  <td><code>ts()</code><br><small style="color:var(--muted)">src/demo/seedData.ts</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td><code>d()</code><br><small style="color:var(--muted)">src/demo/seedData.ts</small></td>
+  <td>No direct outbound edge</td>
+  <td>ts() node in src/demo/seedData.ts.</td>
+</tr>
+<tr>
+  <td>22</td>
+  <td><code>RAW</code><br><small style="color:var(--muted)">src/demo/seedData.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>RAW node in src/demo/seedData.ts.</td>
+</tr>
+<tr>
+  <td>23</td>
+  <td><code>DEMO_EXPENSES</code><br><small style="color:var(--muted)">src/demo/seedData.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>useExpenseStore.ts</code><br><small style="color:var(--muted)">src/stores/useExpenseStore.ts</small></td>
+  <td>DEMO_EXPENSES node in src/demo/seedData.ts.</td>
+</tr>
+<tr>
+  <td>24</td>
+  <td><code>DEMO_CATEGORIES</code><br><small style="color:var(--muted)">src/demo/seedData.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>useExpenseStore.ts</code><br><small style="color:var(--muted)">src/stores/useExpenseStore.ts</small></td>
+  <td>DEMO_CATEGORIES node in src/demo/seedData.ts.</td>
+</tr>
+<tr>
+  <td>25</td>
+  <td><code>DEMO_BUDGETS</code><br><small style="color:var(--muted)">src/demo/seedData.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>useExpenseStore.ts</code><br><small style="color:var(--muted)">src/stores/useExpenseStore.ts</small></td>
+  <td>DEMO_BUDGETS node in src/demo/seedData.ts.</td>
+</tr>
+<tr>
+  <td>26</td>
+  <td><code>DEMO_MAPPINGS</code><br><small style="color:var(--muted)">src/demo/seedData.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>useExpenseStore.ts</code><br><small style="color:var(--muted)">src/stores/useExpenseStore.ts</small></td>
+  <td>DEMO_MAPPINGS node in src/demo/seedData.ts.</td>
+</tr>
+<tr>
+  <td>27</td>
+  <td><code>storage.test.ts</code><br><small style="color:var(--muted)">src/services/storage.test.ts</small></td>
+  <td><span class="tag tag-func">Test</span></td>
+  <td><code>Expense</code><br><small style="color:var(--muted)">src/types.ts</small><br><code>types.ts</code><br><small style="color:var(--muted)">src/types.ts</small></td>
+  <td><code>storage</code><br><small style="color:var(--muted)">src/services/storage.ts</small><br><code>storage.ts</code><br><small style="color:var(--muted)">src/services/storage.ts</small></td>
+  <td>Module file in src/services/storage.test.ts.</td>
+</tr>
+<tr>
+  <td>28</td>
+  <td><code>sample</code><br><small style="color:var(--muted)">src/services/storage.test.ts</small></td>
+  <td><span class="tag tag-func">Test</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>sample node in src/services/storage.test.ts.</td>
+</tr>
+<tr>
+  <td>29</td>
+  <td><code>result</code><br><small style="color:var(--muted)">src/services/storage.test.ts</small></td>
+  <td><span class="tag tag-func">Test</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>result node in src/services/storage.test.ts.</td>
+</tr>
+<tr>
+  <td>30</td>
+  <td><code>storage.ts</code><br><small style="color:var(--muted)">src/services/storage.ts</small></td>
+  <td><span class="tag tag-class">Module</span></td>
+  <td><code>CategoryBudgets</code><br><small style="color:var(--muted)">src/types.ts</small><br><code>CategoryBudgetTimestamps</code><br><small style="color:var(--muted)">src/types.ts</small><br><code>CategoryColors</code><br><small style="color:var(--muted)">src/types.ts</small><br>+4 more</td>
+  <td><code>useExpenseStore.ts</code><br><small style="color:var(--muted)">src/stores/useExpenseStore.ts</small></td>
+  <td>Module file in src/services/storage.ts.</td>
+</tr>
+</table>
+
+<div class="grid">
+  <div class="card">
+    <h4>Key Files</h4>
+    <table style="width:100%;font-size:0.85rem;">
+      <tr><th>File</th><th>Coverage</th></tr>
+      <tr><td><code>src/types.ts</code></td><td>13 nodes</td></tr>
+<tr><td><code>src/demo/seedData.ts</code></td><td>9 nodes</td></tr>
+<tr><td><code>src/lib/analytics.ts</code></td><td>9 nodes</td></tr>
+<tr><td><code>src/services/syncService.test.ts</code></td><td>8 nodes</td></tr>
+<tr><td><code>src/stores/useExpenseStore.ts</code></td><td>7 nodes</td></tr>
+<tr><td><code>src/utils/helpers.test.ts</code></td><td>6 nodes</td></tr>
+<tr><td><code>src/utils/helpers.ts</code></td><td>6 nodes</td></tr>
+<tr><td><code>src/lib/analytics.test.ts</code></td><td>5 nodes</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h4>Design Notes</h4>
+    <p>This section comes from graphify community clustering. Relationship summary: contains x100, imports x93, imports x55, calls x19. The diagram prioritizes high-confidence calls or usage relationships; the table keeps the broader node inventory.</p>
+  </div>
+</div>
+<hr>
+
+<!-- ====== 7. Features Datepickertsx Settings ====== -->
+<h2 id="features-datepickertsx-settings">7. Features Datepickertsx Settings</h2>
+<p>Features Datepickertsx Settings groups implementation around features, datepickertsx, settings, syncpaneltsx, mostly in src/ui/DatePicker.tsx, features/settings/SyncPanel.tsx, src/ui/Button.tsx. This section covers 21 nodes and 34 internal edges; the diagram shows only representative relationships to stay readable.</p>
+
+<div class="mermaid">
+%%{init: {"theme": "dark", "themeVariables": {"fontSize": "15.0px", "fontFamily": "Segoe UI, system-ui, sans-serif", "primaryColor": "#1e293b", "primaryTextColor": "#e2e8f0", "primaryBorderColor": "#38bdf8", "secondaryColor": "#0f172a", "tertiaryColor": "#334155", "lineColor": "#64748b", "textColor": "#e2e8f0"}, "flowchart": {"htmlLabels": true, "curve": "basis", "nodeSpacing": 48, "rankSpacing": 64, "padding": 14, "diagramPadding": 10, "useMaxWidth": true}}}%%
+flowchart LR
+    %% Section: Features Datepickertsx Settings (21 nodes, 34 edges)
+    subgraph features_datepickertsx_settings_features_setting_ad0a93d5["features/settings/SyncPanel.tsx"]
+        settings_syncpanel_syncpanel_ffd4f37c("SyncPanel()<br/><small>features/settings/SyncPanel.tsx</small>")
+        settings_syncpanel_timeago_03111e1a("timeAgo()<br/><small>features/settings/SyncPanel.tsx</small>")
+        settings_syncpanel_synccontent_25c94306("SyncContent()<br/><small>features/settings/SyncPanel.tsx</small>")
+        settings_syncpanel_notconfigured_8e35e13a("NotConfigured()<br/><small>features/settings/SyncPanel.tsx</small>")
+    end
+    subgraph features_datepickertsx_settings_src_ui_Button_ts_c37d65d4["src/ui/Button.tsx"]
+        src_ui_button_tsx_b3328e97("Button.tsx")
+        ui_button_button_e9ca2d52("button<br/><small>src/ui/Button.tsx</small>")
+        ui_button_props_298d4594("Props<br/><small>src/ui/Button.tsx</small>")
+    end
+    subgraph features_datepickertsx_settings_src_ui_DatePicke_1fa1a129["src/ui/DatePicker.tsx"]
+        src_ui_datepicker_tsx_dcdf0be6("DatePicker.tsx")
+        ui_datepicker_day_labels_b1d07c7f("DAY_LABELS<br/><small>src/ui/DatePicker.tsx</small>")
+        ui_datepicker_datepickerprops_04e31de6("DatePickerProps<br/><small>src/ui/DatePicker.tsx</small>")
+    end
+    subgraph features_datepickertsx_settings_features_entry_A_7402cc81["features/entry/AddExpenseSheet.tsx"]
+        entry_addexpensesheet_addexpensesheet_9948d857("AddExpenseSheet()<br/><small>features/entry/AddExpenseSheet.tsx</small>")
+        entry_addexpensesheet_props_3bfa0ef1("Props<br/><small>features/entry/AddExpenseSheet.tsx</small>")
+    end
+    subgraph features_datepickertsx_settings_src_ui_Input_tsx_52bd74cc["src/ui/Input.tsx"]
+        src_ui_input_tsx_8e05c4ee("Input.tsx")
+        ui_input_input_54fb3925("Input<br/><small>src/ui/Input.tsx</small>")
+    end
+    subgraph features_datepickertsx_settings_src_ui_Sheet_tsx_acf8e88f["src/ui/Sheet.tsx"]
+        src_ui_sheet_tsx_8a448dfa("Sheet.tsx")
+        ui_sheet_sheet_2013895e("Sheet()<br/><small>src/ui/Sheet.tsx</small>")
+    end
+    src_features_ledger_editexpensesheet_tsx_2a1b859a("EditExpenseSheet.tsx")
+    src_ui_emptystate_tsx_ad75f3a5("EmptyState.tsx")
+    settings_syncpanel_timeago_03111e1a -->|calls| settings_syncpanel_synccontent_25c94306
+    entry_addexpensesheet_addexpensesheet_9948d857 -->|imports| src_ui_sheet_tsx_8a448dfa
+    entry_addexpensesheet_addexpensesheet_9948d857 -->|imports| ui_sheet_sheet_2013895e
+    entry_addexpensesheet_addexpensesheet_9948d857 -->|imports| src_ui_input_tsx_8e05c4ee
+    entry_addexpensesheet_addexpensesheet_9948d857 -->|imports| ui_input_input_54fb3925
+    entry_addexpensesheet_addexpensesheet_9948d857 -->|imports| src_ui_button_tsx_b3328e97
+    entry_addexpensesheet_addexpensesheet_9948d857 -->|imports| ui_button_button_e9ca2d52
+    entry_addexpensesheet_addexpensesheet_9948d857 -->|imports| src_ui_datepicker_tsx_dcdf0be6
+    src_features_ledger_editexpensesheet_tsx_2a1b859a -->|imports| src_ui_sheet_tsx_8a448dfa
+    src_features_ledger_editexpensesheet_tsx_2a1b859a -->|imports| ui_sheet_sheet_2013895e
+    src_features_ledger_editexpensesheet_tsx_2a1b859a -->|imports| src_ui_input_tsx_8e05c4ee
+    src_features_ledger_editexpensesheet_tsx_2a1b859a -->|imports| ui_input_input_54fb3925
+    src_features_ledger_editexpensesheet_tsx_2a1b859a -->|imports| src_ui_button_tsx_b3328e97
+    src_features_ledger_editexpensesheet_tsx_2a1b859a -->|imports| ui_button_button_e9ca2d52
+    src_features_ledger_editexpensesheet_tsx_2a1b859a -->|imports| src_ui_datepicker_tsx_dcdf0be6
+    settings_syncpanel_syncpanel_ffd4f37c -->|imports| src_ui_button_tsx_b3328e97
+    settings_syncpanel_syncpanel_ffd4f37c -->|imports| ui_button_button_e9ca2d52
+    settings_syncpanel_syncpanel_ffd4f37c -->|imports| src_ui_input_tsx_8e05c4ee
+    settings_syncpanel_syncpanel_ffd4f37c -->|imports| ui_input_input_54fb3925
+    src_ui_button_tsx_b3328e97 -->|imports| src_ui_emptystate_tsx_ad75f3a5
+    ui_button_button_e9ca2d52 -->|imports| src_ui_emptystate_tsx_ad75f3a5
+    %% Omitted for readability: 3 nodes, 0 edges
+    class settings_syncpanel_syncpanel_ffd4f37c ui;
+    class settings_syncpanel_timeago_03111e1a ui;
+    class settings_syncpanel_synccontent_25c94306 ui;
+    class settings_syncpanel_notconfigured_8e35e13a ui;
+    class src_ui_button_tsx_b3328e97 ui;
+    class ui_button_button_e9ca2d52 ui;
+    class ui_button_props_298d4594 ui;
+    class src_ui_datepicker_tsx_dcdf0be6 ui;
+    class ui_datepicker_day_labels_b1d07c7f ui;
+    class ui_datepicker_datepickerprops_04e31de6 ui;
+    class entry_addexpensesheet_addexpensesheet_9948d857 ui;
+    class entry_addexpensesheet_props_3bfa0ef1 ui;
+    class src_ui_input_tsx_8e05c4ee ui;
+    class ui_input_input_54fb3925 ui;
+    class src_ui_sheet_tsx_8a448dfa ui;
+    class ui_sheet_sheet_2013895e ui;
+    class src_features_ledger_editexpensesheet_tsx_2a1b859a ui;
+    class src_ui_emptystate_tsx_ad75f3a5 ui;
+    classDef entry fill:#422006,stroke:#fbbf24,color:#fde68a,stroke-width:1px;
+    classDef api fill:#450a0a,stroke:#f87171,color:#fee2e2,stroke-width:1px;
+    classDef async fill:#2e1065,stroke:#a78bfa,color:#ede9fe,stroke-width:1px;
+    classDef klass fill:#064e3b,stroke:#34d399,color:#d1fae5,stroke-width:1px;
+    classDef ui fill:#831843,stroke:#f472b6,color:#fce7f3,stroke-width:1px;
+    classDef module fill:#172554,stroke:#60a5fa,color:#dbeafe,stroke-width:1px;
+    classDef test fill:#3f3f46,stroke:#a1a1aa,color:#f4f4f5,stroke-width:1px;
+    classDef concept fill:#292524,stroke:#a8a29e,color:#fafaf9,stroke-dasharray:4 3;
+    classDef function fill:#0f172a,stroke:#38bdf8,color:#e0f2fe,stroke-width:1px;
+</div>
+
+<h3>Call Details</h3>
+<table class="call-table">
+<tr>
+  <th style="width:5%">#</th>
+  <th style="width:28%">Node</th>
+  <th style="width:10%">Type</th>
+  <th style="width:17%">Caller</th>
+  <th style="width:20%">Callees</th>
+  <th style="width:20%">Description</th>
+</tr>
+<tr>
+  <td>1</td>
+  <td><code>Props</code><br><small style="color:var(--muted)">features/entry/AddExpenseSheet.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Props node in features/entry/AddExpenseSheet.tsx.</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td><code>AddExpenseSheet()</code><br><small style="color:var(--muted)">features/entry/AddExpenseSheet.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>button</code><br><small style="color:var(--muted)">src/ui/Button.tsx</small><br><code>Button.tsx</code><br><small style="color:var(--muted)">src/ui/Button.tsx</small><br><code>DatePicker.tsx</code><br><small style="color:var(--muted)">src/ui/DatePicker.tsx</small><br>+4 more</td>
+  <td>AddExpenseSheet() node in features/entry/AddExpenseSheet.tsx.</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td><code>EditExpenseSheet.tsx</code><br><small style="color:var(--muted)">features/ledger/EditExpenseSheet.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>button</code><br><small style="color:var(--muted)">src/ui/Button.tsx</small><br><code>Button.tsx</code><br><small style="color:var(--muted)">src/ui/Button.tsx</small><br><code>DatePicker.tsx</code><br><small style="color:var(--muted)">src/ui/DatePicker.tsx</small><br>+4 more</td>
+  <td>Module file in features/ledger/EditExpenseSheet.tsx.</td>
+</tr>
+<tr>
+  <td>4</td>
+  <td><code>timeAgo()</code><br><small style="color:var(--muted)">features/settings/SyncPanel.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>SyncContent()</code><br><small style="color:var(--muted)">features/settings/SyncPanel.tsx</small></td>
+  <td>timeAgo() node in features/settings/SyncPanel.tsx.</td>
+</tr>
+<tr>
+  <td>5</td>
+  <td><code>SyncPanel()</code><br><small style="color:var(--muted)">features/settings/SyncPanel.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>button</code><br><small style="color:var(--muted)">src/ui/Button.tsx</small><br><code>Button.tsx</code><br><small style="color:var(--muted)">src/ui/Button.tsx</small><br><code>Input</code><br><small style="color:var(--muted)">src/ui/Input.tsx</small><br>+1 more</td>
+  <td>SyncPanel() node in features/settings/SyncPanel.tsx.</td>
+</tr>
+<tr>
+  <td>6</td>
+  <td><code>NotConfigured()</code><br><small style="color:var(--muted)">features/settings/SyncPanel.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Reads, resolves, or persists project configuration.</td>
+</tr>
+<tr>
+  <td>7</td>
+  <td><code>SyncContent()</code><br><small style="color:var(--muted)">features/settings/SyncPanel.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>timeAgo()</code><br><small style="color:var(--muted)">features/settings/SyncPanel.tsx</small></td>
+  <td>No direct outbound edge</td>
+  <td>SyncContent() node in features/settings/SyncPanel.tsx.</td>
+</tr>
+<tr>
+  <td>8</td>
+  <td><code>Button.tsx</code><br><small style="color:var(--muted)">src/ui/Button.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>AddExpenseSheet()</code><br><small style="color:var(--muted)">features/entry/AddExpenseSheet.tsx</small><br><code>EditExpenseSheet.tsx</code><br><small style="color:var(--muted)">features/ledger/EditExpenseSheet.tsx</small><br><code>SyncPanel()</code><br><small style="color:var(--muted)">features/settings/SyncPanel.tsx</small></td>
+  <td><code>EmptyState.tsx</code><br><small style="color:var(--muted)">src/ui/EmptyState.tsx</small></td>
+  <td>Module file in src/ui/Button.tsx.</td>
+</tr>
+<tr>
+  <td>9</td>
+  <td><code>button</code><br><small style="color:var(--muted)">src/ui/Button.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>AddExpenseSheet()</code><br><small style="color:var(--muted)">features/entry/AddExpenseSheet.tsx</small><br><code>EditExpenseSheet.tsx</code><br><small style="color:var(--muted)">features/ledger/EditExpenseSheet.tsx</small><br><code>SyncPanel()</code><br><small style="color:var(--muted)">features/settings/SyncPanel.tsx</small></td>
+  <td><code>EmptyState.tsx</code><br><small style="color:var(--muted)">src/ui/EmptyState.tsx</small></td>
+  <td>button node in src/ui/Button.tsx.</td>
+</tr>
+<tr>
+  <td>10</td>
+  <td><code>Props</code><br><small style="color:var(--muted)">src/ui/Button.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Props node in src/ui/Button.tsx.</td>
+</tr>
+<tr>
+  <td>11</td>
+  <td><code>DatePicker.tsx</code><br><small style="color:var(--muted)">src/ui/DatePicker.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>AddExpenseSheet()</code><br><small style="color:var(--muted)">features/entry/AddExpenseSheet.tsx</small><br><code>EditExpenseSheet.tsx</code><br><small style="color:var(--muted)">features/ledger/EditExpenseSheet.tsx</small></td>
+  <td>No direct outbound edge</td>
+  <td>Module file in src/ui/DatePicker.tsx.</td>
+</tr>
+<tr>
+  <td>12</td>
+  <td><code>DAY_LABELS</code><br><small style="color:var(--muted)">src/ui/DatePicker.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>DAY_LABELS node in src/ui/DatePicker.tsx.</td>
+</tr>
+<tr>
+  <td>13</td>
+  <td><code>DatePickerProps</code><br><small style="color:var(--muted)">src/ui/DatePicker.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>DatePickerProps node in src/ui/DatePicker.tsx.</td>
+</tr>
+<tr>
+  <td>14</td>
+  <td><code>PopoverPos</code><br><small style="color:var(--muted)">src/ui/DatePicker.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>PopoverPos node in src/ui/DatePicker.tsx.</td>
+</tr>
+<tr>
+  <td>15</td>
+  <td><code>calcPosition()</code><br><small style="color:var(--muted)">src/ui/DatePicker.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>calcPosition() node in src/ui/DatePicker.tsx.</td>
+</tr>
+<tr>
+  <td>16</td>
+  <td><code>EmptyState.tsx</code><br><small style="color:var(--muted)">src/ui/EmptyState.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>button</code><br><small style="color:var(--muted)">src/ui/Button.tsx</small><br><code>Button.tsx</code><br><small style="color:var(--muted)">src/ui/Button.tsx</small></td>
+  <td>No direct outbound edge</td>
+  <td>Module file in src/ui/EmptyState.tsx.</td>
+</tr>
+<tr>
+  <td>17</td>
+  <td><code>Input.tsx</code><br><small style="color:var(--muted)">src/ui/Input.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>AddExpenseSheet()</code><br><small style="color:var(--muted)">features/entry/AddExpenseSheet.tsx</small><br><code>EditExpenseSheet.tsx</code><br><small style="color:var(--muted)">features/ledger/EditExpenseSheet.tsx</small><br><code>SyncPanel()</code><br><small style="color:var(--muted)">features/settings/SyncPanel.tsx</small></td>
+  <td>No direct outbound edge</td>
+  <td>Module file in src/ui/Input.tsx.</td>
+</tr>
+<tr>
+  <td>18</td>
+  <td><code>InputProps</code><br><small style="color:var(--muted)">src/ui/Input.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>InputProps node in src/ui/Input.tsx.</td>
+</tr>
+<tr>
+  <td>19</td>
+  <td><code>Input</code><br><small style="color:var(--muted)">src/ui/Input.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>AddExpenseSheet()</code><br><small style="color:var(--muted)">features/entry/AddExpenseSheet.tsx</small><br><code>EditExpenseSheet.tsx</code><br><small style="color:var(--muted)">features/ledger/EditExpenseSheet.tsx</small><br><code>SyncPanel()</code><br><small style="color:var(--muted)">features/settings/SyncPanel.tsx</small></td>
+  <td>No direct outbound edge</td>
+  <td>Input node in src/ui/Input.tsx.</td>
+</tr>
+<tr>
+  <td>20</td>
+  <td><code>Sheet.tsx</code><br><small style="color:var(--muted)">src/ui/Sheet.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>AddExpenseSheet()</code><br><small style="color:var(--muted)">features/entry/AddExpenseSheet.tsx</small><br><code>EditExpenseSheet.tsx</code><br><small style="color:var(--muted)">features/ledger/EditExpenseSheet.tsx</small></td>
+  <td>No direct outbound edge</td>
+  <td>Module file in src/ui/Sheet.tsx.</td>
+</tr>
+<tr>
+  <td>21</td>
+  <td><code>Sheet()</code><br><small style="color:var(--muted)">src/ui/Sheet.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>AddExpenseSheet()</code><br><small style="color:var(--muted)">features/entry/AddExpenseSheet.tsx</small><br><code>EditExpenseSheet.tsx</code><br><small style="color:var(--muted)">features/ledger/EditExpenseSheet.tsx</small></td>
+  <td>No direct outbound edge</td>
+  <td>Sheet() node in src/ui/Sheet.tsx.</td>
+</tr>
+</table>
+
+<div class="grid">
+  <div class="card">
+    <h4>Key Files</h4>
+    <table style="width:100%;font-size:0.85rem;">
+      <tr><th>File</th><th>Coverage</th></tr>
+      <tr><td><code>src/ui/DatePicker.tsx</code></td><td>5 nodes</td></tr>
+<tr><td><code>features/settings/SyncPanel.tsx</code></td><td>4 nodes</td></tr>
+<tr><td><code>src/ui/Button.tsx</code></td><td>3 nodes</td></tr>
+<tr><td><code>src/ui/Input.tsx</code></td><td>3 nodes</td></tr>
+<tr><td><code>features/entry/AddExpenseSheet.tsx</code></td><td>2 nodes</td></tr>
+<tr><td><code>src/ui/Sheet.tsx</code></td><td>2 nodes</td></tr>
+<tr><td><code>features/ledger/EditExpenseSheet.tsx</code></td><td>1 nodes</td></tr>
+<tr><td><code>src/ui/EmptyState.tsx</code></td><td>1 nodes</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h4>Design Notes</h4>
+    <p>This section comes from graphify community clustering. Relationship summary: contains x13, imports x11, imports x9, calls x1. The diagram prioritizes high-confidence calls or usage relationships; the table keeps the broader node inventory.</p>
+  </div>
+</div>
+<hr>
+
+<!-- ====== 8. Insightsts Utils Insighttone ====== -->
+<h2 id="insightsts-utils-insighttone">8. Insightsts Utils Insighttone</h2>
+<p>Insightsts Utils Insighttone groups implementation around insightsts, utils, insighttone, insight, mostly in src/utils/insights.ts. This section covers 7 nodes and 8 internal edges; the diagram shows only representative relationships to stay readable.</p>
+
+<div class="mermaid">
+%%{init: {"theme": "dark", "themeVariables": {"fontSize": "15.0px", "fontFamily": "Segoe UI, system-ui, sans-serif", "primaryColor": "#1e293b", "primaryTextColor": "#e2e8f0", "primaryBorderColor": "#38bdf8", "secondaryColor": "#0f172a", "tertiaryColor": "#334155", "lineColor": "#64748b", "textColor": "#e2e8f0"}, "flowchart": {"htmlLabels": true, "curve": "basis", "nodeSpacing": 48, "rankSpacing": 64, "padding": 14, "diagramPadding": 10, "useMaxWidth": true}}}%%
+flowchart LR
+    %% Section: Insightsts Utils Insighttone (7 nodes, 8 edges)
+    utils_insights_groupbycategory_dab80605("groupByCategory()<br/><small>src/utils/insights.ts</small>")
+    utils_insights_sumby_4fe357b2("sumBy()<br/><small>src/utils/insights.ts</small>")
+    utils_insights_computeinsights_d172d87a("computeInsights()<br/><small>src/utils/insights.ts</small>")
+    utils_insights_insight_35618458("Insight<br/><small>src/utils/insights.ts</small>")
+    utils_insights_insighttone_4da4c926("InsightTone<br/><small>src/utils/insights.ts</small>")
+    utils_insights_daysleftinmonth_c999861f("daysLeftInMonth()<br/><small>src/utils/insights.ts</small>")
+    src_utils_insights_ts_0640dfe6("insights.ts")
+    utils_insights_sumby_4fe357b2 -->|calls| utils_insights_computeinsights_d172d87a
+    utils_insights_groupbycategory_dab80605 -->|calls| utils_insights_computeinsights_d172d87a
+    class utils_insights_groupbycategory_dab80605 function;
+    class utils_insights_sumby_4fe357b2 function;
+    class utils_insights_computeinsights_d172d87a function;
+    class utils_insights_insight_35618458 klass;
+    class utils_insights_insighttone_4da4c926 klass;
+    class utils_insights_daysleftinmonth_c999861f function;
+    class src_utils_insights_ts_0640dfe6 module;
+    classDef entry fill:#422006,stroke:#fbbf24,color:#fde68a,stroke-width:1px;
+    classDef api fill:#450a0a,stroke:#f87171,color:#fee2e2,stroke-width:1px;
+    classDef async fill:#2e1065,stroke:#a78bfa,color:#ede9fe,stroke-width:1px;
+    classDef klass fill:#064e3b,stroke:#34d399,color:#d1fae5,stroke-width:1px;
+    classDef ui fill:#831843,stroke:#f472b6,color:#fce7f3,stroke-width:1px;
+    classDef module fill:#172554,stroke:#60a5fa,color:#dbeafe,stroke-width:1px;
+    classDef test fill:#3f3f46,stroke:#a1a1aa,color:#f4f4f5,stroke-width:1px;
+    classDef concept fill:#292524,stroke:#a8a29e,color:#fafaf9,stroke-dasharray:4 3;
+    classDef function fill:#0f172a,stroke:#38bdf8,color:#e0f2fe,stroke-width:1px;
+</div>
+
+<h3>Call Details</h3>
+<table class="call-table">
+<tr>
+  <th style="width:5%">#</th>
+  <th style="width:28%">Node</th>
+  <th style="width:10%">Type</th>
+  <th style="width:17%">Caller</th>
+  <th style="width:20%">Callees</th>
+  <th style="width:20%">Description</th>
+</tr>
+<tr>
+  <td>1</td>
+  <td><code>insights.ts</code><br><small style="color:var(--muted)">src/utils/insights.ts</small></td>
+  <td><span class="tag tag-class">Module</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Module file in src/utils/insights.ts.</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td><code>InsightTone</code><br><small style="color:var(--muted)">src/utils/insights.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>InsightTone node in src/utils/insights.ts.</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td><code>Insight</code><br><small style="color:var(--muted)">src/utils/insights.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Insight node in src/utils/insights.ts.</td>
+</tr>
+<tr>
+  <td>4</td>
+  <td><code>sumBy()</code><br><small style="color:var(--muted)">src/utils/insights.ts</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>computeInsights()</code><br><small style="color:var(--muted)">src/utils/insights.ts</small></td>
+  <td>sumBy() node in src/utils/insights.ts.</td>
+</tr>
+<tr>
+  <td>5</td>
+  <td><code>groupByCategory()</code><br><small style="color:var(--muted)">src/utils/insights.ts</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>computeInsights()</code><br><small style="color:var(--muted)">src/utils/insights.ts</small></td>
+  <td>groupByCategory() node in src/utils/insights.ts.</td>
+</tr>
+<tr>
+  <td>6</td>
+  <td><code>computeInsights()</code><br><small style="color:var(--muted)">src/utils/insights.ts</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td><code>groupByCategory()</code><br><small style="color:var(--muted)">src/utils/insights.ts</small><br><code>sumBy()</code><br><small style="color:var(--muted)">src/utils/insights.ts</small></td>
+  <td>No direct outbound edge</td>
+  <td>computeInsights() node in src/utils/insights.ts.</td>
+</tr>
+<tr>
+  <td>7</td>
+  <td><code>daysLeftInMonth()</code><br><small style="color:var(--muted)">src/utils/insights.ts</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>daysLeftInMonth() node in src/utils/insights.ts.</td>
+</tr>
+</table>
+
+<div class="grid">
+  <div class="card">
+    <h4>Key Files</h4>
+    <table style="width:100%;font-size:0.85rem;">
+      <tr><th>File</th><th>Coverage</th></tr>
+      <tr><td><code>src/utils/insights.ts</code></td><td>7 nodes</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h4>Design Notes</h4>
+    <p>This section comes from graphify community clustering. Relationship summary: contains x6, calls x2. The diagram prioritizes high-confidence calls or usage relationships; the table keeps the broader node inventory.</p>
+  </div>
+</div>
+<hr>
+
+<!-- ====== 9. Check Bundle Sizemjs ====== -->
+<h2 id="check-bundle-sizemjs">9. Check Bundle Sizemjs</h2>
+<p>Check Bundle Sizemjs groups implementation around check, bundle, sizemjs, scripts, mostly in scripts/check-bundle-size.mjs. This section covers 6 nodes and 5 internal edges; the diagram shows only representative relationships to stay readable.</p>
+
+<div class="mermaid">
+%%{init: {"theme": "dark", "themeVariables": {"fontSize": "15.0px", "fontFamily": "Segoe UI, system-ui, sans-serif", "primaryColor": "#1e293b", "primaryTextColor": "#e2e8f0", "primaryBorderColor": "#38bdf8", "secondaryColor": "#0f172a", "tertiaryColor": "#334155", "lineColor": "#64748b", "textColor": "#e2e8f0"}, "flowchart": {"htmlLabels": true, "curve": "basis", "nodeSpacing": 48, "rankSpacing": 64, "padding": 14, "diagramPadding": 10, "useMaxWidth": true}}}%%
+flowchart LR
+    %% Section: Check Bundle Sizemjs (6 nodes, 5 edges)
+    scripts_check_bundle_size_mjs_f129c72b("check-bundle-size.mjs")
+    scripts_check_bundle_size_budgets_90ef9cc3("BUDGETS<br/><small>scripts/check-bundle-size.mjs</small>")
+    scripts_check_bundle_size_walk_cffd7a21("walk()<br/><small>scripts/check-bundle-size.mjs</small>")
+    scripts_check_bundle_size_totals_a1ff1e42("totals<br/><small>scripts/check-bundle-size.mjs</small>")
+    scripts_check_bundle_size_fmt_0c9dbf09("fmt()<br/><small>scripts/check-bundle-size.mjs</small>")
+    scripts_check_bundle_size_fail_2aff4aa5("fail<br/><small>scripts/check-bundle-size.mjs</small>")
+    scripts_check_bundle_size_mjs_f129c72b -->|contains| scripts_check_bundle_size_budgets_90ef9cc3
+    scripts_check_bundle_size_mjs_f129c72b -->|contains| scripts_check_bundle_size_walk_cffd7a21
+    scripts_check_bundle_size_mjs_f129c72b -->|contains| scripts_check_bundle_size_totals_a1ff1e42
+    scripts_check_bundle_size_mjs_f129c72b -->|contains| scripts_check_bundle_size_fmt_0c9dbf09
+    scripts_check_bundle_size_mjs_f129c72b -->|contains| scripts_check_bundle_size_fail_2aff4aa5
+    class scripts_check_bundle_size_mjs_f129c72b function;
+    class scripts_check_bundle_size_budgets_90ef9cc3 klass;
+    class scripts_check_bundle_size_walk_cffd7a21 function;
+    class scripts_check_bundle_size_totals_a1ff1e42 function;
+    class scripts_check_bundle_size_fmt_0c9dbf09 function;
+    class scripts_check_bundle_size_fail_2aff4aa5 function;
+    classDef entry fill:#422006,stroke:#fbbf24,color:#fde68a,stroke-width:1px;
+    classDef api fill:#450a0a,stroke:#f87171,color:#fee2e2,stroke-width:1px;
+    classDef async fill:#2e1065,stroke:#a78bfa,color:#ede9fe,stroke-width:1px;
+    classDef klass fill:#064e3b,stroke:#34d399,color:#d1fae5,stroke-width:1px;
+    classDef ui fill:#831843,stroke:#f472b6,color:#fce7f3,stroke-width:1px;
+    classDef module fill:#172554,stroke:#60a5fa,color:#dbeafe,stroke-width:1px;
+    classDef test fill:#3f3f46,stroke:#a1a1aa,color:#f4f4f5,stroke-width:1px;
+    classDef concept fill:#292524,stroke:#a8a29e,color:#fafaf9,stroke-dasharray:4 3;
+    classDef function fill:#0f172a,stroke:#38bdf8,color:#e0f2fe,stroke-width:1px;
+</div>
+
+<h3>Call Details</h3>
+<table class="call-table">
+<tr>
+  <th style="width:5%">#</th>
+  <th style="width:28%">Node</th>
+  <th style="width:10%">Type</th>
+  <th style="width:17%">Caller</th>
+  <th style="width:20%">Callees</th>
+  <th style="width:20%">Description</th>
+</tr>
+<tr>
+  <td>1</td>
+  <td><code>check-bundle-size.mjs</code><br><small style="color:var(--muted)">scripts/check-bundle-size.mjs</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>check-bundle-size.mjs node in scripts/check-bundle-size.mjs.</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td><code>BUDGETS</code><br><small style="color:var(--muted)">scripts/check-bundle-size.mjs</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>BUDGETS node in scripts/check-bundle-size.mjs.</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td><code>walk()</code><br><small style="color:var(--muted)">scripts/check-bundle-size.mjs</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>walk() node in scripts/check-bundle-size.mjs.</td>
+</tr>
+<tr>
+  <td>4</td>
+  <td><code>totals</code><br><small style="color:var(--muted)">scripts/check-bundle-size.mjs</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>totals node in scripts/check-bundle-size.mjs.</td>
+</tr>
+<tr>
+  <td>5</td>
+  <td><code>fmt()</code><br><small style="color:var(--muted)">scripts/check-bundle-size.mjs</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>fmt() node in scripts/check-bundle-size.mjs.</td>
+</tr>
+<tr>
+  <td>6</td>
+  <td><code>fail</code><br><small style="color:var(--muted)">scripts/check-bundle-size.mjs</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>fail node in scripts/check-bundle-size.mjs.</td>
+</tr>
+</table>
+
+<div class="grid">
+  <div class="card">
+    <h4>Key Files</h4>
+    <table style="width:100%;font-size:0.85rem;">
+      <tr><th>File</th><th>Coverage</th></tr>
+      <tr><td><code>scripts/check-bundle-size.mjs</code></td><td>6 nodes</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h4>Design Notes</h4>
+    <p>This section comes from graphify community clustering. Relationship summary: contains x5. The diagram prioritizes high-confidence calls or usage relationships; the table keeps the broader node inventory.</p>
+  </div>
+</div>
+<hr>
+
+<!-- ====== 10. Smoke Previewmjs Scripts ====== -->
+<h2 id="smoke-previewmjs-scripts">10. Smoke Previewmjs Scripts</h2>
+<p>Smoke Previewmjs Scripts groups implementation around smoke, previewmjs, scripts, port, mostly in scripts/smoke-preview.mjs. This section covers 5 nodes and 4 internal edges; the diagram shows only representative relationships to stay readable.</p>
+
+<div class="mermaid">
+%%{init: {"theme": "dark", "themeVariables": {"fontSize": "15.0px", "fontFamily": "Segoe UI, system-ui, sans-serif", "primaryColor": "#1e293b", "primaryTextColor": "#e2e8f0", "primaryBorderColor": "#38bdf8", "secondaryColor": "#0f172a", "tertiaryColor": "#334155", "lineColor": "#64748b", "textColor": "#e2e8f0"}, "flowchart": {"htmlLabels": true, "curve": "basis", "nodeSpacing": 48, "rankSpacing": 64, "padding": 14, "diagramPadding": 10, "useMaxWidth": true}}}%%
+flowchart LR
+    %% Section: Smoke Previewmjs Scripts (5 nodes, 4 edges)
+    scripts_smoke_preview_mjs_b4d92c69("smoke-preview.mjs")
+    scripts_smoke_preview_port_ecdc6b12("port<br/><small>scripts/smoke-preview.mjs</small>")
+    scripts_smoke_preview_routes_cc3a298b("routes<br/><small>scripts/smoke-preview.mjs</small>")
+    scripts_smoke_preview_assertok_34ab3622("assertOk()<br/><small>scripts/smoke-preview.mjs</small>")
+    scripts_smoke_preview_assertasset_f3a1e77a("assertAsset()<br/><small>scripts/smoke-preview.mjs</small>")
+    scripts_smoke_preview_mjs_b4d92c69 -->|contains| scripts_smoke_preview_port_ecdc6b12
+    scripts_smoke_preview_mjs_b4d92c69 -->|contains| scripts_smoke_preview_routes_cc3a298b
+    scripts_smoke_preview_mjs_b4d92c69 -->|contains| scripts_smoke_preview_assertok_34ab3622
+    scripts_smoke_preview_mjs_b4d92c69 -->|contains| scripts_smoke_preview_assertasset_f3a1e77a
+    class scripts_smoke_preview_mjs_b4d92c69 function;
+    class scripts_smoke_preview_port_ecdc6b12 function;
+    class scripts_smoke_preview_routes_cc3a298b api;
+    class scripts_smoke_preview_assertok_34ab3622 async;
+    class scripts_smoke_preview_assertasset_f3a1e77a async;
+    classDef entry fill:#422006,stroke:#fbbf24,color:#fde68a,stroke-width:1px;
+    classDef api fill:#450a0a,stroke:#f87171,color:#fee2e2,stroke-width:1px;
+    classDef async fill:#2e1065,stroke:#a78bfa,color:#ede9fe,stroke-width:1px;
+    classDef klass fill:#064e3b,stroke:#34d399,color:#d1fae5,stroke-width:1px;
+    classDef ui fill:#831843,stroke:#f472b6,color:#fce7f3,stroke-width:1px;
+    classDef module fill:#172554,stroke:#60a5fa,color:#dbeafe,stroke-width:1px;
+    classDef test fill:#3f3f46,stroke:#a1a1aa,color:#f4f4f5,stroke-width:1px;
+    classDef concept fill:#292524,stroke:#a8a29e,color:#fafaf9,stroke-dasharray:4 3;
+    classDef function fill:#0f172a,stroke:#38bdf8,color:#e0f2fe,stroke-width:1px;
+</div>
+
+<h3>Call Details</h3>
+<table class="call-table">
+<tr>
+  <th style="width:5%">#</th>
+  <th style="width:28%">Node</th>
+  <th style="width:10%">Type</th>
+  <th style="width:17%">Caller</th>
+  <th style="width:20%">Callees</th>
+  <th style="width:20%">Description</th>
+</tr>
+<tr>
+  <td>1</td>
+  <td><code>smoke-preview.mjs</code><br><small style="color:var(--muted)">scripts/smoke-preview.mjs</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>smoke-preview.mjs node in scripts/smoke-preview.mjs.</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td><code>port</code><br><small style="color:var(--muted)">scripts/smoke-preview.mjs</small></td>
+  <td><span class="tag tag-func">Function</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>port node in scripts/smoke-preview.mjs.</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td><code>routes</code><br><small style="color:var(--muted)">scripts/smoke-preview.mjs</small></td>
+  <td><span class="tag tag-endpoint">API</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>routes node in scripts/smoke-preview.mjs.</td>
+</tr>
+<tr>
+  <td>4</td>
+  <td><code>assertOk()</code><br><small style="color:var(--muted)">scripts/smoke-preview.mjs</small></td>
+  <td><span class="tag tag-async">Async</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>assertOk() node in scripts/smoke-preview.mjs.</td>
+</tr>
+<tr>
+  <td>5</td>
+  <td><code>assertAsset()</code><br><small style="color:var(--muted)">scripts/smoke-preview.mjs</small></td>
+  <td><span class="tag tag-async">Async</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>assertAsset() node in scripts/smoke-preview.mjs.</td>
+</tr>
+</table>
+
+<div class="grid">
+  <div class="card">
+    <h4>Key Files</h4>
+    <table style="width:100%;font-size:0.85rem;">
+      <tr><th>File</th><th>Coverage</th></tr>
+      <tr><td><code>scripts/smoke-preview.mjs</code></td><td>5 nodes</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h4>Design Notes</h4>
+    <p>This section comes from graphify community clustering. Relationship summary: contains x4. The diagram prioritizes high-confidence calls or usage relationships; the table keeps the broader node inventory.</p>
+  </div>
+</div>
+<hr>
+
+<!-- ====== 11. Paceringtsx Ringtsx Features ====== -->
+<h2 id="paceringtsx-ringtsx-features">11. Paceringtsx Ringtsx Features</h2>
+<p>Paceringtsx Ringtsx Features groups implementation around paceringtsx, ringtsx, features, pulse, mostly in features/pulse/PaceRing.tsx, src/ui/Ring.tsx. This section covers 4 nodes and 4 internal edges; the diagram shows only representative relationships to stay readable.</p>
+
+<div class="mermaid">
+%%{init: {"theme": "dark", "themeVariables": {"fontSize": "15.0px", "fontFamily": "Segoe UI, system-ui, sans-serif", "primaryColor": "#1e293b", "primaryTextColor": "#e2e8f0", "primaryBorderColor": "#38bdf8", "secondaryColor": "#0f172a", "tertiaryColor": "#334155", "lineColor": "#64748b", "textColor": "#e2e8f0"}, "flowchart": {"htmlLabels": true, "curve": "basis", "nodeSpacing": 48, "rankSpacing": 64, "padding": 14, "diagramPadding": 10, "useMaxWidth": true}}}%%
+flowchart LR
+    %% Section: Paceringtsx Ringtsx Features (4 nodes, 4 edges)
+    subgraph paceringtsx_ringtsx_features_features_pulse_Pace_056ed877["features/pulse/PaceRing.tsx"]
+        src_features_pulse_pacering_tsx_af1a9c73("PaceRing.tsx")
+        pulse_pacering_pacering_86ff2500("PaceRing()<br/><small>features/pulse/PaceRing.tsx</small>")
+    end
+    subgraph paceringtsx_ringtsx_features_src_ui_Ring_tsx_801fd0b6["src/ui/Ring.tsx"]
+        src_ui_ring_tsx_3ba261e8("Ring.tsx")
+        ui_ring_ring_4967f163("Ring()<br/><small>src/ui/Ring.tsx</small>")
+    end
+    src_features_pulse_pacering_tsx_af1a9c73 -->|imports| src_ui_ring_tsx_3ba261e8
+    src_features_pulse_pacering_tsx_af1a9c73 -->|imports| ui_ring_ring_4967f163
+    class src_features_pulse_pacering_tsx_af1a9c73 ui;
+    class pulse_pacering_pacering_86ff2500 ui;
+    class src_ui_ring_tsx_3ba261e8 ui;
+    class ui_ring_ring_4967f163 ui;
+    classDef entry fill:#422006,stroke:#fbbf24,color:#fde68a,stroke-width:1px;
+    classDef api fill:#450a0a,stroke:#f87171,color:#fee2e2,stroke-width:1px;
+    classDef async fill:#2e1065,stroke:#a78bfa,color:#ede9fe,stroke-width:1px;
+    classDef klass fill:#064e3b,stroke:#34d399,color:#d1fae5,stroke-width:1px;
+    classDef ui fill:#831843,stroke:#f472b6,color:#fce7f3,stroke-width:1px;
+    classDef module fill:#172554,stroke:#60a5fa,color:#dbeafe,stroke-width:1px;
+    classDef test fill:#3f3f46,stroke:#a1a1aa,color:#f4f4f5,stroke-width:1px;
+    classDef concept fill:#292524,stroke:#a8a29e,color:#fafaf9,stroke-dasharray:4 3;
+    classDef function fill:#0f172a,stroke:#38bdf8,color:#e0f2fe,stroke-width:1px;
+</div>
+
+<h3>Call Details</h3>
+<table class="call-table">
+<tr>
+  <th style="width:5%">#</th>
+  <th style="width:28%">Node</th>
+  <th style="width:10%">Type</th>
+  <th style="width:17%">Caller</th>
+  <th style="width:20%">Callees</th>
+  <th style="width:20%">Description</th>
+</tr>
+<tr>
+  <td>1</td>
+  <td><code>PaceRing.tsx</code><br><small style="color:var(--muted)">features/pulse/PaceRing.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td><code>Ring()</code><br><small style="color:var(--muted)">src/ui/Ring.tsx</small><br><code>Ring.tsx</code><br><small style="color:var(--muted)">src/ui/Ring.tsx</small></td>
+  <td>Module file in features/pulse/PaceRing.tsx.</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td><code>PaceRing()</code><br><small style="color:var(--muted)">features/pulse/PaceRing.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>PaceRing() node in features/pulse/PaceRing.tsx.</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td><code>Ring.tsx</code><br><small style="color:var(--muted)">src/ui/Ring.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>PaceRing.tsx</code><br><small style="color:var(--muted)">features/pulse/PaceRing.tsx</small></td>
+  <td>No direct outbound edge</td>
+  <td>Module file in src/ui/Ring.tsx.</td>
+</tr>
+<tr>
+  <td>4</td>
+  <td><code>Ring()</code><br><small style="color:var(--muted)">src/ui/Ring.tsx</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td><code>PaceRing.tsx</code><br><small style="color:var(--muted)">features/pulse/PaceRing.tsx</small></td>
+  <td>No direct outbound edge</td>
+  <td>Ring() node in src/ui/Ring.tsx.</td>
+</tr>
+</table>
+
+<div class="grid">
+  <div class="card">
+    <h4>Key Files</h4>
+    <table style="width:100%;font-size:0.85rem;">
+      <tr><th>File</th><th>Coverage</th></tr>
+      <tr><td><code>features/pulse/PaceRing.tsx</code></td><td>2 nodes</td></tr>
+<tr><td><code>src/ui/Ring.tsx</code></td><td>2 nodes</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h4>Design Notes</h4>
+    <p>This section comes from graphify community clustering. Relationship summary: contains x2, imports x1, imports x1. The diagram prioritizes high-confidence calls or usage relationships; the table keeps the broader node inventory.</p>
+  </div>
+</div>
+<hr>
+
+<!-- ====== 12. Spendtrack Conductor Tech ====== -->
+<h2 id="spendtrack-conductor-tech">12. Spendtrack Conductor Tech</h2>
+<p>Spendtrack Conductor Tech groups implementation around spendtrack, conductor, tech, product, mostly in conductor/product.md, conductor/tech-stack.md, conductor/workflow.md. This section covers 4 nodes and 3 internal edges; the diagram shows only representative relationships to stay readable.</p>
+
+<div class="mermaid">
+%%{init: {"theme": "dark", "themeVariables": {"fontSize": "15.0px", "fontFamily": "Segoe UI, system-ui, sans-serif", "primaryColor": "#1e293b", "primaryTextColor": "#e2e8f0", "primaryBorderColor": "#38bdf8", "secondaryColor": "#0f172a", "tertiaryColor": "#334155", "lineColor": "#64748b", "textColor": "#e2e8f0"}, "flowchart": {"htmlLabels": true, "curve": "basis", "nodeSpacing": 48, "rankSpacing": 64, "padding": 14, "diagramPadding": 10, "useMaxWidth": true}}}%%
+flowchart LR
+    %% Section: Spendtrack Conductor Tech (4 nodes, 3 edges)
+    spendtrack_product_context_b07e818e("SpendTrack Product Context<br/><small>conductor/product.md</small>")
+    spendtrack_tech_stack_77329662("SpendTrack Tech Stack<br/><small>conductor/tech-stack.md</small>")
+    spendtrack_workflow_901f2e9f("SpendTrack Development Workflow<br/><small>conductor/workflow.md</small>")
+    spendtrack_expense_store_fb5c012b("Expense Store<br/><small>src/stores/expenseStore.ts</small>")
+    spendtrack_product_context_b07e818e -->|references| spendtrack_workflow_901f2e9f
+    spendtrack_tech_stack_77329662 -->|references| spendtrack_expense_store_fb5c012b
+    spendtrack_tech_stack_77329662 -->|references| spendtrack_workflow_901f2e9f
+    class spendtrack_product_context_b07e818e concept;
+    class spendtrack_tech_stack_77329662 concept;
+    class spendtrack_workflow_901f2e9f concept;
+    class spendtrack_expense_store_fb5c012b ui;
+    classDef entry fill:#422006,stroke:#fbbf24,color:#fde68a,stroke-width:1px;
+    classDef api fill:#450a0a,stroke:#f87171,color:#fee2e2,stroke-width:1px;
+    classDef async fill:#2e1065,stroke:#a78bfa,color:#ede9fe,stroke-width:1px;
+    classDef klass fill:#064e3b,stroke:#34d399,color:#d1fae5,stroke-width:1px;
+    classDef ui fill:#831843,stroke:#f472b6,color:#fce7f3,stroke-width:1px;
+    classDef module fill:#172554,stroke:#60a5fa,color:#dbeafe,stroke-width:1px;
+    classDef test fill:#3f3f46,stroke:#a1a1aa,color:#f4f4f5,stroke-width:1px;
+    classDef concept fill:#292524,stroke:#a8a29e,color:#fafaf9,stroke-dasharray:4 3;
+    classDef function fill:#0f172a,stroke:#38bdf8,color:#e0f2fe,stroke-width:1px;
+</div>
+
+<h3>Call Details</h3>
+<table class="call-table">
+<tr>
+  <th style="width:5%">#</th>
+  <th style="width:28%">Node</th>
+  <th style="width:10%">Type</th>
+  <th style="width:17%">Caller</th>
+  <th style="width:20%">Callees</th>
+  <th style="width:20%">Description</th>
+</tr>
+<tr>
+  <td>1</td>
+  <td><code>SpendTrack Product Context</code><br><small style="color:var(--muted)">conductor/product.md</small></td>
+  <td><span class="tag tag-func">Concept</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Design note for SpendTrack Product Context.</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td><code>SpendTrack Tech Stack</code><br><small style="color:var(--muted)">conductor/tech-stack.md</small></td>
+  <td><span class="tag tag-func">Concept</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Design note for SpendTrack Tech Stack.</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td><code>SpendTrack Development Workflow</code><br><small style="color:var(--muted)">conductor/workflow.md</small></td>
+  <td><span class="tag tag-func">Concept</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Design note for SpendTrack Development Workflow.</td>
+</tr>
+<tr>
+  <td>4</td>
+  <td><code>Expense Store</code><br><small style="color:var(--muted)">src/stores/expenseStore.ts</small></td>
+  <td><span class="tag tag-hook">UI</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Expense Store node in src/stores/expenseStore.ts.</td>
+</tr>
+</table>
+
+<div class="grid">
+  <div class="card">
+    <h4>Key Files</h4>
+    <table style="width:100%;font-size:0.85rem;">
+      <tr><th>File</th><th>Coverage</th></tr>
+      <tr><td><code>conductor/product.md</code></td><td>1 nodes</td></tr>
+<tr><td><code>conductor/tech-stack.md</code></td><td>1 nodes</td></tr>
+<tr><td><code>conductor/workflow.md</code></td><td>1 nodes</td></tr>
+<tr><td><code>src/stores/expenseStore.ts</code></td><td>1 nodes</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h4>Design Notes</h4>
+    <p>This section comes from graphify community clustering. Relationship summary: references x3. The diagram prioritizes high-confidence calls or usage relationships; the table keeps the broader node inventory.</p>
+  </div>
+</div>
+<hr>
+
+<!-- ====== 13. Spendtrack Docs Brain ====== -->
+<h2 id="spendtrack-docs-brain">13. Spendtrack Docs Brain</h2>
+<p>Spendtrack Docs Brain groups implementation around spendtrack, docs, brain, operating, mostly in docs/brain/OPERATING-MANUAL.md, docs/brain/bugs-fixed.md, docs/brain/qa-checklist.md. This section covers 3 nodes and 2 internal edges; the diagram shows only representative relationships to stay readable.</p>
+
+<div class="mermaid">
+%%{init: {"theme": "dark", "themeVariables": {"fontSize": "15.0px", "fontFamily": "Segoe UI, system-ui, sans-serif", "primaryColor": "#1e293b", "primaryTextColor": "#e2e8f0", "primaryBorderColor": "#38bdf8", "secondaryColor": "#0f172a", "tertiaryColor": "#334155", "lineColor": "#64748b", "textColor": "#e2e8f0"}, "flowchart": {"htmlLabels": true, "curve": "basis", "nodeSpacing": 48, "rankSpacing": 64, "padding": 14, "diagramPadding": 10, "useMaxWidth": true}}}%%
+flowchart LR
+    %% Section: Spendtrack Docs Brain (3 nodes, 2 edges)
+    spendtrack_operating_manual_42e475fa("SpendTrack Operating Manual<br/><small>docs/brain/OPERATING-MANUAL.md</small>")
+    spendtrack_bugs_fixed_428bfb3c("SpendTrack Fixed Bug Patterns<br/><small>docs/brain/bugs-fixed.md</small>")
+    spendtrack_qa_checklist_fd121e61("SpendTrack QA Checklist<br/><small>docs/brain/qa-checklist.md</small>")
+    spendtrack_operating_manual_42e475fa -->|references| spendtrack_bugs_fixed_428bfb3c
+    spendtrack_operating_manual_42e475fa -->|references| spendtrack_qa_checklist_fd121e61
+    class spendtrack_operating_manual_42e475fa concept;
+    class spendtrack_bugs_fixed_428bfb3c concept;
+    class spendtrack_qa_checklist_fd121e61 concept;
+    classDef entry fill:#422006,stroke:#fbbf24,color:#fde68a,stroke-width:1px;
+    classDef api fill:#450a0a,stroke:#f87171,color:#fee2e2,stroke-width:1px;
+    classDef async fill:#2e1065,stroke:#a78bfa,color:#ede9fe,stroke-width:1px;
+    classDef klass fill:#064e3b,stroke:#34d399,color:#d1fae5,stroke-width:1px;
+    classDef ui fill:#831843,stroke:#f472b6,color:#fce7f3,stroke-width:1px;
+    classDef module fill:#172554,stroke:#60a5fa,color:#dbeafe,stroke-width:1px;
+    classDef test fill:#3f3f46,stroke:#a1a1aa,color:#f4f4f5,stroke-width:1px;
+    classDef concept fill:#292524,stroke:#a8a29e,color:#fafaf9,stroke-dasharray:4 3;
+    classDef function fill:#0f172a,stroke:#38bdf8,color:#e0f2fe,stroke-width:1px;
+</div>
+
+<h3>Call Details</h3>
+<table class="call-table">
+<tr>
+  <th style="width:5%">#</th>
+  <th style="width:28%">Node</th>
+  <th style="width:10%">Type</th>
+  <th style="width:17%">Caller</th>
+  <th style="width:20%">Callees</th>
+  <th style="width:20%">Description</th>
+</tr>
+<tr>
+  <td>1</td>
+  <td><code>SpendTrack Operating Manual</code><br><small style="color:var(--muted)">docs/brain/OPERATING-MANUAL.md</small></td>
+  <td><span class="tag tag-func">Concept</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Design note for SpendTrack Operating Manual.</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td><code>SpendTrack Fixed Bug Patterns</code><br><small style="color:var(--muted)">docs/brain/bugs-fixed.md</small></td>
+  <td><span class="tag tag-func">Concept</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Design note for SpendTrack Fixed Bug Patterns.</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td><code>SpendTrack QA Checklist</code><br><small style="color:var(--muted)">docs/brain/qa-checklist.md</small></td>
+  <td><span class="tag tag-func">Concept</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Design note for SpendTrack QA Checklist.</td>
+</tr>
+</table>
+
+<div class="grid">
+  <div class="card">
+    <h4>Key Files</h4>
+    <table style="width:100%;font-size:0.85rem;">
+      <tr><th>File</th><th>Coverage</th></tr>
+      <tr><td><code>docs/brain/OPERATING-MANUAL.md</code></td><td>1 nodes</td></tr>
+<tr><td><code>docs/brain/bugs-fixed.md</code></td><td>1 nodes</td></tr>
+<tr><td><code>docs/brain/qa-checklist.md</code></td><td>1 nodes</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h4>Design Notes</h4>
+    <p>This section comes from graphify community clustering. Relationship summary: references x2. The diagram prioritizes high-confidence calls or usage relationships; the table keeps the broader node inventory.</p>
+  </div>
+</div>
+<hr>
+
+<!-- ====== 14. Spendtrack Design Anti ====== -->
+<h2 id="spendtrack-design-anti">14. Spendtrack Design Anti</h2>
+<p>Spendtrack Design Anti groups implementation around spendtrack, design, anti, docs, mostly in docs/design-anti-patterns.md, docs/orchestration.md. This section covers 2 nodes and 1 internal edges; the diagram shows only representative relationships to stay readable.</p>
+
+<div class="mermaid">
+%%{init: {"theme": "dark", "themeVariables": {"fontSize": "15.0px", "fontFamily": "Segoe UI, system-ui, sans-serif", "primaryColor": "#1e293b", "primaryTextColor": "#e2e8f0", "primaryBorderColor": "#38bdf8", "secondaryColor": "#0f172a", "tertiaryColor": "#334155", "lineColor": "#64748b", "textColor": "#e2e8f0"}, "flowchart": {"htmlLabels": true, "curve": "basis", "nodeSpacing": 48, "rankSpacing": 64, "padding": 14, "diagramPadding": 10, "useMaxWidth": true}}}%%
+flowchart LR
+    %% Section: Spendtrack Design Anti (2 nodes, 1 edges)
+    spendtrack_design_anti_patterns_4cc08544("SpendTrack Design Anti-Patterns<br/><small>docs/design-anti-patterns.md</small>")
+    spendtrack_orchestration_9594ea30("SpendTrack Orchestration Playbook<br/><small>docs/orchestration.md</small>")
+    spendtrack_design_anti_patterns_4cc08544 -->|references| spendtrack_orchestration_9594ea30
+    class spendtrack_design_anti_patterns_4cc08544 concept;
+    class spendtrack_orchestration_9594ea30 concept;
+    classDef entry fill:#422006,stroke:#fbbf24,color:#fde68a,stroke-width:1px;
+    classDef api fill:#450a0a,stroke:#f87171,color:#fee2e2,stroke-width:1px;
+    classDef async fill:#2e1065,stroke:#a78bfa,color:#ede9fe,stroke-width:1px;
+    classDef klass fill:#064e3b,stroke:#34d399,color:#d1fae5,stroke-width:1px;
+    classDef ui fill:#831843,stroke:#f472b6,color:#fce7f3,stroke-width:1px;
+    classDef module fill:#172554,stroke:#60a5fa,color:#dbeafe,stroke-width:1px;
+    classDef test fill:#3f3f46,stroke:#a1a1aa,color:#f4f4f5,stroke-width:1px;
+    classDef concept fill:#292524,stroke:#a8a29e,color:#fafaf9,stroke-dasharray:4 3;
+    classDef function fill:#0f172a,stroke:#38bdf8,color:#e0f2fe,stroke-width:1px;
+</div>
+
+<h3>Call Details</h3>
+<table class="call-table">
+<tr>
+  <th style="width:5%">#</th>
+  <th style="width:28%">Node</th>
+  <th style="width:10%">Type</th>
+  <th style="width:17%">Caller</th>
+  <th style="width:20%">Callees</th>
+  <th style="width:20%">Description</th>
+</tr>
+<tr>
+  <td>1</td>
+  <td><code>SpendTrack Design Anti-Patterns</code><br><small style="color:var(--muted)">docs/design-anti-patterns.md</small></td>
+  <td><span class="tag tag-func">Concept</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Design note for SpendTrack Design Anti-Patterns.</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td><code>SpendTrack Orchestration Playbook</code><br><small style="color:var(--muted)">docs/orchestration.md</small></td>
+  <td><span class="tag tag-func">Concept</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Design note for SpendTrack Orchestration Playbook.</td>
+</tr>
+</table>
+
+<div class="grid">
+  <div class="card">
+    <h4>Key Files</h4>
+    <table style="width:100%;font-size:0.85rem;">
+      <tr><th>File</th><th>Coverage</th></tr>
+      <tr><td><code>docs/design-anti-patterns.md</code></td><td>1 nodes</td></tr>
+<tr><td><code>docs/orchestration.md</code></td><td>1 nodes</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h4>Design Notes</h4>
+    <p>This section comes from graphify community clustering. Relationship summary: references x1. The diagram prioritizes high-confidence calls or usage relationships; the table keeps the broader node inventory.</p>
+  </div>
+</div>
+<hr>
+
+<!-- ====== 15. Spendtrack Readme Readmemd ====== -->
+<h2 id="spendtrack-readme-readmemd">15. Spendtrack Readme Readmemd</h2>
+<p>Spendtrack Readme Readmemd groups implementation around spendtrack, readme, readmemd, sync, mostly in README.md, src/services/syncService.ts. This section covers 2 nodes and 1 internal edges; the diagram shows only representative relationships to stay readable.</p>
+
+<div class="mermaid">
+%%{init: {"theme": "dark", "themeVariables": {"fontSize": "15.0px", "fontFamily": "Segoe UI, system-ui, sans-serif", "primaryColor": "#1e293b", "primaryTextColor": "#e2e8f0", "primaryBorderColor": "#38bdf8", "secondaryColor": "#0f172a", "tertiaryColor": "#334155", "lineColor": "#64748b", "textColor": "#e2e8f0"}, "flowchart": {"htmlLabels": true, "curve": "basis", "nodeSpacing": 48, "rankSpacing": 64, "padding": 14, "diagramPadding": 10, "useMaxWidth": true}}}%%
+flowchart LR
+    %% Section: Spendtrack Readme Readmemd (2 nodes, 1 edges)
+    spendtrack_readme_39344e67("SpendTrack README<br/><small>README.md</small>")
+    spendtrack_sync_service_b8213606("Sync Service<br/><small>src/services/syncService.ts</small>")
+    spendtrack_readme_39344e67 -->|references| spendtrack_sync_service_b8213606
+    class spendtrack_readme_39344e67 concept;
+    class spendtrack_sync_service_b8213606 klass;
+    classDef entry fill:#422006,stroke:#fbbf24,color:#fde68a,stroke-width:1px;
+    classDef api fill:#450a0a,stroke:#f87171,color:#fee2e2,stroke-width:1px;
+    classDef async fill:#2e1065,stroke:#a78bfa,color:#ede9fe,stroke-width:1px;
+    classDef klass fill:#064e3b,stroke:#34d399,color:#d1fae5,stroke-width:1px;
+    classDef ui fill:#831843,stroke:#f472b6,color:#fce7f3,stroke-width:1px;
+    classDef module fill:#172554,stroke:#60a5fa,color:#dbeafe,stroke-width:1px;
+    classDef test fill:#3f3f46,stroke:#a1a1aa,color:#f4f4f5,stroke-width:1px;
+    classDef concept fill:#292524,stroke:#a8a29e,color:#fafaf9,stroke-dasharray:4 3;
+    classDef function fill:#0f172a,stroke:#38bdf8,color:#e0f2fe,stroke-width:1px;
+</div>
+
+<h3>Call Details</h3>
+<table class="call-table">
+<tr>
+  <th style="width:5%">#</th>
+  <th style="width:28%">Node</th>
+  <th style="width:10%">Type</th>
+  <th style="width:17%">Caller</th>
+  <th style="width:20%">Callees</th>
+  <th style="width:20%">Description</th>
+</tr>
+<tr>
+  <td>1</td>
+  <td><code>SpendTrack README</code><br><small style="color:var(--muted)">README.md</small></td>
+  <td><span class="tag tag-func">Concept</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Documentation node describing SpendTrack README.</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td><code>Sync Service</code><br><small style="color:var(--muted)">src/services/syncService.ts</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Sync Service node in src/services/syncService.ts.</td>
+</tr>
+</table>
+
+<div class="grid">
+  <div class="card">
+    <h4>Key Files</h4>
+    <table style="width:100%;font-size:0.85rem;">
+      <tr><th>File</th><th>Coverage</th></tr>
+      <tr><td><code>README.md</code></td><td>1 nodes</td></tr>
+<tr><td><code>src/services/syncService.ts</code></td><td>1 nodes</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h4>Design Notes</h4>
+    <p>This section comes from graphify community clustering. Relationship summary: references x1. The diagram prioritizes high-confidence calls or usage relationships; the table keeps the broader node inventory.</p>
+  </div>
+</div>
+<hr>
+
+<!-- ====== 16. Other ====== -->
+<h2 id="other">16. Other</h2>
+<p>Other groups implementation around spendtrack, eslintconfigjs, postcssconfigjs, tailwindconfigjs, mostly in eslint.config.js, postcss.config.js, tailwind.config.js. This section covers 11 nodes and 0 internal edges; the diagram shows only representative relationships to stay readable.</p>
+
+<div class="mermaid">
+%%{init: {"theme": "dark", "themeVariables": {"fontSize": "15.0px", "fontFamily": "Segoe UI, system-ui, sans-serif", "primaryColor": "#1e293b", "primaryTextColor": "#e2e8f0", "primaryBorderColor": "#38bdf8", "secondaryColor": "#0f172a", "tertiaryColor": "#334155", "lineColor": "#64748b", "textColor": "#e2e8f0"}, "flowchart": {"htmlLabels": true, "curve": "basis", "nodeSpacing": 48, "rankSpacing": 64, "padding": 14, "diagramPadding": 10, "useMaxWidth": true}}}%%
+flowchart LR
+    %% Section: Other (11 nodes, 0 edges)
+    spendtrack_agents_e7c87898("SpendTrack Repository Notes<br/><small>AGENTS.md</small>")
+    spendtrack_changelog_4bd9d309("SpendTrack Changelog<br/><small>CHANGELOG.md</small>")
+    spendtrack_contributing_0a69ccb7("SpendTrack Contributing Guide<br/><small>CONTRIBUTING.md</small>")
+    spendtrack_user_guide_5a7de931("SpendTrack User Guide<br/><small>docs/USER_GUIDE.md</small>")
+    eslint_config_js_54404e2f("eslint.config.js")
+    spendtrack_index_html_a8f38dc9("SpendTrack Entry Point<br/><small>index.html</small>")
+    postcss_config_js_e45138c6("postcss.config.js")
+    src_vite_env_d_ts_bf7900dc("vite-env.d.ts")
+    tailwind_config_js_cf729719("tailwind.config.js")
+    vite_config_js_eb7c5919("vite.config.js")
+    vitest_config_ts_d9433acb("vitest.config.ts")
+    class spendtrack_agents_e7c87898 concept;
+    class spendtrack_changelog_4bd9d309 concept;
+    class spendtrack_contributing_0a69ccb7 concept;
+    class spendtrack_user_guide_5a7de931 concept;
+    class eslint_config_js_54404e2f module;
+    class spendtrack_index_html_a8f38dc9 klass;
+    class postcss_config_js_e45138c6 module;
+    class src_vite_env_d_ts_bf7900dc module;
+    class tailwind_config_js_cf729719 module;
+    class vite_config_js_eb7c5919 module;
+    class vitest_config_ts_d9433acb test;
+    classDef entry fill:#422006,stroke:#fbbf24,color:#fde68a,stroke-width:1px;
+    classDef api fill:#450a0a,stroke:#f87171,color:#fee2e2,stroke-width:1px;
+    classDef async fill:#2e1065,stroke:#a78bfa,color:#ede9fe,stroke-width:1px;
+    classDef klass fill:#064e3b,stroke:#34d399,color:#d1fae5,stroke-width:1px;
+    classDef ui fill:#831843,stroke:#f472b6,color:#fce7f3,stroke-width:1px;
+    classDef module fill:#172554,stroke:#60a5fa,color:#dbeafe,stroke-width:1px;
+    classDef test fill:#3f3f46,stroke:#a1a1aa,color:#f4f4f5,stroke-width:1px;
+    classDef concept fill:#292524,stroke:#a8a29e,color:#fafaf9,stroke-dasharray:4 3;
+    classDef function fill:#0f172a,stroke:#38bdf8,color:#e0f2fe,stroke-width:1px;
+</div>
+
+<h3>Call Details</h3>
+<table class="call-table">
+<tr>
+  <th style="width:5%">#</th>
+  <th style="width:28%">Node</th>
+  <th style="width:10%">Type</th>
+  <th style="width:17%">Caller</th>
+  <th style="width:20%">Callees</th>
+  <th style="width:20%">Description</th>
+</tr>
+<tr>
+  <td>1</td>
+  <td><code>eslint.config.js</code><br><small style="color:var(--muted)">eslint.config.js</small></td>
+  <td><span class="tag tag-class">Module</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Reads, resolves, or persists project configuration.</td>
+</tr>
+<tr>
+  <td>2</td>
+  <td><code>postcss.config.js</code><br><small style="color:var(--muted)">postcss.config.js</small></td>
+  <td><span class="tag tag-class">Module</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Reads, resolves, or persists project configuration.</td>
+</tr>
+<tr>
+  <td>3</td>
+  <td><code>tailwind.config.js</code><br><small style="color:var(--muted)">tailwind.config.js</small></td>
+  <td><span class="tag tag-class">Module</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Reads, resolves, or persists project configuration.</td>
+</tr>
+<tr>
+  <td>4</td>
+  <td><code>vite.config.js</code><br><small style="color:var(--muted)">vite.config.js</small></td>
+  <td><span class="tag tag-class">Module</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Reads, resolves, or persists project configuration.</td>
+</tr>
+<tr>
+  <td>5</td>
+  <td><code>vitest.config.ts</code><br><small style="color:var(--muted)">vitest.config.ts</small></td>
+  <td><span class="tag tag-func">Test</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Module file in vitest.config.ts.</td>
+</tr>
+<tr>
+  <td>6</td>
+  <td><code>vite-env.d.ts</code><br><small style="color:var(--muted)">src/vite-env.d.ts</small></td>
+  <td><span class="tag tag-class">Module</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Module file in src/vite-env.d.ts.</td>
+</tr>
+<tr>
+  <td>7</td>
+  <td><code>SpendTrack Repository Notes</code><br><small style="color:var(--muted)">AGENTS.md</small></td>
+  <td><span class="tag tag-func">Concept</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Documentation node describing SpendTrack Repository Notes.</td>
+</tr>
+<tr>
+  <td>8</td>
+  <td><code>SpendTrack Changelog</code><br><small style="color:var(--muted)">CHANGELOG.md</small></td>
+  <td><span class="tag tag-func">Concept</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Documentation node describing SpendTrack Changelog.</td>
+</tr>
+<tr>
+  <td>9</td>
+  <td><code>SpendTrack Contributing Guide</code><br><small style="color:var(--muted)">CONTRIBUTING.md</small></td>
+  <td><span class="tag tag-func">Concept</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Documentation node describing SpendTrack Contributing Guide.</td>
+</tr>
+<tr>
+  <td>10</td>
+  <td><code>SpendTrack Entry Point</code><br><small style="color:var(--muted)">index.html</small></td>
+  <td><span class="tag tag-class">Class</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>SpendTrack Entry Point node in index.html.</td>
+</tr>
+<tr>
+  <td>11</td>
+  <td><code>SpendTrack User Guide</code><br><small style="color:var(--muted)">docs/USER_GUIDE.md</small></td>
+  <td><span class="tag tag-func">Concept</span></td>
+  <td>External entry / no inbound edge</td>
+  <td>No direct outbound edge</td>
+  <td>Documentation node describing SpendTrack User Guide.</td>
+</tr>
+</table>
+
+<div class="grid">
+  <div class="card">
+    <h4>Key Files</h4>
+    <table style="width:100%;font-size:0.85rem;">
+      <tr><th>File</th><th>Coverage</th></tr>
+      <tr><td><code>AGENTS.md</code></td><td>1 nodes</td></tr>
+<tr><td><code>CHANGELOG.md</code></td><td>1 nodes</td></tr>
+<tr><td><code>CONTRIBUTING.md</code></td><td>1 nodes</td></tr>
+<tr><td><code>docs/USER_GUIDE.md</code></td><td>1 nodes</td></tr>
+<tr><td><code>eslint.config.js</code></td><td>1 nodes</td></tr>
+<tr><td><code>index.html</code></td><td>1 nodes</td></tr>
+<tr><td><code>postcss.config.js</code></td><td>1 nodes</td></tr>
+<tr><td><code>src/vite-env.d.ts</code></td><td>1 nodes</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h4>Design Notes</h4>
+    <p>This section comes from graphify community clustering. Relationship summary: No high-confidence call edges detected. The diagram prioritizes high-confidence calls or usage relationships; the table keeps the broader node inventory.</p>
+  </div>
+</div>
+<hr>
+
+<h2 id="stats">Project Statistics</h2>
+
+<div class="grid">
+  <div class="card">
+    <h4>Graph</h4>
+    <table style="width:100%;font-size:0.85rem;">
+      <tr><td>Nodes</td><td>348</td></tr>
+      <tr><td>Edges</td><td>607</td></tr>
+      <tr><td>Hyperedges</td><td>0</td></tr>
+      <tr><td>Communities</td><td>36</td></tr>
+      <tr><td>Documented Sections</td><td>15</td></tr>
+    </table>
+  </div>
+  <div class="card">
+    <h4>Edge Confidence</h4>
+    <table style="width:100%;font-size:0.85rem;">
+      <tr><td>EXTRACTED</td><td>606</td></tr>
+      <tr><td>INFERRED</td><td>1</td></tr>
+      <tr><td>AMBIGUOUS</td><td>0</td></tr>
+    </table>
+  </div>
+</div>
+
+<div style="text-align:center; padding:40px 0; color: var(--muted); font-size:0.9rem;">
+  <p>spending-tracker — Architecture Documentation</p>
+  <p>Generated: 2026-05-27 03:59 UTC · graphify callflow-html</p>
+</div>
+
+</div><!-- .container -->
+
+<script>
+(function () {
+  const mermaidConfig = {
+    startOnLoad: false,
+    theme: 'dark',
+    securityLevel: 'loose',
+    flowchart: { htmlLabels: true, useMaxWidth: true },
+    themeVariables: {
+      primaryColor: '#1e293b',
+      primaryTextColor: '#e2e8f0',
+      primaryBorderColor: '#38bdf8',
+      secondaryColor: '#0f172a',
+      tertiaryColor: '#334155',
+      lineColor: '#64748b',
+      textColor: '#e2e8f0',
+    }
+  };
+
+  mermaid.initialize(mermaidConfig);
+
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function enhanceMermaidDiagrams() {
+    document.querySelectorAll('.mermaid').forEach((container) => {
+      if (container.dataset.zoomReady === 'true') return;
+      const svg = container.querySelector('svg');
+      if (!svg) return;
+
+      container.dataset.zoomReady = 'true';
+      container.classList.add('is-enhanced');
+
+      const viewport = document.createElement('div');
+      viewport.className = 'mermaid-viewport';
+      svg.parentNode.insertBefore(viewport, svg);
+      viewport.appendChild(svg);
+
+      const toolbar = document.createElement('div');
+      toolbar.className = 'mermaid-toolbar';
+      toolbar.innerHTML = [
+        '<button type="button" data-action="zoom-out" title="Zoom out">-</button>',
+        '<span class="zoom-level" data-role="level">100%</span>',
+        '<button type="button" data-action="zoom-in" title="Zoom in">+</button>',
+        '<button type="button" data-action="fit" title="Fit width">Fit</button>',
+        '<button type="button" data-action="reset" title="Reset view">Reset</button>'
+      ].join('');
+      container.insertBefore(toolbar, viewport);
+
+      const state = { scale: 1, x: 0, y: 0, dragging: false, startX: 0, startY: 0, originX: 0, originY: 0 };
+      const level = toolbar.querySelector('[data-role="level"]');
+
+      function applyTransform() {
+        svg.style.transform = `translate(${state.x}px, ${state.y}px) scale(${state.scale})`;
+        level.textContent = `${Math.round(state.scale * 100)}%`;
+      }
+
+      function zoomBy(delta) {
+        state.scale = clamp(state.scale + delta, 0.25, 3);
+        applyTransform();
+      }
+
+      function reset() {
+        state.scale = 1;
+        state.x = 0;
+        state.y = 0;
+        applyTransform();
+      }
+
+      function fitWidth() {
+        const rawWidth = svg.viewBox && svg.viewBox.baseVal && svg.viewBox.baseVal.width
+          ? svg.viewBox.baseVal.width
+          : svg.getBoundingClientRect().width / state.scale;
+        if (!rawWidth) {
+          reset();
+          return;
+        }
+        state.scale = clamp((viewport.clientWidth - 48) / rawWidth, 0.25, 1.4);
+        state.x = 0;
+        state.y = 0;
+        applyTransform();
+      }
+
+      toolbar.addEventListener('click', (event) => {
+        const button = event.target.closest('button[data-action]');
+        if (!button) return;
+        const action = button.dataset.action;
+        if (action === 'zoom-in') zoomBy(0.15);
+        if (action === 'zoom-out') zoomBy(-0.15);
+        if (action === 'fit') fitWidth();
+        if (action === 'reset') reset();
+      });
+
+      viewport.addEventListener('wheel', (event) => {
+        if (!event.ctrlKey && !event.metaKey) return;
+        event.preventDefault();
+        zoomBy(event.deltaY < 0 ? 0.1 : -0.1);
+      }, { passive: false });
+
+      viewport.addEventListener('pointerdown', (event) => {
+        if (event.button !== 0) return;
+        state.dragging = true;
+        state.startX = event.clientX;
+        state.startY = event.clientY;
+        state.originX = state.x;
+        state.originY = state.y;
+        viewport.classList.add('is-dragging');
+        viewport.setPointerCapture(event.pointerId);
+      });
+
+      viewport.addEventListener('pointermove', (event) => {
+        if (!state.dragging) return;
+        state.x = state.originX + event.clientX - state.startX;
+        state.y = state.originY + event.clientY - state.startY;
+        applyTransform();
+      });
+
+      function endDrag(event) {
+        if (!state.dragging) return;
+        state.dragging = false;
+        viewport.classList.remove('is-dragging');
+        if (viewport.hasPointerCapture(event.pointerId)) {
+          viewport.releasePointerCapture(event.pointerId);
+        }
+      }
+
+      viewport.addEventListener('pointerup', endDrag);
+      viewport.addEventListener('pointercancel', endDrag);
+      applyTransform();
+    });
+  }
+
+  function renderMermaid() {
+    const result = mermaid.run
+      ? mermaid.run({ querySelector: '.mermaid' })
+      : Promise.resolve();
+    Promise.resolve(result)
+      .then(enhanceMermaidDiagrams)
+      .catch((error) => {
+        console.error('Mermaid render failed:', error);
+        enhanceMermaidDiagrams();
+      });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', renderMermaid);
+  } else {
+    renderMermaid();
+  }
+})();
+</script>
+
+</body>
+</html>

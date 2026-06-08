@@ -44,7 +44,7 @@
 
 Most personal-finance apps are built around syncing, subscriptions, and dashboards you open once and forget. SpendTrack is built for one thing: **making it effortless to log an expense and instantly see where your money is going.**
 
-- **Offline-first.** Your data lives on your device, in your browser — not on a server. No account, no telemetry, no cloud (until *you* opt in).
+- **Offline-first.** Your data lives on your device, in your browser — not on a server. No account, no telemetry, no cloud (until _you_ opt in).
 - **Friction-free entry.** Type `coffee 4.50 yesterday` and it's in. The smart parser infers item, amount, date, and category from one line.
 - **Real-time pacing.** A live month-pace ring tells you whether you're on track without opening a spreadsheet.
 - **Optional cross-device sync.** A single UUID code pairs your phone and laptop — no accounts, no passwords, paste once and you're done.
@@ -52,7 +52,7 @@ Most personal-finance apps are built around syncing, subscriptions, and dashboar
 
 ### Design choices
 
-- **Why offline-first?** Your finances are private. The default should be no servers, no accounts, no tracking. Sync is opt-in and runs against *your own* Supabase project.
+- **Why offline-first?** Your finances are private. The default should be no servers, no accounts, no tracking. Sync is opt-in and runs against _your own_ Supabase project.
 - **Why Supabase?** It's free for personal use, the JS SDK is small enough to lazy-load, and Postgres + Realtime gives instant cross-device updates without writing a backend.
 - **Why a PWA, not a native app?** Same code on every device, install in one tap, no app-store gatekeepers, full offline support via service worker.
 
@@ -60,27 +60,27 @@ Most personal-finance apps are built around syncing, subscriptions, and dashboar
 
 ## Highlights
 
-| | |
-|---|---|
-| **Smart entry** | Natural-language parser → category, amount, date inferred from one line |
-| **Pulse dashboard** | Month/year totals, daily-pace ring, sparkline trend, category mix, 14-week activity heatmap |
-| **Ledger** | Search, filter, edit, undo. Multi-criteria filters live in the URL so views are bookmarkable |
-| **Insights** | Recurring-charge detection, 14-day forecast, week-over-week comparisons, anomaly callouts |
-| **Budgets** | Per-category monthly caps with side-by-side actual-vs-budget bars |
-| **Cross-device sync** | Optional. UUID code pairs devices. Per-expense Last-Write-Wins merge. Tombstone-safe deletes. Realtime push. |
-| **PWA** | Installable on iOS & Android. Works fully offline. CSS-keyframe route transitions (no React-state animations that can stall) |
-| **Privacy** | No account. No analytics. No tracking. Data is local unless you generate a sync code |
+|                       |                                                                                                                              |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| **Smart entry**       | Natural-language parser → category, amount, date inferred from one line                                                      |
+| **Pulse dashboard**   | Month/year totals, daily-pace ring, sparkline trend, category mix, 14-week activity heatmap                                  |
+| **Ledger**            | Search, filter, edit, undo. Multi-criteria filters live in the URL so views are bookmarkable                                 |
+| **Insights**          | Recurring-charge detection, 14-day forecast, week-over-week comparisons, anomaly callouts                                    |
+| **Budgets**           | Per-category monthly caps with side-by-side actual-vs-budget bars                                                            |
+| **Cross-device sync** | Optional. UUID code pairs devices. Per-expense Last-Write-Wins merge. Tombstone-safe deletes. Realtime push.                 |
+| **PWA**               | Installable on iOS & Android. Works fully offline. CSS-keyframe route transitions (no React-state animations that can stall) |
+| **Privacy**           | No account. No analytics. No tracking. Data is local unless you generate a sync code                                         |
 
 ---
 
 ## Try it in 30 seconds
 
-| | Where | Notes |
-|--|------|-------|
-| **▶ Demo** | [spendtrack-demo.vercel.app](https://spendtrack-demo.vercel.app) | Pre-loaded with realistic data — your changes stay on your device |
-| **📱 Install** | Open the demo on your phone → Share → **Add to Home Screen** | Behaves exactly like a native app, fully offline |
-| **🧹 Make it yours** | Settings → Backup → **Clear all expenses** | Wipes the demo seed; categories and budgets remain |
-| **💻 Self-host** | [Quick start ↓](#quick-start) | Clone & run in under a minute — full ownership, zero third-parties |
+|                      | Where                                                            | Notes                                                              |
+| -------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------ |
+| **▶ Demo**           | [spendtrack-demo.vercel.app](https://spendtrack-demo.vercel.app) | Pre-loaded with realistic data — your changes stay on your device  |
+| **📱 Install**       | Open the demo on your phone → Share → **Add to Home Screen**     | Behaves exactly like a native app, fully offline                   |
+| **🧹 Make it yours** | Settings → Backup → **Clear all expenses**                       | Wipes the demo seed; categories and budgets remain                 |
+| **💻 Self-host**     | [Quick start ↓](#quick-start)                                    | Clone & run in under a minute — full ownership, zero third-parties |
 
 ---
 
@@ -179,14 +179,14 @@ See [`src/services/syncService.ts`](src/services/syncService.ts) for the merge l
 
 ### Performance
 
-| | |
-|---|---|
-| Main bundle (gzip) | **83.7 KB** |
-| Total initial download (gzip) | ~190 KB |
-| Settings drawer | code-split (lazy) |
-| Supabase JS SDK | lazy `import()` — only loaded when sync is configured |
-| Hydration | deferred to `useEffect` to keep first paint unblocked |
-| Route transitions | CSS keyframe (no React-state animations that can stall) |
+|                               |                                                         |
+| ----------------------------- | ------------------------------------------------------- |
+| Main bundle (gzip)            | **83.7 KB**                                             |
+| Total initial download (gzip) | ~190 KB                                                 |
+| Settings drawer               | code-split (lazy)                                       |
+| Supabase JS SDK               | lazy `import()` — only loaded when sync is configured   |
+| Hydration                     | deferred to `useEffect` to keep first paint unblocked   |
+| Route transitions             | CSS keyframe (no React-state animations that can stall) |
 
 ### Stability
 
@@ -369,19 +369,19 @@ This was a real bug fixed in v0.5.0 (PR #9). If you see it on the deployed site,
 
 ## Tech stack
 
-| Layer | Tools |
-|-------|-------|
-| Framework | React 19, TypeScript (strict), Vite |
-| Styling | Tailwind CSS, CSS custom properties (OLED-near-black theme) |
-| State | Zustand + `subscribeWithSelector` |
-| Routing | React Router v7 |
+| Layer     | Tools                                                           |
+| --------- | --------------------------------------------------------------- |
+| Framework | React 19, TypeScript (strict), Vite                             |
+| Styling   | Tailwind CSS, CSS custom properties (OLED-near-black theme)     |
+| State     | Zustand + `subscribeWithSelector`                               |
+| Routing   | React Router v7                                                 |
 | Animation | framer-motion (sparingly — CSS keyframes for route transitions) |
-| Search | Fuse.js (smart-entry parser) |
-| Dates | date-fns |
-| Sync | Supabase Postgres + Realtime (lazy-loaded, opt-in) |
-| PWA | vite-plugin-pwa, Workbox |
-| Testing | Vitest, Testing Library, curl-based preview smoke |
-| Deploy | Vercel |
+| Search    | Fuse.js (smart-entry parser)                                    |
+| Dates     | date-fns                                                        |
+| Sync      | Supabase Postgres + Realtime (lazy-loaded, opt-in)              |
+| PWA       | vite-plugin-pwa, Workbox                                        |
+| Testing   | Vitest, Testing Library, curl-based preview smoke               |
+| Deploy    | Vercel                                                          |
 
 ---
 

@@ -40,21 +40,23 @@ There are no accounts and no passwords — a UUID sync code acts as the shared s
 **One-time setup (per Supabase project):**
 
 1. Create a free project at [supabase.com](https://supabase.com).
-2. In the Supabase SQL Editor, run `supabase/migrations/001_sync.sql` (and optionally `002_sync_indexes.sql` for retention helpers).
+2. In the Supabase SQL Editor, run `supabase/migrations/001_sync.sql` (and optionally `002_sync_indexes.sql` for retention helpers). The helper only creates a manual pruning function; schedule it yourself if you want automatic 90-day cleanup.
 3. Copy your project URL and anon public key into `.env.local` as `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
 4. Open Settings → **Sync** in the app and tap **Generate sync code**. Paste the same code into Settings → Sync on every other device.
 
 **About the sync code:**
 
 - Treat it like a password — anyone with it can read and write your synced data. Don't share it in chats or screenshots.
-- Pair as many devices as you like with the same code (phone + laptop + tablet + work browser, etc.). All merge via per-expense last-write-wins.
+- Pair as many devices as you like with the same code (phone + laptop + tablet + work browser, etc.). Expenses and budgets merge with last-write-wins metadata.
 - If you ever lose the code, just generate a new one. The old bucket stays in Supabase for 90 days then auto-prunes if `prune_stale_sync_buckets()` is scheduled.
+- This no-account relay is designed for a personal Supabase project. It uses broad anon table access, so it is not a hardened multi-user SaaS security model.
 
 How it works:
 
 - localStorage stays the source of truth — the cloud is a stateless relay.
 - Each expense merges by **last-write-wins** using its `updatedAt` (or `createdAt`) timestamp.
-- A tombstone set propagates deletions across devices, so a deleted expense never resurrects on another device.
+- Each budget category merges by set/delete timestamps, so stale tabs cannot revert newer budget changes.
+- Tombstone sets propagate deletions across devices, so deleted expenses and removed budgets do not resurrect.
 - Local edits push 3 seconds after your last change. Remote edits arrive instantly via Supabase Realtime.
 - If a push fails, retries back off exponentially (1.5 s × 2ⁿ, capped at 2 minutes) until you're online again.
 
@@ -91,7 +93,7 @@ That means:
 | | |
 |---|---|
 | **localStorage cap** | ~5–10 MB per browser (varies by device). SpendTrack alerts you with a toast if storage is full and stops silently — never silent data loss. |
-| **Sync device count** | Unbounded — pair any number of devices with the same code; all merge via last-write-wins. |
+| **Sync device count** | Unbounded — pair any number of devices with the same code; expenses and budgets merge via last-write-wins metadata. |
 | **Sync payload size** | Soft warning at 800 KB, hard reject at 1 MB (Supabase row limit). Tombstone array auto-caps at 1000 entries. |
 | **Tested expense count** | Up to ~5000 entries renders smoothly. Beyond that, Ledger may benefit from virtualised scrolling — not yet implemented. |
 | **Time zones** | Dates are stored at noon UTC for the display date, which keeps grouping stable across most timezones but may shift by a day for users in extreme zones with DST transitions. |

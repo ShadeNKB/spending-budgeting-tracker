@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from "react";
-import { useSearchParams } from "react-router-dom";
-import { motion, AnimatePresence } from "framer-motion";
-import { Search, Filter, Inbox, X } from "lucide-react";
-import { DatePicker } from "../../ui/DatePicker";
+import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Search, Filter, Inbox, X } from 'lucide-react'
+import { DatePicker } from '../../ui/DatePicker'
 import {
   parseISO,
   format,
@@ -16,138 +16,159 @@ import {
   endOfDay,
   startOfYear,
   endOfYear,
-} from "date-fns";
-import { useExpenseStore } from "../../stores/useExpenseStore";
-import { Segmented } from "../../ui/Segmented";
-import { Input } from "../../ui/Input";
-import { Pill } from "../../ui/Pill";
-import { EmptyState } from "../../ui/EmptyState";
-import { formatMoney } from "../../lib/format";
-import { SmartInput } from "../entry/SmartInput";
-import { LedgerRow } from "./LedgerRow";
-import { EditExpenseSheet } from "./EditExpenseSheet";
-import { useToast } from "../../hooks/useToast";
-import type { Expense } from "../../types";
+  isValid,
+} from 'date-fns'
+import { useExpenseStore } from '../../stores/useExpenseStore'
+import { Segmented } from '../../ui/Segmented'
+import { Input } from '../../ui/Input'
+import { Select } from '../../ui/Select'
+import { Pill } from '../../ui/Pill'
+import { EmptyState } from '../../ui/EmptyState'
+import { formatMoney } from '../../lib/format'
+import { SmartInput } from '../entry/SmartInput'
+import { LedgerRow } from './LedgerRow'
+import { EditExpenseSheet } from './EditExpenseSheet'
+import { useToast } from '../../hooks/useToast'
+import type { Expense } from '../../types'
 
-type Range = "today" | "week" | "month" | "year" | "all" | "custom";
+type Range = 'today' | 'week' | 'month' | 'year' | 'all' | 'custom'
+
+const isValidYmd = (v: string | null): v is string => {
+  if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false
+  return isValid(parseISO(v))
+}
 
 export function LedgerScreen() {
-  const expenses = useExpenseStore((s) => s.expenses);
-  const categories = useExpenseStore((s) => s.categories);
-  const deleteExpense = useExpenseStore((s) => s.deleteExpense);
-  const consumeUndo = useExpenseStore((s) => s.consumeUndo);
-  const toast = useToast();
+  const expenses = useExpenseStore((s) => s.expenses)
+  const categories = useExpenseStore((s) => s.categories)
+  const deleteExpense = useExpenseStore((s) => s.deleteExpense)
+  const consumeUndo = useExpenseStore((s) => s.consumeUndo)
+  const toast = useToast()
 
-  const [params, setParams] = useSearchParams();
-  const [editing, setEditing] = useState<Expense | null>(null);
+  const [params, setParams] = useSearchParams()
+  const [editing, setEditing] = useState<Expense | null>(null)
 
-  const range = (params.get("range") as Range) ?? "month";
-  const category = params.get("category") ?? "all";
-  const specificDate = params.get("date"); // yyyy-MM-dd
-  const customStart = params.get("customStart") ?? "";
-  const customEnd = params.get("customEnd") ?? "";
-  const [search, setSearch] = useState(params.get("q") ?? "");
+  const range = (params.get('range') as Range) ?? 'month'
+  const category = params.get('category') ?? 'all'
+  const rawSpecificDate = params.get('date')
+  const rawCustomStart = params.get('customStart')
+  const rawCustomEnd = params.get('customEnd')
+  const specificDate = isValidYmd(rawSpecificDate) ? rawSpecificDate : null // yyyy-MM-dd
+  const customStart = isValidYmd(rawCustomStart) ? rawCustomStart : ''
+  const customEnd = isValidYmd(rawCustomEnd) ? rawCustomEnd : ''
+  const [search, setSearch] = useState(params.get('q') ?? '')
 
-  const today = format(new Date(), "yyyy-MM-dd");
+  const today = format(new Date(), 'yyyy-MM-dd')
 
   const setRange = (r: Range) => {
-    const n = new URLSearchParams(params);
-    n.set("range", r);
-    n.delete("date");
-    if (r !== "custom") {
-      n.delete("customStart");
-      n.delete("customEnd");
+    const n = new URLSearchParams(params)
+    n.set('range', r)
+    n.delete('date')
+    if (r !== 'custom') {
+      n.delete('customStart')
+      n.delete('customEnd')
     }
-    setParams(n, { replace: true });
-  };
+    setParams(n, { replace: true })
+  }
   const setCustomStart = (v: string) => {
-    const n = new URLSearchParams(params);
-    n.set("customStart", v);
-    setParams(n, { replace: true });
-  };
+    const n = new URLSearchParams(params)
+    n.set('customStart', v)
+    setParams(n, { replace: true })
+  }
   const setCustomEnd = (v: string) => {
-    const n = new URLSearchParams(params);
-    n.set("customEnd", v);
-    setParams(n, { replace: true });
-  };
+    const n = new URLSearchParams(params)
+    n.set('customEnd', v)
+    setParams(n, { replace: true })
+  }
   const setCategory = (c: string) => {
-    const n = new URLSearchParams(params);
-    if (c === "all") n.delete("category");
-    else n.set("category", c);
-    setParams(n, { replace: true });
-  };
+    const n = new URLSearchParams(params)
+    if (c === 'all') n.delete('category')
+    else n.set('category', c)
+    setParams(n, { replace: true })
+  }
   const clearDate = () => {
-    const n = new URLSearchParams(params);
-    n.delete("date");
-    setParams(n, { replace: true });
-  };
+    const n = new URLSearchParams(params)
+    n.delete('date')
+    setParams(n, { replace: true })
+  }
   const clearAll = () => {
-    setSearch("");
-    setParams(new URLSearchParams(), { replace: true });
-  };
+    setSearch('')
+    setParams(new URLSearchParams(), { replace: true })
+  }
 
   const filtered = useMemo(() => {
-    let arr = [...expenses];
-    const now = new Date();
+    let arr = [...expenses]
+    const now = new Date()
     if (specificDate) {
-      arr = arr.filter((e) => format(parseISO(e.date), "yyyy-MM-dd") === specificDate);
-    } else if (range === "custom") {
-      const start = customStart ? startOfDay(parseISO(customStart)) : new Date(0);
-      const end = customEnd ? endOfDay(parseISO(customEnd)) : endOfDay(now);
-      arr = arr.filter((e) => isWithinInterval(parseISO(e.date), { start, end }));
-    } else if (range !== "all") {
-      let start: Date, end: Date;
-      if (range === "today") { start = startOfDay(now); end = endOfDay(now); }
-      else if (range === "week") { start = subDays(now, 7); end = now; }
-      else if (range === "year") { start = startOfYear(now); end = endOfYear(now); }
-      else { start = startOfMonth(now); end = endOfMonth(now); }
-      arr = arr.filter((e) => isWithinInterval(parseISO(e.date), { start, end }));
+      arr = arr.filter((e) => format(parseISO(e.date), 'yyyy-MM-dd') === specificDate)
+    } else if (range === 'custom') {
+      const start = customStart ? startOfDay(parseISO(customStart)) : new Date(0)
+      const end = customEnd ? endOfDay(parseISO(customEnd)) : endOfDay(now)
+      arr = arr.filter((e) => isWithinInterval(parseISO(e.date), { start, end }))
+    } else if (range !== 'all') {
+      let start: Date, end: Date
+      if (range === 'today') {
+        start = startOfDay(now)
+        end = endOfDay(now)
+      } else if (range === 'week') {
+        start = subDays(now, 7)
+        end = now
+      } else if (range === 'year') {
+        start = startOfYear(now)
+        end = endOfYear(now)
+      } else {
+        start = startOfMonth(now)
+        end = endOfMonth(now)
+      }
+      arr = arr.filter((e) => isWithinInterval(parseISO(e.date), { start, end }))
     }
-    if (category !== "all") arr = arr.filter((e) => e.category === category);
+    if (category !== 'all') arr = arr.filter((e) => e.category === category)
     if (search) {
-      const q = search.toLowerCase();
+      const q = search.toLowerCase()
       arr = arr.filter(
         (e) =>
           e.itemName.toLowerCase().includes(q) ||
           e.category.toLowerCase().includes(q) ||
-          e.notes?.toLowerCase().includes(q)
-      );
+          e.notes?.toLowerCase().includes(q),
+      )
     }
-    arr.sort((a, b) => parseISO(b.date).getTime() - parseISO(a.date).getTime());
-    return arr;
-  }, [expenses, range, category, search, specificDate, customStart, customEnd]);
+    arr.sort((a, b) => parseISO(b.date).getTime() - parseISO(a.date).getTime())
+    return arr
+  }, [expenses, range, category, search, specificDate, customStart, customEnd])
 
   const groups = useMemo(() => {
-    const m = new Map<string, Expense[]>();
+    const m = new Map<string, Expense[]>()
     for (const e of filtered) {
-      const key = format(parseISO(e.date), "yyyy-MM-dd");
-      if (!m.has(key)) m.set(key, []);
-      m.get(key)!.push(e);
+      const key = format(parseISO(e.date), 'yyyy-MM-dd')
+      if (!m.has(key)) m.set(key, [])
+      m.get(key)!.push(e)
     }
     return Array.from(m.entries()).map(([date, items]) => ({
       date,
       items,
       total: items.reduce((s, e) => s + e.amount, 0),
-    }));
-  }, [filtered]);
+    }))
+  }, [filtered])
 
-  const totalSum = useMemo(() => filtered.reduce((s, e) => s + e.amount, 0), [filtered]);
+  const totalSum = useMemo(() => filtered.reduce((s, e) => s + e.amount, 0), [filtered])
 
   const handleDelete = (id: string) => {
-    const expense = expenses.find((e) => e.id === id);
-    deleteExpense(id);
+    const expense = expenses.find((e) => e.id === id)
+    deleteExpense(id)
     if (expense) {
       toast.info(`Deleted "${expense.itemName}"`, {
         action: {
-          label: "Undo",
+          label: 'Undo',
           onClick: () => {
-            const entry = useExpenseStore.getState().undoStack.find((u) => u.id.startsWith(`del-${id}`));
-            if (entry) consumeUndo(entry.id);
+            const entry = useExpenseStore
+              .getState()
+              .undoStack.find((u) => u.id.startsWith(`del-${id}`))
+            if (entry) consumeUndo(entry.id)
           },
         },
-      });
+      })
     }
-  };
+  }
 
   // Sync search param. Intentionally only depends on `search` — adding `params`
   // / `setParams` to the deps would re-arm the debounce on every URL change
@@ -155,55 +176,60 @@ export function LedgerScreen() {
   // setTimeout closure when it fires.
   useEffect(() => {
     const t = setTimeout(() => {
-      const n = new URLSearchParams(params);
-      if (search) n.set("q", search);
-      else n.delete("q");
-      setParams(n, { replace: true });
-    }, 200);
-    return () => clearTimeout(t);
+      const n = new URLSearchParams(params)
+      if (search) n.set('q', search)
+      else n.delete('q')
+      setParams(n, { replace: true })
+    }, 200)
+    return () => clearTimeout(t)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search]);
+  }, [search])
 
-  const hasFilters = range !== "month" || category !== "all" || !!search || !!specificDate || !!(customStart || customEnd);
+  const hasFilters =
+    range !== 'month' ||
+    category !== 'all' ||
+    !!search ||
+    !!specificDate ||
+    !!(customStart || customEnd)
 
   // Compute a human-readable date range label for the active filter
   const dateRangeLabel = useMemo(() => {
-    const now = new Date();
-    if (specificDate) return format(parseISO(specificDate), "MMM d, yyyy");
+    const now = new Date()
+    if (specificDate) return format(parseISO(specificDate), 'MMM d, yyyy')
     switch (range) {
-      case "today":
-        return format(now, "MMMM d, yyyy");
-      case "week": {
-        const weekStart = subDays(now, 6);
-        return `${format(weekStart, "MMM d")} - ${format(now, "MMM d, yyyy")}`;
+      case 'today':
+        return format(now, 'MMMM d, yyyy')
+      case 'week': {
+        const weekStart = subDays(now, 6)
+        return `${format(weekStart, 'MMM d')} - ${format(now, 'MMM d, yyyy')}`
       }
-      case "month": {
-        const ms = startOfMonth(now);
-        const me = endOfMonth(now);
-        if (now.getDate() === me.getDate()) return format(ms, "MMMM yyyy");
-        return `${format(ms, "MMM d")} - ${format(now, "MMM d, yyyy")}`;
+      case 'month': {
+        const ms = startOfMonth(now)
+        const me = endOfMonth(now)
+        if (now.getDate() === me.getDate()) return format(ms, 'MMMM yyyy')
+        return `${format(ms, 'MMM d')} - ${format(now, 'MMM d, yyyy')}`
       }
-      case "year": {
-        const ys = startOfYear(now);
-        const ye = endOfYear(now);
-        return `${format(ys, "MMM d")} - ${format(ye, "MMM d, yyyy")}`;
+      case 'year': {
+        const ys = startOfYear(now)
+        const ye = endOfYear(now)
+        return `${format(ys, 'MMM d')} - ${format(ye, 'MMM d, yyyy')}`
       }
-      case "custom": {
+      case 'custom': {
         if (customStart && customEnd)
-          return `${format(parseISO(customStart), "MMM d, yyyy")} - ${format(parseISO(customEnd), "MMM d, yyyy")}`;
-        if (customStart) return `From ${format(parseISO(customStart), "MMM d, yyyy")}`;
-        if (customEnd) return `Until ${format(parseISO(customEnd), "MMM d, yyyy")}`;
-        return "Custom range";
+          return `${format(parseISO(customStart), 'MMM d, yyyy')} - ${format(parseISO(customEnd), 'MMM d, yyyy')}`
+        if (customStart) return `From ${format(parseISO(customStart), 'MMM d, yyyy')}`
+        if (customEnd) return `Until ${format(parseISO(customEnd), 'MMM d, yyyy')}`
+        return 'Custom range'
       }
-      case "all":
+      case 'all':
       default:
-        return "All time";
+        return 'All time'
     }
-  }, [range, specificDate, customStart, customEnd]);
+  }, [range, specificDate, customStart, customEnd])
 
   return (
     <div className="flex flex-col gap-4">
-      <div className="md:hidden">
+      <div className="lg:hidden">
         <SmartInput />
       </div>
 
@@ -211,44 +237,46 @@ export function LedgerScreen() {
         <div className="flex items-center justify-between">
           <h1 className="text-[22px] font-semibold tracking-tight text-white">Ledger</h1>
           <div className="text-right">
-            <div className="font-mono text-[16px] tabular-nums font-semibold text-white">
+            <div className="font-mono text-[16px] font-semibold tabular-nums text-white">
               {formatMoney(totalSum)}
             </div>
             <div className="text-[11px] text-[var(--text-tertiary)]">
-              {filtered.length} {filtered.length === 1 ? "entry" : "entries"}
+              {filtered.length} {filtered.length === 1 ? 'entry' : 'entries'}
             </div>
           </div>
         </div>
 
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-2">
-            <div className="overflow-x-auto no-scrollbar flex-1">
+            <div className="no-scrollbar flex-1 overflow-x-auto">
               <Segmented<Range>
                 value={range}
                 onChange={(v) => setRange(v)}
                 size="sm"
                 options={[
-                  { value: "today", label: "Today" },
-                  { value: "week", label: "Week" },
-                  { value: "month", label: "Month" },
-                  { value: "year", label: "Year" },
-                  { value: "all", label: "All" },
-                  { value: "custom", label: "Custom" },
+                  { value: 'today', label: 'Today' },
+                  { value: 'week', label: 'Week' },
+                  { value: 'month', label: 'Month' },
+                  { value: 'year', label: 'Year' },
+                  { value: 'all', label: 'All' },
+                  { value: 'custom', label: 'Custom' },
                 ]}
               />
             </div>
           </div>
           {/* Date range label */}
-          {range !== "custom" && (
-            <div className="text-[11px] text-[var(--text-tertiary)] flex items-center gap-1 pl-0.5">
+          {range !== 'custom' && (
+            <div className="flex items-center gap-1 pl-0.5 text-[11px] text-[var(--text-tertiary)]">
               <span>{dateRangeLabel}</span>
             </div>
           )}
 
-          {range === "custom" && (
+          {range === 'custom' && (
             <div className="flex items-center gap-2">
-              <div className="flex-1 flex flex-col gap-1">
-                <span className="text-[10px] text-[var(--text-tertiary)] font-medium uppercase tracking-wider pl-0.5">From</span>
+              <div className="flex flex-1 flex-col gap-1">
+                <span className="pl-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--text-tertiary)]">
+                  From
+                </span>
                 <DatePicker
                   variant="input"
                   value={customStart}
@@ -257,9 +285,11 @@ export function LedgerScreen() {
                   placeholder="Start date"
                 />
               </div>
-              <div className="shrink-0 mt-4 text-[var(--text-tertiary)]">to</div>
-              <div className="flex-1 flex flex-col gap-1">
-                <span className="text-[10px] text-[var(--text-tertiary)] font-medium uppercase tracking-wider pl-0.5">To</span>
+              <div className="mt-4 shrink-0 text-[var(--text-tertiary)]">to</div>
+              <div className="flex flex-1 flex-col gap-1">
+                <span className="pl-0.5 text-[10px] font-medium uppercase tracking-wider text-[var(--text-tertiary)]">
+                  To
+                </span>
                 <DatePicker
                   variant="input"
                   value={customEnd}
@@ -272,8 +302,8 @@ export function LedgerScreen() {
             </div>
           )}
 
-          <div className="flex items-center gap-2 flex-1 min-w-0">
-            <div className="flex-1 min-w-0">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <div className="min-w-0 flex-1">
               <Input
                 prefix={<Search size={13} />}
                 placeholder="Search..."
@@ -281,39 +311,51 @@ export function LedgerScreen() {
                 onChange={(e) => setSearch(e.target.value)}
                 suffix={
                   search ? (
-                    <button onClick={() => setSearch("")} className="text-[var(--text-tertiary)] hover:text-white">
+                    <button
+                      type="button"
+                      onClick={() => setSearch('')}
+                      className="text-[var(--text-tertiary)] hover:text-white"
+                      aria-label="Clear search"
+                    >
                       <X size={13} />
                     </button>
                   ) : undefined
                 }
               />
             </div>
-            <div className="relative shrink-0">
-              <select
+            <div className="min-w-0 shrink-0">
+              <Select
+                label="Filter by category"
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}
-                className="h-11 rounded-[10px] border border-white/[0.06] bg-surface-2 pl-3 pr-8 text-[13px] text-white outline-none focus:border-accent/60 appearance-none cursor-pointer"
+                className="max-w-[42vw] sm:w-[160px]"
+                aria-label="Filter by category"
               >
                 <option value="all">All</option>
                 {categories.map((c) => (
-                  <option key={c} value={c}>{c}</option>
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
                 ))}
-              </select>
-              <svg className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+              </Select>
             </div>
           </div>
         </div>
 
         {(specificDate || hasFilters) && (
-          <div className="flex items-center gap-2 flex-wrap">
+          <div className="flex flex-wrap items-center gap-2">
             {specificDate && (
               <Pill tone="accent" onClick={clearDate}>
-                <Filter size={10} /> {format(parseISO(specificDate), "MMM d, yyyy")}
+                <Filter size={10} /> {format(parseISO(specificDate), 'MMM d, yyyy')}
                 <X size={10} />
               </Pill>
             )}
             {hasFilters && (
-              <button onClick={clearAll} className="text-[11px] text-[var(--text-tertiary)] hover:text-white transition">
+              <button
+                type="button"
+                onClick={clearAll}
+                className="text-[11px] text-[var(--text-tertiary)] transition hover:text-white"
+              >
                 Clear all filters
               </button>
             )}
@@ -324,17 +366,25 @@ export function LedgerScreen() {
       {filtered.length === 0 ? (
         <EmptyState
           icon={Inbox}
-          title={hasFilters ? "No results for this view" : "No expenses yet"}
-          description={hasFilters ? "Try widening the range or clearing filters" : "Use the quick bar above to add your first entry"}
-          action={hasFilters ? { label: "Clear filters", onClick: clearAll } : undefined}
+          title={hasFilters ? 'No results for this view' : 'No expenses yet'}
+          description={
+            hasFilters
+              ? 'Try widening the range or clearing filters'
+              : 'Use the quick bar above to add your first entry'
+          }
+          action={hasFilters ? { label: 'Clear filters', onClick: clearAll } : undefined}
           className="mt-4"
         />
       ) : (
-        <div className="rounded-[14px] border border-white/[0.06] bg-surface-1 overflow-hidden">
+        <div className="overflow-hidden rounded-[14px] border border-white/[0.06] bg-surface-1">
           <AnimatePresence initial={false}>
             {groups.map((g) => {
-              const d = parseISO(g.date);
-              const label = isToday(d) ? "Today" : isYesterday(d) ? "Yesterday" : format(d, "EEE / MMM d");
+              const d = parseISO(g.date)
+              const label = isToday(d)
+                ? 'Today'
+                : isYesterday(d)
+                  ? 'Yesterday'
+                  : format(d, 'EEE / MMM d')
               return (
                 <motion.section
                   key={g.date}
@@ -343,7 +393,7 @@ export function LedgerScreen() {
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                 >
-                  <header className="sticky top-0 z-[1] flex items-center justify-between gap-2 border-b border-white/[0.05] bg-surface-1/95 backdrop-blur px-4 py-2.5">
+                  <header className="sticky top-0 z-[1] flex items-center justify-between gap-2 border-b border-white/[0.05] bg-surface-1/95 px-4 py-2.5 backdrop-blur">
                     <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
                       {label}
                     </span>
@@ -359,7 +409,7 @@ export function LedgerScreen() {
                     ))}
                   </ul>
                 </motion.section>
-              );
+              )
             })}
           </AnimatePresence>
         </div>
@@ -367,5 +417,5 @@ export function LedgerScreen() {
 
       <EditExpenseSheet expense={editing} onClose={() => setEditing(null)} />
     </div>
-  );
+  )
 }

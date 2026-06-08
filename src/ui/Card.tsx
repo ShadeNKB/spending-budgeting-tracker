@@ -1,12 +1,12 @@
-import { motion, type HTMLMotionProps } from "framer-motion";
-import clsx from "clsx";
+import { motion, type HTMLMotionProps } from 'framer-motion'
+import clsx from 'clsx'
 
-type Props = HTMLMotionProps<"div"> & {
-  interactive?: boolean;
-  glow?: boolean;
-  padded?: boolean;
-  children?: React.ReactNode;
-};
+type Props = HTMLMotionProps<'div'> & {
+  interactive?: boolean
+  glow?: boolean
+  padded?: boolean
+  children?: React.ReactNode
+}
 
 /**
  * Reliable Card primitive.
@@ -25,11 +25,11 @@ export function Card({ className, interactive, glow, padded = true, children, ..
       whileHover={interactive ? { y: -1 } : undefined}
       transition={{ duration: 0.18, ease: [0.2, 0, 0, 1] }}
       className={clsx(
-        "rounded-[14px] border border-white/[0.06] bg-surface-1 transition-colors",
-        padded && "p-5 md:p-6",
-        interactive && "cursor-pointer hover:bg-surface-2 hover:border-white/[0.1]",
-        glow && "relative overflow-hidden",
-        className
+        'rounded-[14px] border border-white/[0.06] bg-surface-1 transition-colors',
+        padded && 'p-5 md:p-6',
+        interactive && 'cursor-pointer hover:border-white/[0.1] hover:bg-surface-2',
+        glow && 'relative overflow-hidden',
+        className,
       )}
       {...p}
     >
@@ -39,11 +39,11 @@ export function Card({ className, interactive, glow, padded = true, children, ..
           className="pointer-events-none absolute inset-x-0 top-0 h-px opacity-50"
           style={{
             background:
-              "linear-gradient(90deg, transparent 0%, rgba(34,211,238,0.7) 50%, transparent 100%)",
+              'linear-gradient(90deg, transparent 0%, rgba(34,211,238,0.7) 50%, transparent 100%)',
           }}
         />
       )}
       {children}
     </motion.div>
-  );
+  )
 }

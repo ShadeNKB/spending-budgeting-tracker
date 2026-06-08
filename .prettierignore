@@ -1,0 +1,8 @@
+dist
+node_modules
+.claude
+conductor
+supabase/migrations
+docs/screenshots
+*.lock
+package-lock.json
