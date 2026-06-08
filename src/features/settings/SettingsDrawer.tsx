@@ -9,6 +9,7 @@ import {
   Wallet,
   Tags,
   Database,
+  Cloud,
   Check,
   X,
   Smartphone,
@@ -21,13 +22,14 @@ import { Input } from '../../ui/Input'
 import { Pill } from '../../ui/Pill'
 import { useUIStore } from '../../stores/useUIStore'
 import { useExpenseStore } from '../../stores/useExpenseStore'
+import { SyncPanel } from './SyncPanel'
 import { useToast } from '../../hooks/useToast'
 import { formatMoney } from '../../lib/format'
 import { downloadJSON, downloadCSV } from '../../lib/download'
 import { colorFromString } from '../../lib/analytics'
 import type { BackupData } from '../../types'
 
-type Tab = 'categories' | 'budgets' | 'backup'
+type Tab = 'categories' | 'budgets' | 'backup' | 'sync'
 
 export function SettingsDrawer() {
   const open = useUIStore((s) => s.settingsOpen)
@@ -59,6 +61,7 @@ export function SettingsDrawer() {
               ['categories', Tags, 'Categories'],
               ['budgets', Wallet, 'Budgets'],
               ['backup', Database, 'Backup'],
+              ['sync', Cloud, 'Sync'],
             ] as const
           ).map(([key, Icon, label]) => (
             <button
@@ -83,6 +86,7 @@ export function SettingsDrawer() {
         {tab === 'categories' && <CategoriesPanel />}
         {tab === 'budgets' && <BudgetsPanel />}
         {tab === 'backup' && <BackupPanel />}
+        {tab === 'sync' && <SyncPanel />}
       </div>
     </Sheet>
   )

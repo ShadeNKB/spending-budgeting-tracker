@@ -12,7 +12,7 @@ interface UIState {
   toasts: Toast[]
   paletteOpen: boolean
   settingsOpen: boolean
-  settingsTab: 'categories' | 'budgets' | 'backup'
+  settingsTab: 'categories' | 'budgets' | 'backup' | 'sync'
   addSheetOpen: boolean
   smartInputFocused: boolean
 
