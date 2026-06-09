@@ -54,7 +54,7 @@ export function TopBar() {
         <button
           type="button"
           onClick={() => setPaletteOpen(true)}
-          className="inline-flex h-9 items-center gap-2 rounded-full border border-white/[0.06] bg-surface-1 px-3 text-[12px] text-[var(--text-secondary)] transition hover:bg-surface-2 hover:text-white"
+          className="inline-flex h-10 items-center gap-2 rounded-full border border-white/[0.06] bg-surface-1 px-3 text-[12px] text-[var(--text-secondary)] transition hover:bg-surface-2 hover:text-white"
           aria-label="Open command palette"
         >
           <Command size={13} />
@@ -67,7 +67,7 @@ export function TopBar() {
         <button
           type="button"
           onClick={() => setSettingsOpen(true)}
-          className="inline-flex h-9 w-9 items-center justify-center rounded-full text-[var(--text-secondary)] transition hover:bg-surface-2 hover:text-white"
+          className="inline-flex h-10 w-10 items-center justify-center rounded-full text-[var(--text-secondary)] transition hover:bg-surface-2 hover:text-white"
           aria-label="Settings"
         >
           <Settings2 size={16} />

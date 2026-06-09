@@ -143,8 +143,9 @@ export function InsightsScreen() {
                       <div
                         key={d.date}
                         className="flex flex-1 cursor-default flex-col items-center gap-1"
-                        onMouseEnter={() => setHoveredDay(i)}
-                        onMouseLeave={() => setHoveredDay(null)}
+                        onPointerEnter={() => setHoveredDay(i)}
+                        onPointerLeave={() => setHoveredDay(null)}
+                        onClick={() => setHoveredDay(hoveredDay === i ? null : i)}
                       >
                         <div
                           className="relative flex w-full flex-col justify-end"

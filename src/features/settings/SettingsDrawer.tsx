@@ -68,15 +68,17 @@ export function SettingsDrawer() {
               type="button"
               key={key}
               onClick={() => setTab(key)}
+              aria-label={label}
+              title={label}
               className={
-                'inline-flex flex-1 items-center justify-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] font-medium transition ' +
+                'inline-flex flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-2 text-[12px] font-medium transition sm:px-3 sm:py-1.5 ' +
                 (tab === key
                   ? 'bg-accent/12 text-accent shadow-[inset_0_0_0_1px_rgba(34,211,238,0.18)]'
                   : 'text-[var(--text-secondary)] hover:text-white')
               }
             >
-              <Icon size={12} />
-              {label}
+              <Icon size={13} />
+              <span className="hidden sm:inline">{label}</span>
             </button>
           ))}
         </div>
