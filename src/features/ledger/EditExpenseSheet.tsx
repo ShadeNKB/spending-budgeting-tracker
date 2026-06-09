@@ -22,6 +22,14 @@ export function EditExpenseSheet({
   const categories = useExpenseStore((s) => s.categories)
   const toast = useToast()
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 768)
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 767px)')
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches)
+    mq.addEventListener('change', handler)
+    return () => mq.removeEventListener('change', handler)
+  }, [])
 
   const [form, setForm] = useState<{
     itemName: string
@@ -66,8 +74,6 @@ export function EditExpenseSheet({
     toast.success('Expense updated')
     onClose()
   }
-
-  const isMobile = typeof window !== 'undefined' && window.innerWidth < 768
 
   return (
     <Sheet

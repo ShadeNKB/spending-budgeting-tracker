@@ -134,9 +134,9 @@ export function SmartInput({
             onClick={commit}
             disabled={!canCommit}
             className={clsx(
-              'inline-flex shrink-0 items-center gap-1 rounded-lg px-2.5 py-1 text-[12px] font-semibold transition',
+              'inline-flex shrink-0 items-center gap-1 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition',
               canCommit
-                ? 'bg-accent text-surface-0 hover:bg-accent-hover'
+                ? 'bg-accent text-surface-0 hover:bg-accent-hover active:scale-95'
                 : 'cursor-not-allowed bg-surface-2 text-[var(--text-tertiary)]',
             )}
           >

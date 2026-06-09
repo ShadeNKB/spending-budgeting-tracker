@@ -33,7 +33,7 @@ function ToastItem({ toast }: { toast: Toast }) {
       exit={{ opacity: 0, y: 8, scale: 0.96 }}
       transition={{ type: 'spring', stiffness: 420, damping: 32 }}
       className={clsx(
-        'pointer-events-auto flex min-w-[280px] max-w-[380px] items-start gap-3 overflow-hidden rounded-xl border bg-surface-1/95 px-4 py-3 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.6)] backdrop-blur-md',
+        'pointer-events-auto flex w-full min-w-0 max-w-[380px] items-start gap-3 overflow-hidden rounded-xl border bg-surface-1/95 px-4 py-3 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.6)] backdrop-blur-md',
         toneClass[toast.kind],
       )}
     >
