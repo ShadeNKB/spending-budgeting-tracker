@@ -11,6 +11,9 @@ coverage/
 playwright-report/
 test-results/
 
+# Graphify analysis output (generated, not source)
+graphify-out/
+
 # Environment and local configuration
 .env
 .env.*
