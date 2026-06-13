@@ -46,6 +46,7 @@ export function TodayStrip({ entries, total }: { entries: Expense[]; total: numb
                   color: colorFromString(e.category),
                   boxShadow: `0 0 0 1px ${colorFromString(e.category)}28`,
                 }}
+                aria-hidden
               >
                 {e.itemName.charAt(0).toUpperCase()}
               </span>

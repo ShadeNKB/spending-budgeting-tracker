@@ -7,8 +7,6 @@ import { DatePicker } from '../../ui/DatePicker'
 import {
   parseISO,
   format,
-  isToday,
-  isYesterday,
   startOfMonth,
   endOfMonth,
   subDays,
@@ -28,11 +26,17 @@ import { EmptyState } from '../../ui/EmptyState'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { SmartInput } from '../entry/SmartInput'
 import { LedgerRow } from './LedgerRow'
+import { VirtualLedgerList } from './VirtualLedgerList'
+import { ledgerHeaderLabel } from './ledgerFlatten'
 import { EditExpenseSheet } from './EditExpenseSheet'
 import { useToast } from '../../hooks/useToast'
 import type { Expense } from '../../types'
 
 type Range = 'today' | 'week' | 'month' | 'year' | 'all' | 'custom'
+
+// Above this many rows, switch from the animated grouped+sticky view to a
+// windowed list so the DOM stays bounded (anti-pattern: lists >~200 unwindowed).
+const VIRTUALIZE_THRESHOLD = 150
 
 const isValidYmd = (v: string | null): v is string => {
   if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false
@@ -406,16 +410,13 @@ export function LedgerScreen() {
           action={hasFilters ? { label: 'Clear filters', onClick: clearAll } : undefined}
           className="mt-4"
         />
+      ) : filtered.length > VIRTUALIZE_THRESHOLD ? (
+        <VirtualLedgerList groups={groups} onEdit={setEditing} onDelete={handleDelete} />
       ) : (
         <div className="overflow-hidden rounded-[14px] border border-white/[0.06] bg-surface-1">
           <AnimatePresence initial={false}>
             {groups.map((g) => {
-              const d = parseISO(g.date)
-              const label = isToday(d)
-                ? 'Today'
-                : isYesterday(d)
-                  ? 'Yesterday'
-                  : format(d, 'EEE / MMM d')
+              const label = ledgerHeaderLabel(g.date)
               return (
                 <motion.section
                   key={g.date}

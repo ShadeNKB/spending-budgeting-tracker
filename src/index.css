@@ -112,11 +112,12 @@
     --surface-3: #e2e8f0;
     --surface-4: #cbd5e1;
 
-    /* Text */
+    /* Text — tertiary/muted darkened to clear WCAG AA 4.5:1 on light surfaces
+       (the slate-500/400 values failed contrast). */
     --text-primary: #0f172a;
     --text-secondary: #475569;
-    --text-tertiary: #64748b;
-    --text-muted: #94a3b8;
+    --text-tertiary: #5b6573;
+    --text-muted: #646e7d;
 
     /* Borders */
     --border: rgba(0, 0, 0, 0.08);
@@ -1224,6 +1225,30 @@
   }
   [data-theme='light'] .hover\:text-white:hover {
     color: var(--text-primary);
+  }
+
+  /* Accent + semantic colors as TEXT — the dark-mode neon values fail contrast
+     on light surfaces (cyan 1.8:1, green/red ~1:1). Remap text usages to
+     AA-passing 700-weight variants in light mode. Backgrounds/bars/borders keep
+     the bright tokens; only foreground text is darkened here. */
+  [data-theme='light'] .text-accent,
+  [data-theme='light'] .text-accent\/60,
+  [data-theme='light'] .text-accent\/70,
+  [data-theme='light'] .text-accent\/80,
+  [data-theme='light'] .text-accent\/90,
+  [data-theme='light'] .hover\:text-accent:hover {
+    color: #0e7490; /* cyan-700 — 5.4:1 on white */
+  }
+  [data-theme='light'] .text-positive,
+  [data-theme='light'] .text-success {
+    color: #15803d; /* green-700 */
+  }
+  [data-theme='light'] .text-negative,
+  [data-theme='light'] .text-danger {
+    color: #b91c1c; /* red-700 */
+  }
+  [data-theme='light'] .text-warning {
+    color: #b45309; /* amber-700 */
   }
 
   /* border-white/X → dark-on-light equivalents */
