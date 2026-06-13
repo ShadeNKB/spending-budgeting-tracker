@@ -12,8 +12,10 @@ _(all shipped 2026-06-13)_
 _(shipped 2026-06-13)_
 
 ## Nice to have
-- **Light mode.** Dark is default and follower at best — but a follower exists by design (see anti-patterns doc). Skipping unless requested.
 - **Storybook.** Component count too low to justify; revisit at ~40+ components.
+
+## Shipped
+- **Light mode** — shipped 2026-06-13 in v0.6.0. System/Dark/Light, `[data-theme]` token overrides, Tailwind surface channel vars. Released as [v0.6.0](https://github.com/ShadeNKB/spending-budgeting-tracker/releases/tag/v0.6.0).
 
 ## Investigations (don't act, just look first)
 - Bundle js 625 KB (under 700 KB budget). `perf-reviewer` ran 2026-06-13 — verdict FAST. No urgent action.
