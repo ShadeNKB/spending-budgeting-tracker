@@ -39,3 +39,18 @@ describe('formatInt', () => {
     expect(formatInt(1234.7)).toBe('1,235')
   })
 })
+
+describe('formatMoney — multi-currency', () => {
+  it('uses the specified currency for formatting', () => {
+    expect(formatMoney(12.5, {}, 'EUR')).toBe('€12.50')
+    expect(formatMoney(12.5, {}, 'GBP')).toBe('£12.50')
+  })
+
+  it('uses currency symbol in compact formatting', () => {
+    expect(formatMoney(1500, { compact: true }, 'EUR')).toBe('€1.5k')
+  })
+
+  it('returns zero value in the specified currency for non-finite input', () => {
+    expect(formatMoney(NaN, {}, 'EUR')).toBe('€0.00')
+  })
+})

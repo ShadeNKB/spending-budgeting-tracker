@@ -25,7 +25,7 @@ import { Input } from '../../ui/Input'
 import { Select } from '../../ui/Select'
 import { Pill } from '../../ui/Pill'
 import { EmptyState } from '../../ui/EmptyState'
-import { formatMoney } from '../../lib/format'
+import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { SmartInput } from '../entry/SmartInput'
 import { LedgerRow } from './LedgerRow'
 import { EditExpenseSheet } from './EditExpenseSheet'
@@ -45,6 +45,7 @@ export function LedgerScreen() {
   const deleteExpense = useExpenseStore((s) => s.deleteExpense)
   const consumeUndo = useExpenseStore((s) => s.consumeUndo)
   const toast = useToast()
+  const fmt = useFormatMoney()
 
   const [params, setParams] = useSearchParams()
   const [editing, setEditing] = useState<Expense | null>(null)
@@ -267,7 +268,7 @@ export function LedgerScreen() {
             )}
             <div className="text-right">
               <div className="font-mono text-[16px] font-semibold tabular-nums text-white">
-                {formatMoney(totalSum)}
+                {fmt(totalSum)}
               </div>
               <div className="text-[11px] text-[var(--text-tertiary)]">
                 {filtered.length} {filtered.length === 1 ? 'entry' : 'entries'}
@@ -428,7 +429,7 @@ export function LedgerScreen() {
                       {label}
                     </span>
                     <span className="font-mono text-[11px] tabular-nums text-[var(--text-secondary)]">
-                      {formatMoney(g.total)}
+                      {fmt(g.total)}
                     </span>
                   </header>
                   <ul className="divide-y divide-white/[0.04]">

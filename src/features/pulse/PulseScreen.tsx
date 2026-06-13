@@ -13,7 +13,7 @@ import { format, subDays } from 'date-fns'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useUIStore } from '../../stores/useUIStore'
 import { computeMonthAnalytics, computeYearAnalytics } from '../../lib/analytics'
-import { formatMoney } from '../../lib/format'
+import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { AnimatedNumber } from '../../ui/AnimatedNumber'
 import { Card } from '../../ui/Card'
 import { Pill } from '../../ui/Pill'
@@ -34,6 +34,7 @@ export function PulseScreen() {
   const budgets = useExpenseStore((s) => s.budgets)
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen)
   const setSettingsTab = useUIStore((s) => s.setSettingsTab)
+  const fmt = useFormatMoney()
   const [view, setView] = useState<PeriodView>('month')
   const [monthOffset, setMonthOffset] = useState(0)
   const [yearOffset, setYearOffset] = useState(0)
@@ -141,14 +142,14 @@ export function PulseScreen() {
                         <span>
                           Today{' '}
                           <span className="font-mono tabular-nums text-white">
-                            {formatMoney(monthData.todayTotal)}
+                            {fmt(monthData.todayTotal)}
                           </span>
                         </span>
                         <span className="text-[var(--text-tertiary)]">/</span>
                         <span>
                           Avg{' '}
                           <span className="font-mono tabular-nums text-white">
-                            {formatMoney(
+                            {fmt(
                               monthData.periodTotal / Math.max(1, monthData.daysElapsed),
                             )}
                           </span>
@@ -160,7 +161,7 @@ export function PulseScreen() {
                         <span>
                           Daily avg{' '}
                           <span className="font-mono tabular-nums text-white">
-                            {formatMoney(
+                            {fmt(
                               monthData.periodTotal / Math.max(1, monthData.daysElapsed),
                             )}
                           </span>
@@ -179,7 +180,7 @@ export function PulseScreen() {
                     <span>
                       Monthly avg{' '}
                       <span className="font-mono tabular-nums text-white">
-                        {formatMoney(
+                        {fmt(
                           yearData.periodTotal /
                             Math.max(1, yearOffset === 0 ? new Date().getMonth() + 1 : 12),
                         )}
@@ -289,7 +290,7 @@ export function PulseScreen() {
                         Avg/day
                       </div>
                       <div className="mt-0.5 font-mono text-[15px] tabular-nums text-white">
-                        {formatMoney(monthData.periodTotal / Math.max(1, monthData.daysElapsed))}
+                        {fmt(monthData.periodTotal / Math.max(1, monthData.daysElapsed))}
                       </div>
                     </div>
                     <div>

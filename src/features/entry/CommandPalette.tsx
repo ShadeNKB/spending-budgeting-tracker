@@ -17,7 +17,7 @@ import clsx from 'clsx'
 import Fuse from 'fuse.js'
 import { useUIStore } from '../../stores/useUIStore'
 import { useExpenseStore } from '../../stores/useExpenseStore'
-import { formatMoney } from '../../lib/format'
+import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { downloadJSON } from '../../lib/download'
 import { format as fmtDate, parseISO } from 'date-fns'
 import { parseExpense } from '../../utils/parseExpense'
@@ -44,6 +44,7 @@ export function CommandPalette() {
   const exportBackup = useExpenseStore((s) => s.exportBackup)
   const toast = useToast()
   const vibrate = useHaptic()
+  const fmt = useFormatMoney()
 
   const [query, setQuery] = useState('')
   const [activeIdx, setActiveIdx] = useState(0)
@@ -302,7 +303,7 @@ export function CommandPalette() {
                           </div>
                         </div>
                         <span className="font-mono text-[13px] tabular-nums text-white">
-                          {formatMoney(e.amount)}
+                          {fmt(e.amount)}
                         </span>
                       </button>
                     )

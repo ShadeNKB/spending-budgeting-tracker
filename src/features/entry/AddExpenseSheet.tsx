@@ -8,6 +8,7 @@ import { Pill } from '../../ui/Pill'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useToast } from '../../hooks/useToast'
 import { useHaptic } from '../../hooks/useHaptic'
+import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { colorFromString } from '../../lib/analytics'
 import { DatePicker } from '../../ui/DatePicker'
 
@@ -23,6 +24,7 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
   const consumeUndo = useExpenseStore((s) => s.consumeUndo)
   const toast = useToast()
   const vibrate = useHaptic()
+  const fmt = useFormatMoney()
 
   const today = format(new Date(), 'yyyy-MM-dd')
 
@@ -81,7 +83,7 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
     vibrate(10)
     const isBackdated = form.date !== today
     toast.success(
-      `${isBackdated ? `Added for ${format(new Date(form.date), 'MMM d')} · ` : ''}$${created.amount.toFixed(2)} — ${created.itemName}`,
+      `${isBackdated ? `Added for ${format(new Date(form.date), 'MMM d')} · ` : ''}${fmt(created.amount)} — ${created.itemName}`,
       {
         action: {
           label: 'Undo',

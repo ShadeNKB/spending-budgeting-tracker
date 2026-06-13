@@ -1,11 +1,12 @@
 import { ArrowRight, Sun } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
-import { formatMoney } from '../../lib/format'
+import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { colorFromString } from '../../lib/analytics'
 import type { Expense } from '../../types'
 
 export function TodayStrip({ entries, total }: { entries: Expense[]; total: number }) {
   const navigate = useNavigate()
+  const fmt = useFormatMoney()
 
   return (
     <div className="rounded-[14px] border border-white/[0.06] bg-surface-1 p-4 md:p-5">
@@ -19,7 +20,7 @@ export function TodayStrip({ entries, total }: { entries: Expense[]; total: numb
         </div>
         <div className="flex items-center gap-3">
           <span className="font-mono text-[15px] font-semibold tabular-nums text-white">
-            {formatMoney(total)}
+            {fmt(total)}
           </span>
           <button
             onClick={() => navigate('/ledger?range=today')}
@@ -56,7 +57,7 @@ export function TodayStrip({ entries, total }: { entries: Expense[]; total: numb
                 </div>
               </div>
               <span className="font-mono text-[13px] tabular-nums text-white">
-                {formatMoney(e.amount)}
+                {fmt(e.amount)}
               </span>
             </li>
           ))}

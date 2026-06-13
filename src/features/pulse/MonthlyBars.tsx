@@ -1,9 +1,10 @@
 import { useState } from 'react'
-import { formatMoney } from '../../lib/format'
+import { useFormatMoney } from '../../hooks/useFormatMoney'
 
 const CHART_H = 88 // bar area height — label lives outside this
 
 export function MonthlyBars({ data }: { data: { label: string; total: number; month: number }[] }) {
+  const fmt = useFormatMoney()
   const max = Math.max(...data.map((d) => d.total), 1)
   const currentMonth = new Date().getMonth()
   const [hovered, setHovered] = useState<number | null>(null)
@@ -35,7 +36,7 @@ export function MonthlyBars({ data }: { data: { label: string; total: number; mo
               onClick={() => setSelected((current) => (current === d.month ? null : d.month))}
               role="button"
               tabIndex={0}
-              aria-label={`${d.label}: ${formatMoney(d.total)}`}
+              aria-label={`${d.label}: ${fmt(d.total)}`}
               onKeyDown={(e) => {
                 if (e.key === 'Enter' || e.key === ' ') {
                   e.preventDefault()
@@ -53,7 +54,7 @@ export function MonthlyBars({ data }: { data: { label: string; total: number; mo
                     {d.label}
                   </div>
                   <div className="font-mono text-[11px] font-semibold tabular-nums text-white">
-                    {formatMoney(d.total)}
+                    {fmt(d.total)}
                   </div>
                 </div>
               )}
@@ -101,13 +102,13 @@ export function MonthlyBars({ data }: { data: { label: string; total: number; mo
       {/* Summary row */}
       <div className="flex items-center gap-3 border-t border-white/[0.05] pt-1 text-[11px] text-[var(--text-tertiary)]">
         <span>
-          Total <span className="font-mono tabular-nums text-white">{formatMoney(yearTotal)}</span>
+          Total <span className="font-mono tabular-nums text-white">{fmt(yearTotal)}</span>
         </span>
         <span className="text-white/20">·</span>
         <span>
           Avg/mo{' '}
           <span className="font-mono tabular-nums text-white">
-            {formatMoney(yearTotal / Math.max(1, activeMos))}
+            {fmt(yearTotal / Math.max(1, activeMos))}
           </span>
         </span>
         {activeMonth !== null && data[activeMonth] && (
@@ -116,7 +117,7 @@ export function MonthlyBars({ data }: { data: { label: string; total: number; mo
             <span className="text-white/60">
               {data[activeMonth].label}{' '}
               <span className="font-mono tabular-nums text-white">
-                {formatMoney(data[activeMonth].total)}
+                {fmt(data[activeMonth].total)}
               </span>
             </span>
           </>

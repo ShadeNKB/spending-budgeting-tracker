@@ -1,6 +1,6 @@
 import { useNavigate } from 'react-router-dom'
 import { ArrowRight } from 'lucide-react'
-import { formatMoney } from '../../lib/format'
+import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { colorFromString } from '../../lib/analytics'
 import { EmptyState } from '../../ui/EmptyState'
 import { PieChart } from 'lucide-react'
@@ -11,6 +11,7 @@ export function TopCategories({
   items: { category: string; total: number; share: number }[]
 }) {
   const navigate = useNavigate()
+  const fmt = useFormatMoney()
 
   if (!items.length) {
     return (
@@ -44,7 +45,7 @@ export function TopCategories({
                   </span>
                 </div>
                 <div className="flex items-center gap-1 font-mono text-[13px] tabular-nums text-white">
-                  {formatMoney(it.total)}
+                  {fmt(it.total)}
                   <ArrowRight size={12} className="opacity-0 transition group-hover:opacity-60" />
                 </div>
               </div>

@@ -2,7 +2,7 @@ import { motion, useMotionValue, useTransform, animate, PanInfo } from 'framer-m
 import { useRef, useState } from 'react'
 import { Pencil, Trash2 } from 'lucide-react'
 import { format, parseISO } from 'date-fns'
-import { formatMoney } from '../../lib/format'
+import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { colorFromString } from '../../lib/analytics'
 import type { Expense } from '../../types'
 
@@ -15,6 +15,7 @@ export function LedgerRow({
   onEdit: (e: Expense) => void
   onDelete: (id: string) => void
 }) {
+  const fmt = useFormatMoney()
   const x = useMotionValue(0)
   const bg = useTransform(
     x,
@@ -87,7 +88,7 @@ export function LedgerRow({
         }}
         role="button"
         tabIndex={0}
-        aria-label={`Edit ${expense.itemName}, ${formatMoney(expense.amount)}, ${expense.category}`}
+        aria-label={`Edit ${expense.itemName}, ${fmt(expense.amount)}, ${expense.category}`}
         className="relative flex cursor-pointer items-center gap-3 bg-surface-1 px-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/70 md:cursor-default md:px-4 active:md:cursor-default"
       >
         <span
@@ -111,7 +112,7 @@ export function LedgerRow({
         </div>
 
         <span className="shrink-0 font-mono text-[14px] tabular-nums text-white">
-          {formatMoney(expense.amount)}
+          {fmt(expense.amount)}
         </span>
 
         {/* Desktop: hover-revealed buttons */}

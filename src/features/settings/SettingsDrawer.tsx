@@ -20,11 +20,11 @@ import { Sheet } from '../../ui/Sheet'
 import { Button } from '../../ui/Button'
 import { Input } from '../../ui/Input'
 import { Pill } from '../../ui/Pill'
-import { useUIStore } from '../../stores/useUIStore'
+import { useUIStore, SUPPORTED_CURRENCIES } from '../../stores/useUIStore'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { SyncPanel } from './SyncPanel'
 import { useToast } from '../../hooks/useToast'
-import { formatMoney } from '../../lib/format'
+import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { downloadJSON, downloadCSV } from '../../lib/download'
 import { colorFromString } from '../../lib/analytics'
 import type { BackupData } from '../../types'
@@ -36,6 +36,8 @@ export function SettingsDrawer() {
   const setOpen = useUIStore((s) => s.setSettingsOpen)
   const tab = useUIStore((s) => s.settingsTab) as Tab
   const setTab = useUIStore((s) => s.setSettingsTab)
+  const currency = useUIStore((s) => s.currency)
+  const setCurrency = useUIStore((s) => s.setCurrency)
   const [isMobile, setIsMobile] = useState(false)
 
   useEffect(() => {
@@ -55,6 +57,22 @@ export function SettingsDrawer() {
       width={460}
     >
       <div className="px-5 pb-2 pt-4">
+        <div className="mb-3 flex items-center justify-between">
+          <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+            Currency
+          </span>
+          <select
+            value={currency}
+            onChange={(e) => setCurrency(e.target.value)}
+            className="rounded-md border border-white/[0.08] bg-surface-2 px-2.5 py-1 text-[12px] text-white outline-none [color-scheme:dark] focus:border-accent/60"
+          >
+            {SUPPORTED_CURRENCIES.map((c) => (
+              <option key={c.code} value={c.code}>
+                {c.label}
+              </option>
+            ))}
+          </select>
+        </div>
         <div className="flex w-full items-center gap-1 rounded-full border border-white/[0.06] bg-surface-1 p-1">
           {(
             [
@@ -209,6 +227,7 @@ function BudgetsPanel() {
   const setBudget = useExpenseStore((s) => s.setBudget)
   const removeBudget = useExpenseStore((s) => s.removeBudget)
   const toast = useToast()
+  const fmt = useFormatMoney()
 
   return (
     <div className="flex flex-col gap-3">
@@ -239,7 +258,7 @@ function BudgetsPanel() {
                     const v = parseFloat(e.target.value)
                     if (Number.isFinite(v) && v > 0) {
                       setBudget(c, v)
-                      toast.success(`${c}: ${formatMoney(v)} budget set`)
+                      toast.success(`${c}: ${fmt(v)} budget set`)
                     } else if (e.target.value === '' && current != null) {
                       removeBudget(c)
                       toast.info(`Budget cleared`)

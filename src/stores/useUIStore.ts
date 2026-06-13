@@ -8,6 +8,29 @@ export interface Toast {
   duration?: number
 }
 
+const CURRENCY_KEY = 'spendtrack:currency'
+
+export const SUPPORTED_CURRENCIES = [
+  { code: 'USD', label: 'USD — $' },
+  { code: 'SGD', label: 'SGD — S$' },
+  { code: 'EUR', label: 'EUR — €' },
+  { code: 'GBP', label: 'GBP — £' },
+  { code: 'JPY', label: 'JPY — ¥' },
+  { code: 'MYR', label: 'MYR — RM' },
+  { code: 'AUD', label: 'AUD — A$' },
+  { code: 'CAD', label: 'CAD — C$' },
+] as const
+
+export type SupportedCurrency = (typeof SUPPORTED_CURRENCIES)[number]['code']
+
+function readCurrency(): string {
+  try {
+    return localStorage.getItem(CURRENCY_KEY) ?? 'USD'
+  } catch {
+    return 'USD'
+  }
+}
+
 interface UIState {
   toasts: Toast[]
   paletteOpen: boolean
@@ -16,6 +39,7 @@ interface UIState {
   addSheetOpen: boolean
   hotkeysOpen: boolean
   smartInputFocused: boolean
+  currency: string
 
   pushToast: (t: Omit<Toast, 'id'>) => string
   dismissToast: (id: string) => void
@@ -26,6 +50,7 @@ interface UIState {
   setAddSheetOpen: (v: boolean) => void
   setHotkeysOpen: (v: boolean) => void
   setSmartInputFocused: (v: boolean) => void
+  setCurrency: (v: string) => void
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -36,6 +61,7 @@ export const useUIStore = create<UIState>((set) => ({
   addSheetOpen: false,
   hotkeysOpen: false,
   smartInputFocused: false,
+  currency: readCurrency(),
 
   pushToast: (t) => {
     const id = Math.random().toString(36).slice(2)
@@ -50,4 +76,10 @@ export const useUIStore = create<UIState>((set) => ({
   setAddSheetOpen: (v) => set({ addSheetOpen: v }),
   setHotkeysOpen: (v) => set({ hotkeysOpen: v }),
   setSmartInputFocused: (v) => set({ smartInputFocused: v }),
+  setCurrency: (v) => {
+    try {
+      localStorage.setItem(CURRENCY_KEY, v)
+    } catch {}
+    set({ currency: v })
+  },
 }))

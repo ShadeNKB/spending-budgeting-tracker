@@ -82,65 +82,55 @@ test.describe("Route navigation", () => {
 
 // ─── add expense ───────────────────────────────────────────────────────────
 
-// /entry is an in-app sheet, not a route. These tests need to trigger the
-// sheet from /pulse and then interact with the form inside it — pending DOM
-// inspection to lock down the selectors.
-test.describe.fixme("Add expense", () => {
+// /entry is an in-app sheet triggered from /pulse via the full-entry button.
+test.describe("Add expense", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/pulse");
     await waitForApp(page);
   });
 
   test("entry form renders required fields", async ({ page }) => {
-    // Amount field
-    const amountField = page
-      .getByPlaceholder(/amount|0\.00/i)
-      .or(page.getByLabel(/amount/i))
-      .first();
-    await expect(amountField).toBeVisible();
+    await page.getByRole("button", { name: "Full entry form" }).click();
+
+    // Sheet auto-focuses the "What" field on open
+    const whatField = page.getByPlaceholder(/coffee, grab, spotify/i);
+    await expect(whatField).toBeVisible({ timeout: 3000 });
+    await expect(page.getByPlaceholder("0.00")).toBeVisible();
   });
 
   test("submits a valid expense and it appears in ledger", async ({ page }) => {
-    // Fill amount
-    const amountField = page
-      .getByPlaceholder(/amount|0\.00/i)
-      .or(page.getByRole("spinbutton").first())
-      .first();
-    await amountField.fill("12.50");
+    await page.getByRole("button", { name: "Full entry form" }).click();
 
-    // Submit (look for Save/Add button)
-    const submitBtn = page
-      .getByRole("button", { name: /save|add|submit/i })
-      .first();
-    if (await submitBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
-      await submitBtn.click();
-      await page.waitForTimeout(500);
-    }
+    await page.getByPlaceholder(/coffee, grab, spotify/i).fill("E2E Test Coffee");
+    const amountField = page.getByPlaceholder("0.00");
+    await amountField.fill("9.99");
+    await amountField.press("Enter");
 
-    // Navigate to ledger and check entry exists
+    await page.waitForTimeout(400);
+
     await page.goto("/ledger");
     await waitForApp(page);
-    const hasEntry = await page.getByText("12.50").isVisible({ timeout: 3000 }).catch(() => false);
-    // Only assert if the form submitted successfully
-    if (hasEntry) expect(hasEntry).toBe(true);
+    await expect(page.getByText("E2E Test Coffee")).toBeVisible({ timeout: 3000 });
   });
 });
 
 // ─── backup & restore ──────────────────────────────────────────────────────
 
-// /settings is a drawer, not a route — these need to open the drawer from the
-// app header. Pending DOM inspection of the SettingsDrawer trigger button.
-test.describe.fixme("Backup and restore", () => {
+// /settings is a drawer opened from the TopBar "Settings" button.
+test.describe("Backup and restore", () => {
   test.beforeEach(async ({ page }) => {
     await page.goto("/pulse");
     await waitForApp(page);
+    // Open settings drawer and navigate to Backup tab
+    await page.getByRole("button", { name: "Settings" }).first().click();
+    await page.waitForTimeout(200);
+    await page.getByRole("button", { name: "Backup" }).click();
+    await page.waitForTimeout(100);
   });
 
   test("backup triggers a file download", async ({ page }) => {
     const downloadPromise = page.waitForEvent("download", { timeout: 5000 });
-    const backupBtn = page.getByRole("button", { name: /backup|export/i }).first();
-    await expect(backupBtn).toBeVisible();
-    await backupBtn.click();
+    await page.getByRole("button", { name: /download json backup/i }).click();
     const download = await downloadPromise;
     expect(download.suggestedFilename()).toMatch(/spendtrack|backup|\.json/i);
   });

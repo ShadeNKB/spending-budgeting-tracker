@@ -1,11 +1,12 @@
 import { useNavigate } from 'react-router-dom'
 import { AlertTriangle, TrendingUp } from 'lucide-react'
-import { formatMoney } from '../../lib/format'
+import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { colorFromString } from '../../lib/analytics'
 import type { CategoryStat } from '../../lib/analytics'
 
 export function BudgetActual({ items, daysLeft }: { items: CategoryStat[]; daysLeft: number }) {
   const navigate = useNavigate()
+  const fmt = useFormatMoney()
   if (!items.length) return null
 
   return (
@@ -30,7 +31,7 @@ export function BudgetActual({ items, daysLeft }: { items: CategoryStat[]; daysL
               type="button"
               onClick={() => navigate(`/ledger?category=${encodeURIComponent(it.category)}`)}
               className="group w-full rounded-lg px-1.5 py-1 text-left transition hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
-              aria-label={`${it.category}: ${formatMoney(it.total)} used of ${formatMoney(budget)} budget`}
+              aria-label={`${it.category}: ${fmt(it.total)} used of ${fmt(budget)} budget`}
             >
               <div className="mb-1 flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-1.5">
@@ -44,9 +45,9 @@ export function BudgetActual({ items, daysLeft }: { items: CategoryStat[]; daysL
                 </div>
                 <div className="flex shrink-0 items-center gap-2 font-mono text-[12px] tabular-nums">
                   <span className={over ? 'text-negative' : warn ? 'text-warning' : 'text-white'}>
-                    {formatMoney(it.total)}
+                    {fmt(it.total)}
                   </span>
-                  <span className="text-[var(--text-tertiary)]">/ {formatMoney(budget)}</span>
+                  <span className="text-[var(--text-tertiary)]">/ {fmt(budget)}</span>
                 </div>
               </div>
 
@@ -70,8 +71,8 @@ export function BudgetActual({ items, daysLeft }: { items: CategoryStat[]; daysL
                 >
                   {over
                     ? it.total > budget
-                      ? `Over by ${formatMoney(it.total - budget)}`
-                      : `Projected ${formatMoney(projected)}`
+                      ? `Over by ${fmt(it.total - budget)}`
+                      : `Projected ${fmt(projected)}`
                     : `${Math.round(pct)}% used`}
                 </span>
                 <span className="text-[var(--text-tertiary)]">{daysLeft}d left</span>

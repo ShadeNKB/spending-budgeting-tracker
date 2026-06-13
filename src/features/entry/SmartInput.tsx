@@ -6,6 +6,7 @@ import { parseExpense } from '../../utils/parseExpense'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useToast } from '../../hooks/useToast'
 import { useHaptic } from '../../hooks/useHaptic'
+import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { Pill } from '../../ui/Pill'
 import { colorFromString } from '../../lib/analytics'
 
@@ -34,6 +35,7 @@ export function SmartInput({
   const consumeUndo = useExpenseStore((s) => s.consumeUndo)
   const toast = useToast()
   const vibrate = useHaptic()
+  const fmt = useFormatMoney()
 
   useEffect(() => {
     if (autoFocus) inputRef.current?.focus()
@@ -58,7 +60,7 @@ export function SmartInput({
     })
     vibrate(10)
     toast.success(
-      `${parsedDateLabel ? `${parsedDateLabel} / ` : ''}Added "${created.itemName}" - $${created.amount.toFixed(2)}`,
+      `${parsedDateLabel ? `${parsedDateLabel} / ` : ''}Added "${created.itemName}" - ${fmt(created.amount)}`,
       {
         action: {
           label: 'Undo',

@@ -19,7 +19,7 @@ import { Card } from '../../ui/Card'
 import { Pill } from '../../ui/Pill'
 import { EmptyState } from '../../ui/EmptyState'
 import { Sparkline } from '../pulse/Sparkline'
-import { formatMoney } from '../../lib/format'
+import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { colorFromString } from '../../lib/analytics'
 import { useUIStore } from '../../stores/useUIStore'
 
@@ -41,6 +41,7 @@ export function InsightsScreen() {
   const expenses = useExpenseStore((s) => s.expenses)
   const budgets = useExpenseStore((s) => s.budgets)
   const setAddSheetOpen = useUIStore((s) => s.setAddSheetOpen)
+  const fmt = useFormatMoney()
 
   const insights = useMemo(() => computeInsights(expenses, budgets), [expenses, budgets])
   const recurring = useMemo(() => detectRecurring(expenses), [expenses])
@@ -182,14 +183,14 @@ export function InsightsScreen() {
               <div>
                 <span className="text-[var(--text-tertiary)]">This week </span>
                 <span className="font-mono font-semibold tabular-nums text-white">
-                  {formatMoney(weekAnalytics.thisWeek)}
+                  {fmt(weekAnalytics.thisWeek)}
                 </span>
               </div>
               {weekHasPrev && (
                 <div>
                   <span className="text-[var(--text-tertiary)]">Last week </span>
                   <span className="font-mono tabular-nums text-[var(--text-secondary)]">
-                    {formatMoney(weekAnalytics.prevWeek)}
+                    {fmt(weekAnalytics.prevWeek)}
                   </span>
                 </div>
               )}
@@ -204,7 +205,7 @@ export function InsightsScreen() {
                 <h2 className="text-[13px] font-semibold text-white">14-day forecast</h2>
               </div>
               <span className="font-mono text-[13px] tabular-nums text-white">
-                {formatMoney(forecastTotal)}
+                {fmt(forecastTotal)}
               </span>
             </div>
             {forecastTotal <= 0 ? (
@@ -296,7 +297,7 @@ export function InsightsScreen() {
                     </div>
                     <div className="text-right">
                       <div className="font-mono text-[13px] tabular-nums text-white">
-                        {formatMoney(r.avgAmount)}
+                        {fmt(r.avgAmount)}
                       </div>
                       <div className="ml-auto mt-0.5 h-1 w-16 overflow-hidden rounded-full bg-surface-2">
                         <div

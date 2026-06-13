@@ -1,12 +1,13 @@
 import { useNavigate } from 'react-router-dom'
 import { format, parseISO, isToday, getDay } from 'date-fns'
 import clsx from 'clsx'
-import { formatMoney } from '../../lib/format'
+import { useFormatMoney } from '../../hooks/useFormatMoney'
 
 const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
 export function Heatmap({ data }: { data: { date: string; total: number }[] }) {
   const navigate = useNavigate()
+  const fmt = useFormatMoney()
   const max = Math.max(...data.map((d) => d.total), 1)
 
   // Break into weeks (7-row columns)
@@ -94,8 +95,8 @@ export function Heatmap({ data }: { data: { date: string; total: number }[] }) {
                   <button
                     key={d.date}
                     type="button"
-                    aria-label={`${dayName}, ${format(parseISO(d.date), 'MMMM d')}: ${d.total > 0 ? formatMoney(d.total) : 'No spending'}`}
-                    title={`${dayName}, ${format(parseISO(d.date), 'MMM d')} · ${d.total > 0 ? formatMoney(d.total) : 'No spending'}`}
+                    aria-label={`${dayName}, ${format(parseISO(d.date), 'MMMM d')}: ${d.total > 0 ? fmt(d.total) : 'No spending'}`}
+                    title={`${dayName}, ${format(parseISO(d.date), 'MMM d')} · ${d.total > 0 ? fmt(d.total) : 'No spending'}`}
                     onClick={() => d.total > 0 && navigate(`/ledger?date=${d.date}`)}
                     className={clsx(
                       'h-[17px] w-[17px] rounded-[5px] border transition-transform hover:scale-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent sm:h-[19px] sm:w-[19px]',
