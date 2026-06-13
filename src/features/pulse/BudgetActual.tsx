@@ -57,8 +57,12 @@ export function BudgetActual({ items, daysLeft }: { items: CategoryStat[]; daysL
                   style={{ width: `${Math.max(2, pct)}%`, background: barColor }}
                 />
                 <span
-                  className="absolute top-0 h-full w-px bg-white/70 shadow-[0_0_0_1px_rgba(0,0,0,0.35)]"
-                  style={{ left: `${expectedPct}%` }}
+                  className="absolute top-0 h-full w-px"
+                  style={{
+                    left: `${expectedPct}%`,
+                    background: 'var(--marker)',
+                    boxShadow: '0 0 0 1px var(--marker-edge)',
+                  }}
                   aria-hidden
                 />
               </div>
