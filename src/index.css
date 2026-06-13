@@ -12,11 +12,12 @@
     --surface-3: #1f252e;
     --surface-4: #2a313c;
 
-    /* Text */
+    /* Text — tertiary/muted lifted to clear WCAG AA (4.5:1) on elevated
+       surfaces (surface-3/4), where the old values failed contrast. */
     --text-primary: #f3f5f7;
     --text-secondary: #8a94a6;
-    --text-tertiary: #778399;
-    --text-muted: #6c778a;
+    --text-tertiary: #8a96aa;
+    --text-muted: #828da1;
 
     /* Borders */
     --border: rgba(255, 255, 255, 0.06);
@@ -78,6 +79,14 @@
     --glow-green: rgba(34, 197, 94, 0.16);
     --glow-red: rgba(239, 68, 68, 0.18);
 
+    /* Chart + marker tokens — theme-aware so SVG strokes & overlay markers
+       adapt (previously hardcoded white, which vanished in light mode) */
+    --marker: rgba(255, 255, 255, 0.75);
+    --marker-edge: rgba(0, 0, 0, 0.35);
+    --chart-axis: rgba(255, 255, 255, 0.12);
+    --chart-axis-strong: rgba(255, 255, 255, 0.3);
+    --app-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 280px);
+
     /* Layout */
     --radius-sm: 6px;
     --radius-md: 10px;
@@ -124,6 +133,13 @@
     --glow-purple: rgba(129, 140, 248, 0.25);
     --glow-green: rgba(34, 197, 94, 0.22);
     --glow-red: rgba(239, 68, 68, 0.22);
+
+    /* Chart + marker tokens — dark-on-light so strokes/markers stay visible */
+    --marker: rgba(15, 23, 42, 0.6);
+    --marker-edge: rgba(255, 255, 255, 0.65);
+    --chart-axis: rgba(15, 23, 42, 0.14);
+    --chart-axis-strong: rgba(15, 23, 42, 0.32);
+    --app-sheen: linear-gradient(180deg, rgba(15, 23, 42, 0.025), transparent 280px);
   }
 
   * {
@@ -1074,7 +1090,9 @@
   @media (prefers-contrast: more) {
     .card,
     .card-neon {
-      border-color: rgba(255, 255, 255, 0.18);
+      /* Token-driven so high-contrast strengthens the border in BOTH themes
+         (white-on-dark was inverting contrast in light mode). */
+      border-color: var(--border-strong);
     }
     .btn-primary,
     .btn-secondary {

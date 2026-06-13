@@ -73,7 +73,7 @@ export function Sparkline({
               y1={0}
               x2={points[tooltip.i][0]}
               y2={height}
-              stroke="rgba(255,255,255,0.12)"
+              stroke="var(--chart-axis)"
               strokeWidth={1}
               strokeDasharray="3 3"
             />
@@ -82,7 +82,7 @@ export function Sparkline({
               cy={points[tooltip.i][1]}
               r={4}
               fill={stroke}
-              stroke="rgba(255,255,255,0.3)"
+              stroke="var(--chart-axis-strong)"
               strokeWidth={1.5}
             />
           </>

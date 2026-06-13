@@ -145,7 +145,10 @@ export function AppShell() {
 
   return (
     <div className="min-h-dvh bg-surface-0 text-[var(--text-primary)]">
-      <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.035),transparent_280px)]" />
+      <div
+        className="pointer-events-none fixed inset-0"
+        style={{ background: 'var(--app-sheen)' }}
+      />
 
       <div className="relative z-10 flex min-h-dvh flex-col">
         {IS_DEMO && (
@@ -169,6 +172,7 @@ export function AppShell() {
         <TopBar />
 
         <main className="mx-auto w-full max-w-[1200px] flex-1 px-4 py-5 pb-[calc(env(safe-area-inset-bottom,0px)+96px)] md:px-8 md:py-8 md:pb-10">
+          <h1 className="sr-only">SpendTrack — spending tracker</h1>
           {!hydrated ? (
             <div
               role="status"
