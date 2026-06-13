@@ -57,7 +57,8 @@ export default {
       },
       fontFamily: {
         mono: ["'JetBrains Mono'", "'Fira Code'", 'monospace'],
-        sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+        // Matches the font actually loaded in index.html + applied in index.css.
+        sans: ["'IBM Plex Sans'", 'system-ui', '-apple-system', 'sans-serif'],
       },
       fontSize: {
         display: [
