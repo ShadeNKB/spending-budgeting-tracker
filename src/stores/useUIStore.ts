@@ -9,6 +9,17 @@ export interface Toast {
 }
 
 const CURRENCY_KEY = 'spendtrack:currency'
+const THEME_KEY = 'spendtrack:theme'
+
+export type Theme = 'dark' | 'light' | 'system'
+
+function readTheme(): Theme {
+  try {
+    return (localStorage.getItem(THEME_KEY) as Theme) ?? 'system'
+  } catch {
+    return 'system'
+  }
+}
 
 export const SUPPORTED_CURRENCIES = [
   { code: 'USD', label: 'USD — $' },
@@ -40,6 +51,7 @@ interface UIState {
   hotkeysOpen: boolean
   smartInputFocused: boolean
   currency: string
+  theme: Theme
 
   pushToast: (t: Omit<Toast, 'id'>) => string
   dismissToast: (id: string) => void
@@ -51,6 +63,7 @@ interface UIState {
   setHotkeysOpen: (v: boolean) => void
   setSmartInputFocused: (v: boolean) => void
   setCurrency: (v: string) => void
+  setTheme: (v: Theme) => void
 }
 
 export const useUIStore = create<UIState>((set) => ({
@@ -62,6 +75,7 @@ export const useUIStore = create<UIState>((set) => ({
   hotkeysOpen: false,
   smartInputFocused: false,
   currency: readCurrency(),
+  theme: readTheme(),
 
   pushToast: (t) => {
     const id = Math.random().toString(36).slice(2)
@@ -81,5 +95,11 @@ export const useUIStore = create<UIState>((set) => ({
       localStorage.setItem(CURRENCY_KEY, v)
     } catch {}
     set({ currency: v })
+  },
+  setTheme: (v) => {
+    try {
+      localStorage.setItem(THEME_KEY, v)
+    } catch {}
+    set({ theme: v })
   },
 }))

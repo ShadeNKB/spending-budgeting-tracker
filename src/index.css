@@ -65,6 +65,13 @@
     --dark-400: var(--text-tertiary);
     --dark-300: var(--text-secondary);
 
+    /* Surface channels — space-separated RGB for Tailwind opacity modifiers */
+    --surface-0-ch: 7 9 13;
+    --surface-1-ch: 14 18 23;
+    --surface-2-ch: 22 27 34;
+    --surface-3-ch: 31 37 46;
+    --surface-4-ch: 42 49 60;
+
     /* Glow tokens */
     --glow-cyan: rgba(34, 211, 238, 0.2);
     --glow-purple: rgba(129, 140, 248, 0.18);
@@ -78,6 +85,45 @@
     --radius-xl: 18px;
     --safe-bottom: env(safe-area-inset-bottom, 0px);
     --safe-top: env(safe-area-inset-top, 0px);
+  }
+
+  /* -- Light mode token overrides --------------------------------- */
+  [data-theme="light"] {
+    /* Surface channels (Tailwind bg-surface-X and bg-surface-X/Y) */
+    --surface-0-ch: 248 250 252;
+    --surface-1-ch: 255 255 255;
+    --surface-2-ch: 241 245 249;
+    --surface-3-ch: 226 232 240;
+    --surface-4-ch: 203 213 225;
+
+    /* Surface hex values (used by body bg, box-shadows, and rgba() CSS references) */
+    --surface-0: #f8fafc;
+    --surface-1: #ffffff;
+    --surface-2: #f1f5f9;
+    --surface-3: #e2e8f0;
+    --surface-4: #cbd5e1;
+
+    /* Text */
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-tertiary: #64748b;
+    --text-muted: #94a3b8;
+
+    /* Borders */
+    --border: rgba(0, 0, 0, 0.08);
+    --border-strong: rgba(0, 0, 0, 0.14);
+    --border-subtle: rgba(0, 0, 0, 0.04);
+
+    /* Accent — keep cyan, bump opacity slightly for lighter backgrounds */
+    --accent-dim: rgba(34, 211, 238, 0.15);
+    --accent-border: rgba(34, 211, 238, 0.4);
+    --accent-ring: rgba(34, 211, 238, 0.3);
+
+    /* Glows — more visible on light surfaces */
+    --glow-cyan: rgba(34, 211, 238, 0.35);
+    --glow-purple: rgba(129, 140, 248, 0.25);
+    --glow-green: rgba(34, 197, 94, 0.22);
+    --glow-red: rgba(239, 68, 68, 0.22);
   }
 
   * {
@@ -1098,6 +1144,78 @@
       transform: translateY(0);
     }
   }
+
+  /* ── Light mode component overrides ─────────────────────────── */
+
+  /* Glass surfaces */
+  [data-theme="light"] .glass {
+    background: rgba(248, 250, 252, 0.88);
+    border-bottom-color: rgba(0, 0, 0, 0.06);
+  }
+  [data-theme="light"] .glass-bottom {
+    background: rgba(248, 250, 252, 0.92);
+    border-top-color: rgba(0, 0, 0, 0.06);
+  }
+
+  /* List rows */
+  [data-theme="light"] .list-row:hover {
+    background: rgba(0, 0, 0, 0.025);
+  }
+
+  /* Sticky day header — remove dark rgba fade */
+  [data-theme="light"] .day-header {
+    background: linear-gradient(180deg, rgba(255, 255, 255, 1) 85%, rgba(255, 255, 255, 0.6) 100%);
+  }
+
+  /* Card hover shadow — lighter in light mode */
+  [data-theme="light"] .card:hover {
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+  }
+
+  /* DatePicker popup has a hardcoded dark bg */
+  [data-theme="light"] .bg-\[\#0f1117\] {
+    background-color: var(--surface-1);
+  }
+
+  /* ── Tailwind white-opacity class overrides ────────────────── */
+
+  /* text-white and fractional variants → dark equivalents */
+  [data-theme="light"] .text-white { color: var(--text-primary); }
+  [data-theme="light"] .text-white\/15 { color: rgba(15, 23, 42, 0.15); }
+  [data-theme="light"] .text-white\/20 { color: rgba(15, 23, 42, 0.2); }
+  [data-theme="light"] .text-white\/40 { color: rgba(15, 23, 42, 0.4); }
+  [data-theme="light"] .text-white\/60 { color: rgba(15, 23, 42, 0.6); }
+  [data-theme="light"] .text-white\/70 { color: rgba(15, 23, 42, 0.7); }
+  [data-theme="light"] .text-white\/80 { color: rgba(15, 23, 42, 0.8); }
+  [data-theme="light"] .text-white\/90 { color: rgba(15, 23, 42, 0.9); }
+  [data-theme="light"] .hover\:text-white:hover { color: var(--text-primary); }
+
+  /* border-white/X → dark-on-light equivalents */
+  [data-theme="light"] .border-white\/\[0\.04\] { border-color: rgba(0, 0, 0, 0.04); }
+  [data-theme="light"] .border-white\/\[0\.05\] { border-color: rgba(0, 0, 0, 0.05); }
+  [data-theme="light"] .border-white\/\[0\.06\] { border-color: rgba(0, 0, 0, 0.07); }
+  [data-theme="light"] .border-white\/\[0\.07\] { border-color: rgba(0, 0, 0, 0.08); }
+  [data-theme="light"] .border-white\/\[0\.08\] { border-color: rgba(0, 0, 0, 0.09); }
+  [data-theme="light"] .border-white\/\[0\.1\] { border-color: rgba(0, 0, 0, 0.12); }
+  [data-theme="light"] .border-white\/10 { border-color: rgba(0, 0, 0, 0.1); }
+  [data-theme="light"] .border-white\/20 { border-color: rgba(0, 0, 0, 0.2); }
+  [data-theme="light"] .hover\:border-white\/\[0\.1\]:hover { border-color: rgba(0, 0, 0, 0.12); }
+  [data-theme="light"] .hover\:border-white\/20:hover { border-color: rgba(0, 0, 0, 0.2); }
+
+  /* bg-white/X hover states → inverted dark equivalents */
+  [data-theme="light"] .bg-white\/\[0\.02\] { background-color: rgba(0, 0, 0, 0.01); }
+  [data-theme="light"] .bg-white\/\[0\.03\] { background-color: rgba(0, 0, 0, 0.02); }
+  [data-theme="light"] .bg-white\/\[0\.04\] { background-color: rgba(0, 0, 0, 0.02); }
+  [data-theme="light"] .bg-white\/\[0\.06\] { background-color: rgba(0, 0, 0, 0.04); }
+  [data-theme="light"] .bg-white\/\[0\.07\] { background-color: rgba(0, 0, 0, 0.05); }
+  [data-theme="light"] .bg-white\/\[0\.08\] { background-color: rgba(0, 0, 0, 0.05); }
+  [data-theme="light"] .bg-white\/20 { background-color: rgba(0, 0, 0, 0.1); }
+  [data-theme="light"] .hover\:bg-white\/\[0\.03\]:hover { background-color: rgba(0, 0, 0, 0.02); }
+  [data-theme="light"] .hover\:bg-white\/\[0\.06\]:hover { background-color: rgba(0, 0, 0, 0.04); }
+  [data-theme="light"] .hover\:bg-white\/\[0\.08\]:hover { background-color: rgba(0, 0, 0, 0.05); }
+
+  /* Native input color scheme — flip to light when [data-theme="light"] is active */
+  [data-theme="light"] .\[color-scheme\:dark\] { color-scheme: light; }
 
   @keyframes route-fade-in {
     from {

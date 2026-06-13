@@ -13,13 +13,14 @@ export default {
     },
     extend: {
       colors: {
-        // OLED-near-black surface scale. surface-0 = app bg, ascending elevation.
+        // Surface scale — references CSS channel vars so bg-surface-X/Y opacity
+        // modifiers work and the palette adapts when [data-theme="light"] is set.
         surface: {
-          0: '#07090D',
-          1: '#0E1217',
-          2: '#161B22',
-          3: '#1F252E',
-          4: '#2A313C',
+          0: 'rgb(var(--surface-0-ch) / <alpha-value>)',
+          1: 'rgb(var(--surface-1-ch) / <alpha-value>)',
+          2: 'rgb(var(--surface-2-ch) / <alpha-value>)',
+          3: 'rgb(var(--surface-3-ch) / <alpha-value>)',
+          4: 'rgb(var(--surface-4-ch) / <alpha-value>)',
         },
         // Legacy alias (kept so existing bg-surface-1 references still read as app bg)
         dark: {

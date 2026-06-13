@@ -20,7 +20,7 @@ import { Sheet } from '../../ui/Sheet'
 import { Button } from '../../ui/Button'
 import { Input } from '../../ui/Input'
 import { Pill } from '../../ui/Pill'
-import { useUIStore, SUPPORTED_CURRENCIES } from '../../stores/useUIStore'
+import { useUIStore, SUPPORTED_CURRENCIES, type Theme } from '../../stores/useUIStore'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { SyncPanel } from './SyncPanel'
 import { useToast } from '../../hooks/useToast'
@@ -38,6 +38,8 @@ export function SettingsDrawer() {
   const setTab = useUIStore((s) => s.setSettingsTab)
   const currency = useUIStore((s) => s.currency)
   const setCurrency = useUIStore((s) => s.setCurrency)
+  const theme = useUIStore((s) => s.theme)
+  const setTheme = useUIStore((s) => s.setTheme)
   const [isMobile, setIsMobile] = useState(false)
 
   useEffect(() => {
@@ -57,6 +59,20 @@ export function SettingsDrawer() {
       width={460}
     >
       <div className="px-5 pb-2 pt-4">
+        <div className="mb-3 flex items-center justify-between">
+          <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+            Theme
+          </span>
+          <select
+            value={theme}
+            onChange={(e) => setTheme(e.target.value as Theme)}
+            className="rounded-md border border-white/[0.08] bg-surface-2 px-2.5 py-1 text-[12px] text-[var(--text-primary)] outline-none [color-scheme:dark] focus:border-accent/60"
+          >
+            <option value="system">System</option>
+            <option value="dark">Dark</option>
+            <option value="light">Light</option>
+          </select>
+        </div>
         <div className="mb-3 flex items-center justify-between">
           <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]">
             Currency

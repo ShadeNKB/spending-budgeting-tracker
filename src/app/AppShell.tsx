@@ -66,6 +66,7 @@ function bootstrap() {
 export function AppShell() {
   const hydrated = useExpenseStore((s) => s.hydrated)
   const isOffline = useExpenseStore((s) => s.isOffline)
+  const theme = useUIStore((s) => s.theme)
   const setPaletteOpen = useUIStore((s) => s.setPaletteOpen)
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen)
   const setHotkeysOpen = useUIStore((s) => s.setHotkeysOpen)
@@ -79,6 +80,20 @@ export function AppShell() {
   toastRef.current = toast
 
   useEffect(bootstrap, [])
+
+  useEffect(() => {
+    const root = document.documentElement
+    if (theme === 'system') {
+      const mq = window.matchMedia('(prefers-color-scheme: dark)')
+      const apply = () => {
+        root.dataset.theme = mq.matches ? 'dark' : 'light'
+      }
+      apply()
+      mq.addEventListener('change', apply)
+      return () => mq.removeEventListener('change', apply)
+    }
+    root.dataset.theme = theme
+  }, [theme])
 
   // Surface storage quota errors to the user — without this the app would
   // silently fail to persist, which is the worst possible UX for a finance
@@ -129,7 +144,7 @@ export function AppShell() {
   })
 
   return (
-    <div className="min-h-dvh bg-surface-0 text-white">
+    <div className="min-h-dvh bg-surface-0 text-[var(--text-primary)]">
       <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.035),transparent_280px)]" />
 
       <div className="relative z-10 flex min-h-dvh flex-col">
