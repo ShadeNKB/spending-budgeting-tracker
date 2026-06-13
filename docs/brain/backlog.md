@@ -16,6 +16,7 @@ _(shipped 2026-06-13)_
 
 ## Shipped
 - **Light mode** — shipped 2026-06-13 in v0.6.0. System/Dark/Light, `[data-theme]` token overrides, Tailwind surface channel vars. Released as [v0.6.0](https://github.com/ShadeNKB/spending-budgeting-tracker/releases/tag/v0.6.0).
+- **Light-mode parity + a11y** — shipped 2026-06-13 in [v0.6.1](https://github.com/ShadeNKB/spending-budgeting-tracker/releases/tag/v0.6.1). Theme-aware chart/marker tokens (fixed hardcoded-white leaks), WCAG-AA text contrast (axe 30→0), page h1.
 
 ## Investigations (don't act, just look first)
 - Bundle js 625 KB (under 700 KB budget). `perf-reviewer` ran 2026-06-13 — verdict FAST. No urgent action.
