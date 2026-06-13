@@ -56,9 +56,7 @@ export function TodayStrip({ entries, total }: { entries: Expense[]; total: numb
                   {e.notes ? ` · ${e.notes}` : ''}
                 </div>
               </div>
-              <span className="font-mono text-[13px] tabular-nums text-white">
-                {fmt(e.amount)}
-              </span>
+              <span className="font-mono text-[13px] tabular-nums text-white">{fmt(e.amount)}</span>
             </li>
           ))}
           {entries.length > 5 && (

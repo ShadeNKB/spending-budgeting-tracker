@@ -149,9 +149,7 @@ export function PulseScreen() {
                         <span>
                           Avg{' '}
                           <span className="font-mono tabular-nums text-white">
-                            {fmt(
-                              monthData.periodTotal / Math.max(1, monthData.daysElapsed),
-                            )}
+                            {fmt(monthData.periodTotal / Math.max(1, monthData.daysElapsed))}
                           </span>
                           /day
                         </span>
@@ -161,9 +159,7 @@ export function PulseScreen() {
                         <span>
                           Daily avg{' '}
                           <span className="font-mono tabular-nums text-white">
-                            {fmt(
-                              monthData.periodTotal / Math.max(1, monthData.daysElapsed),
-                            )}
+                            {fmt(monthData.periodTotal / Math.max(1, monthData.daysElapsed))}
                           </span>
                         </span>
                         <span className="text-[var(--text-tertiary)]">/</span>
