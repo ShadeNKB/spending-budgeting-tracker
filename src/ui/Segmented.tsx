@@ -1,6 +1,4 @@
-import { motion } from 'framer-motion'
 import clsx from 'clsx'
-import { useId } from 'react'
 
 export interface SegmentedOption<T extends string = string> {
   value: T
@@ -24,7 +22,6 @@ export function Segmented<T extends string>({
   fullWidth,
   className,
 }: Props<T>) {
-  const layoutId = useId()
   return (
     <div
       role="radiogroup"
@@ -47,17 +44,12 @@ export function Segmented<T extends string>({
               'relative inline-flex items-center justify-center rounded-full font-medium transition-colors',
               size === 'sm' ? 'h-7 px-3 text-[12px]' : 'h-8 px-3.5 text-[13px]',
               fullWidth && 'flex-1',
-              active ? 'text-accent' : 'text-[var(--text-secondary)] hover:text-white',
+              active
+                ? 'bg-accent/12 text-accent shadow-[inset_0_0_0_1px_rgba(34,211,238,0.18)]'
+                : 'text-[var(--text-secondary)] hover:text-white',
             )}
           >
-            {active && (
-              <motion.span
-                layoutId={`seg-${layoutId}`}
-                className="bg-accent/12 absolute inset-0 rounded-full shadow-[inset_0_0_0_1px_rgba(34,211,238,0.18)]"
-                transition={{ type: 'spring', stiffness: 420, damping: 36 }}
-              />
-            )}
-            <span className="relative z-10">{opt.label}</span>
+            {opt.label}
           </button>
         )
       })}

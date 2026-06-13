@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
 import { Check, Loader2, WifiOff, AlertCircle } from 'lucide-react'
 import clsx from 'clsx'
 import { useExpenseStore } from '../stores/useExpenseStore'
@@ -53,27 +52,22 @@ export function SyncPill() {
   const spinning = Icon === Loader2
 
   return (
-    <AnimatePresence mode="wait">
-      <motion.div
-        key={label + tick}
-        initial={{ opacity: 0, y: -4 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -4 }}
-        transition={{ duration: 0.15 }}
-        role="status"
-        aria-live="polite"
+    <div
+      key={label + tick}
+      role="status"
+      aria-live="polite"
+      style={{ animation: 'sync-pill-in 0.15s ease both' }}
+    >
+      <div
+        className={clsx(
+          'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium',
+          tone,
+        )}
+        title={title}
       >
-        <div
-          className={clsx(
-            'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium',
-            tone,
-          )}
-          title={title}
-        >
-          <Icon size={12} className={spinning ? 'animate-spin' : ''} />
-          <span>{label}</span>
-        </div>
-      </motion.div>
-    </AnimatePresence>
+        <Icon size={12} className={spinning ? 'animate-spin' : ''} />
+        <span>{label}</span>
+      </div>
+    </div>
   )
 }

@@ -1,33 +1,20 @@
-import { motion, type HTMLMotionProps } from 'framer-motion'
 import clsx from 'clsx'
 
-type Props = HTMLMotionProps<'div'> & {
+type Props = React.HTMLAttributes<HTMLDivElement> & {
   interactive?: boolean
   glow?: boolean
   padded?: boolean
   children?: React.ReactNode
 }
 
-/**
- * Reliable Card primitive.
- *
- * Uses `initial={false}` so framer-motion never starts the card hidden —
- * Cards are always visible immediately. Previously `initial={{ opacity: 0 }}`
- * could leave Cards stuck invisible if the parent `AnimatePresence` lifecycle
- * was interrupted by rapid route navigation.
- *
- * The hover lift is preserved via `whileHover`.
- */
 export function Card({ className, interactive, glow, padded = true, children, ...p }: Props) {
   return (
-    <motion.div
-      initial={false}
-      whileHover={interactive ? { y: -1 } : undefined}
-      transition={{ duration: 0.18, ease: [0.2, 0, 0, 1] }}
+    <div
       className={clsx(
-        'rounded-[14px] border border-white/[0.06] bg-surface-1 transition-colors',
+        'rounded-[14px] border border-white/[0.06] bg-surface-1 transition-[border-color,background-color,box-shadow,transform] duration-[180ms]',
         padded && 'p-5 md:p-6',
-        interactive && 'cursor-pointer hover:border-white/[0.1] hover:bg-surface-2',
+        interactive &&
+          'cursor-pointer hover:-translate-y-px hover:border-white/[0.1] hover:bg-surface-2',
         glow && 'relative overflow-hidden',
         className,
       )}
@@ -44,6 +31,6 @@ export function Card({ className, interactive, glow, padded = true, children, ..
         />
       )}
       {children}
-    </motion.div>
+    </div>
   )
 }

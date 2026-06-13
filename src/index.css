@@ -1063,6 +1063,42 @@
      opacity:0 when rapid navigation interrupted the animation
      lifecycle. CSS animations are independent of React state, so
      they can never be "stuck". */
+  @keyframes offline-banner-in {
+    from {
+      max-height: 0;
+      opacity: 0;
+    }
+    to {
+      max-height: 48px;
+      opacity: 1;
+    }
+  }
+  .offline-banner-in {
+    animation: offline-banner-in 0.2s ease both;
+    overflow: hidden;
+  }
+
+  @keyframes logo-glow {
+    0%,
+    100% {
+      box-shadow: 0 0 12px -2px rgba(34, 211, 238, 0.45);
+    }
+    50% {
+      box-shadow: 0 0 22px -2px rgba(34, 211, 238, 0.7);
+    }
+  }
+
+  @keyframes sync-pill-in {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+
   @keyframes route-fade-in {
     from {
       opacity: 0;

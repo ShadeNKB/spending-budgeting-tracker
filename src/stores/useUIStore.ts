@@ -14,6 +14,7 @@ interface UIState {
   settingsOpen: boolean
   settingsTab: 'categories' | 'budgets' | 'backup' | 'sync'
   addSheetOpen: boolean
+  hotkeysOpen: boolean
   smartInputFocused: boolean
 
   pushToast: (t: Omit<Toast, 'id'>) => string
@@ -23,6 +24,7 @@ interface UIState {
   setSettingsOpen: (v: boolean) => void
   setSettingsTab: (v: UIState['settingsTab']) => void
   setAddSheetOpen: (v: boolean) => void
+  setHotkeysOpen: (v: boolean) => void
   setSmartInputFocused: (v: boolean) => void
 }
 
@@ -32,6 +34,7 @@ export const useUIStore = create<UIState>((set) => ({
   settingsOpen: false,
   settingsTab: 'categories',
   addSheetOpen: false,
+  hotkeysOpen: false,
   smartInputFocused: false,
 
   pushToast: (t) => {
@@ -45,5 +48,6 @@ export const useUIStore = create<UIState>((set) => ({
   setSettingsOpen: (v) => set({ settingsOpen: v }),
   setSettingsTab: (v) => set({ settingsTab: v }),
   setAddSheetOpen: (v) => set({ addSheetOpen: v }),
+  setHotkeysOpen: (v) => set({ hotkeysOpen: v }),
   setSmartInputFocused: (v) => set({ smartInputFocused: v }),
 }))

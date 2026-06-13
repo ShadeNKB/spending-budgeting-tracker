@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { Sparkles, CornerDownLeft, X, CalendarDays, PenLine } from 'lucide-react'
 import { format } from 'date-fns'
 import clsx from 'clsx'
@@ -8,7 +8,10 @@ import { useToast } from '../../hooks/useToast'
 import { useHaptic } from '../../hooks/useHaptic'
 import { Pill } from '../../ui/Pill'
 import { colorFromString } from '../../lib/analytics'
-import { AddExpenseSheet } from './AddExpenseSheet'
+
+const AddExpenseSheet = lazy(() =>
+  import('./AddExpenseSheet').then((m) => ({ default: m.AddExpenseSheet })),
+)
 
 export function SmartInput({
   autoFocus,
@@ -174,20 +177,22 @@ export function SmartInput({
         )}
       </div>
 
-      <AddExpenseSheet
-        open={sheetOpen}
-        onClose={() => setSheetOpen(false)}
-        prefill={
-          parsed.itemName || parsed.amount
-            ? {
-                itemName: parsed.itemName,
-                amount: parsed.amount ?? undefined,
-                category: parsed.suggestedCategory,
-                date: parsed.parsedDate ?? today,
-              }
-            : undefined
-        }
-      />
+      <Suspense fallback={null}>
+        <AddExpenseSheet
+          open={sheetOpen}
+          onClose={() => setSheetOpen(false)}
+          prefill={
+            parsed.itemName || parsed.amount
+              ? {
+                  itemName: parsed.itemName,
+                  amount: parsed.amount ?? undefined,
+                  category: parsed.suggestedCategory,
+                  date: parsed.parsedDate ?? today,
+                }
+              : undefined
+          }
+        />
+      </Suspense>
     </>
   )
 }

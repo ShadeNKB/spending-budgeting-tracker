@@ -1,12 +1,8 @@
-import { Suspense, lazy, useEffect } from 'react'
+import { Suspense, lazy, useEffect, useRef } from 'react'
 import { Outlet } from 'react-router-dom'
-import { AnimatePresence, motion, MotionConfig } from 'framer-motion'
 import { WifiOff, FlaskConical } from 'lucide-react'
 import { TopBar } from './TopBar'
 import { TabBar } from './TabBar'
-import { ToastHost } from '../ui/ToastHost'
-import { CommandPalette } from '../features/entry/CommandPalette'
-import { AddExpenseSheet } from '../features/entry/AddExpenseSheet'
 import { useExpenseStore, installPersistence, IS_DEMO } from '../stores/useExpenseStore'
 import { useSyncStore } from '../stores/useSyncStore'
 import { syncApplying } from '../services/syncService'
@@ -14,10 +10,20 @@ import { useUIStore } from '../stores/useUIStore'
 import { useHotkeys } from '../hooks/useHotkeys'
 import { useToast } from '../hooks/useToast'
 
-// Lazy-load the Settings drawer — it's hidden by default and contains 4 panels
-// (Categories, Budgets, Backup, Sync), so shaving it from the initial bundle is a real win.
+// Lazy-load heavy components that are hidden on first paint — keeps framer-motion
+// out of the critical bundle path and shaves the initial JS parse budget.
 const SettingsDrawer = lazy(() =>
   import('../features/settings/SettingsDrawer').then((m) => ({ default: m.SettingsDrawer })),
+)
+const CommandPalette = lazy(() =>
+  import('../features/entry/CommandPalette').then((m) => ({ default: m.CommandPalette })),
+)
+const AddExpenseSheet = lazy(() =>
+  import('../features/entry/AddExpenseSheet').then((m) => ({ default: m.AddExpenseSheet })),
+)
+const ToastHost = lazy(() => import('../ui/ToastHost').then((m) => ({ default: m.ToastHost })))
+const HotkeyHints = lazy(() =>
+  import('../ui/HotkeyHints').then((m) => ({ default: m.HotkeyHints })),
 )
 
 // Bootstrap runs once per page load — wired in a top-level useEffect rather than
@@ -62,11 +68,15 @@ export function AppShell() {
   const isOffline = useExpenseStore((s) => s.isOffline)
   const setPaletteOpen = useUIStore((s) => s.setPaletteOpen)
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen)
+  const setHotkeysOpen = useUIStore((s) => s.setHotkeysOpen)
+  const hotkeysOpen = useUIStore((s) => s.hotkeysOpen)
   const addSheetOpen = useUIStore((s) => s.addSheetOpen)
   const setAddSheetOpen = useUIStore((s) => s.setAddSheetOpen)
   const undoStack = useExpenseStore((s) => s.undoStack)
   const consumeUndo = useExpenseStore((s) => s.consumeUndo)
   const toast = useToast()
+  const toastRef = useRef(toast)
+  toastRef.current = toast
 
   useEffect(bootstrap, [])
 
@@ -83,10 +93,29 @@ export function AppShell() {
     return () => window.removeEventListener('spendtrack:quota-exceeded', onQuota)
   }, [toast])
 
+  // Show a reload prompt when the service worker updates (new version deployed).
+  // Uses a ref so the effect doesn't re-register on every toast reference change.
+  useEffect(() => {
+    if (!('serviceWorker' in navigator)) return
+    let prevController = navigator.serviceWorker.controller
+    const onController = () => {
+      if (prevController) {
+        toastRef.current.info('App updated — reload for the latest version.', {
+          duration: 0,
+          action: { label: 'Reload', onClick: () => window.location.reload() },
+        })
+      }
+      prevController = navigator.serviceWorker.controller
+    }
+    navigator.serviceWorker.addEventListener('controllerchange', onController)
+    return () => navigator.serviceWorker.removeEventListener('controllerchange', onController)
+  }, [])
+
   useHotkeys({
     'mod+k': () => setPaletteOpen(true),
     'mod+n': () => setAddSheetOpen(true),
     'mod+,': () => setSettingsOpen(true),
+    '?': () => setHotkeysOpen(true),
     'mod+z': () => {
       const last = undoStack[undoStack.length - 1]
       if (last) consumeUndo(last.id)
@@ -95,86 +124,88 @@ export function AppShell() {
       setPaletteOpen(false)
       setSettingsOpen(false)
       setAddSheetOpen(false)
+      setHotkeysOpen(false)
     },
   })
 
   return (
-    <MotionConfig reducedMotion="user">
-      <div className="min-h-dvh bg-surface-0 text-white">
-        <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.035),transparent_280px)]" />
+    <div className="min-h-dvh bg-surface-0 text-white">
+      <div className="pointer-events-none fixed inset-0 bg-[linear-gradient(180deg,rgba(255,255,255,0.035),transparent_280px)]" />
 
-        <div className="relative z-10 flex min-h-dvh flex-col">
-          {IS_DEMO && (
-            <div className="flex items-center justify-center gap-2 border-b border-accent/20 bg-accent/10 px-4 py-1.5 text-[12px] text-accent">
-              <FlaskConical size={12} />
-              <span>
-                Demo mode — sample data loaded.{' '}
-                <span className="text-accent/70">Data is stored locally on this device only.</span>{' '}
-                Clear it in Settings → Backup and use for your own expenses.
+      <div className="relative z-10 flex min-h-dvh flex-col">
+        {IS_DEMO && (
+          <div className="flex items-center justify-center gap-2 border-b border-accent/20 bg-accent/10 px-4 py-1.5 text-[12px] text-accent">
+            <FlaskConical size={12} />
+            <span>
+              Demo mode — sample data loaded.{' '}
+              <span className="text-accent/70">Data is stored locally on this device only.</span>{' '}
+              Clear it in Settings → Backup and use for your own expenses.
+            </span>
+          </div>
+        )}
+        {isOffline && (
+          <div className="offline-banner-in relative z-50">
+            <div className="flex items-center justify-center gap-2 border-b border-warning/20 bg-warning/10 px-4 py-1.5 text-[12px] text-warning">
+              <WifiOff size={12} />
+              You're offline — changes will sync when connection is restored
+            </div>
+          </div>
+        )}
+        <TopBar />
+
+        <main className="mx-auto w-full max-w-[1200px] flex-1 px-4 py-5 pb-[calc(env(safe-area-inset-bottom,0px)+96px)] md:px-8 md:py-8 md:pb-10">
+          {!hydrated ? (
+            <div
+              role="status"
+              aria-live="polite"
+              className="flex flex-col items-center justify-center gap-3 py-32"
+            >
+              <div className="h-7 w-7 animate-spin rounded-full border-2 border-accent/20 border-t-accent" />
+              <span className="text-[12px] text-[var(--text-tertiary)]">
+                Loading local spending data
               </span>
             </div>
-          )}
-          <AnimatePresence>
-            {isOffline && (
-              <motion.div
-                initial={{ height: 0, opacity: 0 }}
-                animate={{ height: 'auto', opacity: 1 }}
-                exit={{ height: 0, opacity: 0 }}
-                transition={{ duration: 0.2 }}
-                className="relative z-50 overflow-hidden"
-              >
-                <div className="flex items-center justify-center gap-2 border-b border-warning/20 bg-warning/10 px-4 py-1.5 text-[12px] text-warning">
-                  <WifiOff size={12} />
-                  You're offline — changes will sync when connection is restored
-                </div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-          <TopBar />
-
-          <main className="mx-auto w-full max-w-[1200px] flex-1 px-4 py-5 pb-[calc(env(safe-area-inset-bottom,0px)+96px)] md:px-8 md:py-8 md:pb-10">
-            {!hydrated ? (
-              <div
-                role="status"
-                aria-live="polite"
-                className="flex flex-col items-center justify-center gap-3 py-32"
-              >
-                <div className="h-7 w-7 animate-spin rounded-full border-2 border-accent/20 border-t-accent" />
-                <span className="text-[12px] text-[var(--text-tertiary)]">
-                  Loading local spending data
-                </span>
-              </div>
-            ) : (
-              // No AnimatePresence around routes — rapid navigation could leave
-              // motion.divs stranded with `initial: opacity 0` when framer-motion's
-              // exit/enter lifecycle overlapped, blanking Pulse + Insights.
-              // Routes now render synchronously; subtle CSS fade-in is applied
-              // via the `route-fade-in` keyframe so transitions still feel polished
-              // without any React-state animation that can fail.
-              <div key="route-content" className="route-fade-in">
-                <Outlet />
-              </div>
-            )}
-          </main>
-
-          <TabBar />
-        </div>
-
-        <CommandPalette />
-
-        <Suspense
-          fallback={
-            <div role="status" className="sr-only">
-              Loading settings
+          ) : (
+            // No AnimatePresence around routes — rapid navigation could leave
+            // motion.divs stranded with `initial: opacity 0` when framer-motion's
+            // exit/enter lifecycle overlapped, blanking Pulse + Insights.
+            // Routes now render synchronously; subtle CSS fade-in is applied
+            // via the `route-fade-in` keyframe so transitions still feel polished
+            // without any React-state animation that can fail.
+            <div key="route-content" className="route-fade-in">
+              <Outlet />
             </div>
-          }
-        >
-          <SettingsDrawer />
-        </Suspense>
-        <AddExpenseSheet open={addSheetOpen} onClose={() => setAddSheetOpen(false)} />
+          )}
+        </main>
 
-        <ToastHost />
+        <TabBar />
       </div>
-    </MotionConfig>
+
+      <Suspense fallback={null}>
+        <CommandPalette />
+      </Suspense>
+
+      <Suspense
+        fallback={
+          <div role="status" className="sr-only">
+            Loading settings
+          </div>
+        }
+      >
+        <SettingsDrawer />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <AddExpenseSheet open={addSheetOpen} onClose={() => setAddSheetOpen(false)} />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <ToastHost />
+      </Suspense>
+
+      <Suspense fallback={null}>
+        <HotkeyHints open={hotkeysOpen} onClose={() => setHotkeysOpen(false)} />
+      </Suspense>
+    </div>
   )
 }

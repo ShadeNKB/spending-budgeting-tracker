@@ -1,5 +1,3 @@
-import { motion } from 'framer-motion'
-
 /**
  * SpendTrack brand mark.
  *
@@ -11,25 +9,14 @@ import { motion } from 'framer-motion'
  * across favicon, PWA icon, in-app header, OS install prompts.
  */
 export function SpendLogo({ size = 28, animated = false }: { size?: number; animated?: boolean }) {
-  // The arc length is animated subtly when `animated` is true.
   return (
-    <motion.div
+    <div
       className="shrink-0 rounded-[8px]"
-      style={{ width: size, height: size }}
-      animate={
-        animated
-          ? {
-              boxShadow: [
-                '0 0 12px -2px rgba(34,211,238,0.45)',
-                '0 0 22px -2px rgba(34,211,238,0.7)',
-                '0 0 12px -2px rgba(34,211,238,0.45)',
-              ],
-            }
-          : undefined
-      }
-      transition={
-        animated ? { duration: 3.2, repeat: Infinity, ease: 'easeInOut' as const } : undefined
-      }
+      style={{
+        width: size,
+        height: size,
+        animation: animated ? 'logo-glow 3.2s ease-in-out infinite' : undefined,
+      }}
     >
       <svg
         width={size}
@@ -100,6 +87,6 @@ export function SpendLogo({ size = 28, animated = false }: { size?: number; anim
         {/* Center dot accent */}
         <circle cx="16" cy="16" r="2" fill={`url(#sl-ring-${size})`} />
       </svg>
-    </motion.div>
+    </div>
   )
 }

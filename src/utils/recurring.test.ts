@@ -33,6 +33,17 @@ describe('recurring expenses', () => {
     })
   })
 
+  it('does not flag an irregularly repeated expense as recurring', () => {
+    // Three repairs with consistent-ish gaps (~88 days) but only 3 data points.
+    // High gap + low sample count = false positive territory.
+    const groups = detectRecurring([
+      expense('1', 'laptop repair', '2025-01-10', 180),
+      expense('2', 'laptop repair', '2025-04-06', 200),
+      expense('3', 'laptop repair', '2025-07-05', 190),
+    ])
+    expect(groups).toHaveLength(0)
+  })
+
   it('forecasts recurring charges into the requested window', () => {
     vi.setSystemTime(new Date('2026-04-01T12:00:00'))
 

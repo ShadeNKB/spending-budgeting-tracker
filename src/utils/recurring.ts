@@ -75,14 +75,17 @@ export function detectRecurring(expenses: Expense[]): RecurringGroup[] {
     const relativeStdDev = avgGap > 0 ? stdDev / avgGap : 1
     const confidence = Math.max(0, Math.min(1, 1 - relativeStdDev))
 
-    // Ignore groups where timing is too scattered
-    if (confidence < 0.45) continue
+    // Raise threshold: 0.55 reduces false positives from near-equal gaps by chance.
+    if (confidence < 0.55) continue
 
     let periodicity: RecurringGroup['periodicity']
     if (avgGap <= 10) periodicity = 'weekly'
     else if (avgGap <= 18) periodicity = 'biweekly'
     else if (avgGap <= 45) periodicity = 'monthly'
     else periodicity = 'irregular'
+
+    // Irregular cadence with only 3 occurrences is unreliable — require 4+ data points.
+    if (periodicity === 'irregular' && items.length < 4) continue
 
     const lastDate = parseISO(sorted[sorted.length - 1].date)
     const nextEstimatedDate = new Date(lastDate)

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Search, Filter, Inbox, X } from 'lucide-react'
+import { Search, Filter, Inbox, X, FileDown } from 'lucide-react'
+import { downloadCSV } from '../../lib/download'
 import { DatePicker } from '../../ui/DatePicker'
 import {
   parseISO,
@@ -170,6 +171,22 @@ export function LedgerScreen() {
     }
   }
 
+  const escapeCsvField = (value: string | number | undefined) =>
+    `"${String(value ?? '').replace(/"/g, '""')}"`
+
+  const handleExportCsv = () => {
+    if (filtered.length === 0) return
+    const headers = ['Date', 'Item', 'Category', 'Amount', 'Notes']
+    const rows = filtered.map((e) =>
+      [format(new Date(e.date), 'yyyy-MM-dd'), e.itemName, e.category, e.amount, e.notes]
+        .map(escapeCsvField)
+        .join(','),
+    )
+    const csv = [headers.join(','), ...rows].join('\n')
+    downloadCSV(`spendtrack-${format(new Date(), 'yyyy-MM-dd')}.csv`, csv)
+    toast.success(`Exported ${filtered.length} ${filtered.length === 1 ? 'entry' : 'entries'}`)
+  }
+
   // Sync search param. Intentionally only depends on `search` — adding `params`
   // / `setParams` to the deps would re-arm the debounce on every URL change
   // and we'd never settle. The latest `params` is captured fresh inside the
@@ -236,12 +253,25 @@ export function LedgerScreen() {
       <div className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
           <h1 className="text-[22px] font-semibold tracking-tight text-white">Ledger</h1>
-          <div className="text-right">
-            <div className="font-mono text-[16px] font-semibold tabular-nums text-white">
-              {formatMoney(totalSum)}
-            </div>
-            <div className="text-[11px] text-[var(--text-tertiary)]">
-              {filtered.length} {filtered.length === 1 ? 'entry' : 'entries'}
+          <div className="flex items-center gap-2">
+            {filtered.length > 0 && (
+              <button
+                type="button"
+                onClick={handleExportCsv}
+                title={`Export ${filtered.length} ${filtered.length === 1 ? 'entry' : 'entries'} to CSV`}
+                aria-label="Export filtered entries to CSV"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-tertiary)] transition hover:bg-surface-2 hover:text-white"
+              >
+                <FileDown size={14} />
+              </button>
+            )}
+            <div className="text-right">
+              <div className="font-mono text-[16px] font-semibold tabular-nums text-white">
+                {formatMoney(totalSum)}
+              </div>
+              <div className="text-[11px] text-[var(--text-tertiary)]">
+                {filtered.length} {filtered.length === 1 ? 'entry' : 'entries'}
+              </div>
             </div>
           </div>
         </div>
