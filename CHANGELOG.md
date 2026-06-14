@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.3 — 2026-06-15
+
+### Changed
+
+- **Warmer/softer Entry sheets pass — completes the redesign.** The bottom sheets, command palette, and date-picker popup now use a theme-aware `--shadow-overlay` token (softer, warm-tinted in light) instead of hardcoded heavy black shadows. The date-picker popup, which still hardcoded the old cool blue-black (`#0f1117`), now uses the warm surface token. With this, all four surfaces (Pulse, Ledger, Insights, Entry/Settings) carry the warmer/softer design.
+
 ## 0.8.2 — 2026-06-14
 
 ### Changed

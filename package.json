@@ -2,7 +2,7 @@
   "name": "spendtrack",
   "private": true,
   "description": "A fast, local-first spending tracker with smart categorisation, real-time budgets, and optional cross-device sync.",
-  "version": "0.8.2",
+  "version": "0.8.3",
   "type": "module",
   "license": "MIT",
   "repository": {
