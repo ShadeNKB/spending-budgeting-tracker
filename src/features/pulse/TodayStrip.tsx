@@ -9,7 +9,7 @@ export function TodayStrip({ entries, total }: { entries: Expense[]; total: numb
   const fmt = useFormatMoney()
 
   return (
-    <div className="rounded-[14px] border border-white/[0.06] bg-surface-1 p-4 md:p-5">
+    <div className="rounded-2xl border border-white/[0.06] bg-surface-1 p-4 md:p-5">
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Sun size={14} className="text-accent/80" />

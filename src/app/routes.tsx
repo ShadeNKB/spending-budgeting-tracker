@@ -20,10 +20,10 @@ function ScreenSkeleton() {
       <span className="sr-only">Loading screen</span>
       <div className="h-9 w-40 animate-pulse rounded-lg bg-surface-2" />
       <div className="grid gap-4 md:grid-cols-2">
-        <div className="h-36 animate-pulse rounded-[14px] border border-white/[0.06] bg-surface-1" />
-        <div className="h-36 animate-pulse rounded-[14px] border border-white/[0.06] bg-surface-1" />
+        <div className="h-36 animate-pulse rounded-2xl border border-white/[0.06] bg-surface-1" />
+        <div className="h-36 animate-pulse rounded-2xl border border-white/[0.06] bg-surface-1" />
       </div>
-      <div className="h-56 animate-pulse rounded-[14px] border border-white/[0.06] bg-surface-1" />
+      <div className="h-56 animate-pulse rounded-2xl border border-white/[0.06] bg-surface-1" />
     </div>
   )
 }
