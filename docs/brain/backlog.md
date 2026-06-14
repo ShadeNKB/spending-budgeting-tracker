@@ -14,8 +14,12 @@ _(shipped 2026-06-13)_
 ## Nice to have
 - **Storybook.** Component count too low to justify; revisit at ~40+ components.
 
-## Needs Shade (taste/decision — not autonomous)
-- **Broader visual redesign.** v0.6.1/0.7.0 were correctness passes (light parity, a11y, virtualization), not a restyle. A real hierarchy/spacing/motion/typography design sprint is still open and needs Shade driving taste calls (start with Pulse). Use Taste Dials in design-anti-patterns.md.
+## In flight — warmer/softer redesign (brief: docs/design-brief.md)
+- ✅ **Foundation + Pulse** shipped in v0.8.0 (warm surfaces, soft shadows, rounder radii, warm text, shared SectionHeader).
+- ⬜ **Ledger** — per-surface refinement against the brief (next).
+- ⬜ **Insights** — per-surface refinement.
+- ⬜ **Entry + Settings sheets** — per-surface refinement (settings controls already redone in v0.7.1).
+  _One surface per release; before/after + a11y both themes each time._
 - **Per-bucket RLS lockdown (Supabase).** RLS disabled by design (sync_id = shared secret); Shade ruled leave-as-is 2026-06-13. Revisit only to tighten sync security — its own session.
 
 ## Shipped
