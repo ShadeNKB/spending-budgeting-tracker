@@ -14,9 +14,14 @@ _(shipped 2026-06-13)_
 ## Nice to have
 - **Storybook.** Component count too low to justify; revisit at ~40+ components.
 
+## Needs Shade (taste/decision — not autonomous)
+- **Broader visual redesign.** v0.6.1/0.7.0 were correctness passes (light parity, a11y, virtualization), not a restyle. A real hierarchy/spacing/motion/typography design sprint is still open and needs Shade driving taste calls (start with Pulse). Use Taste Dials in design-anti-patterns.md.
+- **Per-bucket RLS lockdown (Supabase).** RLS disabled by design (sync_id = shared secret); Shade ruled leave-as-is 2026-06-13. Revisit only to tighten sync security — its own session.
+
 ## Shipped
 - **Light mode** — shipped 2026-06-13 in v0.6.0. System/Dark/Light, `[data-theme]` token overrides, Tailwind surface channel vars. Released as [v0.6.0](https://github.com/ShadeNKB/spending-budgeting-tracker/releases/tag/v0.6.0).
 - **Light-mode parity + a11y** — shipped 2026-06-13 in [v0.6.1](https://github.com/ShadeNKB/spending-budgeting-tracker/releases/tag/v0.6.1). Theme-aware chart/marker tokens (fixed hardcoded-white leaks), WCAG-AA text contrast (axe 30→0), page h1.
+- **Ledger virtualization + light-mode a11y** — shipped 2026-06-13 in [v0.7.0](https://github.com/ShadeNKB/spending-budgeting-tracker/releases/tag/v0.7.0). @tanstack/react-virtual windowing >150 rows; light-mode text/accent contrast (axe 0 both themes); Tailwind font hygiene.
 
 ## Investigations (don't act, just look first)
 - Bundle js 625 KB (under 700 KB budget). `perf-reviewer` ran 2026-06-13 — verdict FAST. No urgent action.
