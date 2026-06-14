@@ -167,7 +167,7 @@ export function DatePicker({
           ref={popoverRef}
           role="dialog"
           aria-label="Choose date"
-          className="fixed z-[9999] select-none rounded-2xl border border-white/[0.1] bg-[#0f1117] p-3 shadow-2xl shadow-black/70"
+          className="fixed z-[9999] select-none rounded-2xl border border-white/[0.1] bg-surface-1 p-3 shadow-[var(--shadow-overlay)]"
           style={{ top: pos.top, left: pos.left, width: pos.width }}
         >
           {/* Month navigation */}

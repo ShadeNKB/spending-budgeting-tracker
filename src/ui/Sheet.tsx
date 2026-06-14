@@ -98,7 +98,7 @@ export function Sheet({
             aria-label={title === undefined ? 'Sheet' : undefined}
             tabIndex={-1}
             className={
-              'fixed z-[97] flex flex-col overflow-hidden border-white/[0.07] bg-surface-1 shadow-[0_40px_80px_-20px_rgba(0,0,0,0.7)] ' +
+              'fixed z-[97] flex flex-col overflow-hidden border-white/[0.07] bg-surface-1 shadow-[var(--shadow-overlay)] ' +
               (isBottom
                 ? 'bottom-0 left-0 right-0 max-h-[85dvh] rounded-t-2xl border-t'
                 : 'bottom-0 right-0 top-0 border-l')

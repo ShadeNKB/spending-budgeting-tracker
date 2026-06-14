@@ -210,7 +210,7 @@ export function CommandPalette() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -8, scale: 0.97 }}
             transition={{ type: 'spring', stiffness: 420, damping: 36 }}
-            className="fixed inset-x-0 bottom-0 z-[91] mx-auto max-h-[88dvh] overflow-hidden rounded-t-2xl border border-white/[0.08] bg-surface-1 shadow-[0_30px_80px_-20px_rgba(0,0,0,0.8)] md:inset-x-4 md:bottom-auto md:top-[12vh] md:max-w-[560px] md:rounded-2xl"
+            className="fixed inset-x-0 bottom-0 z-[91] mx-auto max-h-[88dvh] overflow-hidden rounded-t-2xl border border-white/[0.08] bg-surface-1 shadow-[var(--shadow-overlay)] md:inset-x-4 md:bottom-auto md:top-[12vh] md:max-w-[560px] md:rounded-2xl"
             onKeyDown={onKey}
           >
             <div className="flex items-center gap-2 border-b border-white/[0.06] px-4 py-2.5">
