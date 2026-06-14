@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.1 — 2026-06-14
+
+### Changed
+
+- **Settings controls redesign** — the Theme selector is now a full-width Segmented control (System / Dark / Light with icons) instead of a cramped native dropdown; the Currency selector is a polished full-width styled select with a custom chevron and theme-aware colors. Bigger touch targets, consistent with the app's pill/segmented styling.
+
+### Fixed
+
+- **Light-mode button contrast** — `.text-surface-0` (text on solid accent/colored fills: Add buttons, FAB, selected category pills) flipped to near-white in light mode and failed contrast (1.7:1) on the bright cyan fill. Pinned dark in light mode. Verified 0 contrast failures.
+
 ## 0.7.0 — 2026-06-13
 
 ### Added
