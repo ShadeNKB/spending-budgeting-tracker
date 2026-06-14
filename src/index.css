@@ -91,6 +91,9 @@
     --chart-bar: rgba(255, 255, 255, 0.16);
     --chart-bar-strong: rgba(255, 255, 255, 0.34);
     --app-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 280px);
+    /* Overlay/modal elevation (sheets, command palette) — softer than the old
+       0.7–0.8 black; theme-aware so it's a warm soft shadow in light mode. */
+    --shadow-overlay: 0 32px 80px -24px rgba(0, 0, 0, 0.62);
 
     /* Layout */
     --radius-sm: 8px;
@@ -148,6 +151,7 @@
     --chart-bar: rgba(15, 23, 42, 0.16);
     --chart-bar-strong: rgba(15, 23, 42, 0.36);
     --app-sheen: linear-gradient(180deg, rgba(15, 23, 42, 0.025), transparent 280px);
+    --shadow-overlay: 0 32px 80px -24px rgba(38, 34, 28, 0.26);
   }
 
   * {
@@ -1232,11 +1236,6 @@
     box-shadow:
       0 1px 2px rgba(38, 34, 28, 0.05),
       0 6px 16px -10px rgba(38, 34, 28, 0.12);
-  }
-
-  /* DatePicker popup has a hardcoded dark bg */
-  [data-theme='light'] .bg-\[\#0f1117\] {
-    background-color: var(--surface-1);
   }
 
   /* ── Tailwind white-opacity class overrides ────────────────── */
