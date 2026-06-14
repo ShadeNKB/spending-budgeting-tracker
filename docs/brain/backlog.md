@@ -17,7 +17,8 @@ _(shipped 2026-06-13)_
 ## In flight — warmer/softer redesign (brief: docs/design-brief.md)
 - ✅ **Foundation + Pulse** shipped in v0.8.0 (warm surfaces, soft shadows, rounder radii, warm text, shared SectionHeader).
 - ✅ **Ledger** shipped in v0.8.1 (soft floating list via `.elevated`, unified warm day-headers, warm row-hover; radius rounding completed app-wide).
-- ⬜ **Insights** — per-surface refinement against the brief (next).
+- ✅ **Insights** shipped in v0.8.2 (theme-aware `--chart-bar` tokens fix the week chart in light mode; consistent card icons).
+- ⬜ **Entry + Settings sheets** — per-surface refinement against the brief (last; settings controls already redone in v0.7.1).
 - ⬜ **Insights** — per-surface refinement.
 - ⬜ **Entry + Settings sheets** — per-surface refinement (settings controls already redone in v0.7.1).
   _One surface per release; before/after + a11y both themes each time._
