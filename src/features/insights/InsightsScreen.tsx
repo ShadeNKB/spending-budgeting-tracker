@@ -8,6 +8,7 @@ import {
   Info,
   Repeat,
   Calendar,
+  Activity,
   ArrowUp,
   ArrowDown,
 } from 'lucide-react'
@@ -162,8 +163,8 @@ export function InsightsScreen() {
                               isToday
                                 ? 'bg-accent shadow-[0_0_8px_-2px_rgba(34,211,238,0.5)]'
                                 : isHovered
-                                  ? 'bg-white/30'
-                                  : 'bg-white/15'
+                                  ? 'bg-[var(--chart-bar-strong)]'
+                                  : 'bg-[var(--chart-bar)]'
                             }`}
                             style={{ height: barPx }}
                           />
@@ -243,7 +244,10 @@ export function InsightsScreen() {
           {/* 30-day trend recap */}
           <Card>
             <div className="mb-3 flex items-center justify-between">
-              <h2 className="text-[13px] font-semibold text-white">Spending trend</h2>
+              <div className="flex items-center gap-2">
+                <Activity size={14} className="text-accent/80" />
+                <h2 className="text-[13px] font-semibold text-white">Spending trend</h2>
+              </div>
               <span className="text-[11px] text-[var(--text-tertiary)]">Last 30 days</span>
             </div>
             <Sparkline
