@@ -86,6 +86,10 @@
     --marker-edge: rgba(0, 0, 0, 0.35);
     --chart-axis: rgba(255, 255, 255, 0.12);
     --chart-axis-strong: rgba(255, 255, 255, 0.3);
+    /* Neutral data bars (Insights week chart) — theme-aware so they stay
+       visible on light cards (white bars vanished on white). */
+    --chart-bar: rgba(255, 255, 255, 0.16);
+    --chart-bar-strong: rgba(255, 255, 255, 0.34);
     --app-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 280px);
 
     /* Layout */
@@ -141,6 +145,8 @@
     --marker-edge: rgba(255, 255, 255, 0.65);
     --chart-axis: rgba(15, 23, 42, 0.14);
     --chart-axis-strong: rgba(15, 23, 42, 0.32);
+    --chart-bar: rgba(15, 23, 42, 0.16);
+    --chart-bar-strong: rgba(15, 23, 42, 0.36);
     --app-sheen: linear-gradient(180deg, rgba(15, 23, 42, 0.025), transparent 280px);
   }
 
