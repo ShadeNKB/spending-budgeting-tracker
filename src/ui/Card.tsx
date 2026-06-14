@@ -11,7 +11,7 @@ export function Card({ className, interactive, glow, padded = true, children, ..
   return (
     <div
       className={clsx(
-        'rounded-[14px] border border-white/[0.06] bg-surface-1 transition-[border-color,background-color,box-shadow,transform] duration-[180ms]',
+        'rounded-2xl border border-white/[0.06] bg-surface-1 transition-[border-color,background-color,box-shadow,transform] duration-[180ms]',
         padded && 'p-5 md:p-6',
         interactive &&
           'cursor-pointer hover:-translate-y-px hover:border-white/[0.1] hover:bg-surface-2',

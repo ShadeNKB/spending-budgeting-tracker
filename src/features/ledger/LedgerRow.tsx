@@ -89,7 +89,7 @@ export function LedgerRow({
         role="button"
         tabIndex={0}
         aria-label={`Edit ${expense.itemName}, ${fmt(expense.amount)}, ${expense.category}`}
-        className="relative flex cursor-pointer items-center gap-3 bg-surface-1 px-3 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/70 md:cursor-default md:px-4 active:md:cursor-default"
+        className="relative flex cursor-pointer items-center gap-3 bg-surface-1 px-3 py-3 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/70 md:cursor-default md:px-4 md:hover:bg-surface-2 active:md:cursor-default"
       >
         <span
           className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-bold"

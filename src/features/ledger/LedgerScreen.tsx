@@ -413,7 +413,7 @@ export function LedgerScreen() {
       ) : filtered.length > VIRTUALIZE_THRESHOLD ? (
         <VirtualLedgerList groups={groups} onEdit={setEditing} onDelete={handleDelete} />
       ) : (
-        <div className="overflow-hidden rounded-[14px] border border-white/[0.06] bg-surface-1">
+        <div className="elevated overflow-hidden rounded-2xl border border-white/[0.06] bg-surface-1">
           <AnimatePresence initial={false}>
             {groups.map((g) => {
               const label = ledgerHeaderLabel(g.date)
@@ -425,7 +425,7 @@ export function LedgerScreen() {
                   animate={{ opacity: 1 }}
                   exit={{ opacity: 0 }}
                 >
-                  <header className="sticky top-0 z-[1] flex items-center justify-between gap-2 border-b border-white/[0.05] bg-surface-1/95 px-4 py-2.5 backdrop-blur">
+                  <header className="sticky top-0 z-[1] flex items-center justify-between gap-2 border-b border-white/[0.05] bg-surface-2/85 px-4 py-2.5 backdrop-blur">
                     <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
                       {label}
                     </span>

@@ -42,7 +42,7 @@ export function VirtualLedgerList({
   return (
     <div
       ref={parentRef}
-      className="overflow-hidden rounded-[14px] border border-white/[0.06] bg-surface-1"
+      className="elevated overflow-hidden rounded-2xl border border-white/[0.06] bg-surface-1"
     >
       <div style={{ height: virtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
         {virtualizer.getVirtualItems().map((vi) => {
@@ -61,7 +61,7 @@ export function VirtualLedgerList({
               }}
             >
               {item.kind === 'header' ? (
-                <div className="flex items-center justify-between gap-2 border-b border-white/[0.05] bg-surface-2/40 px-4 py-2.5">
+                <div className="flex items-center justify-between gap-2 border-b border-white/[0.05] bg-surface-2/85 px-4 py-2.5">
                   <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
                     {ledgerHeaderLabel(item.date)}
                   </span>
