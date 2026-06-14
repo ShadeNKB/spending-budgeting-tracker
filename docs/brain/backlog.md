@@ -14,11 +14,12 @@ _(shipped 2026-06-13)_
 ## Nice to have
 - **Storybook.** Component count too low to justify; revisit at ~40+ components.
 
-## In flight — warmer/softer redesign (brief: docs/design-brief.md)
-- ✅ **Foundation + Pulse** shipped in v0.8.0 (warm surfaces, soft shadows, rounder radii, warm text, shared SectionHeader).
-- ✅ **Ledger** shipped in v0.8.1 (soft floating list via `.elevated`, unified warm day-headers, warm row-hover; radius rounding completed app-wide).
-- ✅ **Insights** shipped in v0.8.2 (theme-aware `--chart-bar` tokens fix the week chart in light mode; consistent card icons).
-- ⬜ **Entry + Settings sheets** — per-surface refinement against the brief (last; settings controls already redone in v0.7.1).
+## ✅ Warmer/softer redesign — COMPLETE (brief: docs/design-brief.md)
+- ✅ **Foundation + Pulse** (v0.8.0) — warm surfaces, soft shadows, rounder radii, warm text, shared SectionHeader.
+- ✅ **Ledger** (v0.8.1) — soft floating list via `.elevated`, unified warm day-headers, warm row-hover; radius rounding completed app-wide.
+- ✅ **Insights** (v0.8.2) — theme-aware `--chart-bar` tokens fix the week chart in light; consistent card icons.
+- ✅ **Entry + Settings sheets** (v0.8.3 + v0.7.1) — `--shadow-overlay` token for soft warm modal shadows; DatePicker warmed; settings controls redesigned (Segmented theme + styled currency).
+  _All four surfaces shipped. Light mode AA-clean throughout; dark primary._
 - ⬜ **Insights** — per-surface refinement.
 - ⬜ **Entry + Settings sheets** — per-surface refinement (settings controls already redone in v0.7.1).
   _One surface per release; before/after + a11y both themes each time._
