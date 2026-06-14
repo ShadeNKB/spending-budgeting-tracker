@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.8.2 — 2026-06-14
+
+### Changed
+
+- **Warmer/softer Insights pass.** Gave the "Spending trend" card the accent leading icon the other Insights cards already had; cards inherit the warm/soft foundation.
+
+### Fixed
+
+- **Insights week chart invisible in light mode** — the Week-vs-last-week bars hardcoded `bg-white/15`/`bg-white/30` and disappeared on the white card. Added theme-aware `--chart-bar` tokens (dark-on-light in light mode). Contrast verified 0 failures in both themes.
+
 ## 0.8.1 — 2026-06-14
 
 ### Changed
