@@ -4,7 +4,8 @@ import {
   ArrowUp,
   Wallet,
   BarChart3,
-  CalendarRange,
+  Layers,
+  Activity,
   Target,
   ChevronLeft,
   ChevronRight,
@@ -18,6 +19,7 @@ import { AnimatedNumber } from '../../ui/AnimatedNumber'
 import { Card } from '../../ui/Card'
 import { Pill } from '../../ui/Pill'
 import { Segmented } from '../../ui/Segmented'
+import { SectionHeader } from '../../ui/SectionHeader'
 import { PaceRing } from './PaceRing'
 import { TopCategories } from './TopCategories'
 import { Heatmap } from './Heatmap'
@@ -198,7 +200,7 @@ export function PulseScreen() {
 
                 <div className="mt-4">
                   <div className="mb-1.5 flex items-center justify-between">
-                    <span className="text-[10px] uppercase tracking-[0.07em] text-[var(--text-tertiary)]">
+                    <span className="text-[10px] uppercase tracking-[0.08em] text-[var(--text-tertiary)]">
                       {view === 'month' ? 'Last 30 days' : 'Monthly / 12 months'}
                     </span>
                   </div>
@@ -308,12 +310,7 @@ export function PulseScreen() {
       {/* Year: monthly bars */}
       {view === 'year' && (
         <Card>
-          <div className="mb-3 flex items-center gap-2">
-            <BarChart3 size={13} className="text-accent/70" />
-            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
-              Monthly breakdown
-            </h2>
-          </div>
+          <SectionHeader icon={BarChart3}>Monthly breakdown</SectionHeader>
           <MonthlyBars data={yearData.monthlyTotals} />
         </Card>
       )}
@@ -321,24 +318,16 @@ export function PulseScreen() {
       {/* Top categories + heatmap */}
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
-              Top categories
-            </h2>
-            <span className="text-[11px] text-[var(--text-tertiary)]">{a.label}</span>
-          </div>
+          <SectionHeader icon={Layers} meta={a.label}>
+            Top categories
+          </SectionHeader>
           <TopCategories items={a.topCategories} />
         </Card>
 
         <Card>
-          <div className="mb-3 flex items-center justify-between">
-            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
-              Activity
-            </h2>
-            <span className="inline-flex items-center gap-1 text-[11px] text-[var(--text-tertiary)]">
-              <CalendarRange size={10} /> 14 weeks
-            </span>
-          </div>
+          <SectionHeader icon={Activity} meta="14 weeks">
+            Activity
+          </SectionHeader>
           <Heatmap data={monthData.heatmap} />
         </Card>
       </div>
@@ -346,15 +335,12 @@ export function PulseScreen() {
       {/* Budget vs actual — only when month view and budgets exist */}
       {view === 'month' && hasBudgets && (
         <Card>
-          <div className="mb-3 flex items-center gap-2">
-            <Target size={13} className="text-accent/70" />
-            <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
-              Budget vs actual
-            </h2>
-            <span className="ml-auto text-[11px] text-[var(--text-tertiary)]">
-              {monthData.daysLeft}d left in {monthData.label.split(' ')[0]}
-            </span>
-          </div>
+          <SectionHeader
+            icon={Target}
+            meta={`${monthData.daysLeft}d left in ${monthData.label.split(' ')[0]}`}
+          >
+            Budget vs actual
+          </SectionHeader>
           <BudgetActual items={monthData.categoryBudgets} daysLeft={monthData.daysLeft} />
         </Card>
       )}

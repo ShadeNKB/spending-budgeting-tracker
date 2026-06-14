@@ -5,19 +5,19 @@
 /* --- Design tokens ------------------------------------------------ */
 @layer base {
   :root {
-    /* Surfaces (OLED-near-black) */
-    --surface-0: #07090d;
-    --surface-1: #0e1217;
-    --surface-2: #161b22;
-    --surface-3: #1f252e;
-    --surface-4: #2a313c;
+    /* Surfaces — warm-neutral charcoal ramp (warmer/softer redesign 2026-06-14;
+       was cool OLED blue-black). R>G>B for subtle warmth without sepia. */
+    --surface-0: #0c0b0a;
+    --surface-1: #14120f;
+    --surface-2: #1c1915;
+    --surface-3: #26221c;
+    --surface-4: #322d26;
 
-    /* Text — tertiary/muted lifted to clear WCAG AA (4.5:1) on elevated
-       surfaces (surface-3/4), where the old values failed contrast. */
-    --text-primary: #f3f5f7;
-    --text-secondary: #8a94a6;
-    --text-tertiary: #8a96aa;
-    --text-muted: #828da1;
+    /* Text — warm off-white primary; tertiary/muted kept at AA-tuned values. */
+    --text-primary: #f5f3ef;
+    --text-secondary: #989389;
+    --text-tertiary: #9a948a;
+    --text-muted: #8f897e;
 
     /* Borders */
     --border: rgba(255, 255, 255, 0.06);
@@ -66,12 +66,13 @@
     --dark-400: var(--text-tertiary);
     --dark-300: var(--text-secondary);
 
-    /* Surface channels — space-separated RGB for Tailwind opacity modifiers */
-    --surface-0-ch: 7 9 13;
-    --surface-1-ch: 14 18 23;
-    --surface-2-ch: 22 27 34;
-    --surface-3-ch: 31 37 46;
-    --surface-4-ch: 42 49 60;
+    /* Surface channels — space-separated RGB for Tailwind opacity modifiers
+       (warm-neutral ramp, matches --surface-N hex above) */
+    --surface-0-ch: 12 11 10;
+    --surface-1-ch: 20 18 15;
+    --surface-2-ch: 28 25 21;
+    --surface-3-ch: 38 34 28;
+    --surface-4-ch: 50 45 38;
 
     /* Glow tokens */
     --glow-cyan: rgba(34, 211, 238, 0.2);
@@ -88,29 +89,29 @@
     --app-sheen: linear-gradient(180deg, rgba(255, 255, 255, 0.035), transparent 280px);
 
     /* Layout */
-    --radius-sm: 6px;
-    --radius-md: 10px;
-    --radius-lg: 14px;
-    --radius-xl: 18px;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --radius-xl: 20px;
     --safe-bottom: env(safe-area-inset-bottom, 0px);
     --safe-top: env(safe-area-inset-top, 0px);
   }
 
   /* -- Light mode token overrides --------------------------------- */
   [data-theme='light'] {
-    /* Surface channels (Tailwind bg-surface-X and bg-surface-X/Y) */
-    --surface-0-ch: 248 250 252;
-    --surface-1-ch: 255 255 255;
-    --surface-2-ch: 241 245 249;
-    --surface-3-ch: 226 232 240;
-    --surface-4-ch: 203 213 225;
+    /* Surface channels — warm off-whites (warmer/softer redesign) */
+    --surface-0-ch: 250 248 245;
+    --surface-1-ch: 255 253 251;
+    --surface-2-ch: 244 241 236;
+    --surface-3-ch: 232 227 218;
+    --surface-4-ch: 215 207 194;
 
     /* Surface hex values (used by body bg, box-shadows, and rgba() CSS references) */
-    --surface-0: #f8fafc;
-    --surface-1: #ffffff;
-    --surface-2: #f1f5f9;
-    --surface-3: #e2e8f0;
-    --surface-4: #cbd5e1;
+    --surface-0: #faf8f5;
+    --surface-1: #fffdfb;
+    --surface-2: #f4f1ec;
+    --surface-3: #e8e3da;
+    --surface-4: #d7cfc2;
 
     /* Text — tertiary/muted darkened to clear WCAG AA 4.5:1 on light surfaces
        (the slate-500/400 values failed contrast). */
@@ -270,6 +271,10 @@
     border-radius: var(--radius-lg);
     padding: 16px;
     position: relative;
+    /* Soft resting elevation (warmer/softer redesign) */
+    box-shadow:
+      0 1px 2px rgba(0, 0, 0, 0.16),
+      0 6px 20px -10px rgba(0, 0, 0, 0.22);
     transition:
       border-color 200ms ease,
       background-color 200ms ease,
@@ -289,7 +294,9 @@
 
   .card:hover {
     border-color: var(--border-strong);
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.35);
+    box-shadow:
+      0 2px 4px rgba(0, 0, 0, 0.16),
+      0 12px 32px -8px rgba(0, 0, 0, 0.3);
   }
 
   .card-interactive {
@@ -299,7 +306,8 @@
     border-color: var(--accent-border);
     background: var(--surface-2);
     box-shadow:
-      0 8px 28px rgba(0, 0, 0, 0.45),
+      0 2px 4px rgba(0, 0, 0, 0.16),
+      0 12px 32px -8px rgba(0, 0, 0, 0.3),
       0 0 0 1px rgba(34, 211, 238, 0.08);
     transform: translateY(-1px);
   }
@@ -1187,8 +1195,23 @@
   }
 
   /* Card hover shadow — lighter in light mode */
+  /* Light mode: the dark-tuned resting/hover card shadows read as a gray smudge
+     on warm off-white — drop them to soft, airy elevations. */
+  [data-theme='light'] .card {
+    box-shadow:
+      0 1px 2px rgba(38, 34, 28, 0.05),
+      0 6px 16px -10px rgba(38, 34, 28, 0.12);
+  }
   [data-theme='light'] .card:hover {
-    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.1);
+    box-shadow:
+      0 2px 6px rgba(38, 34, 28, 0.06),
+      0 12px 28px -12px rgba(38, 34, 28, 0.16);
+  }
+  [data-theme='light'] .card-interactive:hover {
+    box-shadow:
+      0 2px 6px rgba(38, 34, 28, 0.06),
+      0 12px 28px -10px rgba(38, 34, 28, 0.18),
+      0 0 0 1px rgba(34, 211, 238, 0.08);
   }
 
   /* DatePicker popup has a hardcoded dark bg */
@@ -1256,6 +1279,13 @@
      mode (the fills stay bright in both themes, so dark text is always right). */
   [data-theme='light'] .text-surface-0 {
     color: #0a0e14;
+  }
+  /* Dark mode: the saturated negative red (#ef4444) as small text only reaches
+     ~4.06:1 on the dark cards — under AA. Brighten the text usage to red-400
+     (bars/fills keep the saturated token). */
+  [data-theme='dark'] .text-negative,
+  [data-theme='dark'] .text-danger {
+    color: #f87171;
   }
 
   /* border-white/X → dark-on-light equivalents */
