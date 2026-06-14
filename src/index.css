@@ -1250,6 +1250,13 @@
   [data-theme='light'] .text-warning {
     color: #b45309; /* amber-700 */
   }
+  /* Text on solid accent/colored fills (Add buttons, FAB, selected category
+     pills) uses .text-surface-0, which flips to near-white when surface-0 does
+     in light mode — illegible on the bright cyan fill. Pin it dark in light
+     mode (the fills stay bright in both themes, so dark text is always right). */
+  [data-theme='light'] .text-surface-0 {
+    color: #0a0e14;
+  }
 
   /* border-white/X → dark-on-light equivalents */
   [data-theme='light'] .border-white\/\[0\.04\] {
