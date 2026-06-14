@@ -14,9 +14,13 @@ import {
   X,
   Smartphone,
   Monitor,
+  Moon,
+  Sun,
+  ChevronDown,
   AlertTriangle,
 } from 'lucide-react'
 import { Sheet } from '../../ui/Sheet'
+import { Segmented } from '../../ui/Segmented'
 import { Button } from '../../ui/Button'
 import { Input } from '../../ui/Input'
 import { Pill } from '../../ui/Pill'
@@ -59,35 +63,67 @@ export function SettingsDrawer() {
       width={460}
     >
       <div className="px-5 pb-2 pt-4">
-        <div className="mb-3 flex items-center justify-between">
+        <div className="mb-3 flex flex-col gap-1.5">
           <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]">
             Theme
           </span>
-          <select
+          <Segmented<Theme>
             value={theme}
-            onChange={(e) => setTheme(e.target.value as Theme)}
-            className="rounded-md border border-white/[0.08] bg-surface-2 px-2.5 py-1 text-[12px] text-[var(--text-primary)] outline-none [color-scheme:dark] focus:border-accent/60"
-          >
-            <option value="system">System</option>
-            <option value="dark">Dark</option>
-            <option value="light">Light</option>
-          </select>
+            onChange={setTheme}
+            fullWidth
+            options={[
+              {
+                value: 'system',
+                label: (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Monitor size={13} /> System
+                  </span>
+                ),
+              },
+              {
+                value: 'dark',
+                label: (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Moon size={13} /> Dark
+                  </span>
+                ),
+              },
+              {
+                value: 'light',
+                label: (
+                  <span className="inline-flex items-center gap-1.5">
+                    <Sun size={13} /> Light
+                  </span>
+                ),
+              },
+            ]}
+          />
         </div>
-        <div className="mb-3 flex items-center justify-between">
-          <span className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]">
-            Currency
-          </span>
-          <select
-            value={currency}
-            onChange={(e) => setCurrency(e.target.value)}
-            className="rounded-md border border-white/[0.08] bg-surface-2 px-2.5 py-1 text-[12px] text-white outline-none [color-scheme:dark] focus:border-accent/60"
+        <div className="mb-4 flex flex-col gap-1.5">
+          <label
+            htmlFor="currency-select"
+            className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]"
           >
-            {SUPPORTED_CURRENCIES.map((c) => (
-              <option key={c.code} value={c.code}>
-                {c.label}
-              </option>
-            ))}
-          </select>
+            Currency
+          </label>
+          <div className="relative">
+            <select
+              id="currency-select"
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value)}
+              className="h-10 w-full appearance-none rounded-lg border border-white/[0.08] bg-surface-2 pl-3 pr-9 text-[13px] font-medium text-[var(--text-primary)] outline-none transition [color-scheme:dark] hover:border-white/[0.14] focus:border-accent/60 focus:shadow-[0_0_0_3px_rgba(34,211,238,0.15)]"
+            >
+              {SUPPORTED_CURRENCIES.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            <ChevronDown
+              size={15}
+              className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
+            />
+          </div>
         </div>
         <div className="flex w-full items-center gap-1 rounded-full border border-white/[0.06] bg-surface-1 p-1">
           {(
