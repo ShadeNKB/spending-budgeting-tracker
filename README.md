@@ -14,8 +14,8 @@
   <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React 19" />
   <img src="https://img.shields.io/badge/TypeScript-Strict-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
   <img src="https://img.shields.io/badge/PWA-Installable-8B5CF6?style=flat-square" alt="PWA" />
-  <img src="https://img.shields.io/badge/bundle-86%20KB%20gzip-22C55E?style=flat-square" alt="Bundle 86 KB gzip" />
-  <img src="https://img.shields.io/badge/tests-53%20passing-22C55E?style=flat-square" alt="53 tests passing" />
+  <img src="https://img.shields.io/badge/bundle-81%20KB%20gzip-22C55E?style=flat-square" alt="Bundle 81 KB gzip" />
+  <img src="https://img.shields.io/badge/tests-39%20passing-22C55E?style=flat-square" alt="39 tests passing" />
   <img src="https://img.shields.io/badge/audit-0%20vulns-22C55E?style=flat-square" alt="0 vulnerabilities" />
   <img src="https://img.shields.io/badge/license-MIT-22D3EE?style=flat-square" alt="MIT" />
 </p>
@@ -47,6 +47,7 @@ Most personal-finance apps are built around syncing, subscriptions, and dashboar
 - **Offline-first.** Your data lives on your device, in your browser — not on a server. No account, no telemetry, no cloud (until _you_ opt in).
 - **Friction-free entry.** Type `coffee 4.50 yesterday` and it's in. The smart parser infers item, amount, date, and category from one line.
 - **Real-time pacing.** A live month-pace ring tells you whether you're on track without opening a spreadsheet.
+- **Yours to theme.** Light, Dark, and System themes — a warm, soft palette that's AA-clean in both. Pick from 8 currencies.
 - **Optional cross-device sync.** A single UUID code pairs your phone and laptop — no accounts, no passwords, paste once and you're done.
 - **Production-grade.** Strict TypeScript, a passing Vitest suite, sub-100 KB gzipped initial JS, fully PWA-installable.
 
@@ -64,9 +65,10 @@ Most personal-finance apps are built around syncing, subscriptions, and dashboar
 | --------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
 | **Smart entry**       | Natural-language parser → category, amount, date inferred from one line                                                      |
 | **Pulse dashboard**   | Month/year totals, daily-pace ring, sparkline trend, category mix, 14-week activity heatmap                                  |
-| **Ledger**            | Search, filter, edit, undo. Multi-criteria filters live in the URL so views are bookmarkable                                 |
+| **Ledger**            | Search, filter, edit, undo. Multi-criteria filters live in the URL so views are bookmarkable. List virtualizes past 150 rows |
 | **Insights**          | Recurring-charge detection, 14-day forecast, week-over-week comparisons, anomaly callouts                                    |
 | **Budgets**           | Per-category monthly caps with side-by-side actual-vs-budget bars                                                            |
+| **Theming**           | Light / Dark / System — a warm, soft palette (AA-clean in both themes). 8 selectable currencies                              |
 | **Cross-device sync** | Optional. UUID code pairs devices. Per-expense Last-Write-Wins merge. Tombstone-safe deletes. Realtime push.                 |
 | **PWA**               | Installable on iOS & Android. Works fully offline. CSS-keyframe route transitions (no React-state animations that can stall) |
 | **Privacy**           | No account. No analytics. No tracking. Data is local unless you generate a sync code                                         |
@@ -181,7 +183,7 @@ See [`src/services/syncService.ts`](src/services/syncService.ts) for the merge l
 
 |                               |                                                         |
 | ----------------------------- | ------------------------------------------------------- |
-| Main bundle (gzip)            | **83.7 KB**                                             |
+| Main bundle (gzip)            | **81 KB**                                               |
 | Total initial download (gzip) | ~190 KB                                                 |
 | Settings drawer               | code-split (lazy)                                       |
 | Supabase JS SDK               | lazy `import()` — only loaded when sync is configured   |
@@ -192,6 +194,7 @@ See [`src/services/syncService.ts`](src/services/syncService.ts) for the merge l
 
 - Strict TypeScript, no `any`
 - Passing Vitest unit suite across core parsing, analytics, storage, and sync logic
+- Ledger virtualizes beyond 150 rows (`@tanstack/react-virtual`) — scales to thousands of entries without dropping frames
 - CI smoke test boots `vite preview` and asserts all 4 routes + service worker + manifest
 - Storage quota errors are caught and surfaced as a user toast (never silent data loss)
 - JSON import: 8 MB file cap, deep schema validation, hostile-data-safe
@@ -210,7 +213,7 @@ If you do want phone ↔ laptop sync, here's the full flow:
 You need your own free Supabase project. This is what stores the synced data — no third-party sees it. Plan ~5 minutes.
 
 1. Sign up at [supabase.com](https://supabase.com) and create a project.
-2. In the project's **SQL Editor**, paste and run [`supabase/migrations/001_sync.sql`](supabase/migrations/001_sync.sql). Optionally also run [`002_sync_indexes.sql`](supabase/migrations/002_sync_indexes.sql) for retention helpers. The helper only creates a manual pruning function; schedule it yourself if you want automatic 90-day cleanup.
+2. In the project's **SQL Editor**, run [`supabase/migrations/001_sync.sql`](supabase/migrations/001_sync.sql), then [`002_sync_indexes.sql`](supabase/migrations/002_sync_indexes.sql) (index + retention helper) and [`003_harden_prune_search_path.sql`](supabase/migrations/003_harden_prune_search_path.sql) (pins `search_path` on the prune function). The helper only creates a manual pruning function; schedule it yourself if you want automatic 90-day cleanup.
 3. From **Project Settings → API**, copy the **Project URL** and the **anon public** key.
 4. Add them as env vars on Vercel (or in `.env.local` if you self-host):
    ```bash
@@ -323,6 +326,12 @@ Settings → Backup → <b>Download JSON backup</b>. On the new browser, Setting
 </details>
 
 <details>
+<summary><b>Can I switch themes or change the currency?</b></summary>
+<br/>
+Yes. Settings → <b>Appearance</b> offers <b>Light</b>, <b>Dark</b>, and <b>System</b> (follows your OS). The palette is warm and soft, and stays WCAG-AA legible in both themes. Currency is a separate setting with 8 options (USD, SGD, EUR, GBP, JPY, AUD, CAD, and more) — amounts reformat instantly everywhere.
+</details>
+
+<details>
 <summary><b>Is my data encrypted?</b></summary>
 <br/>
 In transit (HTTPS to Supabase): yes. At rest in <code>localStorage</code> or Supabase: no, it's plain JSON. Treat your sync code as a password — that's the security boundary.
@@ -369,19 +378,20 @@ This was a real bug fixed in v0.5.0 (PR #9). If you see it on the deployed site,
 
 ## Tech stack
 
-| Layer     | Tools                                                           |
-| --------- | --------------------------------------------------------------- |
-| Framework | React 19, TypeScript (strict), Vite                             |
-| Styling   | Tailwind CSS, CSS custom properties (OLED-near-black theme)     |
-| State     | Zustand + `subscribeWithSelector`                               |
-| Routing   | React Router v7                                                 |
-| Animation | framer-motion (sparingly — CSS keyframes for route transitions) |
-| Search    | Fuse.js (smart-entry parser)                                    |
-| Dates     | date-fns                                                        |
-| Sync      | Supabase Postgres + Realtime (lazy-loaded, opt-in)              |
-| PWA       | vite-plugin-pwa, Workbox                                        |
-| Testing   | Vitest, Testing Library, curl-based preview smoke               |
-| Deploy    | Vercel                                                          |
+| Layer     | Tools                                                                        |
+| --------- | ---------------------------------------------------------------------------- |
+| Framework | React 19, TypeScript (strict), Vite                                          |
+| Styling   | Tailwind CSS, CSS custom properties (warm, soft palette · Light/Dark/System) |
+| State     | Zustand + `subscribeWithSelector`                                            |
+| Routing   | React Router v7                                                              |
+| Lists     | @tanstack/react-virtual (ledger windowing past 150 rows)                     |
+| Animation | framer-motion (sparingly — CSS keyframes for route transitions)              |
+| Search    | Fuse.js (smart-entry parser)                                                 |
+| Dates     | date-fns                                                                     |
+| Sync      | Supabase Postgres + Realtime (lazy-loaded, opt-in)                           |
+| PWA       | vite-plugin-pwa, Workbox                                                     |
+| Testing   | Vitest, Testing Library, curl-based preview smoke                            |
+| Deploy    | Vercel                                                                       |
 
 ---
 
@@ -407,7 +417,10 @@ docs/           user guide, screenshots
 ## Roadmap & changelog
 
 - ✅ Cross-device sync (Supabase relay, UUID pairing, LWW merge, tombstones)
-- ✅ Performance pass — main bundle 83.7 KB gzip (−41% from initial); Supabase + Settings lazy-loaded
+- ✅ Light / Dark / System theming + 8-currency support
+- ✅ Warmer/softer visual redesign across all four surfaces (AA-clean in both themes)
+- ✅ Ledger virtualization (`@tanstack/react-virtual`) — scales to thousands of rows
+- ✅ Performance pass — main bundle 81 KB gzip; Supabase + Settings lazy-loaded
 - ✅ Rapid-nav blank-render bug eliminated — 290 stress-test iterations, 0 blanks
 - ✅ Storage quota toast + JSON import schema validation
 - ✅ Production CI smoke test on every route + service worker + manifest
