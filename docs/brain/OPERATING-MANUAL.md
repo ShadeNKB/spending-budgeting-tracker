@@ -12,7 +12,7 @@ A local-first spending tracker. React 19 + TS strict + Vite 7 + Zustand 5 + Tail
 2. `useExpenseStore` (Zustand, persisted) is the single source of truth.
 3. Three screens read from it: Pulse (overview), Ledger (list), Insights (trends).
 4. PWA shell + service worker make it installable + offline.
-5. If the user opted into Supabase sync, a debounced push/pull keeps devices aligned. **Sync is currently being rewritten** — see [backlog.md](backlog.md).
+5. If the user opted into Supabase sync, a debounced push/pull keeps devices aligned. Sync is **live and stable** (v4.0 per-key Last-Write-Wins merge) — see [bugs-fixed.md](bugs-fixed.md) §Sync for the failure patterns it guards against.
 
 ## What NOT to break
 - **Date storage contract** — all dates stored as `T12:00:00` ISO strings. Anything else hits timezone bugs. See `src/utils/date.ts`.
