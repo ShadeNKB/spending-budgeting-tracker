@@ -1,6 +1,6 @@
 # Debug Prompt — Systematic Debugging
 
-*Adapted from Hermes Agent's `systematic-debugging` skill (MIT, NousResearch/hermes-agent).*
+_Adapted from Hermes Agent's `systematic-debugging` skill (MIT, NousResearch/hermes-agent)._
 
 ---
 
@@ -22,10 +22,10 @@ Before proposing ANY fix:
 2. **Reproduce consistently.** `npm run dev` or `npm run preview`. Confirm exact steps. If you can't reproduce, gather data — don't guess.
 3. **Check recent changes.** `git log --oneline -10`, `git diff`. What changed that could cause this?
 4. **Check `docs/brain/bugs-fixed.md`.** If this matches a known class (sync RLS, route blank-render, localStorage quota) — apply the documented fix and skip to Phase 4 verify.
-5. **Trace data flow.** For deep stacks, work *upstream* from the symptom to where the bad value originates. Fix at the source.
-6. **Form a hypothesis.** State it: *"I think X is the cause because Y."* One sentence. Write it down.
+5. **Trace data flow.** For deep stacks, work _upstream_ from the symptom to where the bad value originates. Fix at the source.
+6. **Form a hypothesis.** State it: _"I think X is the cause because Y."_ One sentence. Write it down.
 
-**Phase 1 exit gate:** you can answer *why* it's happening. If you can only describe *what's* happening, you're not done.
+**Phase 1 exit gate:** you can answer _why_ it's happening. If you can only describe _what's_ happening, you're not done.
 
 ## Phase 2 — Pattern Analysis
 
@@ -37,7 +37,7 @@ Before proposing ANY fix:
 
 1. **Write a failing test first** if the bug is in pure logic (utils, stores, services). Skip for pure UI bugs — visual confirm only.
 2. **Smallest possible diff.** No drive-by refactors. No restyling adjacent code. One concern per commit.
-3. **Predict the outcome.** "If my fix is right, then *X* will now happen and *Y* will stop."
+3. **Predict the outcome.** "If my fix is right, then _X_ will now happen and _Y_ will stop."
 
 ## Phase 4 — Verify
 

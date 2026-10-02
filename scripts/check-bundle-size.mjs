@@ -47,6 +47,8 @@ for (const k of Object.keys(BUDGETS)) {
 }
 
 if (fail.length) {
-  console.error(`\nBundle budget exceeded: ${fail.join(', ')}. Raise budgets in scripts/check-bundle-size.mjs if intentional.`)
+  console.error(
+    `\nBundle budget exceeded: ${fail.join(', ')}. Raise budgets in scripts/check-bundle-size.mjs if intentional.`,
+  )
   process.exit(1)
 }

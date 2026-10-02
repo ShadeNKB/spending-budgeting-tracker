@@ -4,14 +4,14 @@ This brain borrows several patterns from **[NousResearch/hermes-agent](https://g
 
 ## What we ported
 
-| Brain file | Source skill | What we kept |
-|---|---|---|
-| `prompts/debug.md` | `skills/software-development/systematic-debugging` | 4-phase loop, Iron Law framing, anti-patterns list |
-| `prompts/plan.md` | `skills/software-development/plan` | Plan-only mode, fixed save location, structure |
-| `prompts/spike.md` | `skills/software-development/spike` | Decompose→build→verdict, Given/When/Then, disposability |
-| `prompts/dogfood-qa.md` | `skills/dogfood` | 5-phase systematic web QA, evidence capture, severity grid |
+| Brain file              | Source skill                                       | What we kept                                               |
+| ----------------------- | -------------------------------------------------- | ---------------------------------------------------------- |
+| `prompts/debug.md`      | `skills/software-development/systematic-debugging` | 4-phase loop, Iron Law framing, anti-patterns list         |
+| `prompts/plan.md`       | `skills/software-development/plan`                 | Plan-only mode, fixed save location, structure             |
+| `prompts/spike.md`      | `skills/software-development/spike`                | Decompose→build→verdict, Given/When/Then, disposability    |
+| `prompts/dogfood-qa.md` | `skills/dogfood`                                   | 5-phase systematic web QA, evidence capture, severity grid |
 
-We did *not* port: TDD skill (already have `tdd` global skill), subagent-driven-development (covered by `docs/orchestration.md`), pre-commit verification (covered by `qa-checklist.md` + `code-reviewer` agent).
+We did _not_ port: TDD skill (already have `tdd` global skill), subagent-driven-development (covered by `docs/orchestration.md`), pre-commit verification (covered by `qa-checklist.md` + `code-reviewer` agent).
 
 ## Why this approach over installing Hermes
 
@@ -22,18 +22,23 @@ Hermes is a standalone Python AI agent runtime (~255 MB, peer to Claude Code). C
 Hermes is a Claude-Code alternative that brings a built-in learning loop (skills self-improve, periodic memory nudges, FTS5 session search across past conversations) and gateways for Telegram/Discord/Slack. It installs **outside this repo**.
 
 **Windows install (PowerShell, native — early beta):**
+
 ```powershell
 iex (irm https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1)
 ```
+
 Lands at `%LOCALAPPDATA%\hermes`. Pulls Python 3.11, Node, ripgrep, ffmpeg, MinGit — fully isolated from system installs.
 
 **WSL2 install (more battle-tested):**
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
 ```
+
 Lands at `~/.hermes`.
 
 **Then:**
+
 ```bash
 hermes setup    # wizard — picks LLM provider, configures keys
 hermes          # interactive CLI

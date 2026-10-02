@@ -1,7 +1,7 @@
 name: Bug report
 description: Report something broken in SpendTrack
-title: "[Bug]: "
-labels: ["bug"]
+title: '[Bug]: '
+labels: ['bug']
 body:
   - type: textarea
     id: summary
@@ -30,7 +30,7 @@ body:
     id: browser
     attributes:
       label: Browser and OS
-      placeholder: "Chrome on Windows 11"
+      placeholder: 'Chrome on Windows 11'
   - type: textarea
     id: notes
     attributes:

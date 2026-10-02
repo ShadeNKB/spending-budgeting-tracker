@@ -90,13 +90,13 @@ That means:
 
 ## Operational limits
 
-| | |
-|---|---|
-| **localStorage cap** | ~5–10 MB per browser (varies by device). SpendTrack alerts you with a toast if storage is full and stops silently — never silent data loss. |
-| **Sync device count** | Unbounded — pair any number of devices with the same code; expenses and budgets merge via last-write-wins metadata. |
-| **Sync payload size** | Soft warning at 800 KB, hard reject at 1 MB (Supabase row limit). Tombstone array auto-caps at 1000 entries. |
-| **Tested expense count** | Up to ~5000 entries renders smoothly. Beyond that, Ledger may benefit from virtualised scrolling — not yet implemented. |
-| **Time zones** | Dates are stored at noon UTC for the display date, which keeps grouping stable across most timezones but may shift by a day for users in extreme zones with DST transitions. |
+|                          |                                                                                                                                                                              |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **localStorage cap**     | ~5–10 MB per browser (varies by device). SpendTrack alerts you with a toast if storage is full and stops silently — never silent data loss.                                  |
+| **Sync device count**    | Unbounded — pair any number of devices with the same code; expenses and budgets merge via last-write-wins metadata.                                                          |
+| **Sync payload size**    | Soft warning at 800 KB, hard reject at 1 MB (Supabase row limit). Tombstone array auto-caps at 1000 entries.                                                                 |
+| **Tested expense count** | Up to ~5000 entries renders smoothly. Beyond that, Ledger may benefit from virtualised scrolling — not yet implemented.                                                      |
+| **Time zones**           | Dates are stored at noon UTC for the display date, which keeps grouping stable across most timezones but may shift by a day for users in extreme zones with DST transitions. |
 
 ## What SpendTrack doesn't do
 

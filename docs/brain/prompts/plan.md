@@ -1,6 +1,6 @@
 # Plan Mode
 
-*Adapted from Hermes Agent's `plan` skill (MIT, NousResearch/hermes-agent).*
+_Adapted from Hermes Agent's `plan` skill (MIT, NousResearch/hermes-agent)._
 
 ---
 
@@ -30,33 +30,41 @@ Include each section that applies. Skip the ones that don't — empty headings a
 # <Title>
 
 ## Goal
+
 One sentence. What does "done" look like?
 
 ## Context / assumptions
+
 What's already true. What you're taking as given.
 
 ## Approach
+
 The chosen direction in 2–4 sentences. Why this over the alternatives.
 
 ## Step-by-step
+
 1. ...
 2. ...
 3. ...
 
 ## Files likely to change
+
 - `src/...` — why
 - `src/...` — why
 
 ## Tests / validation
+
 - Failing test to write first (if logic)
 - QA gate to run
 - Manual verification steps
 
 ## Risks / tradeoffs
+
 - ...
 - Rollback: ...
 
 ## Open questions
+
 - ...
 ```
 

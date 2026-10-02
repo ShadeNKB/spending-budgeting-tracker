@@ -43,4 +43,5 @@ Not a changelog (that's `CHANGELOG.md`). This is the **distilled patterns** — 
 - **Bundle creeps silently.** `npm run size` budget catches it; raise budgets deliberately when adding a dep, with a commit note. (0.6.0)
 
 ## Adding to this file
+
 One bullet per pattern. Format: **bold rule** + 1–2 sentences. Optionally add **How to apply:** if non-obvious. Link the PR if there's useful context. Don't paste full postmortems — that's what git history is for.

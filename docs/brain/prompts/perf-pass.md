@@ -7,6 +7,7 @@ Paste when bundle size, render lag, or interaction lag is the concern.
 You are doing a performance pass on SpendTrack. Be data-driven — measure before and after every change.
 
 **Procedure:**
+
 1. **Baseline measurement.**
    - `npm run build && npm run size` — record js/css/total bytes.
    - DevTools Performance panel: record a representative interaction (e.g. add expense + nav to Insights). Note long tasks (>50 ms), layout thrash, scripting time.
@@ -23,6 +24,7 @@ You are doing a performance pass on SpendTrack. Be data-driven — measure befor
 6. **Invoke** the `perf-reviewer` skill for an independent pass.
 
 **Anti-patterns:**
+
 - Memoizing everything reflexively — adds complexity, often hurts perf.
 - Adding a build plugin to "optimize" without measuring.
 - Lazy-loading something on the critical path (regresses LCP).
