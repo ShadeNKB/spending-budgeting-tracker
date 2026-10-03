@@ -7,6 +7,7 @@ Paste when you have a diff and need a PR title + body.
 You are drafting a PR for SpendTrack. Read the diff yourself (`git diff main...HEAD`) — don't guess.
 
 **Title** — under 70 chars, conventional prefix:
+
 - `feat:` new user-visible capability
 - `fix:` bug fix (always include the symptom, not just the cause)
 - `chore:` housekeeping, tooling, docs
@@ -14,6 +15,7 @@ You are drafting a PR for SpendTrack. Read the diff yourself (`git diff main...H
 - `refactor:` no behavior change
 
 **Body template:**
+
 ```
 ## What
 1–3 bullets — what changed at the user/system level, not file-by-file.
@@ -32,6 +34,7 @@ One sentence. What could regress? What's the rollback?
 ```
 
 **Rules:**
+
 - No marketing language. No emoji unless the user uses them habitually.
 - Don't claim things you didn't test.
 - If the diff touches a "What NOT to break" item from `OPERATING-MANUAL.md`, call it out in Risk.

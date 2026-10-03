@@ -59,6 +59,7 @@ Distilled from impeccable, taste-skill, and huashu-design. These are the concret
 ## Taste Dials (when prompted to design)
 
 Reference these when starting fresh UI work:
+
 - **Variance** (1=conservative, 10=experimental) — default 5
 - **Motion** (1=static, 10=cinematic) — default 4
 - **Density** (1=spacious, 10=dashboard-dense) — default 6 for tracker views
@@ -66,6 +67,7 @@ Reference these when starting fresh UI work:
 ## Workflow gates
 
 Before merging UI changes, run:
+
 1. Grep this file's bullets — fix violations
 2. Mobile + desktop screenshot
 3. Keyboard-only navigation pass
