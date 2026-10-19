@@ -53,7 +53,7 @@ export function SyncPill() {
 
   return (
     <div
-      key={label + tick}
+      key={`${label}${tick}`}
       role="status"
       aria-live="polite"
       style={{ animation: 'sync-pill-in 0.15s ease both' }}

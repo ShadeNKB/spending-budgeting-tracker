@@ -10,23 +10,19 @@ const InsightsScreen = lazy(() =>
   import('../features/insights/InsightsScreen').then((m) => ({ default: m.InsightsScreen })),
 )
 
-function LazyScreen({ children }: { children: React.ReactNode }) {
-  return <Suspense fallback={<ScreenSkeleton />}>{children}</Suspense>
-}
-
-function ScreenSkeleton() {
-  return (
-    <div role="status" aria-live="polite" className="flex flex-col gap-4">
-      <span className="sr-only">Loading screen</span>
-      <div className="h-9 w-40 animate-pulse rounded-lg bg-surface-2" />
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="h-36 animate-pulse rounded-2xl border border-white/[0.06] bg-surface-1" />
-        <div className="h-36 animate-pulse rounded-2xl border border-white/[0.06] bg-surface-1" />
-      </div>
-      <div className="h-56 animate-pulse rounded-2xl border border-white/[0.06] bg-surface-1" />
+// A plain element rather than a component: this module exports the router config,
+// so it must not declare components of its own (React Fast Refresh boundary).
+const screenSkeleton = (
+  <div role="status" aria-live="polite" className="flex flex-col gap-4">
+    <span className="sr-only">Loading screen</span>
+    <div className="h-9 w-40 animate-pulse rounded-lg bg-surface-2" />
+    <div className="grid gap-4 md:grid-cols-2">
+      <div className="h-36 animate-pulse rounded-2xl border border-white/[0.06] bg-surface-1" />
+      <div className="h-36 animate-pulse rounded-2xl border border-white/[0.06] bg-surface-1" />
     </div>
-  )
-}
+    <div className="h-56 animate-pulse rounded-2xl border border-white/[0.06] bg-surface-1" />
+  </div>
+)
 
 export const router = createBrowserRouter([
   {
@@ -40,17 +36,17 @@ export const router = createBrowserRouter([
       {
         path: 'ledger',
         element: (
-          <LazyScreen>
+          <Suspense fallback={screenSkeleton}>
             <LedgerScreen />
-          </LazyScreen>
+          </Suspense>
         ),
       },
       {
         path: 'insights',
         element: (
-          <LazyScreen>
+          <Suspense fallback={screenSkeleton}>
             <InsightsScreen />
-          </LazyScreen>
+          </Suspense>
         ),
       },
       { path: '*', element: <Navigate to="/pulse" replace /> },

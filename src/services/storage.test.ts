@@ -51,7 +51,7 @@ describe('storage', () => {
     )
     const result = storage.getExpenses()
     expect(result).toHaveLength(1)
-    expect(result[0].itemName).toBe('x')
+    expect(result[0]?.itemName).toBe('x')
   })
 
   it('clears unrecoverable corrupted payloads instead of throwing', () => {
@@ -63,5 +63,29 @@ describe('storage', () => {
   it('treats an empty array of categories as missing (returns null)', () => {
     storage.saveCategories([])
     expect(storage.getCategories()).toBeNull()
+  })
+
+  it('repairs well-formed JSON of the wrong shape to safe defaults', () => {
+    localStorage.setItem('categories', '[1, null]')
+    localStorage.setItem('categoryMappings', 'null')
+    localStorage.setItem('categoryBudgets', '[200]')
+    localStorage.setItem('categoryBudgetUpdatedAt', '"2026-05-08"')
+    localStorage.setItem('categoryBudgetDeletedAt', '42')
+
+    expect(storage.getCategories()).toBeNull()
+    expect(storage.getCategoryMappings()).toEqual({})
+    expect(storage.getBudgets()).toEqual({})
+    expect(storage.getBudgetUpdatedAt()).toEqual({})
+    expect(storage.getBudgetDeletedAt()).toEqual({})
+  })
+
+  it('drops individual entries of the wrong type and keeps the rest', () => {
+    localStorage.setItem('categories', '["Food & Drink", 3]')
+    localStorage.setItem('categoryMappings', '{"coffee":"Food & Drink","tea":7}')
+    localStorage.setItem('categoryBudgets', '{"Food & Drink":200,"Travel":"300"}')
+
+    expect(storage.getCategories()).toEqual(['Food & Drink'])
+    expect(storage.getCategoryMappings()).toEqual({ coffee: 'Food & Drink' })
+    expect(storage.getBudgets()).toEqual({ 'Food & Drink': 200 })
   })
 })

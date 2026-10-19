@@ -15,7 +15,8 @@ export type Theme = 'dark' | 'light' | 'system'
 
 function readTheme(): Theme {
   try {
-    return (localStorage.getItem(THEME_KEY) as Theme) ?? 'system'
+    const stored = localStorage.getItem(THEME_KEY)
+    return stored === 'dark' || stored === 'light' || stored === 'system' ? stored : 'system'
   } catch {
     return 'system'
   }
@@ -34,9 +35,15 @@ export const SUPPORTED_CURRENCIES = [
 
 export type SupportedCurrency = (typeof SUPPORTED_CURRENCIES)[number]['code']
 
-function readCurrency(): string {
+export const isSupportedCurrency = (v: unknown): v is SupportedCurrency =>
+  SUPPORTED_CURRENCIES.some((c) => c.code === v)
+
+// A stored code outside the supported set would make Intl.NumberFormat throw on every
+// money render, so anything unexpected falls back to USD.
+function readCurrency(): SupportedCurrency {
   try {
-    return localStorage.getItem(CURRENCY_KEY) ?? 'USD'
+    const stored = localStorage.getItem(CURRENCY_KEY)
+    return isSupportedCurrency(stored) ? stored : 'USD'
   } catch {
     return 'USD'
   }
@@ -50,7 +57,7 @@ interface UIState {
   addSheetOpen: boolean
   hotkeysOpen: boolean
   smartInputFocused: boolean
-  currency: string
+  currency: SupportedCurrency
   theme: Theme
 
   pushToast: (t: Omit<Toast, 'id'>) => string
@@ -62,7 +69,7 @@ interface UIState {
   setAddSheetOpen: (v: boolean) => void
   setHotkeysOpen: (v: boolean) => void
   setSmartInputFocused: (v: boolean) => void
-  setCurrency: (v: string) => void
+  setCurrency: (v: SupportedCurrency) => void
   setTheme: (v: Theme) => void
 }
 
@@ -93,13 +100,17 @@ export const useUIStore = create<UIState>((set) => ({
   setCurrency: (v) => {
     try {
       localStorage.setItem(CURRENCY_KEY, v)
-    } catch {}
+    } catch {
+      // Preference is best-effort: if storage is unavailable, keep it for this session only.
+    }
     set({ currency: v })
   },
   setTheme: (v) => {
     try {
       localStorage.setItem(THEME_KEY, v)
-    } catch {}
+    } catch {
+      // Preference is best-effort: if storage is unavailable, keep it for this session only.
+    }
     set({ theme: v })
   },
 }))

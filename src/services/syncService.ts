@@ -5,7 +5,11 @@
 // - Budget v4.0: per-key LWW via `budgetUpdatedAt` / `budgetDeletedAt` timestamps.
 // - The Supabase JS SDK is lazy-loaded so unconfigured users never pay for it.
 
-import type { RealtimeChannel, SupabaseClient } from '@supabase/supabase-js'
+import type {
+  REALTIME_SUBSCRIBE_STATES,
+  RealtimeChannel,
+  SupabaseClient,
+} from '@supabase/supabase-js'
 import type { BackupData, Expense } from '../types'
 import { DEFAULT_CATEGORIES } from '../constants'
 
@@ -18,6 +22,13 @@ const TABLE = 'sync_buckets'
 const PAYLOAD_WARN_BYTES = 800 * 1024 // 800 KB — below Supabase free-tier 1 MB row limit
 const TOMBSTONE_CAP = 1000 // cap the deletedIds array; oldest pruned first
 const REALTIME_RECONNECT_DELAY = 2000
+// Channel states that mean the realtime subscription dropped and must be re-armed.
+// Typed against the SDK enum's values so the check stays type-only (no eager SDK import).
+const RECONNECT_STATES: ReadonlySet<`${REALTIME_SUBSCRIBE_STATES}`> = new Set([
+  'CLOSED',
+  'CHANNEL_ERROR',
+  'TIMED_OUT',
+])
 
 // Module-level flag: prevents circular push when applying remote data locally.
 export const syncApplying = { value: false }
@@ -29,10 +40,10 @@ export const syncApplying = { value: false }
 let clientPromise: Promise<SupabaseClient | null> | null = null
 
 function getClient(): Promise<SupabaseClient | null> {
-  if (!syncEnabled) return Promise.resolve(null)
+  if (!SUPABASE_URL || !SUPABASE_ANON_KEY) return Promise.resolve(null)
   if (clientPromise) return clientPromise
   clientPromise = import('@supabase/supabase-js').then((m) =>
-    m.createClient(SUPABASE_URL!, SUPABASE_ANON_KEY!, {
+    m.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       realtime: { params: { eventsPerSecond: 2 } },
     }),
   )
@@ -63,7 +74,7 @@ export function mergeBackups(local: BackupData, remote: BackupData): BackupData 
     const l = localMap.get(id)
     const r = remoteMap.get(id)
     if (!l) {
-      merged.push(r!)
+      if (r) merged.push(r)
       continue
     }
     if (!r) {
@@ -128,7 +139,8 @@ export function mergeBackups(local: BackupData, remote: BackupData): BackupData 
     if (winningDelTs > 0 && winningDelTs >= winningSetTs) {
       // Deletion wins — key is absent from budgets.
       const delSrc = localDelTs >= remoteDelTs ? local : remote
-      mergedBudgetDeletedAt[key] = delSrc.budgetDeletedAt![key]
+      const deletedAt = delSrc.budgetDeletedAt?.[key]
+      if (deletedAt) mergedBudgetDeletedAt[key] = deletedAt
       continue
     }
 
@@ -223,9 +235,10 @@ export async function subscribeSync(syncId: string, onUpdate: () => void): Promi
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null
 
   const open = () => {
-    if (!active || !client) return
-    channel = client
-      .channel(`sync:${syncId}`)
+    if (!active) return
+    const current = client.channel(`sync:${syncId}`)
+    channel = current
+    current
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: TABLE, filter: `sync_id=eq.${syncId}` },
@@ -234,16 +247,17 @@ export async function subscribeSync(syncId: string, onUpdate: () => void): Promi
         },
       )
       .subscribe((status) => {
+        // Removing a replaced channel fires CLOSED on it — ignore statuses from
+        // any channel that is no longer the live one, or we would tear down its successor.
+        if (!active || current !== channel) return
         // Realtime sometimes drops silently on flaky networks — re-arm if so.
-        if (
-          active &&
-          (status === 'CLOSED' || status === 'CHANNEL_ERROR' || status === 'TIMED_OUT')
-        ) {
+        if (RECONNECT_STATES.has(status)) {
           if (reconnectTimer) clearTimeout(reconnectTimer)
           reconnectTimer = setTimeout(() => {
-            if (!active || !client) return
-            client.removeChannel(channel!)
+            if (!active || current !== channel) return
             channel = null
+            // removeChannel resolves with a status string ('ok' | 'timed out' | 'error'); it does not reject.
+            void client.removeChannel(current)
             open()
           }, REALTIME_RECONNECT_DELAY)
         }
@@ -255,7 +269,7 @@ export async function subscribeSync(syncId: string, onUpdate: () => void): Promi
   return () => {
     active = false
     if (reconnectTimer) clearTimeout(reconnectTimer)
-    if (channel && client) client.removeChannel(channel)
+    if (channel) void client.removeChannel(channel)
     channel = null
   }
 }

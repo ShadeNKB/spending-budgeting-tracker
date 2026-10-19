@@ -34,7 +34,7 @@ export function VirtualLedgerList({
 
   const virtualizer = useWindowVirtualizer({
     count: flat.length,
-    estimateSize: (i) => (flat[i].kind === 'header' ? 41 : 62),
+    estimateSize: (i) => (flat[i]?.kind === 'header' ? 41 : 62),
     overscan: 8,
     scrollMargin,
   })
@@ -47,6 +47,7 @@ export function VirtualLedgerList({
       <div style={{ height: virtualizer.getTotalSize(), position: 'relative', width: '100%' }}>
         {virtualizer.getVirtualItems().map((vi) => {
           const item = flat[vi.index]
+          if (!item) return null
           return (
             <div
               key={vi.key}

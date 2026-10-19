@@ -46,14 +46,14 @@ export function Sheet({
         ),
       ).filter((el) => !el.hasAttribute('disabled') && el.offsetParent !== null)
 
-      if (focusable.length === 0) {
+      const first = focusable[0]
+      const last = focusable[focusable.length - 1]
+      if (!first || !last) {
         e.preventDefault()
         panelRef.current.focus()
         return
       }
 
-      const first = focusable[0]
-      const last = focusable[focusable.length - 1]
       if (e.shiftKey && document.activeElement === first) {
         e.preventDefault()
         last.focus()

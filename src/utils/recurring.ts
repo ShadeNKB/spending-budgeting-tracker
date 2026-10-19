@@ -28,8 +28,9 @@ export function detectRecurring(expenses: Expense[]): RecurringGroup[] {
   for (const e of expenses) {
     const k = norm(e.itemName)
     if (!k) continue
-    if (!buckets.has(k)) buckets.set(k, [])
-    buckets.get(k)!.push(e)
+    const bucket = buckets.get(k)
+    if (bucket) bucket.push(e)
+    else buckets.set(k, [e])
   }
 
   // 2. Absorb near-identical buckets via fuzzy match (e.g. "spotify" vs "spotify premium")
@@ -62,9 +63,14 @@ export function detectRecurring(expenses: Expense[]): RecurringGroup[] {
       (a, b) => parseISO(a.date).getTime() - parseISO(b.date).getTime(),
     )
     const gaps: number[] = []
-    for (let i = 1; i < sorted.length; i++) {
-      const g = differenceInDays(parseISO(sorted[i].date), parseISO(sorted[i - 1].date))
-      if (g > 0) gaps.push(g)
+    let prevDate: Date | undefined
+    for (const e of sorted) {
+      const date = parseISO(e.date)
+      if (prevDate) {
+        const g = differenceInDays(date, prevDate)
+        if (g > 0) gaps.push(g)
+      }
+      prevDate = date
     }
     if (gaps.length < 2) continue
 
@@ -87,7 +93,9 @@ export function detectRecurring(expenses: Expense[]): RecurringGroup[] {
     // Irregular cadence with only 3 occurrences is unreliable — require 4+ data points.
     if (periodicity === 'irregular' && items.length < 4) continue
 
-    const lastDate = parseISO(sorted[sorted.length - 1].date)
+    const last = sorted[sorted.length - 1]
+    if (!last) continue
+    const lastDate = parseISO(last.date)
     const nextEstimatedDate = new Date(lastDate)
     nextEstimatedDate.setDate(lastDate.getDate() + Math.round(avgGap))
 
@@ -95,8 +103,8 @@ export function detectRecurring(expenses: Expense[]): RecurringGroup[] {
 
     groups.push({
       key,
-      displayName: sorted[sorted.length - 1].itemName,
-      category: sorted[sorted.length - 1].category,
+      displayName: last.itemName,
+      category: last.category,
       occurrences: sorted,
       avgAmount,
       avgGapDays: avgGap,
@@ -114,9 +122,10 @@ export function detectRecurring(expenses: Expense[]): RecurringGroup[] {
  * Returns one number per day (0-indexed from today = slot 0).
  */
 export function forecastDailyFromRecurring(groups: RecurringGroup[], days: number): number[] {
-  const bins = new Array(days).fill(0)
+  const bins = new Array<number>(days).fill(0)
   const today = new Date()
   today.setHours(0, 0, 0, 0)
+  const dayOffset = (d: Date) => Math.round((d.getTime() - today.getTime()) / 86400000)
 
   for (const g of groups) {
     if (g.confidence < 0.5) continue
@@ -124,11 +133,11 @@ export function forecastDailyFromRecurring(groups: RecurringGroup[], days: numbe
     start.setHours(0, 0, 0, 0)
     // Place the first projected hit, then repeat every avgGap
     let d = start
-    while (true) {
-      const offset = Math.round((d.getTime() - today.getTime()) / 86400000)
-      if (offset >= days) break
-      if (offset >= 0) bins[offset] += g.avgAmount
+    let offset = dayOffset(d)
+    while (offset < days) {
+      if (offset >= 0) bins[offset] = (bins[offset] ?? 0) + g.avgAmount
       d = new Date(d.getTime() + Math.round(g.avgGapDays) * 86400000)
+      offset = dayOffset(d)
     }
   }
 

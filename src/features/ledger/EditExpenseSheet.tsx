@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { format, parseISO } from 'date-fns'
 import { Trash2 } from 'lucide-react'
 import { Sheet } from '../../ui/Sheet'
@@ -21,6 +21,9 @@ export function EditExpenseSheet({
   const deleteExpense = useExpenseStore((s) => s.deleteExpense)
   const categories = useExpenseStore((s) => s.categories)
   const toast = useToast()
+  const categoryLabelId = useId()
+  const dateLabelId = useId()
+  const notesId = useId()
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 768)
 
@@ -103,10 +106,13 @@ export function EditExpenseSheet({
         />
 
         <div className="flex flex-col gap-1.5">
-          <label className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+          <span
+            id={categoryLabelId}
+            className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]"
+          >
             Category
-          </label>
-          <div className="flex flex-wrap gap-1.5">
+          </span>
+          <div role="group" aria-labelledby={categoryLabelId} className="flex flex-wrap gap-1.5">
             {categories.slice(0, 8).map((c) => (
               <button
                 key={c}
@@ -153,10 +159,17 @@ export function EditExpenseSheet({
           const editIsPreset = editPresets.some((p) => p.val === form.date)
           return (
             <div className="flex flex-col gap-2">
-              <label className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+              <span
+                id={dateLabelId}
+                className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]"
+              >
                 Date
-              </label>
-              <div className="flex flex-wrap items-center gap-2">
+              </span>
+              <div
+                role="group"
+                aria-labelledby={dateLabelId}
+                className="flex flex-wrap items-center gap-2"
+              >
                 {editPresets.map((p) => (
                   <button
                     key={p.label}
@@ -187,10 +200,14 @@ export function EditExpenseSheet({
         })()}
 
         <div className="flex flex-col gap-1.5">
-          <label className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+          <label
+            htmlFor={notesId}
+            className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]"
+          >
             Notes
           </label>
           <textarea
+            id={notesId}
             value={form.notes}
             onChange={(e) => setForm({ ...form, notes: e.target.value })}
             placeholder="Any extra detail"

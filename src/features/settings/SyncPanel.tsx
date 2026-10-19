@@ -130,7 +130,13 @@ function SyncContent() {
 
   const handleCopy = async () => {
     if (!syncId) return
-    await navigator.clipboard.writeText(syncId)
+    try {
+      await navigator.clipboard.writeText(syncId)
+    } catch {
+      // Clipboard access is denied or unavailable (insecure context) — the code stays selectable.
+      toast.error('Could not copy — select the code and copy it manually')
+      return
+    }
     setCopied(true)
     if (copyResetTimer.current) clearTimeout(copyResetTimer.current)
     copyResetTimer.current = setTimeout(() => {
@@ -205,7 +211,7 @@ function SyncContent() {
               value={codeInput}
               onChange={(e) => setCodeInput(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') handleConnect()
+                if (e.key === 'Enter') void handleConnect()
               }}
             />
           </div>

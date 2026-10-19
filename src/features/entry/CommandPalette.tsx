@@ -18,6 +18,7 @@ import Fuse from 'fuse.js'
 import { useUIStore } from '../../stores/useUIStore'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
+import { formatMoney } from '../../lib/format'
 import { downloadJSON } from '../../lib/download'
 import { format as fmtDate, parseISO } from 'date-fns'
 import { parseExpense } from '../../utils/parseExpense'
@@ -37,6 +38,7 @@ export function CommandPalette() {
   const setOpen = useUIStore((s) => s.setPaletteOpen)
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen)
   const setAddSheetOpen = useUIStore((s) => s.setAddSheetOpen)
+  const currency = useUIStore((s) => s.currency)
   const navigate = useNavigate()
   const expenses = useExpenseStore((s) => s.expenses)
   const categoryMappings = useExpenseStore((s) => s.categoryMappings)
@@ -71,31 +73,32 @@ export function CommandPalette() {
     () => parseExpense(query, categoryMappings),
     [query, categoryMappings],
   )
-  const canQuickAdd = Boolean(parsedQuery.itemName && parsedQuery.amount && parsedQuery.amount > 0)
+  const quickAddAmount =
+    parsedQuery.itemName && parsedQuery.amount && parsedQuery.amount > 0 ? parsedQuery.amount : null
 
   const quickAddAction: Action | null = useMemo(() => {
-    if (!canQuickAdd) return null
+    if (quickAddAmount === null) return null
 
     return {
       id: 'quick-add-query',
-      label: `Add "${parsedQuery.itemName}" - $${parsedQuery.amount!.toFixed(2)}`,
+      label: `Add "${parsedQuery.itemName}" - ${formatMoney(quickAddAmount, {}, currency)}`,
       hint: 'Enter',
       icon: Plus,
       onRun: () => {
         const created = addExpense({
           itemName: parsedQuery.itemName,
-          amount: parsedQuery.amount!,
+          amount: quickAddAmount,
           category: parsedQuery.suggestedCategory,
           date: parsedQuery.parsedDate
             ? new Date(parsedQuery.parsedDate + 'T12:00:00').toISOString()
             : undefined,
         })
         vibrate(10)
-        toast.success(`Added "${created.itemName}" - $${created.amount.toFixed(2)}`)
+        toast.success(`Added "${created.itemName}" - ${formatMoney(created.amount, {}, currency)}`)
         setQuery('')
       },
     }
-  }, [addExpense, canQuickAdd, parsedQuery, toast, vibrate])
+  }, [addExpense, currency, quickAddAmount, parsedQuery, toast, vibrate])
 
   const actions: Action[] = useMemo(
     () => [
@@ -164,12 +167,12 @@ export function CommandPalette() {
 
   const runAt = (idx: number) => {
     if (idx < filteredActions.length) {
-      filteredActions[idx].onRun()
+      filteredActions[idx]?.onRun()
     } else {
       const exp = expenseHits[idx - filteredActions.length]
       if (exp) {
         const date = fmtDate(parseISO(exp.date), 'yyyy-MM-dd')
-        navigate(`/ledger?date=${date}&q=${encodeURIComponent(exp.itemName)}`)
+        void navigate(`/ledger?date=${date}&q=${encodeURIComponent(exp.itemName)}`)
       }
     }
     setOpen(false)

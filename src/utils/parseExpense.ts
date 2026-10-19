@@ -1,14 +1,5 @@
 import Fuse from 'fuse.js'
-import {
-  subDays,
-  subWeeks,
-  startOfWeek,
-  nextDay,
-  previousDay,
-  parse,
-  isValid,
-  format,
-} from 'date-fns'
+import { subDays, subWeeks, previousDay, parse, isValid, format } from 'date-fns'
 
 export interface ParsedExpense {
   itemName: string
@@ -27,7 +18,7 @@ const DATE_PATTERNS: { re: RegExp; resolve: (m: RegExpMatchArray) => Date | null
   { re: /\btoday\b/i, resolve: () => new Date() },
   {
     re: /\b(\d{1,2})\s*(days?)\s*ago\b/i,
-    resolve: (m) => subDays(new Date(), parseInt(m[1])),
+    resolve: ([, n]) => (n ? subDays(new Date(), parseInt(n)) : null),
   },
   {
     re: /\blast\s+week\b/i,
@@ -35,9 +26,9 @@ const DATE_PATTERNS: { re: RegExp; resolve: (m: RegExpMatchArray) => Date | null
   },
   {
     re: /\blast\s+(mon|tue|wed|thu|fri|sat|sun)\w*/i,
-    resolve: (m) => {
+    resolve: ([, dayName = '']) => {
       const day = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat'].indexOf(
-        m[1].toLowerCase().slice(0, 3),
+        dayName.toLowerCase().slice(0, 3),
       )
       if (day < 0) return null
       return previousDay(subDays(new Date(), 1), day as 0 | 1 | 2 | 3 | 4 | 5 | 6)
@@ -82,7 +73,7 @@ export function parseExpense(raw: string, mappings: Record<string, string>): Par
 
   // 2. Extract amount
   const amtMatch = working.match(AMOUNT_RE)
-  if (amtMatch) {
+  if (amtMatch?.[1]) {
     result.amount = parseFloat(amtMatch[1])
     working = working.replace(amtMatch[0], ' ').replace(/\s+/g, ' ').trim()
   }

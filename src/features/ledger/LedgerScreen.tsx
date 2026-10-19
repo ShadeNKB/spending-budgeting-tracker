@@ -15,7 +15,6 @@ import {
   endOfDay,
   startOfYear,
   endOfYear,
-  isValid,
 } from 'date-fns'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { Segmented } from '../../ui/Segmented'
@@ -30,18 +29,12 @@ import { VirtualLedgerList } from './VirtualLedgerList'
 import { ledgerHeaderLabel } from './ledgerFlatten'
 import { EditExpenseSheet } from './EditExpenseSheet'
 import { useToast } from '../../hooks/useToast'
+import { isRange, isValidYmd, type Range } from './ledgerParams'
 import type { Expense } from '../../types'
-
-type Range = 'today' | 'week' | 'month' | 'year' | 'all' | 'custom'
 
 // Above this many rows, switch from the animated grouped+sticky view to a
 // windowed list so the DOM stays bounded (anti-pattern: lists >~200 unwindowed).
 const VIRTUALIZE_THRESHOLD = 150
-
-const isValidYmd = (v: string | null): v is string => {
-  if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return false
-  return isValid(parseISO(v))
-}
 
 export function LedgerScreen() {
   const expenses = useExpenseStore((s) => s.expenses)
@@ -54,7 +47,8 @@ export function LedgerScreen() {
   const [params, setParams] = useSearchParams()
   const [editing, setEditing] = useState<Expense | null>(null)
 
-  const range = (params.get('range') as Range) ?? 'month'
+  const rawRange = params.get('range')
+  const range: Range = isRange(rawRange) ? rawRange : 'month'
   const category = params.get('category') ?? 'all'
   const rawSpecificDate = params.get('date')
   const rawCustomStart = params.get('customStart')
@@ -146,8 +140,9 @@ export function LedgerScreen() {
     const m = new Map<string, Expense[]>()
     for (const e of filtered) {
       const key = format(parseISO(e.date), 'yyyy-MM-dd')
-      if (!m.has(key)) m.set(key, [])
-      m.get(key)!.push(e)
+      const bucket = m.get(key)
+      if (bucket) bucket.push(e)
+      else m.set(key, [e])
     }
     return Array.from(m.entries()).map(([date, items]) => ({
       date,

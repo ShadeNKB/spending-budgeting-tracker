@@ -1,16 +1,21 @@
 import { defineConfig, devices } from '@playwright/test'
 
+// E2E_PORT lets several worktrees run the suite side by side without reusing each other's server.
+const PORT = Number(process.env.E2E_PORT ?? 4173)
+const BASE_URL = `http://localhost:${String(PORT)}`
+
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
   forbidOnly: !!process.env.CI,
-  retries: process.env.CI ? 2 : 0,
-  workers: process.env.CI ? 1 : undefined,
-  reporter: 'list',
+  retries: process.env.CI ? 1 : 0,
+  workers: process.env.CI ? 2 : undefined,
+  reporter: process.env.CI ? [['list'], ['html', { open: 'never' }]] : 'list',
   use: {
-    baseURL: 'http://localhost:4173',
+    baseURL: BASE_URL,
     trace: 'on-first-retry',
     screenshot: 'only-on-failure',
+    serviceWorkers: 'block',
   },
   projects: [
     {
@@ -23,9 +28,9 @@ export default defineConfig({
     },
   ],
   webServer: {
-    command: 'npm run preview',
-    url: 'http://localhost:4173',
+    command: `npm run preview -- --port ${String(PORT)} --strictPort`,
+    url: BASE_URL,
     reuseExistingServer: !process.env.CI,
-    timeout: 30000,
+    timeout: 60000,
   },
 })

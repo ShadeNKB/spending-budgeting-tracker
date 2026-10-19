@@ -42,7 +42,8 @@ export function SmartInput({
   }, [autoFocus])
 
   const parsed = useMemo(() => parseExpense(value, categoryMappings), [value, categoryMappings])
-  const canCommit = Boolean(parsed.itemName && parsed.amount && parsed.amount > 0)
+  const commitAmount = parsed.itemName && parsed.amount && parsed.amount > 0 ? parsed.amount : null
+  const canCommit = commitAmount !== null
 
   const today = format(new Date(), 'yyyy-MM-dd')
   const parsedDateLabel =
@@ -51,10 +52,10 @@ export function SmartInput({
       : null
 
   const commit = () => {
-    if (!canCommit) return
+    if (commitAmount === null) return
     const created = addExpense({
       itemName: parsed.itemName,
-      amount: parsed.amount!,
+      amount: commitAmount,
       category: parsed.suggestedCategory,
       date: parsed.parsedDate ? new Date(parsed.parsedDate + 'T12:00:00').toISOString() : undefined,
     })
