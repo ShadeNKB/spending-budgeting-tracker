@@ -58,7 +58,7 @@ describe('migrateExpenseCategory', () => {
       expense({ category: 'Education' }),
       expense({ category: 'Other' }),
     ])
-    expect(out[0].category).toBe('Subscriptions')
-    expect(out[1].category).toBe('Other')
+    expect(out[0]?.category).toBe('Subscriptions')
+    expect(out[1]?.category).toBe('Other')
   })
 })

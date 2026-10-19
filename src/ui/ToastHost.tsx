@@ -24,6 +24,7 @@ function ToastItem({ toast }: { toast: Toast }) {
   }, [toast.id, dismiss, duration])
 
   const Icon = iconFor(toast.kind)
+  const { action } = toast
 
   return (
     <motion.div
@@ -39,15 +40,15 @@ function ToastItem({ toast }: { toast: Toast }) {
     >
       <Icon size={16} className="mt-0.5 shrink-0" />
       <div className="flex-1 text-sm text-white">{toast.message}</div>
-      {toast.action && (
+      {action && (
         <button
           onClick={() => {
-            toast.action!.onClick()
+            action.onClick()
             dismiss(toast.id)
           }}
           className="shrink-0 text-xs font-semibold text-accent transition hover:text-accent-hover"
         >
-          {toast.action.label}
+          {action.label}
         </button>
       )}
       <button

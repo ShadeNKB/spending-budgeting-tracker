@@ -7,8 +7,8 @@ const expense = (id: string, itemName: string, date: string, amount = 15): Expen
   itemName,
   amount,
   category: 'Subscriptions',
-  date: `${date}T12:00:00.000Z`,
-  createdAt: `${date}T12:00:00.000Z`,
+  date: `${date}T12:00:00`,
+  createdAt: `${date}T12:00:00`,
 })
 
 describe('recurring expenses', () => {
@@ -55,5 +55,22 @@ describe('recurring expenses', () => {
     const forecast = forecastDailyFromRecurring(groups, 35)
 
     expect(forecast.reduce((sum, value) => sum + value, 0)).toBe(12)
+  })
+
+  it('returns an empty forecast instead of hanging on an invalid estimated date', () => {
+    const [group] = detectRecurring([
+      expense('1', 'Spotify', '2026-01-01', 12),
+      expense('2', 'Spotify', '2026-02-01', 12),
+      expense('3', 'Spotify', '2026-03-01', 12),
+    ])
+    if (!group) throw new Error('expected a recurring group')
+
+    const forecast = forecastDailyFromRecurring(
+      [{ ...group, nextEstimatedDate: new Date(Number.NaN) }],
+      35,
+    )
+
+    expect(forecast).toHaveLength(35)
+    expect(forecast.every((value) => value === 0)).toBe(true)
   })
 })

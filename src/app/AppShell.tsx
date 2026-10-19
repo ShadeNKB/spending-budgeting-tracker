@@ -93,6 +93,7 @@ export function AppShell() {
       return () => mq.removeEventListener('change', apply)
     }
     root.dataset.theme = theme
+    return undefined
   }, [theme])
 
   // Surface storage quota errors to the user — without this the app would

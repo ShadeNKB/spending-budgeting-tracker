@@ -33,13 +33,12 @@ export function Heatmap({ data }: { data: { date: string; total: number }[] }) {
 
   // Determine month label for each column: show label when month changes
   const monthLabels: (string | null)[] = weeks.map((week, wi) => {
-    const firstDay = week.find((d) => d)
+    const firstDay = week[0]
     if (!firstDay) return null
     const date = parseISO(firstDay.date)
     // Show label on first week or when month changes from previous week
     if (wi === 0) return format(date, 'MMM')
-    const prevWeek = weeks[wi - 1]
-    const prevFirst = prevWeek?.find((d) => d)
+    const prevFirst = weeks[wi - 1]?.[0]
     if (!prevFirst) return null
     const prevDate = parseISO(prevFirst.date)
     if (format(date, 'MMM') !== format(prevDate, 'MMM')) {
@@ -50,6 +49,8 @@ export function Heatmap({ data }: { data: { date: string; total: number }[] }) {
 
   // Day-of-week labels: show Mon, Wed, Fri (indices 1, 3, 5)
   const dayRows = [0, 1, 2, 3, 4, 5, 6]
+  const firstEntry = data[0]
+  const lastEntry = data[data.length - 1]
 
   return (
     <div>
@@ -116,11 +117,11 @@ export function Heatmap({ data }: { data: { date: string; total: number }[] }) {
       {/* Footer */}
       <div className="mt-2.5 flex items-center justify-between text-[10px] text-[var(--text-tertiary)]">
         <span>
-          {data.length > 0 && (
+          {firstEntry && lastEntry && (
             <>
-              {format(parseISO(data[0].date), 'MMM d')}
+              {format(parseISO(firstEntry.date), 'MMM d')}
               {' – '}
-              {format(parseISO(data[data.length - 1].date), 'MMM d, yyyy')}
+              {format(parseISO(lastEntry.date), 'MMM d, yyyy')}
             </>
           )}
         </span>

@@ -24,21 +24,25 @@ import { Segmented } from '../../ui/Segmented'
 import { Button } from '../../ui/Button'
 import { Input } from '../../ui/Input'
 import { Pill } from '../../ui/Pill'
-import { useUIStore, SUPPORTED_CURRENCIES, type Theme } from '../../stores/useUIStore'
+import {
+  useUIStore,
+  SUPPORTED_CURRENCIES,
+  isSupportedCurrency,
+  type Theme,
+} from '../../stores/useUIStore'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { SyncPanel } from './SyncPanel'
 import { useToast } from '../../hooks/useToast'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { downloadJSON, downloadCSV } from '../../lib/download'
 import { colorFromString } from '../../lib/analytics'
+import { BackupTooLargeError, parseBackup } from '../../lib/backup'
 import type { BackupData } from '../../types'
-
-type Tab = 'categories' | 'budgets' | 'backup' | 'sync'
 
 export function SettingsDrawer() {
   const open = useUIStore((s) => s.settingsOpen)
   const setOpen = useUIStore((s) => s.setSettingsOpen)
-  const tab = useUIStore((s) => s.settingsTab) as Tab
+  const tab = useUIStore((s) => s.settingsTab)
   const setTab = useUIStore((s) => s.setSettingsTab)
   const currency = useUIStore((s) => s.currency)
   const setCurrency = useUIStore((s) => s.setCurrency)
@@ -110,7 +114,10 @@ export function SettingsDrawer() {
             <select
               id="currency-select"
               value={currency}
-              onChange={(e) => setCurrency(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value
+                if (isSupportedCurrency(next)) setCurrency(next)
+              }}
               className="h-10 w-full appearance-none rounded-lg border border-white/[0.08] bg-surface-2 pl-3 pr-9 text-[13px] font-medium text-[var(--text-primary)] outline-none transition [color-scheme:dark] hover:border-white/[0.14] focus:border-accent/60 focus:shadow-[0_0_0_3px_rgba(34,211,238,0.15)]"
             >
               {SUPPORTED_CURRENCIES.map((c) => (
@@ -364,7 +371,6 @@ function BackupPanel() {
   }
 
   const MAX_IMPORT_BYTES = 8 * 1024 * 1024 // 8 MB safety cap
-  const MAX_IMPORT_EXPENSES = 50_000 // sanity cap to avoid freezing the browser
 
   const onFile = (f: File) => {
     if (f.size > MAX_IMPORT_BYTES) {
@@ -372,43 +378,16 @@ function BackupPanel() {
       return
     }
     const reader = new FileReader()
-    reader.onload = (e) => {
+    reader.onload = () => {
       try {
-        const raw = JSON.parse(e.target!.result as string) as Partial<BackupData>
-        if (!raw || typeof raw !== 'object') throw new Error('not an object')
-        if (!Array.isArray(raw.expenses)) throw new Error('missing expenses[]')
-        if (raw.expenses.length > MAX_IMPORT_EXPENSES) {
-          toast.error(
-            `Backup has ${raw.expenses.length.toLocaleString()} entries — too large to import safely.`,
-          )
-          return
-        }
-        // Shallow schema validation on every expense — reject anything that
-        // would corrupt analytics/sync downstream.
-        for (const x of raw.expenses) {
-          if (!x || typeof x !== 'object') throw new Error('malformed expense')
-          if (typeof x.id !== 'string' || !x.id) throw new Error('missing id')
-          if (typeof x.itemName !== 'string') throw new Error('missing itemName')
-          if (typeof x.amount !== 'number' || !Number.isFinite(x.amount) || x.amount <= 0) {
-            throw new Error(`bad amount on "${x.itemName ?? x.id}"`)
-          }
-          if (typeof x.date !== 'string') throw new Error('missing date')
-          if (typeof x.category !== 'string') throw new Error('missing category')
-        }
-        const data: BackupData = {
-          expenses: raw.expenses,
-          categories: Array.isArray(raw.categories) ? raw.categories : [],
-          categoryMappings: (raw.categoryMappings ?? {}) as BackupData['categoryMappings'],
-          budgets: (raw.budgets ?? {}) as BackupData['budgets'],
-          budgetUpdatedAt: (raw.budgetUpdatedAt ?? {}) as BackupData['budgetUpdatedAt'],
-          budgetDeletedAt: (raw.budgetDeletedAt ?? {}) as BackupData['budgetDeletedAt'],
-          deletedIds: Array.isArray(raw.deletedIds) ? raw.deletedIds : [],
-          exportDate:
-            typeof raw.exportDate === 'string' ? raw.exportDate : new Date().toISOString(),
-          version: typeof raw.version === 'string' ? raw.version : '4.0',
-        }
+        if (typeof reader.result !== 'string') throw new Error('unreadable file')
+        const data = parseBackup(JSON.parse(reader.result))
         setPendingImport({ data, count: data.expenses.length })
       } catch (err) {
+        if (err instanceof BackupTooLargeError) {
+          toast.error(err.message)
+          return
+        }
         const msg = err instanceof Error ? err.message : 'parse error'
         toast.error(`Invalid backup file — ${msg}`)
       }

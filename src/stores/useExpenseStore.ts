@@ -175,7 +175,7 @@ export const useExpenseStore = create<ExpenseState>()(
     },
 
     addExpense: (input) => {
-      const amount = Number(input.amount)
+      const amount = input.amount
       // Reject invalid/negative amounts at the store boundary so corrupted
       // imports or programmatic mutations cannot leave bad data in storage.
       if (!Number.isFinite(amount) || amount <= 0) {
@@ -356,9 +356,9 @@ export const useExpenseStore = create<ExpenseState>()(
 
     importBackup: (data) => {
       set({
-        expenses: data.expenses ? migrateExpenses(data.expenses) : [],
-        categories: data.categories?.length ? data.categories : DEFAULT_CATEGORIES,
-        categoryMappings: data.categoryMappings ?? {},
+        expenses: migrateExpenses(data.expenses),
+        categories: data.categories.length ? data.categories : DEFAULT_CATEGORIES,
+        categoryMappings: data.categoryMappings,
         budgets: data.budgets ?? {},
         budgetUpdatedAt: completeBudgetUpdatedAt(
           data.budgets ?? {},
@@ -387,9 +387,9 @@ export const useExpenseStore = create<ExpenseState>()(
 
     applySync: (data) => {
       set({
-        expenses: data.expenses ? migrateExpenses(data.expenses) : [],
-        categories: data.categories?.length ? data.categories : DEFAULT_CATEGORIES,
-        categoryMappings: data.categoryMappings ?? {},
+        expenses: migrateExpenses(data.expenses),
+        categories: data.categories.length ? data.categories : DEFAULT_CATEGORIES,
+        categoryMappings: data.categoryMappings,
         budgets: data.budgets ?? {},
         budgetUpdatedAt: completeBudgetUpdatedAt(
           data.budgets ?? {},
@@ -446,7 +446,7 @@ export function installPersistence() {
 
   useExpenseStore.subscribe(
     persistSelectors,
-    (slice) => {
+    () => {
       if (!useExpenseStore.getState().hydrated) return
       useExpenseStore.setState({ syncStatus: 'saving' })
       if (saveTimer) clearTimeout(saveTimer)

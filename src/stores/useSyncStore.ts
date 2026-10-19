@@ -19,7 +19,7 @@ interface SyncState {
 
   initSync: () => void
   setupSync: (syncId: string) => Promise<void>
-  disconnectSync: () => Promise<void>
+  disconnectSync: () => void
   triggerSync: () => Promise<void>
   scheduleSyncPush: () => void
 }
@@ -69,7 +69,7 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     if (saved) {
       get()
         .setupSync(saved)
-        .catch((err) => console.error('[sync] initSync', err))
+        .catch((err: unknown) => console.error('[sync] initSync', err))
     }
   },
 
@@ -97,11 +97,11 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       if (gen !== setupGen) return
       get()
         .triggerSync()
-        .catch((err) => console.error('[sync] realtime trigger', err))
+        .catch((err: unknown) => console.error('[sync] realtime trigger', err))
     })
   },
 
-  disconnectSync: async () => {
+  disconnectSync: () => {
     setupGen++ // invalidate any pending subscriptions
     storage.saveSyncId(null)
     set({ syncId: null, cloudStatus: 'idle', lastSyncAt: null })
@@ -163,7 +163,7 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       pushTimer = null
       get()
         .triggerSync()
-        .catch((err) => console.error('[sync] push', err))
+        .catch((err: unknown) => console.error('[sync] push', err))
     }, PUSH_DEBOUNCE_MS)
   },
 }))

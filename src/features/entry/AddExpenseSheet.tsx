@@ -1,10 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useId, useState } from 'react'
 import { format } from 'date-fns'
 import { CalendarDays, ChevronDown } from 'lucide-react'
 import { Sheet } from '../../ui/Sheet'
 import { Input } from '../../ui/Input'
 import { Button } from '../../ui/Button'
-import { Pill } from '../../ui/Pill'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useToast } from '../../hooks/useToast'
 import { useHaptic } from '../../hooks/useHaptic'
@@ -25,6 +24,7 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
   const toast = useToast()
   const vibrate = useHaptic()
   const fmt = useFormatMoney()
+  const categoryLabelId = useId()
 
   const today = format(new Date(), 'yyyy-MM-dd')
 
@@ -177,10 +177,13 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
         />
 
         <div className="flex flex-col gap-1.5">
-          <label className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+          <span
+            id={categoryLabelId}
+            className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]"
+          >
             Category
-          </label>
-          <div className="flex flex-wrap gap-1.5">
+          </span>
+          <div role="group" aria-labelledby={categoryLabelId} className="flex flex-wrap gap-1.5">
             {categories.slice(0, 8).map((c) => (
               <button
                 type="button"

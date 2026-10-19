@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { useFormatMoney } from '../../hooks/useFormatMoney'
 
 const VB_W = 400
 
@@ -18,6 +19,7 @@ export function Sparkline({
   className?: string
 }) {
   const [tooltip, setTooltip] = useState<{ i: number; x: number; y: number } | null>(null)
+  const fmt = useFormatMoney()
 
   if (!data.length) return null
   const max = Math.max(...data, 1)
@@ -32,11 +34,13 @@ export function Sparkline({
   const path = points.map(([x, y], i) => (i === 0 ? `M${x},${y}` : `L${x},${y}`)).join(' ')
   const area = `${path} L${VB_W},${height} L0,${height} Z`
 
-  const hoveredVal = tooltip !== null ? data[tooltip.i] : null
+  const lastPoint = points[points.length - 1]
+  const hoveredPoint = tooltip !== null ? points[tooltip.i] : undefined
+  const hoveredVal = tooltip !== null ? data[tooltip.i] : undefined
   const hoveredLabel = tooltip !== null && labels ? labels[tooltip.i] : null
   const total = data.reduce((sum, value) => sum + value, 0)
   const maxIndex = data.indexOf(max)
-  const chartLabel = `Trend chart. Total $${total.toFixed(2)}. Peak $${max.toFixed(2)}${labels?.[maxIndex] ? ` on ${labels[maxIndex]}` : ''}.`
+  const chartLabel = `Trend chart. Total ${fmt(total)}. Peak ${fmt(max)}${labels?.[maxIndex] ? ` on ${labels[maxIndex]}` : ''}.`
 
   return (
     <div className={`relative w-full ${className ?? ''}`} style={{ height }}>
@@ -57,29 +61,22 @@ export function Sparkline({
           strokeLinejoin="round"
           strokeLinecap="round"
         />
-        {points.length > 0 && (
-          <circle
-            cx={points[points.length - 1][0]}
-            cy={points[points.length - 1][1]}
-            r={3}
-            fill={stroke}
-          />
-        )}
+        {lastPoint && <circle cx={lastPoint[0]} cy={lastPoint[1]} r={3} fill={stroke} />}
         {/* Hover indicator */}
-        {tooltip !== null && (
+        {hoveredPoint && (
           <>
             <line
-              x1={points[tooltip.i][0]}
+              x1={hoveredPoint[0]}
               y1={0}
-              x2={points[tooltip.i][0]}
+              x2={hoveredPoint[0]}
               y2={height}
               stroke="var(--chart-axis)"
               strokeWidth={1}
               strokeDasharray="3 3"
             />
             <circle
-              cx={points[tooltip.i][0]}
-              cy={points[tooltip.i][1]}
+              cx={hoveredPoint[0]}
+              cy={hoveredPoint[1]}
               r={4}
               fill={stroke}
               stroke="var(--chart-axis-strong)"
@@ -88,7 +85,7 @@ export function Sparkline({
           </>
         )}
         {/* Invisible hover targets for each data point */}
-        {points.map(([x], i) => {
+        {points.map(([x, y], i) => {
           const hitW = step
           const hitX = Math.max(0, x - hitW / 2)
           return (
@@ -99,11 +96,9 @@ export function Sparkline({
               width={hitW}
               height={height}
               fill="transparent"
-              onMouseEnter={() => setTooltip({ i, x, y: points[i][1] })}
+              onMouseEnter={() => setTooltip({ i, x, y })}
               onMouseLeave={() => setTooltip(null)}
-              onClick={() =>
-                setTooltip((current) => (current?.i === i ? null : { i, x, y: points[i][1] }))
-              }
+              onClick={() => setTooltip((current) => (current?.i === i ? null : { i, x, y }))}
               style={{ cursor: 'crosshair' }}
             />
           )
@@ -111,7 +106,7 @@ export function Sparkline({
       </svg>
       <span className="sr-only">{chartLabel}</span>
       {/* Tooltip bubble */}
-      {tooltip !== null && hoveredVal !== null && (
+      {tooltip !== null && hoveredVal !== undefined && (
         <div
           className="pointer-events-none absolute bottom-full mb-1 -translate-x-1/2 whitespace-nowrap rounded-md border border-white/10 bg-surface-3 px-2 py-1 shadow-lg"
           style={{ left: `${(tooltip.x / VB_W) * 100}%` }}
@@ -120,7 +115,7 @@ export function Sparkline({
             <div className="text-[10px] text-[var(--text-tertiary)]">{hoveredLabel}</div>
           )}
           <div className="font-mono text-[11px] font-semibold tabular-nums text-white">
-            ${hoveredVal.toFixed(2)}
+            {fmt(hoveredVal)}
           </div>
         </div>
       )}

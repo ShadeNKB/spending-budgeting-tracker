@@ -156,7 +156,7 @@ export function computeMonthAnalytics(
         paceRatio: expected > 0 ? total / expected : 0,
       }
     })
-    .sort((a, b) => (b.paceRatio ?? 0) - (a.paceRatio ?? 0))
+    .sort((a, b) => b.paceRatio - a.paceRatio)
 
   // Heatmap — 14 weeks (always anchored to today regardless of offset)
   const heatStart = startOfWeek(subDays(now, 13 * 7), { weekStartsOn: 0 })
@@ -224,7 +224,6 @@ export function computeYearAnalytics(
 ): YearAnalytics {
   const now = new Date()
   const refYear = getYear(now) - yearOffset
-  const refDate = new Date(refYear, now.getMonth(), now.getDate())
   const isCurrentYear = yearOffset === 0
 
   const yearStart = startOfYear(new Date(refYear, 0, 1))
@@ -235,14 +234,15 @@ export function computeYearAnalytics(
   let periodTotal = 0
   let prevTotal = 0
   const catTotals: Record<string, number> = {}
-  const monthlyBuckets: number[] = new Array(12).fill(0)
+  const monthlyBuckets = new Array<number>(12).fill(0)
 
   for (const e of expenses) {
     const d = parseISO(e.date)
     if (isWithinInterval(d, { start: yearStart, end: yearEnd })) {
       periodTotal += e.amount
       catTotals[e.category] = (catTotals[e.category] ?? 0) + e.amount
-      monthlyBuckets[getMonth(d)] += e.amount
+      const month = getMonth(d)
+      monthlyBuckets[month] = (monthlyBuckets[month] ?? 0) + e.amount
     } else if (isWithinInterval(d, { start: prevYearStart, end: prevYearEnd })) {
       prevTotal += e.amount
     }
@@ -284,9 +284,6 @@ export function computeYearAnalytics(
 
   const monthlySparkline = monthlyBuckets.slice()
 
-  // suppress unused var warning
-  void refDate
-
   return {
     period: 'year',
     label: String(refYear),
@@ -307,7 +304,6 @@ export function computeYearAnalytics(
 
 export function computeWeekAnalytics(expenses: Expense[]): WeekAnalytics {
   const now = new Date()
-  const DAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
 
   const thisWeekDays = Array.from({ length: 7 }, (_, i) => subDays(now, 6 - i))
   const prevWeekDays = Array.from({ length: 7 }, (_, i) => subDays(now, 13 - i))
@@ -315,19 +311,19 @@ export function computeWeekAnalytics(expenses: Expense[]): WeekAnalytics {
   const bucket = (d: Date) =>
     expenses.filter((e) => isSameDay(parseISO(e.date), d)).reduce((s, e) => s + e.amount, 0)
 
-  const thisWeekDailyTotals = thisWeekDays.map(bucket)
+  const dailyThisWeek = thisWeekDays.map((d) => ({
+    date: format(d, 'yyyy-MM-dd'),
+    total: bucket(d),
+    label: format(d, 'EEE'), // "Sun" … "Sat"
+  }))
   const prevWeekTotal = prevWeekDays.map(bucket).reduce((s, v) => s + v, 0)
-  const thisWeekTotal = thisWeekDailyTotals.reduce((s, v) => s + v, 0)
+  const thisWeekTotal = dailyThisWeek.reduce((s, day) => s + day.total, 0)
 
   return {
     thisWeek: thisWeekTotal,
     prevWeek: prevWeekTotal,
     changePct: prevWeekTotal > 0 ? (thisWeekTotal - prevWeekTotal) / prevWeekTotal : 0,
-    dailyThisWeek: thisWeekDays.map((d, i) => ({
-      date: format(d, 'yyyy-MM-dd'),
-      total: thisWeekDailyTotals[i],
-      label: DAYS[d.getDay()],
-    })),
+    dailyThisWeek,
   }
 }
 

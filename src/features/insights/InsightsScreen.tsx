@@ -13,7 +13,7 @@ import {
   ArrowDown,
 } from 'lucide-react'
 import { useExpenseStore } from '../../stores/useExpenseStore'
-import { computeInsights } from '../../utils/insights'
+import { computeInsights, type InsightTone } from '../../utils/insights'
 import { detectRecurring, forecastDailyFromRecurring } from '../../utils/recurring'
 import { computeMonthAnalytics, computeWeekAnalytics } from '../../lib/analytics'
 import { Card } from '../../ui/Card'
@@ -25,7 +25,7 @@ import { colorFromString } from '../../lib/analytics'
 import { useUIStore } from '../../stores/useUIStore'
 
 const toneIcon: Record<
-  string,
+  InsightTone,
   {
     Icon: React.ComponentType<{ size?: number; className?: string }>
     tone: 'negative' | 'positive' | 'warning' | 'info'
@@ -92,7 +92,7 @@ export function InsightsScreen() {
               </div>
             ) : (
               insights.map((ins) => {
-                const tc = toneIcon[ins.tone] ?? toneIcon.info
+                const tc = toneIcon[ins.tone]
                 const { Icon } = tc
                 return (
                   <div key={ins.id}>
@@ -148,6 +148,15 @@ export function InsightsScreen() {
                         onPointerEnter={() => setHoveredDay(i)}
                         onPointerLeave={() => setHoveredDay(null)}
                         onClick={() => setHoveredDay(hoveredDay === i ? null : i)}
+                        role="button"
+                        tabIndex={0}
+                        aria-label={`${d.label}: ${fmt(d.total)}`}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault()
+                            setHoveredDay(hoveredDay === i ? null : i)
+                          }
+                        }}
                       >
                         <div
                           className="relative flex w-full flex-col justify-end"
@@ -155,7 +164,7 @@ export function InsightsScreen() {
                         >
                           {isHovered && (
                             <span className="pointer-events-none absolute -top-6 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded border border-white/10 bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-white shadow">
-                              ${d.total.toFixed(2)}
+                              {fmt(d.total)}
                             </span>
                           )}
                           <div

@@ -7,8 +7,8 @@ const expense = (over: Partial<Expense> = {}): Expense => ({
   itemName: over.itemName ?? 'coffee',
   amount: over.amount ?? 5,
   category: over.category ?? 'Food & Drink',
-  date: over.date ?? '2026-05-02T10:00:00.000Z',
-  createdAt: over.createdAt ?? '2026-05-02T10:00:00.000Z',
+  date: over.date ?? '2026-05-02T12:00:00',
+  createdAt: over.createdAt ?? '2026-05-02T12:00:00',
   ...over,
 })
 
@@ -30,13 +30,13 @@ describe('computeMonthAnalytics', () => {
   afterEach(() => vi.useRealTimers())
 
   it('sums month total, today total, and computes prev-month change', () => {
-    vi.setSystemTime(new Date('2026-05-15T12:00:00.000Z'))
+    vi.setSystemTime(new Date(2026, 4, 15, 12))
 
     const expenses: Expense[] = [
-      expense({ amount: 10, date: '2026-05-15T10:00:00.000Z' }), // today
-      expense({ amount: 20, date: '2026-05-10T10:00:00.000Z' }), // this month
-      expense({ amount: 30, date: '2026-04-20T10:00:00.000Z' }), // prev month
-      expense({ amount: 40, date: '2026-03-01T10:00:00.000Z' }), // not counted
+      expense({ amount: 10, date: '2026-05-15T12:00:00' }), // today
+      expense({ amount: 20, date: '2026-05-10T12:00:00' }), // this month
+      expense({ amount: 30, date: '2026-04-20T12:00:00' }), // prev month
+      expense({ amount: 40, date: '2026-03-01T12:00:00' }), // not counted
     ]
 
     const a = computeMonthAnalytics(expenses, {})
@@ -49,25 +49,25 @@ describe('computeMonthAnalytics', () => {
   })
 
   it('ranks topCategories by amount descending and computes share', () => {
-    vi.setSystemTime(new Date('2026-05-15T12:00:00.000Z'))
+    vi.setSystemTime(new Date(2026, 4, 15, 12))
 
     const expenses: Expense[] = [
-      expense({ amount: 100, category: 'Food', date: '2026-05-01T10:00:00.000Z' }),
-      expense({ amount: 50, category: 'Transport', date: '2026-05-02T10:00:00.000Z' }),
-      expense({ amount: 50, category: 'Food', date: '2026-05-03T10:00:00.000Z' }),
+      expense({ amount: 100, category: 'Food', date: '2026-05-01T12:00:00' }),
+      expense({ amount: 50, category: 'Transport', date: '2026-05-02T12:00:00' }),
+      expense({ amount: 50, category: 'Food', date: '2026-05-03T12:00:00' }),
     ]
 
     const a = computeMonthAnalytics(expenses, {})
-    expect(a.topCategories[0].category).toBe('Food')
-    expect(a.topCategories[0].total).toBe(150)
-    expect(a.topCategories[0].share).toBeCloseTo(0.75, 2)
-    expect(a.topCategories[1].category).toBe('Transport')
+    expect(a.topCategories[0]?.category).toBe('Food')
+    expect(a.topCategories[0]?.total).toBe(150)
+    expect(a.topCategories[0]?.share).toBeCloseTo(0.75, 2)
+    expect(a.topCategories[1]?.category).toBe('Transport')
   })
 
   it('computes paceRatio against budget proportional to days elapsed', () => {
-    vi.setSystemTime(new Date('2026-05-15T12:00:00.000Z')) // day 15 of 31
+    vi.setSystemTime(new Date(2026, 4, 15, 12)) // day 15 of 31
 
-    const expenses: Expense[] = [expense({ amount: 200, date: '2026-05-10T10:00:00.000Z' })]
+    const expenses: Expense[] = [expense({ amount: 200, date: '2026-05-10T12:00:00' })]
     const budgets = { 'Food & Drink': 620 } // expectedByNow = 620 * 15/31 = 300
 
     const a = computeMonthAnalytics(expenses, budgets)
@@ -75,7 +75,7 @@ describe('computeMonthAnalytics', () => {
   })
 
   it('returns zero pace when no budget set', () => {
-    vi.setSystemTime(new Date('2026-05-15T12:00:00.000Z'))
+    vi.setSystemTime(new Date(2026, 4, 15, 12))
     const a = computeMonthAnalytics([expense({ amount: 50 })], {})
     expect(a.paceRatio).toBe(0)
     expect(a.totalBudget).toBe(0)
@@ -86,12 +86,12 @@ describe('computeWeekAnalytics', () => {
   afterEach(() => vi.useRealTimers())
 
   it('totals last 7 days vs the prior 7 days', () => {
-    vi.setSystemTime(new Date('2026-05-15T12:00:00.000Z'))
+    vi.setSystemTime(new Date(2026, 4, 15, 12))
 
     const expenses: Expense[] = [
-      expense({ amount: 30, date: '2026-05-14T10:00:00.000Z' }), // this week
-      expense({ amount: 10, date: '2026-05-09T10:00:00.000Z' }), // this week (day 6)
-      expense({ amount: 50, date: '2026-05-05T10:00:00.000Z' }), // prev week
+      expense({ amount: 30, date: '2026-05-14T12:00:00' }), // this week
+      expense({ amount: 10, date: '2026-05-09T12:00:00' }), // this week (day 6)
+      expense({ amount: 50, date: '2026-05-05T12:00:00' }), // prev week
     ]
 
     const w = computeWeekAnalytics(expenses)

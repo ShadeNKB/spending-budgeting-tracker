@@ -5,6 +5,7 @@ import type {
   CategoryBudgets,
   CategoryBudgetTimestamps,
 } from '../types'
+import { isNumber, isString, listOf, recordOf } from '../lib/backup'
 
 const KEY_EXPENSES = 'expenses'
 const KEY_CATEGORIES = 'categories'
@@ -37,13 +38,11 @@ function safeSet(key: string, value: string): void {
   try {
     localStorage.setItem(key, value)
   } catch (err) {
+    // Match on `name` — the deprecated numeric `code` (22 / 1014) is derived from it.
+    // NS_ERROR_DOM_QUOTA_REACHED is the legacy Firefox name.
     const isQuota =
       err instanceof DOMException &&
-      // 22 = QuotaExceededError; 1014 = NS_ERROR_DOM_QUOTA_REACHED (Firefox)
-      (err.code === 22 ||
-        err.code === 1014 ||
-        err.name === 'QuotaExceededError' ||
-        err.name === 'NS_ERROR_DOM_QUOTA_REACHED')
+      (err.name === 'QuotaExceededError' || err.name === 'NS_ERROR_DOM_QUOTA_REACHED')
     if (isQuota) {
       if (!quotaWarned && typeof window !== 'undefined') {
         quotaWarned = true
@@ -87,8 +86,8 @@ export const storage = {
     try {
       const raw = localStorage.getItem(KEY_CATEGORIES)
       if (!raw) return null
-      const parsed = JSON.parse(raw) as unknown
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed as string[]
+      const categories = listOf(JSON.parse(raw), isString)
+      if (categories.length > 0) return categories
     } catch {
       localStorage.removeItem(KEY_CATEGORIES)
     }
@@ -102,7 +101,7 @@ export const storage = {
   getCategoryMappings(): CategoryMappings {
     try {
       const raw = localStorage.getItem(KEY_MAPPINGS)
-      if (raw) return JSON.parse(raw) as CategoryMappings
+      if (raw) return recordOf(JSON.parse(raw), isString)
     } catch {
       localStorage.removeItem(KEY_MAPPINGS)
     }
@@ -130,7 +129,7 @@ export const storage = {
   getBudgets(): CategoryBudgets {
     try {
       const raw = localStorage.getItem(KEY_BUDGETS)
-      if (raw) return JSON.parse(raw) as CategoryBudgets
+      if (raw) return recordOf(JSON.parse(raw), isNumber)
     } catch {
       localStorage.removeItem(KEY_BUDGETS)
     }
@@ -144,7 +143,7 @@ export const storage = {
   getBudgetUpdatedAt(): CategoryBudgetTimestamps {
     try {
       const raw = localStorage.getItem(KEY_BUDGET_UPDATED_AT)
-      if (raw) return JSON.parse(raw) as CategoryBudgetTimestamps
+      if (raw) return recordOf(JSON.parse(raw), isString)
     } catch {
       localStorage.removeItem(KEY_BUDGET_UPDATED_AT)
     }
@@ -158,7 +157,7 @@ export const storage = {
   getBudgetDeletedAt(): CategoryBudgetTimestamps {
     try {
       const raw = localStorage.getItem(KEY_BUDGET_DELETED_AT)
-      if (raw) return JSON.parse(raw) as CategoryBudgetTimestamps
+      if (raw) return recordOf(JSON.parse(raw), isString)
     } catch {
       localStorage.removeItem(KEY_BUDGET_DELETED_AT)
     }
