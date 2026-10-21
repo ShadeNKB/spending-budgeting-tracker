@@ -1,18 +1,28 @@
 import { useState } from 'react'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
+import type { MonthTotal } from '../../lib/analytics'
 
 const CHART_H = 88 // bar area height — label lives outside this
 
-export function MonthlyBars({ data }: { data: { label: string; total: number; month: number }[] }) {
+/**
+ * Twelve monthly bars for the viewed year. Only the current year has a "current" (accent) month
+ * and greyed-out future months; a past year is drawn evenly.
+ */
+export function MonthlyBars({
+  data,
+  total,
+  highest,
+}: {
+  data: readonly MonthTotal[]
+  total: number
+  highest: MonthTotal | null
+}) {
   const fmt = useFormatMoney()
   const max = Math.max(...data.map((d) => d.total), 1)
-  const currentMonth = new Date().getMonth()
   const [hovered, setHovered] = useState<number | null>(null)
   const [selected, setSelected] = useState<number | null>(null)
   const activeMonth = hovered ?? selected
-
-  const yearTotal = data.reduce((s, d) => s + d.total, 0)
-  const activeMos = data.filter((d) => d.total > 0).length
+  const active = activeMonth === null ? undefined : data[activeMonth]
 
   return (
     <div className="flex flex-col gap-2">
@@ -22,9 +32,7 @@ export function MonthlyBars({ data }: { data: { label: string; total: number; mo
           const pct = d.total / max
           // Cap at 92% of CHART_H so top bar never touches ceiling; min 3px stub
           const barPx = Math.round(d.total > 0 ? Math.max(3, pct * CHART_H * 0.92) : 0)
-          const isCurrent = d.month === currentMonth
           const isHovered = activeMonth === d.month
-          const isFuture = d.month > currentMonth
 
           return (
             <div
@@ -61,13 +69,11 @@ export function MonthlyBars({ data }: { data: { label: string; total: number; mo
               {/* Bar — anchored to bottom */}
               <div
                 className={`absolute bottom-0 left-0 right-0 rounded-t transition-all duration-300 ${
-                  isCurrent
+                  d.state === 'current'
                     ? 'bg-accent shadow-[0_0_12px_-2px_rgba(34,211,238,0.45)]'
                     : isHovered
-                      ? 'bg-white/30'
-                      : isFuture
-                        ? 'bg-white/[0.05]'
-                        : 'bg-white/[0.15]'
+                      ? 'bg-[var(--chart-bar-strong)]'
+                      : 'bg-[var(--chart-bar)]'
                 }`}
                 style={{ height: barPx }}
               />
@@ -78,49 +84,40 @@ export function MonthlyBars({ data }: { data: { label: string; total: number; mo
 
       {/* Labels row — separate from bar area, never compressed */}
       <div className="flex gap-[3px]">
-        {data.map((d) => {
-          const isCurrent = d.month === currentMonth
-          const isFuture = d.month > currentMonth
-          return (
-            <div key={d.month} className="flex flex-1 justify-center">
-              <span
-                className={`text-[9px] leading-none ${
-                  isCurrent
-                    ? 'font-semibold text-accent'
-                    : isFuture
-                      ? 'text-white/20'
-                      : 'text-[var(--text-tertiary)]'
-                }`}
-              >
-                {d.label}
-              </span>
-            </div>
-          )
-        })}
+        {data.map((d) => (
+          <div key={d.month} className="flex flex-1 justify-center">
+            <span
+              className={`text-[9px] leading-none ${
+                d.state === 'current'
+                  ? 'font-semibold text-accent'
+                  : d.state === 'future'
+                    ? 'text-[var(--text-muted)]'
+                    : 'text-[var(--text-tertiary)]'
+              }`}
+            >
+              {d.label}
+            </span>
+          </div>
+        ))}
       </div>
 
       {/* Summary row */}
-      <div className="flex items-center gap-3 border-t border-white/[0.05] pt-1 text-[11px] text-[var(--text-tertiary)]">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-white/[0.05] pt-1 text-[11px] text-[var(--text-tertiary)]">
         <span>
-          Total <span className="font-mono tabular-nums text-white">{fmt(yearTotal)}</span>
+          Total <span className="font-mono tabular-nums text-white">{fmt(total)}</span>
         </span>
-        <span className="text-white/20">·</span>
-        <span>
-          Avg/mo{' '}
-          <span className="font-mono tabular-nums text-white">
-            {fmt(yearTotal / Math.max(1, activeMos))}
+        {/* No separator dot: the row gap separates the facts, and it never dangles on a wrap. */}
+        {highest && (
+          <span>
+            Highest: {highest.label}{' '}
+            <span className="font-mono tabular-nums text-white">{fmt(highest.total)}</span>
           </span>
-        </span>
-        {activeMonth !== null && data[activeMonth] && (
-          <>
-            <span className="ml-auto text-white/20">·</span>
-            <span className="text-white/60">
-              {data[activeMonth].label}{' '}
-              <span className="font-mono tabular-nums text-white">
-                {fmt(data[activeMonth].total)}
-              </span>
-            </span>
-          </>
+        )}
+        {active && (
+          <span className="ml-auto text-[var(--text-secondary)]">
+            {active.label}{' '}
+            <span className="font-mono tabular-nums text-white">{fmt(active.total)}</span>
+          </span>
         )}
       </div>
     </div>

@@ -2,6 +2,35 @@ import { useState } from 'react'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 
 const VB_W = 400
+const AXIS_LABEL = 'text-[10px] text-[var(--text-tertiary)]'
+
+/**
+ * The axis under a sparkline: its first, middle and last labels, the middle picked the same way
+ * on every screen, so one window ("Last 30 days") reads the same on Pulse and Insights.
+ */
+export function SparklineAxis({
+  labels,
+  lastLabel,
+  highlightLast = false,
+  className,
+}: {
+  labels: readonly string[]
+  /** Replaces the last label ("Today"). */
+  lastLabel?: string
+  /** Accent on the last label: the period runs to today. */
+  highlightLast?: boolean
+  className?: string
+}) {
+  return (
+    <div className={`mt-1.5 flex justify-between ${className ?? ''}`}>
+      <span className={AXIS_LABEL}>{labels[0]}</span>
+      <span className={AXIS_LABEL}>{labels[Math.floor((labels.length - 1) / 2)]}</span>
+      <span className={highlightLast ? 'text-[10px] text-accent' : AXIS_LABEL}>
+        {lastLabel ?? labels.at(-1)}
+      </span>
+    </div>
+  )
+}
 
 export function Sparkline({
   data,
@@ -11,8 +40,8 @@ export function Sparkline({
   fill = 'rgba(34,211,238,0.14)',
   className,
 }: {
-  data: number[]
-  labels?: string[]
+  data: readonly number[]
+  labels?: readonly string[]
   height?: number
   stroke?: string
   fill?: string
@@ -39,8 +68,14 @@ export function Sparkline({
   const hoveredVal = tooltip !== null ? data[tooltip.i] : undefined
   const hoveredLabel = tooltip !== null && labels ? labels[tooltip.i] : null
   const total = data.reduce((sum, value) => sum + value, 0)
-  const maxIndex = data.indexOf(max)
-  const chartLabel = `Trend chart. Total ${fmt(total)}. Peak ${fmt(max)}${labels?.[maxIndex] ? ` on ${labels[maxIndex]}` : ''}.`
+  // The drawing scales to at least 1; the words use the data itself, so an empty period never
+  // reads as having a peak.
+  const peak = Math.max(...data)
+  const peakLabel = labels?.[data.indexOf(peak)]
+  const chartLabel =
+    peak > 0
+      ? `Trend chart. Total ${fmt(total)}. Peak ${fmt(peak)}${peakLabel ? ` on ${peakLabel}` : ''}.`
+      : 'Trend chart. No spending in this period.'
 
   return (
     <div className={`relative w-full ${className ?? ''}`} style={{ height }}>

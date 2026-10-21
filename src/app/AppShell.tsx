@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useRef } from 'react'
+import { Suspense, lazy, useCallback, useEffect } from 'react'
 import { Outlet } from 'react-router-dom'
 import { WifiOff, FlaskConical } from 'lucide-react'
 import { TopBar } from './TopBar'
@@ -73,11 +73,11 @@ export function AppShell() {
   const hotkeysOpen = useUIStore((s) => s.hotkeysOpen)
   const addSheetOpen = useUIStore((s) => s.addSheetOpen)
   const setAddSheetOpen = useUIStore((s) => s.setAddSheetOpen)
-  const undoStack = useExpenseStore((s) => s.undoStack)
-  const consumeUndo = useExpenseStore((s) => s.consumeUndo)
   const toast = useToast()
-  const toastRef = useRef(toast)
-  toastRef.current = toast
+  // Stable close handlers: Sheet re-runs its focus effect when onClose changes identity, which
+  // pulled focus out of a field whenever the shell re-rendered with a sheet open.
+  const closeAddSheet = useCallback(() => setAddSheetOpen(false), [setAddSheetOpen])
+  const closeHotkeys = useCallback(() => setHotkeysOpen(false), [setHotkeysOpen])
 
   useEffect(bootstrap, [])
 
@@ -110,13 +110,12 @@ export function AppShell() {
   }, [toast])
 
   // Show a reload prompt when the service worker updates (new version deployed).
-  // Uses a ref so the effect doesn't re-register on every toast reference change.
   useEffect(() => {
     if (!('serviceWorker' in navigator)) return
     let prevController = navigator.serviceWorker.controller
     const onController = () => {
       if (prevController) {
-        toastRef.current.info('App updated — reload for the latest version.', {
+        toast.info('App updated — reload for the latest version.', {
           duration: 0,
           action: { label: 'Reload', onClick: () => window.location.reload() },
         })
@@ -125,15 +124,17 @@ export function AppShell() {
     }
     navigator.serviceWorker.addEventListener('controllerchange', onController)
     return () => navigator.serviceWorker.removeEventListener('controllerchange', onController)
-  }, [])
+  }, [toast])
 
   useHotkeys({
     'mod+k': () => setPaletteOpen(true),
     'mod+n': () => setAddSheetOpen(true),
     'mod+,': () => setSettingsOpen(true),
     '?': () => setHotkeysOpen(true),
+    // Read the undo stack on demand: subscribing to it re-rendered the whole shell on every add.
     'mod+z': () => {
-      const last = undoStack[undoStack.length - 1]
+      const { undoStack, consumeUndo } = useExpenseStore.getState()
+      const last = undoStack.at(-1)
       if (last) consumeUndo(last.id)
     },
     escape: () => {
@@ -216,7 +217,7 @@ export function AppShell() {
       </Suspense>
 
       <Suspense fallback={null}>
-        <AddExpenseSheet open={addSheetOpen} onClose={() => setAddSheetOpen(false)} />
+        <AddExpenseSheet open={addSheetOpen} onClose={closeAddSheet} />
       </Suspense>
 
       <Suspense fallback={null}>
@@ -224,7 +225,7 @@ export function AppShell() {
       </Suspense>
 
       <Suspense fallback={null}>
-        <HotkeyHints open={hotkeysOpen} onClose={() => setHotkeysOpen(false)} />
+        <HotkeyHints open={hotkeysOpen} onClose={closeHotkeys} />
       </Suspense>
     </div>
   )

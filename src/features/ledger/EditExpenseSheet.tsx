@@ -1,12 +1,15 @@
-import { useEffect, useId, useState } from 'react'
-import { format, parseISO } from 'date-fns'
+import { useEffect, useId, useState, type KeyboardEvent } from 'react'
 import { Trash2 } from 'lucide-react'
 import { Sheet } from '../../ui/Sheet'
 import { Input } from '../../ui/Input'
 import { Button } from '../../ui/Button'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useToast } from '../../hooks/useToast'
+import { useCurrencySymbol, useFormatMoney } from '../../hooks/useFormatMoney'
+import { useToday } from '../../hooks/useToday'
 import { colorFromString } from '../../lib/analytics'
+import { addDays, dayKeyOfStored } from '../../lib/dates'
+import { MAX_AMOUNT, isAmountTooLarge } from '../../utils/amountGuard'
 import { DatePicker } from '../../ui/DatePicker'
 import type { Expense } from '../../types'
 
@@ -21,8 +24,12 @@ export function EditExpenseSheet({
   const deleteExpense = useExpenseStore((s) => s.deleteExpense)
   const categories = useExpenseStore((s) => s.categories)
   const toast = useToast()
+  const fmt = useFormatMoney()
+  const symbol = useCurrencySymbol()
+  const today = useToday()
   const categoryLabelId = useId()
   const dateLabelId = useId()
+  const dateHintId = useId()
   const notesId = useId()
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 768)
@@ -38,13 +45,14 @@ export function EditExpenseSheet({
     itemName: string
     amount: string
     category: string
+    /** The day; `''` while the stored date cannot be read and no day has been picked. */
     date: string
     notes: string
   }>({
     itemName: '',
     amount: '',
     category: 'Other',
-    date: format(new Date(), 'yyyy-MM-dd'),
+    date: today,
     notes: '',
   })
 
@@ -54,7 +62,9 @@ export function EditExpenseSheet({
         itemName: expense.itemName,
         amount: expense.amount.toString(),
         category: expense.category,
-        date: format(parseISO(expense.date), 'yyyy-MM-dd'),
+        // The row's own day, as every screen reads it. An unreadable date opens with no day
+        // chosen, so saving another field never silently moves the entry to today.
+        date: dayKeyOfStored(expense.date) ?? '',
         notes: expense.notes ?? '',
       })
     }
@@ -67,15 +77,25 @@ export function EditExpenseSheet({
       toast.error('Item name and a valid amount are required')
       return
     }
+    if (isAmountTooLarge(amount)) {
+      toast.error(`Amount too large — the limit is ${fmt(MAX_AMOUNT)}`)
+      return
+    }
     updateExpense(expense.id, {
       itemName: form.itemName.trim(),
       amount,
       category: form.category,
-      date: new Date(form.date + 'T12:00:00').toISOString(),
+      // No day picked for an unreadable date: keep what is stored.
+      ...(form.date ? { date: new Date(form.date + 'T12:00:00').toISOString() } : {}),
       notes: form.notes.trim() || undefined,
     })
     toast.success('Expense updated')
     onClose()
+  }
+
+  // A held Enter (key repeat) or the Enter that confirms an IME word must not save twice.
+  const saveOnEnter = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && !e.repeat && !e.nativeEvent.isComposing) save()
   }
 
   return (
@@ -92,17 +112,17 @@ export function EditExpenseSheet({
           value={form.itemName}
           onChange={(e) => setForm({ ...form, itemName: e.target.value })}
           autoFocus
-          onKeyDown={(e) => e.key === 'Enter' && save()}
+          onKeyDown={saveOnEnter}
         />
         <Input
           label="Amount"
           type="number"
           inputMode="decimal"
-          prefix="$"
+          prefix={symbol}
           mono
           value={form.amount}
           onChange={(e) => setForm({ ...form, amount: e.target.value })}
-          onKeyDown={(e) => e.key === 'Enter' && save()}
+          onKeyDown={saveOnEnter}
         />
 
         <div className="flex flex-col gap-1.5">
@@ -149,14 +169,15 @@ export function EditExpenseSheet({
 
         {/* Date selector — presets + custom picker */}
         {(() => {
-          const todayStr = format(new Date(), 'yyyy-MM-dd')
+          // Calendar days, not 24 h steps: the day after a DST change is 23 or 25 hours long.
           const editPresets = [
-            { label: 'Today', val: todayStr },
-            { label: 'Yesterday', val: format(new Date(Date.now() - 864e5), 'yyyy-MM-dd') },
-            { label: '2d ago', val: format(new Date(Date.now() - 2 * 864e5), 'yyyy-MM-dd') },
-            { label: '3d ago', val: format(new Date(Date.now() - 3 * 864e5), 'yyyy-MM-dd') },
+            { label: 'Today', val: today },
+            { label: 'Yesterday', val: addDays(today, -1) },
+            { label: '2d ago', val: addDays(today, -2) },
+            { label: '3d ago', val: addDays(today, -3) },
           ]
           const editIsPreset = editPresets.some((p) => p.val === form.date)
+          const dateUnknown = form.date === ''
           return (
             <div className="flex flex-col gap-2">
               <span
@@ -168,6 +189,7 @@ export function EditExpenseSheet({
               <div
                 role="group"
                 aria-labelledby={dateLabelId}
+                aria-describedby={dateUnknown ? dateHintId : undefined}
                 className="flex flex-wrap items-center gap-2"
               >
                 {editPresets.map((p) => (
@@ -188,13 +210,19 @@ export function EditExpenseSheet({
                   variant="pill"
                   value={editIsPreset ? '' : form.date}
                   onChange={(v) => {
-                    setForm({ ...form, date: v || format(new Date(), 'yyyy-MM-dd') })
+                    setForm({ ...form, date: v || today })
                   }}
-                  max={todayStr}
+                  max={today}
                   placeholder="Pick date"
-                  active={!editIsPreset}
+                  active={!editIsPreset && !dateUnknown}
                 />
               </div>
+              {dateUnknown && (
+                <p id={dateHintId} className="text-[12px] text-warning">
+                  This entry's date can't be read. Pick the day to fix it, or save to keep it under
+                  Unknown date.
+                </p>
+              )}
             </div>
           )
         })()}

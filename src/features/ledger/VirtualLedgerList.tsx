@@ -2,7 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useWindowVirtualizer } from '@tanstack/react-virtual'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { LedgerRow } from './LedgerRow'
-import { flattenLedgerGroups, ledgerHeaderLabel, type LedgerGroup } from './ledgerFlatten'
+import { flattenLedgerGroups, type LedgerGroup } from './ledgerFlatten'
 import type { Expense } from '../../types'
 
 /**
@@ -11,14 +11,15 @@ import type { Expense } from '../../types'
  * so the page keeps its natural one-hand scroll behaviour while only the
  * visible rows are mounted. Headers scroll inline (not sticky) in this mode —
  * an intentional trade for the rare huge-list case; the grouped sticky view is
- * used for normal-sized lists.
+ * used for normal-sized lists. Slots are keyed by header day / expense id, so a
+ * swipe-armed row can never re-bind to a different expense when the list shifts.
  */
 export function VirtualLedgerList({
   groups,
   onEdit,
   onDelete,
 }: {
-  groups: LedgerGroup[]
+  groups: readonly LedgerGroup[]
   onEdit: (e: Expense) => void
   onDelete: (id: string) => void
 }) {
@@ -35,6 +36,7 @@ export function VirtualLedgerList({
   const virtualizer = useWindowVirtualizer({
     count: flat.length,
     estimateSize: (i) => (flat[i]?.kind === 'header' ? 41 : 62),
+    getItemKey: (i) => flat[i]?.id ?? i,
     overscan: 8,
     scrollMargin,
   })
@@ -58,13 +60,13 @@ export function VirtualLedgerList({
                 top: 0,
                 left: 0,
                 width: '100%',
-                transform: `translateY(${vi.start - scrollMargin}px)`,
+                transform: `translateY(${String(vi.start - scrollMargin)}px)`,
               }}
             >
               {item.kind === 'header' ? (
                 <div className="flex items-center justify-between gap-2 border-b border-white/[0.05] bg-surface-2/85 px-4 py-2.5">
                   <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
-                    {ledgerHeaderLabel(item.date)}
+                    {item.label}
                   </span>
                   <span className="font-mono text-[11px] tabular-nums text-[var(--text-secondary)]">
                     {fmt(item.total)}
@@ -72,7 +74,12 @@ export function VirtualLedgerList({
                 </div>
               ) : (
                 <div className="border-b border-white/[0.04]">
-                  <LedgerRow expense={item.expense} onEdit={onEdit} onDelete={onDelete} />
+                  <LedgerRow
+                    expense={item.expense}
+                    dateLabel={item.dateLabel}
+                    onEdit={onEdit}
+                    onDelete={onDelete}
+                  />
                 </div>
               )}
             </div>
