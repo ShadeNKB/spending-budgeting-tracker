@@ -1,21 +1,9 @@
-import { useEffect, useMemo, useState } from 'react'
-import { useSearchParams } from 'react-router-dom'
-import { motion, AnimatePresence } from 'framer-motion'
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Search, Filter, Inbox, X, FileDown } from 'lucide-react'
 import { downloadCSV } from '../../lib/download'
 import { DatePicker } from '../../ui/DatePicker'
-import {
-  parseISO,
-  format,
-  startOfMonth,
-  endOfMonth,
-  subDays,
-  isWithinInterval,
-  startOfDay,
-  endOfDay,
-  startOfYear,
-  endOfYear,
-} from 'date-fns'
+import { format } from 'date-fns'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { Segmented } from '../../ui/Segmented'
 import { Input } from '../../ui/Input'
@@ -23,18 +11,28 @@ import { Select } from '../../ui/Select'
 import { Pill } from '../../ui/Pill'
 import { EmptyState } from '../../ui/EmptyState'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
+import { useToday } from '../../hooks/useToday'
+import { dayKeyOfStored, ledgerRange, ledgerRangeLabel, shortDateYear } from '../../lib/dates'
+import { getLedgerIndex, rowsInRange, rowsToExpenses } from '../../lib/ledgerIndex'
 import { SmartInput } from '../entry/SmartInput'
 import { LedgerRow } from './LedgerRow'
 import { VirtualLedgerList } from './VirtualLedgerList'
-import { ledgerHeaderLabel } from './ledgerFlatten'
+import { filterLedgerRows, groupLedgerRows } from './ledgerFlatten'
 import { EditExpenseSheet } from './EditExpenseSheet'
 import { useToast } from '../../hooks/useToast'
 import { isRange, isValidYmd, type Range } from './ledgerParams'
 import type { Expense } from '../../types'
 
-// Above this many rows, switch from the animated grouped+sticky view to a
+// Above this many rows, switch from the grouped sticky-header view to a
 // windowed list so the DOM stays bounded (anti-pattern: lists >~200 unwindowed).
 const VIRTUALIZE_THRESHOLD = 150
+/** Typing settles into `?q=` after this pause (and at once on blur). */
+const SEARCH_SYNC_MS = 400
+/**
+ * After a delete, further deletes are ignored this long: a reflex second tap lands on the
+ * row that just slid into place, and must never delete it.
+ */
+const DELETE_GUARD_MS = 450
 
 export function LedgerScreen() {
   const expenses = useExpenseStore((s) => s.expenses)
@@ -43,12 +41,23 @@ export function LedgerScreen() {
   const consumeUndo = useExpenseStore((s) => s.consumeUndo)
   const toast = useToast()
   const fmt = useFormatMoney()
+  const today = useToday()
+  const navigate = useNavigate()
 
   const [params, setParams] = useSearchParams()
   const [editing, setEditing] = useState<Expense | null>(null)
 
   const rawRange = params.get('range')
   const range: Range = isRange(rawRange) ? rawRange : 'month'
+  // The tapped range lights up at once; the URL (and the list) follow in the router's
+  // transition, which can take a moment on a slow phone with a long list. Any change of the URL
+  // range, from a tap or from outside (back, "Clear all filters"), clears it.
+  const [tappedRange, setTappedRange] = useState<Range | null>(null)
+  const [renderedRange, setRenderedRange] = useState(range)
+  if (renderedRange !== range) {
+    setRenderedRange(range)
+    setTappedRange(null)
+  }
   const category = params.get('category') ?? 'all'
   const rawSpecificDate = params.get('date')
   const rawCustomStart = params.get('customStart')
@@ -56,107 +65,121 @@ export function LedgerScreen() {
   const specificDate = isValidYmd(rawSpecificDate) ? rawSpecificDate : null // yyyy-MM-dd
   const customStart = isValidYmd(rawCustomStart) ? rawCustomStart : ''
   const customEnd = isValidYmd(rawCustomEnd) ? rawCustomEnd : ''
-  const [search, setSearch] = useState(params.get('q') ?? '')
+  const urlQuery = params.get('q') ?? ''
+  const [search, setSearch] = useState(urlQuery)
+  const deferredSearch = useDeferredValue(search)
+  /** The `?q=` value the search box last wrote or adopted. */
+  const syncedQuery = useRef(urlQuery)
 
-  const today = format(new Date(), 'yyyy-MM-dd')
+  // Filters live in the URL. Every write starts from the URL as it is *now* (not the params
+  // of the last render), so a debounced search write can never revert a filter tapped while
+  // it was pending, even if that tap is still rendering.
+  const patchParams = useCallback(
+    (patch: (next: URLSearchParams) => void) => {
+      const next = new URLSearchParams(window.location.search)
+      patch(next)
+      void navigate({ search: `?${next.toString()}` }, { replace: true })
+    },
+    [navigate],
+  )
 
   const setRange = (r: Range) => {
-    const n = new URLSearchParams(params)
-    n.set('range', r)
-    n.delete('date')
-    if (r !== 'custom') {
-      n.delete('customStart')
-      n.delete('customEnd')
-    }
-    setParams(n, { replace: true })
+    patchParams((n) => {
+      n.set('range', r)
+      n.delete('date')
+      if (r !== 'custom') {
+        n.delete('customStart')
+        n.delete('customEnd')
+      }
+    })
   }
   const setCustomStart = (v: string) => {
-    const n = new URLSearchParams(params)
-    n.set('customStart', v)
-    setParams(n, { replace: true })
+    patchParams((n) => {
+      n.set('customStart', v)
+    })
   }
   const setCustomEnd = (v: string) => {
-    const n = new URLSearchParams(params)
-    n.set('customEnd', v)
-    setParams(n, { replace: true })
+    patchParams((n) => {
+      n.set('customEnd', v)
+    })
   }
   const setCategory = (c: string) => {
-    const n = new URLSearchParams(params)
-    if (c === 'all') n.delete('category')
-    else n.set('category', c)
-    setParams(n, { replace: true })
+    patchParams((n) => {
+      if (c === 'all') n.delete('category')
+      else n.set('category', c)
+    })
   }
   const clearDate = () => {
-    const n = new URLSearchParams(params)
-    n.delete('date')
-    setParams(n, { replace: true })
+    patchParams((n) => {
+      n.delete('date')
+    })
   }
   const clearAll = () => {
+    syncedQuery.current = ''
     setSearch('')
     setParams(new URLSearchParams(), { replace: true })
   }
 
-  const filtered = useMemo(() => {
-    let arr = [...expenses]
-    const now = new Date()
-    if (specificDate) {
-      arr = arr.filter((e) => format(parseISO(e.date), 'yyyy-MM-dd') === specificDate)
-    } else if (range === 'custom') {
-      const start = customStart ? startOfDay(parseISO(customStart)) : new Date(0)
-      const end = customEnd ? endOfDay(parseISO(customEnd)) : endOfDay(now)
-      arr = arr.filter((e) => isWithinInterval(parseISO(e.date), { start, end }))
-    } else if (range !== 'all') {
-      let start: Date, end: Date
-      if (range === 'today') {
-        start = startOfDay(now)
-        end = endOfDay(now)
-      } else if (range === 'week') {
-        start = subDays(now, 7)
-        end = now
-      } else if (range === 'year') {
-        start = startOfYear(now)
-        end = endOfYear(now)
-      } else {
-        start = startOfMonth(now)
-        end = endOfMonth(now)
-      }
-      arr = arr.filter((e) => isWithinInterval(parseISO(e.date), { start, end }))
-    }
-    if (category !== 'all') arr = arr.filter((e) => e.category === category)
-    if (search) {
-      const q = search.toLowerCase()
-      arr = arr.filter(
-        (e) =>
-          e.itemName.toLowerCase().includes(q) ||
-          e.category.toLowerCase().includes(q) ||
-          e.notes?.toLowerCase().includes(q),
-      )
-    }
-    arr.sort((a, b) => parseISO(b.date).getTime() - parseISO(a.date).getTime())
-    return arr
-  }, [expenses, range, category, search, specificDate, customStart, customEnd])
+  const writeQuery = useCallback(
+    (value: string) => {
+      syncedQuery.current = value
+      patchParams((n) => {
+        if (value) n.set('q', value)
+        else n.delete('q')
+      })
+    },
+    [patchParams],
+  )
 
-  const groups = useMemo(() => {
-    const m = new Map<string, Expense[]>()
-    for (const e of filtered) {
-      const key = format(parseISO(e.date), 'yyyy-MM-dd')
-      const bucket = m.get(key)
-      if (bucket) bucket.push(e)
-      else m.set(key, [e])
+  // `?q=` changed from outside (command palette, back/forward): the search box follows it.
+  useEffect(() => {
+    if (urlQuery === syncedQuery.current) return
+    syncedQuery.current = urlQuery
+    setSearch(urlQuery)
+  }, [urlQuery])
+
+  // Typing settles into the URL after a pause.
+  useEffect(() => {
+    if (search === syncedQuery.current) return
+    const t = setTimeout(() => {
+      writeQuery(search)
+    }, SEARCH_SYNC_MS)
+    return () => {
+      clearTimeout(t)
     }
-    return Array.from(m.entries()).map(([date, items]) => ({
-      date,
-      items,
-      total: items.reduce((s, e) => s + e.amount, 0),
-    }))
-  }, [filtered])
+  }, [search, writeQuery])
 
-  const totalSum = useMemo(() => filtered.reduce((s, e) => s + e.amount, 0), [filtered])
+  const index = getLedgerIndex(expenses)
+  const rows = useMemo(
+    () =>
+      filterLedgerRows(
+        index,
+        rowsInRange(
+          index,
+          ledgerRange(range, today, { date: specificDate, customStart, customEnd }),
+        ),
+        { category, search: deferredSearch },
+      ),
+    [index, range, today, specificDate, customStart, customEnd, category, deferredSearch],
+  )
 
-  const handleDelete = (id: string) => {
-    const expense = expenses.find((e) => e.id === id)
-    deleteExpense(id)
-    if (expense) {
+  const filtered = useMemo(() => rowsToExpenses(index, rows), [index, rows])
+  const groups = useMemo(() => groupLedgerRows(index, rows, today), [index, rows, today])
+  const totalSum = useMemo(() => {
+    let cents = 0
+    for (const r of rows) cents += index.cents[r] ?? 0
+    return cents / 100
+  }, [index, rows])
+
+  const lastDeleteAt = useRef(Number.NEGATIVE_INFINITY)
+  const handleDelete = useCallback(
+    (id: string) => {
+      const now = performance.now()
+      if (now - lastDeleteAt.current < DELETE_GUARD_MS) return
+      const expense = useExpenseStore.getState().expenses.find((e) => e.id === id)
+      if (!expense) return
+      lastDeleteAt.current = now
+      deleteExpense(id)
       toast.info(`Deleted "${expense.itemName}"`, {
         action: {
           label: 'Undo',
@@ -168,8 +191,9 @@ export function LedgerScreen() {
           },
         },
       })
-    }
-  }
+    },
+    [deleteExpense, consumeUndo, toast],
+  )
 
   const escapeCsvField = (value: string | number | undefined) =>
     `"${String(value ?? '').replace(/"/g, '""')}"`
@@ -178,7 +202,7 @@ export function LedgerScreen() {
     if (filtered.length === 0) return
     const headers = ['Date', 'Item', 'Category', 'Amount', 'Notes']
     const rows = filtered.map((e) =>
-      [format(new Date(e.date), 'yyyy-MM-dd'), e.itemName, e.category, e.amount, e.notes]
+      [dayKeyOfStored(e.date) ?? e.date, e.itemName, e.category, e.amount, e.notes]
         .map(escapeCsvField)
         .join(','),
     )
@@ -187,21 +211,6 @@ export function LedgerScreen() {
     toast.success(`Exported ${filtered.length} ${filtered.length === 1 ? 'entry' : 'entries'}`)
   }
 
-  // Sync search param. Intentionally only depends on `search` — adding `params`
-  // / `setParams` to the deps would re-arm the debounce on every URL change
-  // and we'd never settle. The latest `params` is captured fresh inside the
-  // setTimeout closure when it fires.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      const n = new URLSearchParams(params)
-      if (search) n.set('q', search)
-      else n.delete('q')
-      setParams(n, { replace: true })
-    }, 200)
-    return () => clearTimeout(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [search])
-
   const hasFilters =
     range !== 'month' ||
     category !== 'all' ||
@@ -209,40 +218,12 @@ export function LedgerScreen() {
     !!specificDate ||
     !!(customStart || customEnd)
 
-  // Compute a human-readable date range label for the active filter
-  const dateRangeLabel = useMemo(() => {
-    const now = new Date()
-    if (specificDate) return format(parseISO(specificDate), 'MMM d, yyyy')
-    switch (range) {
-      case 'today':
-        return format(now, 'MMMM d, yyyy')
-      case 'week': {
-        const weekStart = subDays(now, 6)
-        return `${format(weekStart, 'MMM d')} - ${format(now, 'MMM d, yyyy')}`
-      }
-      case 'month': {
-        const ms = startOfMonth(now)
-        const me = endOfMonth(now)
-        if (now.getDate() === me.getDate()) return format(ms, 'MMMM yyyy')
-        return `${format(ms, 'MMM d')} - ${format(now, 'MMM d, yyyy')}`
-      }
-      case 'year': {
-        const ys = startOfYear(now)
-        const ye = endOfYear(now)
-        return `${format(ys, 'MMM d')} - ${format(ye, 'MMM d, yyyy')}`
-      }
-      case 'custom': {
-        if (customStart && customEnd)
-          return `${format(parseISO(customStart), 'MMM d, yyyy')} - ${format(parseISO(customEnd), 'MMM d, yyyy')}`
-        if (customStart) return `From ${format(parseISO(customStart), 'MMM d, yyyy')}`
-        if (customEnd) return `Until ${format(parseISO(customEnd), 'MMM d, yyyy')}`
-        return 'Custom range'
-      }
-      case 'all':
-      default:
-        return 'All time'
-    }
-  }, [range, specificDate, customStart, customEnd])
+  // The label comes from the same definition as the filter, so they cannot disagree.
+  const dateRangeLabel = ledgerRangeLabel(range, today, {
+    date: specificDate,
+    customStart,
+    customEnd,
+  })
 
   return (
     <div className="flex flex-col gap-4">
@@ -280,8 +261,11 @@ export function LedgerScreen() {
           <div className="flex items-center gap-2">
             <div className="no-scrollbar flex-1 overflow-x-auto">
               <Segmented<Range>
-                value={range}
-                onChange={(v) => setRange(v)}
+                value={tappedRange ?? range}
+                onChange={(v) => {
+                  setTappedRange(v)
+                  setRange(v)
+                }}
                 size="sm"
                 options={[
                   { value: 'today', label: 'Today' },
@@ -296,8 +280,8 @@ export function LedgerScreen() {
           </div>
           {/* Date range label */}
           {range !== 'custom' && (
-            <div className="flex items-center gap-1 pl-0.5 text-[11px] text-[var(--text-tertiary)]">
-              <span>{dateRangeLabel}</span>
+            <div className="flex items-center gap-1 truncate pl-0.5 text-[11px] text-[var(--text-tertiary)]">
+              <span className="truncate">{dateRangeLabel}</span>
             </div>
           )}
 
@@ -337,13 +321,21 @@ export function LedgerScreen() {
               <Input
                 prefix={<Search size={13} />}
                 placeholder="Search..."
+                aria-label="Search expenses"
                 value={search}
-                onChange={(e) => setSearch(e.target.value)}
+                onChange={(e) => {
+                  setSearch(e.target.value)
+                }}
+                onBlur={() => {
+                  if (search !== syncedQuery.current) writeQuery(search)
+                }}
                 suffix={
                   search ? (
                     <button
                       type="button"
-                      onClick={() => setSearch('')}
+                      onClick={() => {
+                        setSearch('')
+                      }}
                       className="text-[var(--text-tertiary)] hover:text-white"
                       aria-label="Clear search"
                     >
@@ -357,7 +349,9 @@ export function LedgerScreen() {
               <Select
                 label="Filter by category"
                 value={category}
-                onChange={(e) => setCategory(e.target.value)}
+                onChange={(e) => {
+                  setCategory(e.target.value)
+                }}
                 className="max-w-[42vw] sm:w-[160px]"
                 aria-label="Filter by category"
               >
@@ -376,7 +370,7 @@ export function LedgerScreen() {
           <div className="flex flex-wrap items-center gap-2">
             {specificDate && (
               <Pill tone="accent" onClick={clearDate}>
-                <Filter size={10} /> {format(parseISO(specificDate), 'MMM d, yyyy')}
+                <Filter size={10} /> {shortDateYear(specificDate)}
                 <X size={10} />
               </Pill>
             )}
@@ -409,36 +403,30 @@ export function LedgerScreen() {
         <VirtualLedgerList groups={groups} onEdit={setEditing} onDelete={handleDelete} />
       ) : (
         <div className="elevated overflow-hidden rounded-2xl border border-white/[0.06] bg-surface-1">
-          <AnimatePresence initial={false}>
-            {groups.map((g) => {
-              const label = ledgerHeaderLabel(g.date)
-              return (
-                <motion.section
-                  key={g.date}
-                  layout
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  exit={{ opacity: 0 }}
-                >
-                  <header className="sticky top-0 z-[1] flex items-center justify-between gap-2 border-b border-white/[0.05] bg-surface-2/85 px-4 py-2.5 backdrop-blur">
-                    <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
-                      {label}
-                    </span>
-                    <span className="font-mono text-[11px] tabular-nums text-[var(--text-secondary)]">
-                      {fmt(g.total)}
-                    </span>
-                  </header>
-                  <ul className="divide-y divide-white/[0.04]">
-                    {g.items.map((e) => (
-                      <motion.li key={e.id} layout>
-                        <LedgerRow expense={e} onEdit={setEditing} onDelete={handleDelete} />
-                      </motion.li>
-                    ))}
-                  </ul>
-                </motion.section>
-              )
-            })}
-          </AnimatePresence>
+          {groups.map((g) => (
+            <section key={g.key ?? 'unknown'}>
+              <header className="sticky top-0 z-[1] flex items-center justify-between gap-2 border-b border-white/[0.05] bg-surface-2/85 px-4 py-2.5 backdrop-blur">
+                <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+                  {g.label}
+                </span>
+                <span className="font-mono text-[11px] tabular-nums text-[var(--text-secondary)]">
+                  {fmt(g.total)}
+                </span>
+              </header>
+              <ul className="divide-y divide-white/[0.04]">
+                {g.items.map((e) => (
+                  <li key={e.id}>
+                    <LedgerRow
+                      expense={e}
+                      dateLabel={g.rowDateLabel}
+                      onEdit={setEditing}
+                      onDelete={handleDelete}
+                    />
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))}
         </div>
       )}
 

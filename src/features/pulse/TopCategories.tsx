@@ -1,15 +1,11 @@
 import { useNavigate } from 'react-router-dom'
 import { ArrowRight } from 'lucide-react'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
-import { colorFromString } from '../../lib/analytics'
+import { colorFromString, type CategoryStat } from '../../lib/analytics'
 import { EmptyState } from '../../ui/EmptyState'
 import { PieChart } from 'lucide-react'
 
-export function TopCategories({
-  items,
-}: {
-  items: { category: string; total: number; share: number }[]
-}) {
+export function TopCategories({ items }: { items: readonly CategoryStat[] }) {
   const navigate = useNavigate()
   const fmt = useFormatMoney()
 

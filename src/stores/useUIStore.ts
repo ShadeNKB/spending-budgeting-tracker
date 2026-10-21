@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { isSupportedCurrency, resolveDefaultCurrency, type SupportedCurrency } from '../lib/format'
 
 export interface Toast {
   id: string
@@ -13,6 +14,15 @@ const THEME_KEY = 'spendtrack:theme'
 
 export type Theme = 'dark' | 'light' | 'system'
 
+// Preferences are best-effort: if storage is unavailable they last for this session only.
+function persistPreference(key: string, value: string): void {
+  try {
+    localStorage.setItem(key, value)
+  } catch {
+    // Session-only preference.
+  }
+}
+
 function readTheme(): Theme {
   try {
     const stored = localStorage.getItem(THEME_KEY)
@@ -22,31 +32,36 @@ function readTheme(): Theme {
   }
 }
 
-export const SUPPORTED_CURRENCIES = [
-  { code: 'USD', label: 'USD — $' },
-  { code: 'SGD', label: 'SGD — S$' },
-  { code: 'EUR', label: 'EUR — €' },
-  { code: 'GBP', label: 'GBP — £' },
-  { code: 'JPY', label: 'JPY — ¥' },
-  { code: 'MYR', label: 'MYR — RM' },
-  { code: 'AUD', label: 'AUD — A$' },
-  { code: 'CAD', label: 'CAD — C$' },
-] as const
-
-export type SupportedCurrency = (typeof SUPPORTED_CURRENCIES)[number]['code']
-
-export const isSupportedCurrency = (v: unknown): v is SupportedCurrency =>
-  SUPPORTED_CURRENCIES.some((c) => c.code === v)
-
-// A stored code outside the supported set would make Intl.NumberFormat throw on every
-// money render, so anything unexpected falls back to USD.
-function readCurrency(): SupportedCurrency {
+function detectDefaultCurrency(): SupportedCurrency {
+  let timeZone: string | undefined
+  let languages: readonly string[] | undefined
   try {
-    const stored = localStorage.getItem(CURRENCY_KEY)
-    return isSupportedCurrency(stored) ? stored : 'USD'
+    timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone
   } catch {
-    return 'USD'
+    // No Intl time zone data: rely on the languages.
   }
+  try {
+    languages = navigator.languages.length > 0 ? navigator.languages : [navigator.language]
+  } catch {
+    // No navigator (or it is blocked): rely on the time zone.
+  }
+  return resolveDefaultCurrency({ timeZone, languages })
+}
+
+// A stored valid choice always wins. Otherwise (first run, or a stored code outside the
+// supported set) the device's currency is resolved once and persisted, so the symbol never
+// changes on its own when travelling.
+function readCurrency(): SupportedCurrency {
+  let stored: string | null = null
+  try {
+    stored = localStorage.getItem(CURRENCY_KEY)
+  } catch {
+    // Storage unavailable: resolve for this session.
+  }
+  if (isSupportedCurrency(stored)) return stored
+  const resolved = detectDefaultCurrency()
+  persistPreference(CURRENCY_KEY, resolved)
+  return resolved
 }
 
 interface UIState {
@@ -98,19 +113,11 @@ export const useUIStore = create<UIState>((set) => ({
   setHotkeysOpen: (v) => set({ hotkeysOpen: v }),
   setSmartInputFocused: (v) => set({ smartInputFocused: v }),
   setCurrency: (v) => {
-    try {
-      localStorage.setItem(CURRENCY_KEY, v)
-    } catch {
-      // Preference is best-effort: if storage is unavailable, keep it for this session only.
-    }
+    persistPreference(CURRENCY_KEY, v)
     set({ currency: v })
   },
   setTheme: (v) => {
-    try {
-      localStorage.setItem(THEME_KEY, v)
-    } catch {
-      // Preference is best-effort: if storage is unavailable, keep it for this session only.
-    }
+    persistPreference(THEME_KEY, v)
     set({ theme: v })
   },
 }))
