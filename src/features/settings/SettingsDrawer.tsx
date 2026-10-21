@@ -35,6 +35,7 @@ import { SyncPanel } from './SyncPanel'
 import { useToast } from '../../hooks/useToast'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { downloadJSON, downloadCSV } from '../../lib/download'
+import { expensesToCsv } from '../../lib/csv'
 import { colorFromString } from '../../lib/analytics'
 import { BackupTooLargeError, parseBackup } from '../../lib/backup'
 import type { BackupData } from '../../types'
@@ -312,7 +313,9 @@ function BudgetsPanel() {
                   defaultValue={current ?? ''}
                   aria-label={`Monthly budget for ${c}`}
                   placeholder="—"
-                  className="h-8 w-24 rounded-md border border-white/[0.06] bg-surface-2 px-2 text-right font-mono text-[13px] tabular-nums text-white outline-none [color-scheme:dark] focus:border-accent/60"
+                  // Wider on touch screens, where the text is floored at 16 px (index.css,
+                  // against iOS focus zoom): 9 characters (123456.78) still fit.
+                  className="h-8 w-24 rounded-md border border-white/[0.06] bg-surface-2 px-2 text-right font-mono text-[13px] tabular-nums text-white outline-none [color-scheme:dark] focus:border-accent/60 [@media(pointer:coarse)]:w-28"
                   onBlur={(e) => {
                     const v = parseFloat(e.target.value)
                     if (Number.isFinite(v) && v > 0) {
@@ -353,20 +356,8 @@ function BackupPanel() {
     toast.success('Backup downloaded')
   }
 
-  const escapeCsvField = (value: string | number | undefined) => {
-    const raw = String(value ?? '')
-    return `"${raw.replace(/"/g, '""')}"`
-  }
-
   const exportCsv = () => {
-    const headers = ['Date', 'Item', 'Category', 'Amount', 'Notes']
-    const rows = expenses.map((e) =>
-      [format(new Date(e.date), 'yyyy-MM-dd'), e.itemName, e.category, e.amount, e.notes]
-        .map(escapeCsvField)
-        .join(','),
-    )
-    const csv = [headers.join(','), ...rows].join('\n')
-    downloadCSV(`spendtrack-${format(new Date(), 'yyyy-MM-dd')}.csv`, csv)
+    downloadCSV(`spendtrack-${format(new Date(), 'yyyy-MM-dd')}.csv`, expensesToCsv(expenses))
     toast.success('CSV exported')
   }
 

@@ -1,3 +1,5 @@
+import clsx from 'clsx'
+
 /**
  * SpendTrack brand mark.
  *
@@ -7,16 +9,16 @@
  *
  * Renders the same SVG as `public/favicon.svg` so brand is consistent
  * across favicon, PWA icon, in-app header, OS install prompts.
+ *
+ * `animated` adds the `logo-glow` class (src/index.css): a static glow on a
+ * pseudo-element whose opacity breathes once on load and lifts on hover or
+ * focus. Only opacity changes, so the sticky blurred header never repaints.
  */
 export function SpendLogo({ size = 28, animated = false }: { size?: number; animated?: boolean }) {
   return (
     <div
-      className="shrink-0 rounded-[8px]"
-      style={{
-        width: size,
-        height: size,
-        animation: animated ? 'logo-glow 3.2s ease-in-out infinite' : undefined,
-      }}
+      className={clsx('shrink-0 rounded-[8px]', animated && 'logo-glow')}
+      style={{ width: size, height: size }}
     >
       <svg
         width={size}

@@ -129,20 +129,29 @@ export function EditExpenseSheet({
               </button>
             ))}
             {categories.length > 8 && (
-              <select
-                value={categories.slice(8).includes(form.category) ? form.category : ''}
-                onChange={(e) => {
-                  if (e.target.value) setForm({ ...form, category: e.target.value })
-                }}
-                className="h-[30px] appearance-none rounded-full border border-white/[0.08] bg-surface-2 pl-2.5 pr-6 text-[12px] text-[var(--text-secondary)] outline-none"
-              >
-                <option value="">More…</option>
-                {categories.slice(8).map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
+              // A chip like its neighbours (as in AddExpenseSheet): the 12 px label is drawn
+              // here, and the native select sits invisibly on top to take the tap. Touch screens
+              // floor the select's own text at 16 px (index.css, against iOS focus zoom).
+              <div className="relative inline-flex h-[30px] max-w-full items-center rounded-full border border-white/[0.08] bg-surface-2 pl-2.5 pr-6 text-[12px] text-[var(--text-secondary)] focus-within:border-accent/60 focus-within:shadow-[0_0_0_3px_rgba(34,211,238,0.18)]">
+                <span aria-hidden className="min-w-0 truncate">
+                  {categories.slice(8).includes(form.category) ? form.category : 'More…'}
+                </span>
+                <select
+                  aria-label="More categories"
+                  value={categories.slice(8).includes(form.category) ? form.category : ''}
+                  onChange={(e) => {
+                    if (e.target.value) setForm({ ...form, category: e.target.value })
+                  }}
+                  className="absolute inset-0 h-full w-full cursor-pointer appearance-none rounded-full opacity-0"
+                >
+                  <option value="">More…</option>
+                  {categories.slice(8).map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
             )}
           </div>
         </div>

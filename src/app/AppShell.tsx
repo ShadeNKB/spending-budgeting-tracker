@@ -1,29 +1,46 @@
-import { Suspense, lazy, useEffect, useRef } from 'react'
+import { lazy, useEffect } from 'react'
 import { Outlet } from 'react-router-dom'
 import { WifiOff, FlaskConical } from 'lucide-react'
 import { TopBar } from './TopBar'
 import { TabBar } from './TabBar'
+import { OverlaySlot } from './OverlaySlot'
+import { dropToasts } from './dropToasts'
+import { useAppliedTheme } from './useAppliedTheme'
+import { useLaunchActions } from './useLaunchActions'
+import { SAFE_GUTTER_X } from './safeArea'
 import { useExpenseStore, installPersistence, IS_DEMO } from '../stores/useExpenseStore'
 import { useSyncStore } from '../stores/useSyncStore'
 import { syncApplying } from '../services/syncService'
 import { useUIStore } from '../stores/useUIStore'
 import { useHotkeys } from '../hooks/useHotkeys'
 import { useToast } from '../hooks/useToast'
+import { useIdle } from '../hooks/useIdle'
+import { importWithReload } from '../lib/chunkReload'
 
-// Lazy-load heavy components that are hidden on first paint — keeps framer-motion
-// out of the critical bundle path and shaves the initial JS parse budget.
+// Overlays hidden on first paint. lazy() alone does not keep them (or framer-motion, which
+// they all use) off the critical path: a lazy component that is rendered at boot is fetched
+// at boot. So each overlay mounts through an OverlaySlot, on its first open or once the app
+// goes idle after load, whichever comes first. A stale chunk reloads once.
 const SettingsDrawer = lazy(() =>
-  import('../features/settings/SettingsDrawer').then((m) => ({ default: m.SettingsDrawer })),
+  importWithReload(() => import('../features/settings/SettingsDrawer')).then((m) => ({
+    default: m.SettingsDrawer,
+  })),
 )
 const CommandPalette = lazy(() =>
-  import('../features/entry/CommandPalette').then((m) => ({ default: m.CommandPalette })),
+  importWithReload(() => import('../features/entry/CommandPalette')).then((m) => ({
+    default: m.CommandPalette,
+  })),
 )
 const AddExpenseSheet = lazy(() =>
-  import('../features/entry/AddExpenseSheet').then((m) => ({ default: m.AddExpenseSheet })),
+  importWithReload(() => import('../features/entry/AddExpenseSheet')).then((m) => ({
+    default: m.AddExpenseSheet,
+  })),
 )
-const ToastHost = lazy(() => import('../ui/ToastHost').then((m) => ({ default: m.ToastHost })))
+const ToastHost = lazy(() =>
+  importWithReload(() => import('../ui/ToastHost')).then((m) => ({ default: m.ToastHost })),
+)
 const HotkeyHints = lazy(() =>
-  import('../ui/HotkeyHints').then((m) => ({ default: m.HotkeyHints })),
+  importWithReload(() => import('../ui/HotkeyHints')).then((m) => ({ default: m.HotkeyHints })),
 )
 
 // Bootstrap runs once per page load — wired in a top-level useEffect rather than
@@ -67,6 +84,9 @@ export function AppShell() {
   const hydrated = useExpenseStore((s) => s.hydrated)
   const isOffline = useExpenseStore((s) => s.isOffline)
   const theme = useUIStore((s) => s.theme)
+  const paletteOpen = useUIStore((s) => s.paletteOpen)
+  const settingsOpen = useUIStore((s) => s.settingsOpen)
+  const hasToasts = useUIStore((s) => s.toasts.length > 0)
   const setPaletteOpen = useUIStore((s) => s.setPaletteOpen)
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen)
   const setHotkeysOpen = useUIStore((s) => s.setHotkeysOpen)
@@ -76,25 +96,13 @@ export function AppShell() {
   const undoStack = useExpenseStore((s) => s.undoStack)
   const consumeUndo = useExpenseStore((s) => s.consumeUndo)
   const toast = useToast()
-  const toastRef = useRef(toast)
-  toastRef.current = toast
+
+  const idle = useIdle()
 
   useEffect(bootstrap, [])
 
-  useEffect(() => {
-    const root = document.documentElement
-    if (theme === 'system') {
-      const mq = window.matchMedia('(prefers-color-scheme: dark)')
-      const apply = () => {
-        root.dataset.theme = mq.matches ? 'dark' : 'light'
-      }
-      apply()
-      mq.addEventListener('change', apply)
-      return () => mq.removeEventListener('change', apply)
-    }
-    root.dataset.theme = theme
-    return undefined
-  }, [theme])
+  useAppliedTheme(theme)
+  useLaunchActions()
 
   // Surface storage quota errors to the user — without this the app would
   // silently fail to persist, which is the worst possible UX for a finance
@@ -108,24 +116,6 @@ export function AppShell() {
     window.addEventListener('spendtrack:quota-exceeded', onQuota)
     return () => window.removeEventListener('spendtrack:quota-exceeded', onQuota)
   }, [toast])
-
-  // Show a reload prompt when the service worker updates (new version deployed).
-  // Uses a ref so the effect doesn't re-register on every toast reference change.
-  useEffect(() => {
-    if (!('serviceWorker' in navigator)) return
-    let prevController = navigator.serviceWorker.controller
-    const onController = () => {
-      if (prevController) {
-        toastRef.current.info('App updated — reload for the latest version.', {
-          duration: 0,
-          action: { label: 'Reload', onClick: () => window.location.reload() },
-        })
-      }
-      prevController = navigator.serviceWorker.controller
-    }
-    navigator.serviceWorker.addEventListener('controllerchange', onController)
-    return () => navigator.serviceWorker.removeEventListener('controllerchange', onController)
-  }, [])
 
   useHotkeys({
     'mod+k': () => setPaletteOpen(true),
@@ -152,6 +142,10 @@ export function AppShell() {
       />
 
       <div className="relative z-10 flex min-h-dvh flex-col">
+        {/* The sticky header comes first so it owns the status-bar area; the banners below
+            it scroll away under it. */}
+        <TopBar />
+
         {IS_DEMO && (
           <div className="flex items-center justify-center gap-2 border-b border-accent/20 bg-accent/10 px-4 py-1.5 text-[12px] text-accent">
             <FlaskConical size={12} />
@@ -163,16 +157,17 @@ export function AppShell() {
           </div>
         )}
         {isOffline && (
-          <div className="offline-banner-in relative z-50">
+          <div className="offline-banner-in">
             <div className="flex items-center justify-center gap-2 border-b border-warning/20 bg-warning/10 px-4 py-1.5 text-[12px] text-warning">
               <WifiOff size={12} />
               You're offline — changes will sync when connection is restored
             </div>
           </div>
         )}
-        <TopBar />
 
-        <main className="mx-auto w-full max-w-[1200px] flex-1 px-4 py-5 pb-[calc(env(safe-area-inset-bottom,0px)+96px)] md:px-8 md:py-8 md:pb-10">
+        <main
+          className={`mx-auto w-full max-w-[1200px] flex-1 py-5 pb-[calc(env(safe-area-inset-bottom,0px)+96px)] md:py-8 md:pb-10 ${SAFE_GUTTER_X}`}
+        >
           <h1 className="sr-only">SpendTrack — spending tracker</h1>
           {!hydrated ? (
             <div
@@ -201,31 +196,35 @@ export function AppShell() {
         <TabBar />
       </div>
 
-      <Suspense fallback={null}>
+      <OverlaySlot open={paletteOpen} idle={idle} setOpen={setPaletteOpen}>
         <CommandPalette />
-      </Suspense>
+      </OverlaySlot>
 
-      <Suspense
-        fallback={
+      <OverlaySlot
+        open={settingsOpen}
+        idle={idle}
+        setOpen={setSettingsOpen}
+        mountClosed
+        loading={
           <div role="status" className="sr-only">
             Loading settings
           </div>
         }
       >
         <SettingsDrawer />
-      </Suspense>
+      </OverlaySlot>
 
-      <Suspense fallback={null}>
+      <OverlaySlot open={addSheetOpen} idle={idle} setOpen={setAddSheetOpen}>
         <AddExpenseSheet open={addSheetOpen} onClose={() => setAddSheetOpen(false)} />
-      </Suspense>
+      </OverlaySlot>
 
-      <Suspense fallback={null}>
+      <OverlaySlot open={hasToasts} idle={idle} onFail={dropToasts}>
         <ToastHost />
-      </Suspense>
+      </OverlaySlot>
 
-      <Suspense fallback={null}>
+      <OverlaySlot open={hotkeysOpen} idle={idle} setOpen={setHotkeysOpen}>
         <HotkeyHints open={hotkeysOpen} onClose={() => setHotkeysOpen(false)} />
-      </Suspense>
+      </OverlaySlot>
     </div>
   )
 }

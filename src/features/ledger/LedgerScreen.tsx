@@ -3,6 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Search, Filter, Inbox, X, FileDown } from 'lucide-react'
 import { downloadCSV } from '../../lib/download'
+import { expensesToCsv } from '../../lib/csv'
 import { DatePicker } from '../../ui/DatePicker'
 import {
   parseISO,
@@ -171,19 +172,9 @@ export function LedgerScreen() {
     }
   }
 
-  const escapeCsvField = (value: string | number | undefined) =>
-    `"${String(value ?? '').replace(/"/g, '""')}"`
-
   const handleExportCsv = () => {
     if (filtered.length === 0) return
-    const headers = ['Date', 'Item', 'Category', 'Amount', 'Notes']
-    const rows = filtered.map((e) =>
-      [format(new Date(e.date), 'yyyy-MM-dd'), e.itemName, e.category, e.amount, e.notes]
-        .map(escapeCsvField)
-        .join(','),
-    )
-    const csv = [headers.join(','), ...rows].join('\n')
-    downloadCSV(`spendtrack-${format(new Date(), 'yyyy-MM-dd')}.csv`, csv)
+    downloadCSV(`spendtrack-${format(new Date(), 'yyyy-MM-dd')}.csv`, expensesToCsv(filtered))
     toast.success(`Exported ${filtered.length} ${filtered.length === 1 ? 'entry' : 'entries'}`)
   }
 

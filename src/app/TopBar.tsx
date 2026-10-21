@@ -5,6 +5,8 @@ import { SmartInput } from '../features/entry/SmartInput'
 import { SyncPill } from './SyncPill'
 import { useUIStore } from '../stores/useUIStore'
 import { SpendLogo } from '../ui/SpendLogo'
+import { UpdateBanner } from './UpdateBanner'
+import { SAFE_GUTTER_X } from './safeArea'
 
 const links = [
   { to: '/pulse', label: 'Pulse' },
@@ -17,9 +19,15 @@ export function TopBar() {
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen)
 
   return (
-    <header className="sticky top-0 z-40 border-b border-white/[0.06] bg-surface-0/80 backdrop-blur-xl">
-      <div className="mx-auto flex max-w-[1200px] items-center gap-3 px-4 py-3 md:px-8">
-        <NavLink to="/pulse" className="flex shrink-0 items-center gap-2">
+    // The installed iOS app draws under the status bar (viewport-fit=cover + black-translucent),
+    // so the sticky header owns the top inset; the side insets clear the notch in landscape.
+    <header className="sticky top-0 z-40 border-b border-white/[0.06] bg-surface-0/80 pt-[env(safe-area-inset-top,0px)] backdrop-blur-xl">
+      {/* Phones: 44 px touch targets in a 10 px padded row (the bar stays 64 px tall).
+          md and up: the compact 40 px controls in a 12 px padded row. */}
+      <div
+        className={`mx-auto flex max-w-[1200px] items-center gap-3 py-2.5 md:py-3 ${SAFE_GUTTER_X}`}
+      >
+        <NavLink to="/pulse" className="flex min-h-11 shrink-0 items-center gap-2 md:min-h-0">
           <SpendLogo size={28} animated />
           <span className="text-[15px] font-semibold tracking-tight text-white">SpendTrack</span>
         </NavLink>
@@ -54,7 +62,7 @@ export function TopBar() {
         <button
           type="button"
           onClick={() => setPaletteOpen(true)}
-          className="inline-flex h-10 items-center gap-2 rounded-full border border-white/[0.06] bg-surface-1 px-3 text-[12px] text-[var(--text-secondary)] transition hover:bg-surface-2 hover:text-white"
+          className="inline-flex h-11 min-w-11 items-center justify-center gap-2 rounded-full border border-white/[0.06] bg-surface-1 px-3 text-[12px] text-[var(--text-secondary)] transition hover:bg-surface-2 hover:text-white md:h-10"
           aria-label="Open command palette"
         >
           <Command size={13} />
@@ -67,12 +75,13 @@ export function TopBar() {
         <button
           type="button"
           onClick={() => setSettingsOpen(true)}
-          className="inline-flex h-10 w-10 items-center justify-center rounded-full text-[var(--text-secondary)] transition hover:bg-surface-2 hover:text-white"
+          className="inline-flex h-11 w-11 items-center justify-center rounded-full text-[var(--text-secondary)] transition hover:bg-surface-2 hover:text-white md:h-10 md:w-10"
           aria-label="Settings"
         >
           <Settings2 size={16} />
         </button>
       </div>
+      <UpdateBanner />
     </header>
   )
 }
