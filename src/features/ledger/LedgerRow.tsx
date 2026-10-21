@@ -1,17 +1,24 @@
 import { motion, useMotionValue, useTransform, animate, PanInfo } from 'framer-motion'
-import { useRef, useState } from 'react'
+import { memo, useRef, useState } from 'react'
 import { Pencil, Trash2 } from 'lucide-react'
-import { format, parseISO } from 'date-fns'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { colorFromString } from '../../lib/analytics'
 import type { Expense } from '../../types'
 
-export function LedgerRow({
+/**
+ * One ledger row: tap to edit, swipe left (or the trash button) to delete. Memoised — with
+ * stable `onEdit` / `onDelete` from the screen, typing in the search box or deleting another
+ * row does not re-render it.
+ */
+export const LedgerRow = memo(function LedgerRow({
   expense,
+  dateLabel,
   onEdit,
   onDelete,
 }: {
   expense: Expense
+  /** Pre-formatted day ("Oct 5", or "Oct 5, 2025" in another year). */
+  dateLabel: string
   onEdit: (e: Expense) => void
   onDelete: (id: string) => void
 }) {
@@ -105,9 +112,16 @@ export function LedgerRow({
 
         <div className="min-w-0 flex-1">
           <div className="truncate text-[14px] text-white">{expense.itemName}</div>
-          <div className="truncate text-[11px] text-[var(--text-tertiary)]">
-            {expense.category} · {format(parseISO(expense.date), 'MMM d')}
-            {expense.notes && <span className="ml-1 opacity-60">· {expense.notes}</span>}
+          {/* On a narrow row the notes give way first (they only take the space left over),
+              then the category; the date never does, so "Aug 19, 2025" is never cut to "Aug 1…". */}
+          <div className="flex min-w-0 text-[11px] text-[var(--text-tertiary)]">
+            <span className="truncate">{expense.category}</span>
+            <span className="shrink-0 whitespace-nowrap">&nbsp;· {dateLabel}</span>
+            {expense.notes && (
+              <span className="min-w-0 flex-1 truncate text-[var(--text-muted)]">
+                &nbsp;· {expense.notes}
+              </span>
+            )}
           </div>
         </div>
 
@@ -155,4 +169,4 @@ export function LedgerRow({
       </motion.div>
     </motion.div>
   )
-}
+})

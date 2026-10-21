@@ -1,4 +1,4 @@
-import { lazy, useEffect } from 'react'
+import { lazy, useCallback, useEffect } from 'react'
 import { Outlet } from 'react-router-dom'
 import { WifiOff, FlaskConical } from 'lucide-react'
 import { TopBar } from './TopBar'
@@ -93,11 +93,13 @@ export function AppShell() {
   const hotkeysOpen = useUIStore((s) => s.hotkeysOpen)
   const addSheetOpen = useUIStore((s) => s.addSheetOpen)
   const setAddSheetOpen = useUIStore((s) => s.setAddSheetOpen)
-  const undoStack = useExpenseStore((s) => s.undoStack)
-  const consumeUndo = useExpenseStore((s) => s.consumeUndo)
   const toast = useToast()
 
   const idle = useIdle()
+  // Stable close handlers: Sheet re-runs its focus effect when onClose changes identity, which
+  // pulled focus out of a field whenever the shell re-rendered with a sheet open.
+  const closeAddSheet = useCallback(() => setAddSheetOpen(false), [setAddSheetOpen])
+  const closeHotkeys = useCallback(() => setHotkeysOpen(false), [setHotkeysOpen])
 
   useEffect(bootstrap, [])
 
@@ -122,8 +124,10 @@ export function AppShell() {
     'mod+n': () => setAddSheetOpen(true),
     'mod+,': () => setSettingsOpen(true),
     '?': () => setHotkeysOpen(true),
+    // Read the undo stack on demand: subscribing to it re-rendered the whole shell on every add.
     'mod+z': () => {
-      const last = undoStack[undoStack.length - 1]
+      const { undoStack, consumeUndo } = useExpenseStore.getState()
+      const last = undoStack.at(-1)
       if (last) consumeUndo(last.id)
     },
     escape: () => {
@@ -215,7 +219,7 @@ export function AppShell() {
       </OverlaySlot>
 
       <OverlaySlot open={addSheetOpen} idle={idle} setOpen={setAddSheetOpen}>
-        <AddExpenseSheet open={addSheetOpen} onClose={() => setAddSheetOpen(false)} />
+        <AddExpenseSheet open={addSheetOpen} onClose={closeAddSheet} />
       </OverlaySlot>
 
       <OverlaySlot open={hasToasts} idle={idle} onFail={dropToasts}>
@@ -223,7 +227,7 @@ export function AppShell() {
       </OverlaySlot>
 
       <OverlaySlot open={hotkeysOpen} idle={idle} setOpen={setHotkeysOpen}>
-        <HotkeyHints open={hotkeysOpen} onClose={() => setHotkeysOpen(false)} />
+        <HotkeyHints open={hotkeysOpen} onClose={closeHotkeys} />
       </OverlaySlot>
     </div>
   )

@@ -1,5 +1,4 @@
 import { useMemo, useState } from 'react'
-import { format, addDays, subDays } from 'date-fns'
 import {
   TrendingUp,
   TrendingDown,
@@ -9,18 +8,21 @@ import {
   Repeat,
   Calendar,
   Activity,
-  ArrowUp,
-  ArrowDown,
 } from 'lucide-react'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { computeInsights, type InsightTone } from '../../utils/insights'
-import { detectRecurring, forecastDailyFromRecurring } from '../../utils/recurring'
-import { computeMonthAnalytics, computeWeekAnalytics } from '../../lib/analytics'
+import { detectRecurring, forecastDailyFromRecurring, upcomingDue } from '../../utils/recurring'
+import { computeTrailingDaily, computeWeekAnalytics } from '../../lib/analytics'
+import { addDays, formatRangeLabel, shortDate } from '../../lib/dates'
+import { getLedgerIndex } from '../../lib/ledgerIndex'
 import { Card } from '../../ui/Card'
+import { ChangePill } from '../../ui/ChangePill'
 import { Pill } from '../../ui/Pill'
 import { EmptyState } from '../../ui/EmptyState'
-import { Sparkline } from '../pulse/Sparkline'
+import { Sparkline, SparklineAxis } from '../pulse/Sparkline'
+import { ForecastChart } from './ForecastChart'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
+import { useToday } from '../../hooks/useToday'
 import { colorFromString } from '../../lib/analytics'
 import { useUIStore } from '../../stores/useUIStore'
 
@@ -38,23 +40,36 @@ const toneIcon: Record<
   info: { Icon: Info, tone: 'info' },
 }
 
+const WEEK_BAR_H = 56 // px
+const FORECAST_DAYS = 14
+
 export function InsightsScreen() {
   const expenses = useExpenseStore((s) => s.expenses)
   const budgets = useExpenseStore((s) => s.budgets)
   const setAddSheetOpen = useUIStore((s) => s.setAddSheetOpen)
   const fmt = useFormatMoney()
+  const today = useToday()
+  const index = getLedgerIndex(expenses)
 
-  const insights = useMemo(() => computeInsights(expenses, budgets), [expenses, budgets])
-  const recurring = useMemo(() => detectRecurring(expenses), [expenses])
-  const forecast14 = useMemo(() => forecastDailyFromRecurring(recurring, 14), [recurring])
-  const monthAnalytics = useMemo(
-    () => computeMonthAnalytics(expenses, budgets),
-    [expenses, budgets],
+  const insights = useMemo(
+    () => computeInsights(index, budgets, today, fmt),
+    [index, budgets, today, fmt],
   )
-  const weekAnalytics = useMemo(() => computeWeekAnalytics(expenses), [expenses])
-  const forecastTotal = forecast14.reduce((s, v) => s + v, 0)
-  const weekTrendDown = weekAnalytics.changePct < 0
-  const weekHasPrev = weekAnalytics.prevWeek > 0
+  const recurring = detectRecurring(index) // memoised per index
+  const forecast = useMemo(
+    () => forecastDailyFromRecurring(recurring, today, FORECAST_DAYS),
+    [recurring, today],
+  )
+  const week = useMemo(() => computeWeekAnalytics(index, today), [index, today])
+  const { trendValues, trendLabels } = useMemo(() => {
+    const trend = computeTrailingDaily(index, today, 30)
+    return {
+      trendValues: trend.map((d) => d.total),
+      trendLabels: trend.map((d) => shortDate(d.date)),
+    }
+  }, [index, today])
+  const forecastTotal = forecast.reduce((s, v) => s + v, 0)
+  const weekMax = Math.max(...week.dailyThisWeek.map((x) => x.total), 1)
   const [hoveredDay, setHoveredDay] = useState<number | null>(null)
   const hasEnoughSignal = expenses.length >= 3
 
@@ -117,90 +132,93 @@ export function InsightsScreen() {
             )}
           </div>
 
-          {/* Week vs last week */}
+          {/* Last 7 days vs the previous 7 */}
           <Card>
-            <div className="mb-4 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <TrendingUp size={14} className="text-accent/80" />
-                <h2 className="text-[13px] font-semibold text-white">Week vs last week</h2>
-              </div>
-              {weekHasPrev && (
-                <Pill tone={weekTrendDown ? 'positive' : 'negative'}>
-                  {weekTrendDown ? <ArrowDown size={10} /> : <ArrowUp size={10} />}
-                  {Math.abs(weekAnalytics.changePct * 100).toFixed(0)}%
-                </Pill>
-              )}
-            </div>
-            {(() => {
-              const BAR_H = 56 // px - fixed container height for bars
-              const maxVal = Math.max(...weekAnalytics.dailyThisWeek.map((x) => x.total), 1)
-              return (
-                <div className="mb-3 flex items-end gap-1.5">
-                  {weekAnalytics.dailyThisWeek.map((d, i) => {
-                    const pct = d.total / maxVal
-                    const barPx = Math.round(d.total > 0 ? Math.max(3, pct * BAR_H) : 0)
-                    const isToday = d.date === format(new Date(), 'yyyy-MM-dd')
-                    const isHovered = hoveredDay === i
-                    return (
-                      <div
-                        key={d.date}
-                        className="flex flex-1 cursor-default flex-col items-center gap-1"
-                        onPointerEnter={() => setHoveredDay(i)}
-                        onPointerLeave={() => setHoveredDay(null)}
-                        onClick={() => setHoveredDay(hoveredDay === i ? null : i)}
-                        role="button"
-                        tabIndex={0}
-                        aria-label={`${d.label}: ${fmt(d.total)}`}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === ' ') {
-                            e.preventDefault()
-                            setHoveredDay(hoveredDay === i ? null : i)
-                          }
-                        }}
-                      >
-                        <div
-                          className="relative flex w-full flex-col justify-end"
-                          style={{ height: BAR_H }}
-                        >
-                          {isHovered && (
-                            <span className="pointer-events-none absolute -top-6 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded border border-white/10 bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-white shadow">
-                              {fmt(d.total)}
-                            </span>
-                          )}
-                          <div
-                            className={`w-full rounded-t transition-all duration-300 ${
-                              isToday
-                                ? 'bg-accent shadow-[0_0_8px_-2px_rgba(34,211,238,0.5)]'
-                                : isHovered
-                                  ? 'bg-[var(--chart-bar-strong)]'
-                                  : 'bg-[var(--chart-bar)]'
-                            }`}
-                            style={{ height: barPx }}
-                          />
-                        </div>
-                        <span
-                          className={`text-[9px] leading-none ${isToday ? 'font-semibold text-accent' : 'text-[var(--text-tertiary)]'}`}
-                        >
-                          {d.label}
-                        </span>
-                      </div>
-                    )
-                  })}
-                </div>
-              )
-            })()}
-            <div className="flex items-center justify-between text-[12px]">
-              <div>
-                <span className="text-[var(--text-tertiary)]">This week </span>
-                <span className="font-mono font-semibold tabular-nums text-white">
-                  {fmt(weekAnalytics.thisWeek)}
+            <div className="mb-1 flex items-center justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <TrendingUp size={14} className="shrink-0 text-accent/80" />
+                <h2 className="text-[13px] font-semibold text-white">Last 7 days</h2>
+                <span className="truncate text-[11px] text-[var(--text-tertiary)]">
+                  {formatRangeLabel(week.range, today)}
                 </span>
               </div>
-              {weekHasPrev && (
+              {/* Same rule as the Pulse pill: within ±0.5% it reads "≈ same as …" */}
+              <ChangePill change={week.changePct} against="previous 7 days" digits={0} />
+            </div>
+            {/* The top padding holds a tall bar's amount, so it never covers the heading. */}
+            <div className="mb-3 flex items-end gap-1.5 pt-6">
+              {week.dailyThisWeek.map((d, i) => {
+                const barPx = Math.round(
+                  d.total > 0 ? Math.max(3, (d.total / weekMax) * WEEK_BAR_H) : 0,
+                )
+                const isToday = d.date === today
+                const isHovered = hoveredDay === i
+                return (
+                  <div
+                    key={d.date}
+                    className="flex flex-1 cursor-default flex-col items-center gap-1"
+                    // Hover reads a day with a mouse; a tap toggles it. A finger also fires
+                    // pointerenter, which would open the amount and let the tap close it again.
+                    onPointerEnter={(e) => {
+                      if (e.pointerType === 'mouse') setHoveredDay(i)
+                    }}
+                    onPointerLeave={(e) => {
+                      if (e.pointerType === 'mouse') setHoveredDay(null)
+                    }}
+                    onClick={() => {
+                      setHoveredDay((h) => (h === i ? null : i))
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`${d.label}, ${shortDate(d.date)}: ${fmt(d.total)}`}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault()
+                        setHoveredDay((h) => (h === i ? null : i))
+                      }
+                    }}
+                  >
+                    <div
+                      className="relative flex w-full flex-col justify-end"
+                      style={{ height: WEEK_BAR_H }}
+                    >
+                      {isHovered && (
+                        <span className="pointer-events-none absolute -top-6 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded border border-white/10 bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-white shadow">
+                          {fmt(d.total)}
+                        </span>
+                      )}
+                      <div
+                        className={`w-full rounded-t transition-all duration-300 ${
+                          isToday
+                            ? 'bg-accent shadow-[0_0_8px_-2px_rgba(34,211,238,0.5)]'
+                            : isHovered
+                              ? 'bg-[var(--chart-bar-strong)]'
+                              : 'bg-[var(--chart-bar)]'
+                        }`}
+                        style={{ height: barPx }}
+                      />
+                    </div>
+                    <span
+                      className={`text-[9px] leading-none ${isToday ? 'font-semibold text-accent' : 'text-[var(--text-tertiary)]'}`}
+                    >
+                      {d.label}
+                    </span>
+                  </div>
+                )
+              })}
+            </div>
+            <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[12px]">
+              <div>
+                <span className="text-[var(--text-tertiary)]">Last 7 days </span>
+                <span className="font-mono font-semibold tabular-nums text-white">
+                  {fmt(week.thisWeek)}
+                </span>
+              </div>
+              {week.prevWeek > 0 && (
                 <div>
-                  <span className="text-[var(--text-tertiary)]">Last week </span>
+                  <span className="text-[var(--text-tertiary)]">Previous 7 days </span>
                   <span className="font-mono tabular-nums text-[var(--text-secondary)]">
-                    {fmt(weekAnalytics.prevWeek)}
+                    {fmt(week.prevWeek)}
                   </span>
                 </div>
               )}
@@ -209,7 +227,7 @@ export function InsightsScreen() {
 
           {/* Forecast */}
           <Card>
-            <div className="mb-3 flex items-center justify-between">
+            <div className="mb-1 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Calendar size={14} className="text-accent/80" />
                 <h2 className="text-[13px] font-semibold text-white">14-day forecast</h2>
@@ -219,32 +237,18 @@ export function InsightsScreen() {
               </span>
             </div>
             {forecastTotal <= 0 ? (
-              <p className="text-[12px] text-[var(--text-tertiary)]">
+              <p className="mt-2 text-[12px] text-[var(--text-tertiary)]">
                 {recurring.length > 0
                   ? 'No recurring charges due in the next 14 days.'
                   : "No recurring charges detected yet. After 3+ repeats of the same item we'll project them here."}
               </p>
             ) : (
               <>
-                <div className="flex h-20 items-end justify-between gap-1">
-                  {forecast14.map((v, i) => {
-                    const max = Math.max(...forecast14, 1)
-                    const pct = (v / max) * 100
-                    return (
-                      <div key={i} className="flex flex-1 flex-col items-center gap-1">
-                        <div className="flex w-full flex-1 items-end">
-                          <div
-                            className="w-full rounded-t bg-gradient-to-t from-accent/40 to-accent/80 transition-all"
-                            style={{ height: `${Math.max(2, pct)}%` }}
-                          />
-                        </div>
-                      </div>
-                    )
-                  })}
-                </div>
+                <ForecastChart forecast={forecast} today={today} fmt={fmt} />
                 <div className="mt-2 flex items-center justify-between text-[10px] text-[var(--text-tertiary)]">
-                  <span>{format(new Date(), 'MMM d')}</span>
-                  <span>{format(addDays(new Date(), 13), 'MMM d')}</span>
+                  <span className="text-accent">Today</span>
+                  <span>{shortDate(addDays(today, 7))}</span>
+                  <span>{shortDate(addDays(today, FORECAST_DAYS - 1))}</span>
                 </div>
               </>
             )}
@@ -259,23 +263,8 @@ export function InsightsScreen() {
               </div>
               <span className="text-[11px] text-[var(--text-tertiary)]">Last 30 days</span>
             </div>
-            <Sparkline
-              data={monthAnalytics.daily.map((d) => d.total)}
-              labels={monthAnalytics.daily.map((d) => {
-                const dt = new Date(d.date + 'T12:00:00')
-                return format(dt, 'MMM d')
-              })}
-              height={72}
-            />
-            <div className="mt-1.5 flex justify-between">
-              <span className="text-[10px] text-[var(--text-tertiary)]">
-                {format(subDays(new Date(), 29), 'MMM d')}
-              </span>
-              <span className="text-[10px] text-[var(--text-tertiary)]">
-                {format(subDays(new Date(), 14), 'MMM d')}
-              </span>
-              <span className="text-[10px] text-accent">Today</span>
-            </div>
+            <Sparkline data={trendValues} labels={trendLabels} height={72} />
+            <SparklineAxis labels={trendLabels} lastLabel="Today" highlightLast />
           </Card>
 
           {/* Recurring detection */}
@@ -295,32 +284,42 @@ export function InsightsScreen() {
               </p>
             ) : (
               <ul className="divide-y divide-white/[0.04]">
-                {recurring.slice(0, 8).map((r) => (
-                  <li key={r.key} className="flex items-center gap-3 py-2.5">
-                    <span
-                      className="h-2 w-2 shrink-0 rounded-full"
-                      style={{ background: colorFromString(r.category) }}
-                    />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13px] text-white">{r.displayName}</div>
-                      <div className="text-[11px] text-[var(--text-tertiary)]">
-                        {r.periodicity} / next ~{format(r.nextEstimatedDate, 'MMM d')} /{' '}
-                        {r.occurrences.length} hits
+                {recurring.slice(0, 8).map((r) => {
+                  // A charge just missed is due today, as the forecast files it; never a past "next".
+                  const due = upcomingDue(r, today)
+                  const dueText =
+                    due === null
+                      ? ''
+                      : due === today
+                        ? ' / due today'
+                        : ` / next ~${shortDate(due)}`
+                  return (
+                    <li key={r.key} className="flex items-center gap-3 py-2.5">
+                      <span
+                        className="h-2 w-2 shrink-0 rounded-full"
+                        style={{ background: colorFromString(r.category) }}
+                      />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[13px] text-white">{r.displayName}</div>
+                        <div className="text-[11px] text-[var(--text-tertiary)]">
+                          {r.periodicity}
+                          {dueText} / {r.occurrences.length} hits
+                        </div>
                       </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="font-mono text-[13px] tabular-nums text-white">
-                        {fmt(r.avgAmount)}
+                      <div className="text-right">
+                        <div className="font-mono text-[13px] tabular-nums text-white">
+                          {fmt(r.avgAmount)}
+                        </div>
+                        <div className="ml-auto mt-0.5 h-1 w-16 overflow-hidden rounded-full bg-surface-2">
+                          <div
+                            className="h-full rounded-full bg-accent transition-[width] duration-500"
+                            style={{ width: `${String(Math.round(r.confidence * 100))}%` }}
+                          />
+                        </div>
                       </div>
-                      <div className="ml-auto mt-0.5 h-1 w-16 overflow-hidden rounded-full bg-surface-2">
-                        <div
-                          className="h-full rounded-full bg-accent transition-[width] duration-500"
-                          style={{ width: `${Math.round(r.confidence * 100)}%` }}
-                        />
-                      </div>
-                    </div>
-                  </li>
-                ))}
+                    </li>
+                  )
+                })}
               </ul>
             )}
           </Card>

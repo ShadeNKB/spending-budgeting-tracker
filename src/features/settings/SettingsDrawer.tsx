@@ -24,16 +24,12 @@ import { Segmented } from '../../ui/Segmented'
 import { Button } from '../../ui/Button'
 import { Input } from '../../ui/Input'
 import { Pill } from '../../ui/Pill'
-import {
-  useUIStore,
-  SUPPORTED_CURRENCIES,
-  isSupportedCurrency,
-  type Theme,
-} from '../../stores/useUIStore'
+import { useUIStore, type Theme } from '../../stores/useUIStore'
+import { CURRENCIES, isSupportedCurrency } from '../../lib/format'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { SyncPanel } from './SyncPanel'
 import { useToast } from '../../hooks/useToast'
-import { useFormatMoney } from '../../hooks/useFormatMoney'
+import { useCurrencySymbol, useFormatMoney } from '../../hooks/useFormatMoney'
 import { downloadJSON, downloadCSV } from '../../lib/download'
 import { expensesToCsv } from '../../lib/csv'
 import { colorFromString } from '../../lib/analytics'
@@ -114,6 +110,7 @@ export function SettingsDrawer() {
           <div className="relative">
             <select
               id="currency-select"
+              aria-describedby="currency-hint"
               value={currency}
               onChange={(e) => {
                 const next = e.target.value
@@ -121,7 +118,7 @@ export function SettingsDrawer() {
               }}
               className="h-10 w-full appearance-none rounded-lg border border-white/[0.08] bg-surface-2 pl-3 pr-9 text-[13px] font-medium text-[var(--text-primary)] outline-none transition [color-scheme:dark] hover:border-white/[0.14] focus:border-accent/60 focus:shadow-[0_0_0_3px_rgba(34,211,238,0.15)]"
             >
-              {SUPPORTED_CURRENCIES.map((c) => (
+              {CURRENCIES.map((c) => (
                 <option key={c.code} value={c.code}>
                   {c.label}
                 </option>
@@ -132,6 +129,9 @@ export function SettingsDrawer() {
               className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
             />
           </div>
+          <p id="currency-hint" className="text-[12px] text-[var(--text-tertiary)]">
+            Changes the symbol only — amounts aren't converted.
+          </p>
         </div>
         <div className="flex w-full items-center gap-1 rounded-full border border-white/[0.06] bg-surface-1 p-1">
           {(
@@ -288,6 +288,7 @@ function BudgetsPanel() {
   const removeBudget = useExpenseStore((s) => s.removeBudget)
   const toast = useToast()
   const fmt = useFormatMoney()
+  const symbol = useCurrencySymbol()
 
   return (
     <div className="flex flex-col gap-3">
@@ -305,7 +306,7 @@ function BudgetsPanel() {
               <span className="h-2 w-2 rounded-full" style={{ background: colorFromString(c) }} />
               <span className="flex-1 text-[13px] text-white">{c}</span>
               <div className="flex items-center gap-1">
-                <span className="text-[11px] text-[var(--text-tertiary)]">$</span>
+                <span className="text-[11px] text-[var(--text-tertiary)]">{symbol}</span>
                 <input
                   key={`${c}-${current ?? 'none'}`}
                   type="number"
@@ -327,7 +328,7 @@ function BudgetsPanel() {
                     }
                   }}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                    if (e.key === 'Enter') e.currentTarget.blur()
                   }}
                 />
               </div>

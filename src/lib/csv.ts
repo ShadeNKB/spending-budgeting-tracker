@@ -1,4 +1,5 @@
 import type { Expense } from '../types'
+import { dayKeyOfStored } from './dates'
 
 // One CSV writer for every export. The text inside an expense can come from an
 // imported backup or a synced device, so each cell is treated as untrusted:
@@ -10,8 +11,6 @@ import type { Expense } from '../types'
  * operator sits behind leading whitespace that an importer may trim.
  */
 const FORMULA_LEADER = /^(?:[\t\r]|\s*[=+\-@\uFF1D\uFF0B\uFF0D\uFF20])/
-
-const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/
 
 const HEADER = 'Date,Item,Category,Amount,Notes'
 
@@ -37,22 +36,13 @@ export function toCsvCell(value: string | number | null | undefined): string {
   return '""'
 }
 
-const pad = (n: number, width: number) => String(n).padStart(width, '0')
-
 /**
- * The calendar day of a stored expense date, as `yyyy-MM-dd` in local time.
- * A date-only string is returned unchanged (parsing it would read it as UTC
- * midnight and shift it a day west of Greenwich). A noon-stored or legacy
- * timestamp gives its local day, matching what the Ledger shows. Anything that
- * does not parse is returned raw.
+ * The calendar day of a stored expense date, as `yyyy-MM-dd` in local time, using the same
+ * reader as the Ledger (`dayKeyOfStored`), so an export can never put an entry on a different
+ * day than the screen does. Anything the Ledger shows as "Unknown date" is exported raw.
  */
 export function csvDate(date: string): string {
-  if (DATE_ONLY.test(date)) return date
-  const parsed = new Date(date)
-  if (Number.isNaN(parsed.getTime())) return date
-  // Built by hand rather than with date-fns format(), which is about four
-  // times slower and would dominate a 5,000-row export on a phone.
-  return `${pad(parsed.getFullYear(), 4)}-${pad(parsed.getMonth() + 1, 2)}-${pad(parsed.getDate(), 2)}`
+  return dayKeyOfStored(date) ?? date
 }
 
 /** The CSV export of `expenses`: BOM, header, one row per expense, CRLF line endings. */

@@ -157,6 +157,12 @@ export function DatePicker({
   }
 
   const displayStr = value ? format(new Date(value + 'T12:00:00'), 'MMM d, yyyy') : placeholder
+  // The pill keeps to "Oct 17" this year and shows the year for any other ("Dec 31, 2025").
+  const pillStr = !value
+    ? placeholder
+    : value.slice(0, 4) === String(today.getFullYear())
+      ? format(new Date(value + 'T12:00:00'), 'MMM d')
+      : displayStr
 
   const pillIsActive = active ?? (variant === 'pill' && !!value)
 
@@ -286,7 +292,7 @@ export function DatePicker({
           } ${className}`}
         >
           <CalendarDays size={11} />
-          {value ? format(new Date(value + 'T12:00:00'), 'MMM d') : placeholder}
+          {pillStr}
         </button>
       ) : (
         <button
