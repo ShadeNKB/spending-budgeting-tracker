@@ -63,9 +63,3 @@ export interface ValidationResult {
   isValid: boolean
   errors: string[]
 }
-
-export interface ItemCategoryPattern {
-  category: string
-  fromCategories: string[]
-  keywords: string[]
-}

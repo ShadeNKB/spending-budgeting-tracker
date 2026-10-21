@@ -1,6 +1,47 @@
-import { beforeEach, describe, expect, it } from 'vitest'
-import { storage } from './storage'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { WRITER_VERSION, storage } from './storage'
 import type { Expense } from '../types'
+
+// Each case gets a fresh module: the device id is remembered for the session.
+async function freshStorage() {
+  vi.resetModules()
+  return (await import('./storage')).storage
+}
+
+describe('storage.getDeviceId', () => {
+  beforeEach(() => localStorage.clear())
+  afterEach(() => vi.restoreAllMocks())
+
+  it('creates a 6-char base36 id once and keeps it in spendtrack:dev', async () => {
+    const s = await freshStorage()
+    const id = s.getDeviceId()
+    expect(id).toMatch(/^[0-9a-z]{6}$/)
+    expect(localStorage.getItem('spendtrack:dev')).toBe(id)
+    expect(s.getDeviceId()).toBe(id)
+  })
+
+  it('is stable across reloads', async () => {
+    const id = (await freshStorage()).getDeviceId()
+    expect((await freshStorage()).getDeviceId()).toBe(id)
+  })
+
+  it('replaces a malformed stored id', async () => {
+    localStorage.setItem('spendtrack:dev', 'not an id')
+    const id = (await freshStorage()).getDeviceId()
+    expect(id).toMatch(/^[0-9a-z]{6}$/)
+    expect(localStorage.getItem('spendtrack:dev')).toBe(id)
+  })
+
+  it('still returns one id for the session when storage refuses the write', async () => {
+    const s = await freshStorage()
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('full', 'QuotaExceededError')
+    })
+    const id = s.getDeviceId()
+    expect(id).toMatch(/^[0-9a-z]{6}$/)
+    expect(s.getDeviceId()).toBe(id)
+  })
+})
 
 const sample: Expense = {
   id: 'abc',
@@ -77,6 +118,16 @@ describe('storage', () => {
     expect(storage.getBudgets()).toEqual({})
     expect(storage.getBudgetUpdatedAt()).toEqual({})
     expect(storage.getBudgetDeletedAt()).toEqual({})
+  })
+
+  it('writes the app marker after the data keys on every save', () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    storage.saveAll([sample], ['Food & Drink'], {}, {}, {}, {}, [])
+    expect(localStorage.getItem('spendtrack:app')).toBe(WRITER_VERSION)
+    expect(WRITER_VERSION).toBe('0.8.5')
+    expect(setItem.mock.calls.at(-1)?.[0]).toBe('spendtrack:app')
+    expect(setItem.mock.calls.map((c) => c[0])).toContain('deletedExpenseIds')
+    setItem.mockRestore()
   })
 
   it('drops individual entries of the wrong type and keeps the rest', () => {

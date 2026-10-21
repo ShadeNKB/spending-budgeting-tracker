@@ -30,8 +30,11 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-# Local data exports and backups
+# Local data exports and backups (scripts/check-no-backups.mjs also blocks renamed ones).
+# A test fixture with one of these names needs `git add -f`.
 spendtrack-backup-*.json
+*backup*.json
+spendtrack-*.json
 *.backup
 
 # Editors and operating systems

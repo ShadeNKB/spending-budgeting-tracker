@@ -4,8 +4,7 @@ import { WifiOff, FlaskConical } from 'lucide-react'
 import { TopBar } from './TopBar'
 import { TabBar } from './TabBar'
 import { useExpenseStore, installPersistence, IS_DEMO } from '../stores/useExpenseStore'
-import { useSyncStore } from '../stores/useSyncStore'
-import { syncApplying } from '../services/syncService'
+import { installSync } from '../stores/useSyncStore'
 import { useUIStore } from '../stores/useUIStore'
 import { useHotkeys } from '../hooks/useHotkeys'
 import { useToast } from '../hooks/useToast'
@@ -35,32 +34,8 @@ function bootstrap() {
 
   useExpenseStore.getState().hydrate()
   installPersistence()
-
-  // Wire data changes → debounced cloud push (skipped while applying remote data).
-  useExpenseStore.subscribe(
-    (s) => ({
-      expenses: s.expenses,
-      categories: s.categories,
-      categoryMappings: s.categoryMappings,
-      budgets: s.budgets,
-      deletedIds: s.deletedIds,
-    }),
-    () => {
-      if (!useExpenseStore.getState().hydrated) return
-      if (syncApplying.value) return
-      useSyncStore.getState().scheduleSyncPush()
-    },
-    {
-      equalityFn: (a, b) =>
-        a.expenses === b.expenses &&
-        a.categories === b.categories &&
-        a.categoryMappings === b.categoryMappings &&
-        a.budgets === b.budgets &&
-        a.deletedIds === b.deletedIds,
-    },
-  )
-
-  useSyncStore.getState().initSync()
+  // Local changes, lifecycle events (hide/resume/online) and realtime drive sync from here.
+  installSync()
 }
 
 export function AppShell() {

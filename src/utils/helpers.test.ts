@@ -1,16 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { generateId, validateExpenseData, migrateExpenseCategory, migrateExpenses } from './helpers'
-import type { Expense } from '../types'
-
-const expense = (over: Partial<Expense> = {}): Expense => ({
-  id: over.id ?? 'x',
-  itemName: over.itemName ?? 'thing',
-  amount: over.amount ?? 1,
-  category: over.category ?? 'Other',
-  date: over.date ?? '2026-05-01',
-  createdAt: over.createdAt ?? '2026-05-01',
-  ...over,
-})
+import { generateId, validateExpenseData } from './helpers'
 
 describe('generateId', () => {
   it('returns unique-ish ids on consecutive calls', () => {
@@ -34,31 +23,5 @@ describe('validateExpenseData', () => {
     })
     expect(r.isValid).toBe(true)
     expect(r.errors).toEqual([])
-  })
-})
-
-describe('migrateExpenseCategory', () => {
-  it('applies flat category renames', () => {
-    const e = expense({ category: 'Bills & Utilities' })
-    expect(migrateExpenseCategory(e).category).toBe('Travel')
-  })
-
-  it('applies keyword-based category overrides', () => {
-    const e = expense({ itemName: 'Netflix subscription', category: 'Other' })
-    expect(migrateExpenseCategory(e).category).toBe('Subscriptions')
-  })
-
-  it('leaves unrelated expenses untouched', () => {
-    const e = expense({ itemName: 'groceries', category: 'Food & Dining' })
-    expect(migrateExpenseCategory(e)).toEqual(e)
-  })
-
-  it('migrateExpenses applies migration to every entry', () => {
-    const out = migrateExpenses([
-      expense({ category: 'Education' }),
-      expense({ category: 'Other' }),
-    ])
-    expect(out[0]?.category).toBe('Subscriptions')
-    expect(out[1]?.category).toBe('Other')
   })
 })

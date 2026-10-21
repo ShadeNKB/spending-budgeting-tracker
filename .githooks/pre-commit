@@ -1,0 +1,8 @@
+#!/bin/sh
+# Blocks commits that stage a JSON file shaped like a SpendTrack backup (F-105).
+# Opt in once per clone with `npm run hooks:install` (sets core.hooksPath to .githooks).
+if ! command -v node >/dev/null 2>&1; then
+  echo "pre-commit: node is not on PATH, so the backup guard cannot run. Install Node 20+." >&2
+  exit 1
+fi
+exec node scripts/check-no-backups.mjs --staged

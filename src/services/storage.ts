@@ -16,6 +16,23 @@ const KEY_BUDGET_UPDATED_AT = 'categoryBudgetUpdatedAt'
 const KEY_BUDGET_DELETED_AT = 'categoryBudgetDeletedAt'
 const KEY_DELETED_IDS = 'deletedExpenseIds'
 const KEY_SYNC_ID = 'syncId'
+const KEY_APP = 'spendtrack:app'
+const KEY_DEVICE = 'spendtrack:dev'
+
+/**
+ * Protocol version of this writer, not the display version: it marks local data written by
+ * this build (`spendtrack:app`) and every push (`wr.app`), so later engines know the writer.
+ */
+export const WRITER_VERSION = '0.8.5'
+
+const DEVICE_ID_PATTERN = /^[0-9a-z]{6}$/
+// Kept for the session when storage refuses the write, so pushes keep one device id.
+let sessionDeviceId: string | null = null
+
+function newDeviceId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(6))
+  return Array.from(bytes, (b) => (b % 36).toString(36)).join('')
+}
 
 /**
  * Quota-aware setItem — every persistence write goes through this.
@@ -200,6 +217,28 @@ export const storage = {
     if (budgetUpdatedAt !== undefined) this.saveBudgetUpdatedAt(budgetUpdatedAt)
     if (budgetDeletedAt !== undefined) this.saveBudgetDeletedAt(budgetDeletedAt)
     if (deletedIds !== undefined) this.saveDeletedIds(deletedIds)
+    try {
+      safeSet(KEY_APP, WRITER_VERSION)
+    } catch {
+      // The marker is best-effort; the data keys above are what matter.
+    }
+  },
+
+  /** This device's id for writer stamps: 6 base36 chars, created once (`spendtrack:dev`). */
+  getDeviceId(): string {
+    try {
+      const stored = localStorage.getItem(KEY_DEVICE)
+      if (stored !== null && DEVICE_ID_PATTERN.test(stored)) return stored
+    } catch {
+      // Storage unavailable: fall through to the session id.
+    }
+    sessionDeviceId ??= newDeviceId()
+    try {
+      safeSet(KEY_DEVICE, sessionDeviceId)
+    } catch {
+      // Not persisted; the id still holds for this session.
+    }
+    return sessionDeviceId
   },
 
   getSyncId(): string | null {

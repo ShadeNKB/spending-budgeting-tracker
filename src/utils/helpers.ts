@@ -1,4 +1,3 @@
-import { CATEGORY_MIGRATIONS, ITEM_CATEGORY_PATTERNS } from '../constants'
 import type { Expense, ValidationResult } from '../types'
 
 // NOTE: For currency display, use `formatMoney` from `src/lib/format.ts` (the canonical formatter).
@@ -44,25 +43,3 @@ export const debounce = <T extends (...args: unknown[]) => unknown>(
     timeout = setTimeout(later, wait)
   }
 }
-
-export const migrateExpenseCategory = (expense: Expense): Expense => {
-  const flatMigrated = CATEGORY_MIGRATIONS[expense.category] ?? expense.category
-  const nameLower = (expense.itemName || '').toLowerCase()
-
-  for (const rule of ITEM_CATEGORY_PATTERNS) {
-    if (
-      !rule.fromCategories.includes(flatMigrated) &&
-      !rule.fromCategories.includes(expense.category)
-    ) {
-      continue
-    }
-    if (rule.keywords.some((kw) => nameLower.includes(kw))) {
-      return { ...expense, category: rule.category }
-    }
-  }
-
-  return flatMigrated !== expense.category ? { ...expense, category: flatMigrated } : expense
-}
-
-export const migrateExpenses = (expenses: Expense[]): Expense[] =>
-  expenses.map(migrateExpenseCategory)
