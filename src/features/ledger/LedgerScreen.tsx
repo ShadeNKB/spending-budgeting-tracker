@@ -2,6 +2,7 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } f
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Search, Filter, Inbox, X, FileDown } from 'lucide-react'
 import { downloadCSV } from '../../lib/download'
+import { expensesToCsv } from '../../lib/csv'
 import { DatePicker } from '../../ui/DatePicker'
 import { format } from 'date-fns'
 import { useExpenseStore } from '../../stores/useExpenseStore'
@@ -12,7 +13,7 @@ import { Pill } from '../../ui/Pill'
 import { EmptyState } from '../../ui/EmptyState'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { useToday } from '../../hooks/useToday'
-import { dayKeyOfStored, ledgerRange, ledgerRangeLabel, shortDateYear } from '../../lib/dates'
+import { ledgerRange, ledgerRangeLabel, shortDateYear } from '../../lib/dates'
 import { getLedgerIndex, rowsInRange, rowsToExpenses } from '../../lib/ledgerIndex'
 import { SmartInput } from '../entry/SmartInput'
 import { LedgerRow } from './LedgerRow'
@@ -195,19 +196,9 @@ export function LedgerScreen() {
     [deleteExpense, consumeUndo, toast],
   )
 
-  const escapeCsvField = (value: string | number | undefined) =>
-    `"${String(value ?? '').replace(/"/g, '""')}"`
-
   const handleExportCsv = () => {
     if (filtered.length === 0) return
-    const headers = ['Date', 'Item', 'Category', 'Amount', 'Notes']
-    const rows = filtered.map((e) =>
-      [dayKeyOfStored(e.date) ?? e.date, e.itemName, e.category, e.amount, e.notes]
-        .map(escapeCsvField)
-        .join(','),
-    )
-    const csv = [headers.join(','), ...rows].join('\n')
-    downloadCSV(`spendtrack-${format(new Date(), 'yyyy-MM-dd')}.csv`, csv)
+    downloadCSV(`spendtrack-${format(new Date(), 'yyyy-MM-dd')}.csv`, expensesToCsv(filtered))
     toast.success(`Exported ${filtered.length} ${filtered.length === 1 ? 'entry' : 'entries'}`)
   }
 

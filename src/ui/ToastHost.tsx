@@ -17,11 +17,14 @@ const toneClass: Record<Toast['kind'], string> = {
 function ToastItem({ toast }: { toast: Toast }) {
   const dismiss = useUIStore((s) => s.dismissToast)
   const duration = toast.duration ?? 4000
+  // duration <= 0 means sticky: no timer and no countdown bar, only the close button.
+  const sticky = duration <= 0
 
   useEffect(() => {
+    if (sticky) return undefined
     const t = setTimeout(() => dismiss(toast.id), duration)
     return () => clearTimeout(t)
-  }, [toast.id, dismiss, duration])
+  }, [toast.id, dismiss, duration, sticky])
 
   const Icon = iconFor(toast.kind)
   const { action } = toast
@@ -58,13 +61,15 @@ function ToastItem({ toast }: { toast: Toast }) {
       >
         <X size={14} />
       </button>
-      <motion.div
-        initial={{ scaleX: 1 }}
-        animate={{ scaleX: 0 }}
-        transition={{ duration: duration / 1000, ease: 'linear' }}
-        style={{ transformOrigin: 'left' }}
-        className="absolute bottom-0 left-0 right-0 h-[2px] bg-current opacity-40"
-      />
+      {!sticky && (
+        <motion.div
+          initial={{ scaleX: 1 }}
+          animate={{ scaleX: 0 }}
+          transition={{ duration: duration / 1000, ease: 'linear' }}
+          style={{ transformOrigin: 'left' }}
+          className="absolute bottom-0 left-0 right-0 h-[2px] bg-current opacity-40"
+        />
+      )}
     </motion.div>
   )
 }

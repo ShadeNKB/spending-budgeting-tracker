@@ -28,6 +28,14 @@ vi.mock('../features/entry/AddExpenseSheet', () => ({
   },
 }))
 vi.mock('../ui/ToastHost', () => ({ ToastHost: () => null }))
+// Overlays mount through OverlaySlot once the app is idle (T5). Go idle at once so the sheets
+// mount at boot, as a real session does a second after load.
+vi.mock('../lib/whenIdle', () => ({
+  whenIdle: (callback: () => void) => {
+    callback()
+    return () => undefined
+  },
+}))
 vi.mock('../ui/HotkeyHints', () => ({
   HotkeyHints: ({ onClose }: { onClose: () => void }) => {
     received.hintsOnClose.push(onClose)
@@ -163,10 +171,12 @@ describe('AppShell', () => {
         ),
       ),
     )
-    // Let bootstrap hydrate and the lazy children resolve before counting.
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 0))
-    })
+    // Let bootstrap hydrate, the idle overlays mount and their lazy children resolve.
+    for (let i = 0; i < 3; i++) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+    }
     const listenerCount = (type: string) => add.mock.calls.filter(([t]) => t === type).length
     return { view, commits: () => commits, listenerCount }
   }

@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, useEffect, useMemo, useRef, useState } from 'react'
 import { Sparkles, CornerDownLeft, X, CalendarDays, PenLine, AlertTriangle } from 'lucide-react'
 import clsx from 'clsx'
 import { parseExpense, quickAddDateLabel, quickAddStoredDate } from '../../utils/parseExpense'
@@ -16,9 +16,17 @@ import { useToday } from '../../hooks/useToday'
 import { keyToLocalNoon } from '../../lib/dates'
 import { Pill } from '../../ui/Pill'
 import { colorFromString } from '../../lib/analytics'
+import { importWithReload } from '../../lib/chunkReload'
+import { OverlaySlot } from '../../app/OverlaySlot'
 
+// SmartInput is on screen at boot (in the header and on Pulse), so its full-entry sheet only
+// mounts on the first tap: a lazy component rendered at boot would fetch the sheet and
+// framer-motion before first paint. A stale chunk reloads once; a failure shows the panel
+// recovery card, never a crash of the screen around it.
 const AddExpenseSheet = lazy(() =>
-  import('./AddExpenseSheet').then((m) => ({ default: m.AddExpenseSheet })),
+  importWithReload(() => import('./AddExpenseSheet')).then((m) => ({
+    default: m.AddExpenseSheet,
+  })),
 )
 
 export function SmartInput({
@@ -230,7 +238,7 @@ export function SmartInput({
         </span>
       </div>
 
-      <Suspense fallback={null}>
+      <OverlaySlot open={sheetOpen} idle={false} setOpen={setSheetOpen}>
         <AddExpenseSheet
           open={sheetOpen}
           onClose={() => setSheetOpen(false)}
@@ -245,7 +253,7 @@ export function SmartInput({
               : undefined
           }
         />
-      </Suspense>
+      </OverlaySlot>
     </>
   )
 }

@@ -2,22 +2,53 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#0c0b0a" />
+    <!--
+      Pre-paint theme: applies the saved theme (localStorage 'spendtrack:theme', else the OS
+      preference) to <html data-theme> and the two metas above before anything paints.
+      Keep it on ONE line and byte-identical: its sha256 is pinned in the Content-Security-Policy
+      in vercel.json, and src/__tests__/platform-contract.test.ts fails if the two drift apart.
+    -->
+    <!-- prettier-ignore -->
+    <script>(function(){var s=null;try{s=localStorage.getItem('spendtrack:theme')}catch(e){}var w=window,t=s==='light'||s==='dark'?s:w.matchMedia&&!w.matchMedia('(prefers-color-scheme: dark)').matches?'light':'dark',d=document,c=t==='light'?'#faf8f5':'#0c0b0a',m=d.querySelector('meta[name="theme-color"]'),n=d.querySelector('meta[name="color-scheme"]');d.documentElement.setAttribute('data-theme',t);if(m)m.setAttribute('content',c);if(n)n.setAttribute('content',t)})()</script>
+    <!-- The three faces every screen paints on first render (measured with document.fonts on
+         /pulse, /ledger and /insights, phone and desktop). The rest load on demand. -->
+    <link
+      rel="preload"
+      href="/fonts/ibm-plex-sans-latin-400-normal.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/fonts/ibm-plex-sans-latin-500-normal.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+    <link
+      rel="preload"
+      href="/fonts/ibm-plex-sans-latin-600-normal.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="icon" type="image/png" sizes="192x192" href="/icon-192.png" />
-    <link rel="icon" type="image/png" sizes="512x512" href="/icon-512.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <meta
       name="description"
       content="SpendTrack is a fast, offline-first spending tracker with smart categorisation, real-time budgets, and optional cross-device sync. No account required."
     />
-    <meta name="theme-color" content="#07090D" />
     <!-- Standard PWA capability hint (modern browsers) -->
     <meta name="mobile-web-app-capable" content="yes" />
     <!-- iOS-specific capability hints (kept for iOS Safari which doesn't yet read the standard tag) -->
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="apple-mobile-web-app-title" content="SpendTrack" />
-    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 
     <!-- Open Graph / Twitter — link previews on social, chat, and search -->
     <meta property="og:type" content="website" />
@@ -39,16 +70,9 @@
     <meta name="twitter:image" content="/og.png" />
 
     <title>SpendTrack — Local-first spending tracker</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link
-      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=optional"
-      rel="stylesheet"
-    />
   </head>
   <body>
     <div id="root"></div>
-    <link rel="manifest" href="/manifest.webmanifest" />
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
