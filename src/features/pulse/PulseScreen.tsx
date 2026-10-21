@@ -1,7 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useDeferredValue, useMemo, useState } from 'react'
+import clsx from 'clsx'
 import {
-  ArrowDown,
-  ArrowUp,
   Wallet,
   BarChart3,
   Layers,
@@ -10,54 +9,81 @@ import {
   ChevronLeft,
   ChevronRight,
 } from 'lucide-react'
-import { format } from 'date-fns'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useUIStore } from '../../stores/useUIStore'
 import { computeMonthAnalytics, computeYearAnalytics } from '../../lib/analytics'
+import { monthShortName, shortDate } from '../../lib/dates'
+import { getLedgerIndex } from '../../lib/ledgerIndex'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
+import { useToday } from '../../hooks/useToday'
 import { AnimatedNumber } from '../../ui/AnimatedNumber'
 import { Card } from '../../ui/Card'
-import { Pill } from '../../ui/Pill'
+import { ChangePill } from '../../ui/ChangePill'
 import { Segmented } from '../../ui/Segmented'
 import { SectionHeader } from '../../ui/SectionHeader'
-import { PaceRing } from './PaceRing'
+import { BudgetFinal, PaceRing } from './PaceRing'
 import { TopCategories } from './TopCategories'
 import { Heatmap } from './Heatmap'
 import { TodayStrip } from './TodayStrip'
-import { Sparkline } from './Sparkline'
+import { Sparkline, SparklineAxis } from './Sparkline'
 import { BudgetActual } from './BudgetActual'
 import { MonthlyBars } from './MonthlyBars'
 import { SmartInput } from '../entry/SmartInput'
 
 type PeriodView = 'month' | 'year'
 
+const statValue = 'mt-0.5 truncate font-mono text-[15px] tabular-nums text-white'
+const periodArrow =
+  "relative inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text-tertiary)] transition after:absolute after:-inset-1 after:content-[''] hover:bg-surface-2 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 md:h-7 md:w-7 md:rounded-md"
+
 export function PulseScreen() {
-  const expenses = useExpenseStore((s) => s.expenses)
+  // An add or a sync re-renders the figures in a deferred pass, so the quick-add toast and
+  // the cleared input paint first; the numbers follow a frame later.
+  const latestExpenses = useExpenseStore((s) => s.expenses)
+  const expenses = useDeferredValue(latestExpenses)
   const budgets = useExpenseStore((s) => s.budgets)
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen)
   const setSettingsTab = useUIStore((s) => s.setSettingsTab)
   const fmt = useFormatMoney()
+  const today = useToday()
   const [view, setView] = useState<PeriodView>('month')
   const [monthOffset, setMonthOffset] = useState(0)
   const [yearOffset, setYearOffset] = useState(0)
 
+  const index = getLedgerIndex(expenses)
   const offset = view === 'month' ? monthOffset : yearOffset
   const isCurrentPeriod = offset === 0
 
   const monthData = useMemo(
-    () => computeMonthAnalytics(expenses, budgets, monthOffset),
-    [expenses, budgets, monthOffset],
+    () => computeMonthAnalytics(index, budgets, today, monthOffset),
+    [index, budgets, today, monthOffset],
   )
+  // The year is only computed while it is on screen.
   const yearData = useMemo(
-    () => computeYearAnalytics(expenses, budgets, yearOffset),
-    [expenses, budgets, yearOffset],
+    () => (view === 'year' ? computeYearAnalytics(index, today, yearOffset) : null),
+    [view, index, today, yearOffset],
   )
 
-  const a = view === 'month' ? monthData : yearData
-  const trendDown = a.changePct < 0
-  const hasPrev = a.prevTotal > 0
-  const hasBudgets = monthData.categoryBudgets.length > 0
+  const a = yearData ?? monthData
+  // "Oct 2026" on phones keeps the header on one row; "October 2026" from sm.
+  const shortLabel = yearData
+    ? yearData.label
+    : `${monthShortName(monthData.monthKey)} ${monthData.monthKey.slice(0, 4)}`
   const hasExpenses = expenses.length > 0
+  const hasBudgets = monthData.categoryBudgets.length > 0
+  const daily = monthData.daily
+  const sparkValues = yearData ? yearData.sparkline.values : daily.map((d) => d.total)
+  const sparkLabels = yearData ? yearData.sparkline.labels : daily.map((d) => shortDate(d.date))
+  // Phones get the short form, so the section title is never cut ("11 days left").
+  const budgetMeta =
+    monthData.daysLeft === null
+      ? { short: 'Final', long: `Final · ${monthData.monthName}` }
+      : monthData.daysLeft === 1
+        ? { short: 'Last day', long: `Last day of ${monthData.monthName}` }
+        : {
+            short: `${String(monthData.daysLeft)} days left`,
+            long: `${String(monthData.daysLeft)} days left in ${monthData.monthName}`,
+          }
 
   return (
     <div className="flex flex-col gap-4">
@@ -70,76 +96,79 @@ export function PulseScreen() {
       <div>
         <Card glow className="relative overflow-hidden md:p-7">
           <div className="relative flex flex-col items-start justify-between gap-5 md:flex-row">
-            <div className="min-w-0 flex-1">
-              <div className="mb-3 flex flex-wrap items-center gap-3">
-                <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-tertiary)]">
-                  <Wallet size={12} />
-                  {view === 'month' ? monthData.label : yearData.label}
+            <div className="w-full min-w-0 flex-1">
+              {/* One row on phones from 360 px: a short month label below sm, and the view
+                  switch travels with the period arrows when the row has to wrap. */}
+              <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-2">
+                <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-tertiary)]">
+                  <Wallet size={12} className="shrink-0" />
+                  <span className="sm:hidden">{shortLabel}</span>
+                  <span className="hidden sm:inline">{a.label}</span>
                 </div>
-                <Segmented<PeriodView>
-                  value={view}
-                  onChange={(v) => {
-                    setView(v)
-                  }}
-                  size="sm"
-                  options={[
-                    { value: 'month', label: 'Month' },
-                    { value: 'year', label: 'Year' },
-                  ]}
-                />
-                {/* Period navigation */}
-                <div className="ml-auto flex items-center gap-0.5">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      view === 'month' ? setMonthOffset((o) => o + 1) : setYearOffset((o) => o + 1)
-                    }
-                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-tertiary)] transition hover:bg-surface-2 hover:text-white"
-                    aria-label={`View previous ${view}`}
-                  >
-                    <ChevronLeft size={14} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      view === 'month'
-                        ? setMonthOffset((o) => Math.max(0, o - 1))
-                        : setYearOffset((o) => Math.max(0, o - 1))
-                    }
-                    disabled={isCurrentPeriod}
-                    className="inline-flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-tertiary)] transition hover:bg-surface-2 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
-                    aria-label={`View next ${view}`}
-                  >
-                    <ChevronRight size={14} />
-                  </button>
+                <div className="flex flex-1 items-center gap-2">
+                  <Segmented<PeriodView>
+                    value={view}
+                    onChange={(v) => {
+                      setView(v)
+                    }}
+                    size="sm"
+                    options={[
+                      { value: 'month', label: 'Month' },
+                      { value: 'year', label: 'Year' },
+                    ]}
+                  />
+                  {/* Period navigation: 36 px arrows, 44 px touch targets */}
+                  <div className="ml-auto flex items-center">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        view === 'month'
+                          ? setMonthOffset((o) => o + 1)
+                          : setYearOffset((o) => o + 1)
+                      }
+                      className={periodArrow}
+                      aria-label={`View previous ${view}`}
+                    >
+                      <ChevronLeft size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        view === 'month'
+                          ? setMonthOffset((o) => Math.max(0, o - 1))
+                          : setYearOffset((o) => Math.max(0, o - 1))
+                      }
+                      disabled={isCurrentPeriod}
+                      className={clsx(
+                        periodArrow,
+                        'disabled:cursor-not-allowed disabled:opacity-30',
+                      )}
+                      aria-label={`View next ${view}`}
+                    >
+                      <ChevronRight size={16} />
+                    </button>
+                  </div>
                 </div>
               </div>
 
               <div key={view}>
-                <div className="flex flex-wrap items-baseline gap-3">
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1.5">
                   <AnimatedNumber
                     value={a.periodTotal}
-                    prefix="$"
-                    format={(n) =>
-                      n.toLocaleString('en-US', {
-                        minimumFractionDigits: 2,
-                        maximumFractionDigits: 2,
-                      })
-                    }
-                    className="font-mono text-[2.35rem] font-semibold tabular-nums leading-[1.02] tracking-normal text-white sm:text-[2.75rem] md:text-[3rem]"
+                    format={fmt}
+                    className="font-mono text-[clamp(1.75rem,9vw,2.35rem)] font-semibold tabular-nums leading-[1.02] tracking-normal text-white sm:text-[2.75rem] md:text-[3rem]"
                   />
-                  {hasPrev && (
-                    <Pill tone={trendDown ? 'positive' : 'negative'}>
-                      {trendDown ? <ArrowDown size={10} /> : <ArrowUp size={10} />}
-                      {Math.abs(a.changePct * 100).toFixed(1)}% vs{' '}
-                      {view === 'month' ? 'last month' : 'last year'}
-                    </Pill>
-                  )}
+                  {/* "▲ 41.0% vs Sep 1–18"; within ±0.5% "≈ same as Sep 1–18" */}
+                  <ChangePill
+                    change={a.comparison.changePct}
+                    against={a.comparison.against}
+                    label={a.comparison.label}
+                  />
                 </div>
 
-                {view === 'month' && (
+                {!yearData && (
                   <div className="mt-2 flex items-center gap-3 text-[12px] text-[var(--text-secondary)]">
-                    {monthOffset === 0 ? (
+                    {monthData.isCurrent ? (
                       <>
                         <span>
                           Today{' '}
@@ -151,7 +180,7 @@ export function PulseScreen() {
                         <span>
                           Avg{' '}
                           <span className="font-mono tabular-nums text-white">
-                            {fmt(monthData.periodTotal / Math.max(1, monthData.daysElapsed))}
+                            {fmt(monthData.dailyAverage)}
                           </span>
                           /day
                         </span>
@@ -161,39 +190,27 @@ export function PulseScreen() {
                         <span>
                           Daily avg{' '}
                           <span className="font-mono tabular-nums text-white">
-                            {fmt(monthData.periodTotal / Math.max(1, monthData.daysElapsed))}
+                            {fmt(monthData.dailyAverage)}
                           </span>
                         </span>
                         <span className="text-[var(--text-tertiary)]">/</span>
                         <span>
-                          <span className="text-white">{monthData.daysElapsed}</span> days
+                          <span className="text-white">{monthData.daysInPeriod}</span> days
                         </span>
                       </>
                     )}
                   </div>
                 )}
 
-                {view === 'year' && (
-                  <div className="mt-2 flex items-center gap-3 text-[12px] text-[var(--text-secondary)]">
-                    <span>
-                      Monthly avg{' '}
-                      <span className="font-mono tabular-nums text-white">
-                        {fmt(
-                          yearData.periodTotal /
-                            Math.max(1, yearOffset === 0 ? new Date().getMonth() + 1 : 12),
-                        )}
-                      </span>
+                {yearData && (
+                  <div className="mt-2 text-[12px] text-[var(--text-secondary)]">
+                    Monthly avg{' '}
+                    <span className="font-mono tabular-nums text-white">
+                      {fmt(yearData.monthlyAverage)}
                     </span>
-                    <span className="text-[var(--text-tertiary)]">/</span>
-                    <span>
-                      {yearOffset === 0 ? (
-                        <>
-                          <span className="text-white">{new Date().getMonth() + 1}</span> of 12
-                          months
-                        </>
-                      ) : (
-                        'Full year'
-                      )}
+                    <span className="text-[var(--text-tertiary)]">
+                      {' · '}
+                      {yearData.isCurrent ? `to ${shortDate(today)}` : 'full year'}
                     </span>
                   </div>
                 )}
@@ -201,64 +218,25 @@ export function PulseScreen() {
                 <div className="mt-4">
                   <div className="mb-1.5 flex items-center justify-between">
                     <span className="text-[10px] uppercase tracking-[0.08em] text-[var(--text-tertiary)]">
-                      {view === 'month' ? 'Last 30 days' : 'Monthly / 12 months'}
+                      {yearData
+                        ? 'By month'
+                        : monthData.isCurrent
+                          ? 'Last 30 days'
+                          : `${monthData.monthName} by day`}
                     </span>
                   </div>
                   <Sparkline
-                    data={
-                      view === 'month' ? a.daily.map((d) => d.total) : yearData.monthlySparkline
-                    }
-                    labels={
-                      view === 'month'
-                        ? a.daily.map((d) => format(new Date(d.date + 'T12:00:00'), 'MMM d'))
-                        : [
-                            'Jan',
-                            'Feb',
-                            'Mar',
-                            'Apr',
-                            'May',
-                            'Jun',
-                            'Jul',
-                            'Aug',
-                            'Sep',
-                            'Oct',
-                            'Nov',
-                            'Dec',
-                          ]
-                    }
+                    data={sparkValues}
+                    labels={sparkLabels}
                     height={44}
                     className="max-w-sm"
                   />
-                  {/* Date axis labels */}
-                  <div className="mt-1 flex max-w-sm justify-between">
-                    {view === 'month' ? (
-                      <>
-                        <span className="text-[10px] text-[var(--text-tertiary)]">
-                          {a.daily[0]
-                            ? format(new Date(a.daily[0].date + 'T12:00:00'), 'MMM d')
-                            : ''}
-                        </span>
-                        <span className="text-[10px] text-[var(--text-tertiary)]">
-                          {a.daily[14]
-                            ? format(new Date(a.daily[14].date + 'T12:00:00'), 'MMM d')
-                            : ''}
-                        </span>
-                        <span className="text-[10px] text-accent">
-                          {monthOffset === 0
-                            ? 'Today'
-                            : a.daily[29]
-                              ? format(new Date(a.daily[29].date + 'T12:00:00'), 'MMM d')
-                              : ''}
-                        </span>
-                      </>
-                    ) : (
-                      <>
-                        <span className="text-[10px] text-[var(--text-tertiary)]">Jan</span>
-                        <span className="text-[10px] text-[var(--text-tertiary)]">Jun</span>
-                        <span className="text-[10px] text-accent">{format(new Date(), 'MMM')}</span>
-                      </>
-                    )}
-                  </div>
+                  <SparklineAxis
+                    labels={sparkLabels}
+                    lastLabel={!yearData && monthData.isCurrent ? 'Today' : undefined}
+                    highlightLast={a.isCurrent}
+                    className="max-w-sm"
+                  />
                 </div>
                 {!hasExpenses && (
                   <div className="mt-4 max-w-sm rounded-xl border border-accent/15 bg-accent/[0.06] px-3 py-2 text-[12px] leading-relaxed text-[var(--text-secondary)]">
@@ -269,34 +247,34 @@ export function PulseScreen() {
               </div>
             </div>
 
-            {view === 'month' && (
+            {!yearData && (
               <div className="w-full shrink-0 md:w-auto">
-                {monthData.totalBudget > 0 ? (
-                  <PaceRing ratio={monthData.paceRatio} daysLeft={monthData.daysLeft} />
+                {monthData.budget && monthData.daysLeft !== null ? (
+                  <PaceRing budget={monthData.budget} daysLeft={monthData.daysLeft} />
+                ) : monthData.budget ? (
+                  <BudgetFinal budget={monthData.budget} />
                 ) : (
-                  <div className="grid grid-cols-3 gap-2 rounded-xl border border-white/[0.06] bg-surface-2/55 p-3 md:w-[190px] md:grid-cols-1">
-                    <div>
+                  // Phones drop Avg/day: the line under the total already says it, and a
+                  // four-digit S$ average would not fit a third of a 320 px card.
+                  <div className="grid grid-cols-2 gap-2 rounded-xl border border-white/[0.06] bg-surface-2/55 p-3 sm:grid-cols-3 md:w-[190px] md:grid-cols-1">
+                    <div className="min-w-0">
                       <div className="text-[10px] uppercase tracking-[0.08em] text-[var(--text-tertiary)]">
                         Entries
                       </div>
-                      <div className="mt-0.5 font-mono text-[15px] tabular-nums text-white">
-                        {monthData.periodCount}
-                      </div>
+                      <div className={statValue}>{monthData.periodCount}</div>
                     </div>
-                    <div>
+                    <div className="hidden min-w-0 sm:block">
                       <div className="text-[10px] uppercase tracking-[0.08em] text-[var(--text-tertiary)]">
                         Avg/day
                       </div>
-                      <div className="mt-0.5 font-mono text-[15px] tabular-nums text-white">
-                        {fmt(monthData.periodTotal / Math.max(1, monthData.daysElapsed))}
-                      </div>
+                      <div className={statValue}>{fmt(monthData.dailyAverage)}</div>
                     </div>
-                    <div>
+                    <div className="min-w-0">
                       <div className="text-[10px] uppercase tracking-[0.08em] text-[var(--text-tertiary)]">
-                        Days left
+                        {monthData.daysLeft === null ? 'Days' : 'Days left'}
                       </div>
-                      <div className="mt-0.5 font-mono text-[15px] tabular-nums text-white">
-                        {monthData.daysLeft}
+                      <div className={statValue}>
+                        {monthData.daysLeft ?? monthData.daysInPeriod}
                       </div>
                     </div>
                   </div>
@@ -308,44 +286,53 @@ export function PulseScreen() {
       </div>
 
       {/* Year: monthly bars */}
-      {view === 'year' && (
+      {yearData && (
         <Card>
           <SectionHeader icon={BarChart3}>Monthly breakdown</SectionHeader>
-          <MonthlyBars data={yearData.monthlyTotals} />
+          <MonthlyBars
+            data={yearData.monthlyTotals}
+            total={yearData.periodTotal}
+            highest={yearData.highestMonth}
+          />
         </Card>
       )}
 
       {/* Top categories + heatmap */}
       <div className="grid gap-4 md:grid-cols-2">
-        <Card>
+        <Card className="min-w-0">
           <SectionHeader icon={Layers} meta={a.label}>
             Top categories
           </SectionHeader>
           <TopCategories items={a.topCategories} />
         </Card>
 
-        <Card>
+        <Card className="min-w-0">
           <SectionHeader icon={Activity} meta="14 weeks">
             Activity
           </SectionHeader>
-          <Heatmap data={monthData.heatmap} />
+          <Heatmap data={a.heatmap} today={today} />
         </Card>
       </div>
 
-      {/* Budget vs actual — only when month view and budgets exist */}
-      {view === 'month' && hasBudgets && (
+      {/* Budget vs actual — month view with budgets */}
+      {!yearData && hasBudgets && (
         <Card>
           <SectionHeader
             icon={Target}
-            meta={`${monthData.daysLeft}d left in ${monthData.label.split(' ')[0]}`}
+            meta={
+              <>
+                <span className="sm:hidden">{budgetMeta.short}</span>
+                <span className="hidden sm:inline">{budgetMeta.long}</span>
+              </>
+            }
           >
             Budget vs actual
           </SectionHeader>
-          <BudgetActual items={monthData.categoryBudgets} daysLeft={monthData.daysLeft} />
+          <BudgetActual items={monthData.categoryBudgets} isFinal={!monthData.isCurrent} />
         </Card>
       )}
 
-      {view === 'month' && !hasBudgets && hasExpenses && (
+      {!yearData && !hasBudgets && hasExpenses && (
         <Card className="border-accent/15 bg-accent/[0.035]">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 items-start gap-3">
@@ -373,8 +360,8 @@ export function PulseScreen() {
         </Card>
       )}
 
-      {/* Today strip — only in month view */}
-      {view === 'month' && (
+      {/* Today strip — current month only */}
+      {!yearData && monthData.isCurrent && (
         <TodayStrip entries={monthData.todayEntries} total={monthData.todayTotal} />
       )}
     </div>

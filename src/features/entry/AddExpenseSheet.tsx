@@ -1,5 +1,4 @@
-import { useEffect, useId, useState } from 'react'
-import { format } from 'date-fns'
+import { useEffect, useId, useState, type KeyboardEvent } from 'react'
 import { CalendarDays, ChevronDown } from 'lucide-react'
 import { Sheet } from '../../ui/Sheet'
 import { Input } from '../../ui/Input'
@@ -7,8 +6,11 @@ import { Button } from '../../ui/Button'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useToast } from '../../hooks/useToast'
 import { useHaptic } from '../../hooks/useHaptic'
-import { useFormatMoney } from '../../hooks/useFormatMoney'
+import { useCurrencySymbol, useFormatMoney } from '../../hooks/useFormatMoney'
+import { useToday } from '../../hooks/useToday'
 import { colorFromString } from '../../lib/analytics'
+import { addDays, formatKey, keyYear, shortDate, shortDateYear, type DayKey } from '../../lib/dates'
+import { MAX_AMOUNT, isAmountTooLarge } from '../../utils/amountGuard'
 import { DatePicker } from '../../ui/DatePicker'
 
 interface Props {
@@ -24,9 +26,14 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
   const toast = useToast()
   const vibrate = useHaptic()
   const fmt = useFormatMoney()
+  const symbol = useCurrencySymbol()
   const categoryLabelId = useId()
 
-  const today = format(new Date(), 'yyyy-MM-dd')
+  const today = useToday()
+  // "Oct 17", or "Dec 31, 2025" for another year — read from the key, never through `new Date(key)`
+  // (UTC midnight, the day before west of UTC).
+  const dayLabel = (day: DayKey) =>
+    keyYear(day) === keyYear(today) ? shortDate(day) : shortDateYear(day)
 
   const [form, setForm] = useState({
     itemName: prefill?.itemName ?? '',
@@ -64,6 +71,7 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
     if (!form.itemName.trim()) e.itemName = 'Required'
     const a = parseFloat(form.amount)
     if (!Number.isFinite(a) || a <= 0) e.amount = 'Enter a valid amount'
+    else if (isAmountTooLarge(a)) e.amount = `Amount too large — the limit is ${fmt(MAX_AMOUNT)}`
     return e
   }
 
@@ -83,7 +91,7 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
     vibrate(10)
     const isBackdated = form.date !== today
     toast.success(
-      `${isBackdated ? `Added for ${format(new Date(form.date), 'MMM d')} · ` : ''}${fmt(created.amount)} — ${created.itemName}`,
+      `Added "${created.itemName}" · ${fmt(created.amount)}${isBackdated ? ` · ${dayLabel(form.date)}` : ''}`,
       {
         action: {
           label: 'Undo',
@@ -100,17 +108,19 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
     onClose()
   }
 
+  // A held Enter (key repeat) or the Enter that confirms an IME word must not add a second row.
+  const submitOnEnter = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter' && !e.repeat && !e.nativeEvent.isComposing) submit()
+  }
+
   const isBackdated = form.date && form.date !== today
 
+  // Calendar days, not 24 h steps: the day after a DST change is 23 or 25 hours long.
   const presets = [
     { id: 'today', label: 'Today', val: today },
-    {
-      id: 'yesterday',
-      label: 'Yesterday',
-      val: format(new Date(Date.now() - 864e5), 'yyyy-MM-dd'),
-    },
-    { id: '-2', label: '2d ago', val: format(new Date(Date.now() - 2 * 864e5), 'yyyy-MM-dd') },
-    { id: '-3', label: '3d ago', val: format(new Date(Date.now() - 3 * 864e5), 'yyyy-MM-dd') },
+    { id: 'yesterday', label: 'Yesterday', val: addDays(today, -1) },
+    { id: '-2', label: '2d ago', val: addDays(today, -2) },
+    { id: '-3', label: '3d ago', val: addDays(today, -3) },
   ]
   const isPreset = presets.some((p) => p.val === form.date)
   const isCustomActive = !isPreset
@@ -149,7 +159,11 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
         {isBackdated && (
           <div className="flex items-center gap-1.5 rounded-lg border border-accent/20 bg-accent/5 px-3 py-2 text-[12px] text-accent">
             <CalendarDays size={12} />
-            Logging for {format(new Date(form.date + 'T12:00:00'), 'EEEE, MMMM d')}
+            Logging for{' '}
+            {formatKey(
+              form.date,
+              keyYear(form.date) === keyYear(today) ? 'EEEE, MMMM d' : 'EEEE, MMMM d, yyyy',
+            )}
           </div>
         )}
 
@@ -160,20 +174,20 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
           onChange={(e) => set('itemName', e.target.value)}
           error={errors.itemName}
           autoFocus
-          onKeyDown={(e) => e.key === 'Enter' && submit()}
+          onKeyDown={submitOnEnter}
         />
 
         <Input
           label="Amount"
           type="number"
           inputMode="decimal"
-          prefix="$"
+          prefix={symbol}
           mono
           placeholder="0.00"
           value={form.amount}
           onChange={(e) => set('amount', e.target.value)}
           error={errors.amount}
-          onKeyDown={(e) => e.key === 'Enter' && submit()}
+          onKeyDown={submitOnEnter}
         />
 
         <div className="flex flex-col gap-1.5">
@@ -234,7 +248,7 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
             Cancel
           </Button>
           <Button onClick={submit} className="flex-1">
-            Add{isBackdated ? ` for ${format(new Date(form.date + 'T12:00:00'), 'MMM d')}` : ''}
+            Add{isBackdated ? ` for ${dayLabel(form.date)}` : ''}
           </Button>
         </div>
       </div>

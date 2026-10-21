@@ -1,134 +1,185 @@
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { format, parseISO, isToday, getDay } from 'date-fns'
 import clsx from 'clsx'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
+import {
+  dayOfWeek,
+  longDate,
+  monthShortName,
+  shortDate,
+  shortDateYear,
+  weekdayShort,
+  type DayKey,
+} from '../../lib/dates'
+import type { HeatmapData } from '../../lib/analytics'
 
-const DAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+// Labels and cells share one row template (month row + 7 day rows, 3 px gaps), so the
+// Mon / Wed / Fri labels sit on their rows by construction at every breakpoint.
+const ROWS = 'grid grid-rows-[14px_repeat(7,17px)] gap-[3px] sm:grid-rows-[14px_repeat(7,19px)]'
+const LABELED_ROWS = new Map([
+  [1, 'Mon'],
+  [3, 'Wed'],
+  [5, 'Fri'],
+])
+/** Width of the fade over a side whose weeks are scrolled out of view. */
+const FADE = '16px'
+/** Fully shown in the mask (a mask reads only alpha; the colour is never painted). */
+const SHOWN = 'rgb(0 0 0 / 1)'
+const LEVEL_CLASSES = [
+  'bg-surface-2 border-white/[0.04]',
+  'bg-accent/15 border-accent/20',
+  'bg-accent/30 border-accent/30',
+  'bg-accent/55 border-accent/40',
+  'bg-accent border-accent',
+] as const
 
-export function Heatmap({ data }: { data: { date: string; total: number }[] }) {
+interface Cell {
+  key: DayKey
+  row: number
+  level: number
+  total: number
+  label: string
+  title: string
+}
+
+const levelOf = (total: number, max: number) => {
+  if (total <= 0) return 0
+  const r = total / max
+  if (r < 0.25) return 1
+  if (r < 0.5) return 2
+  if (r < 0.75) return 3
+  return 4
+}
+
+export function Heatmap({ data, today }: { data: HeatmapData; today: DayKey }) {
   const navigate = useNavigate()
   const fmt = useFormatMoney()
-  const max = Math.max(...data.map((d) => d.total), 1)
+  const scroller = useRef<HTMLDivElement>(null)
 
-  // Break into weeks (7-row columns)
-  const weeks: { date: string; total: number }[][] = []
-  for (let i = 0; i < data.length; i += 7) weeks.push(data.slice(i, i + 7))
-
-  const level = (total: number) => {
-    if (total === 0) return 0
-    const r = total / max
-    if (r < 0.25) return 1
-    if (r < 0.5) return 2
-    if (r < 0.75) return 3
-    return 4
-  }
-
-  const colors = [
-    'bg-surface-2 border-white/[0.04]',
-    'bg-accent/15 border-accent/20',
-    'bg-accent/30 border-accent/30',
-    'bg-accent/55 border-accent/40',
-    'bg-accent border-accent',
-  ]
-
-  // Determine month label for each column: show label when month changes
-  const monthLabels: (string | null)[] = weeks.map((week, wi) => {
-    const firstDay = week[0]
-    if (!firstDay) return null
-    const date = parseISO(firstDay.date)
-    // Show label on first week or when month changes from previous week
-    if (wi === 0) return format(date, 'MMM')
-    const prevFirst = weeks[wi - 1]?.[0]
-    if (!prevFirst) return null
-    const prevDate = parseISO(prevFirst.date)
-    if (format(date, 'MMM') !== format(prevDate, 'MMM')) {
-      return format(date, 'MMM')
+  // Everything per cell is derived once per data / currency change, by key slicing.
+  const weeks = useMemo(() => {
+    const max = Math.max(...data.days.map((d) => d.total), 1)
+    const out: { month: string | null; cells: Cell[] }[] = []
+    let lastMonth = ''
+    for (const d of data.days) {
+      const row = dayOfWeek(d.date)
+      if (row === 0 || out.length === 0) {
+        const month = d.date.slice(0, 7)
+        out.push({ month: month === lastMonth ? null : monthShortName(month), cells: [] })
+        lastMonth = month
+      }
+      const amount = d.total > 0 ? fmt(d.total) : 'No spending'
+      out[out.length - 1]?.cells.push({
+        key: d.date,
+        row,
+        level: levelOf(d.total, max),
+        total: d.total,
+        label: `${weekdayShort(d.date)}, ${longDate(d.date)}: ${amount}`,
+        title: `${weekdayShort(d.date)}, ${shortDate(d.date)} · ${amount}`,
+      })
     }
-    return null
-  })
+    return out
+  }, [data, fmt])
 
-  // Day-of-week labels: show Mon, Wed, Fri (indices 1, 3, 5)
-  const dayRows = [0, 1, 2, 3, 4, 5, 6]
-  const firstEntry = data[0]
-  const lastEntry = data[data.length - 1]
+  // Which sides have weeks scrolled out of view. A cut-off column under a soft fade reads as
+  // "more this way" rather than as a broken edge (below 390 px 14 weeks do not quite fit).
+  const [hidden, setHidden] = useState({ before: false, after: false })
+  const readEdges = useCallback(() => {
+    const el = scroller.current
+    if (!el) return
+    const before = el.scrollLeft > 1
+    const after = el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+    setHidden((h) => (h.before === before && h.after === after ? h : { before, after }))
+  }, [])
+
+  // Open on the latest weeks: on a narrow phone the grid scrolls inside its card. The scroll
+  // waits for the frame's own layout (rAF runs before it, still ahead of the first paint), so
+  // mounting Pulse never forces an extra synchronous layout; and it runs only when the period
+  // changes, so an add does not undo the reader's scroll.
+  useLayoutEffect(() => {
+    const el = scroller.current
+    if (!el) return
+    const frame = requestAnimationFrame(() => {
+      el.scrollLeft = el.scrollWidth
+      readEdges()
+    })
+    return () => {
+      cancelAnimationFrame(frame)
+    }
+  }, [data.start, data.end, readEdges])
+
+  // A rotated phone or a resized window changes what fits.
+  useEffect(() => {
+    window.addEventListener('resize', readEdges)
+    return () => {
+      window.removeEventListener('resize', readEdges)
+    }
+  }, [readEdges])
+
+  const fade =
+    hidden.before || hidden.after
+      ? `linear-gradient(to right, ${hidden.before ? 'transparent' : SHOWN}, ${SHOWN} ${FADE}, ${SHOWN} calc(100% - ${FADE}), ${hidden.after ? 'transparent' : SHOWN})`
+      : undefined
 
   return (
     <div>
-      <div className="flex gap-[3px]">
-        {/* Day-of-week labels column */}
-        <div className="mr-1 flex shrink-0 flex-col gap-[3px]">
-          {/* Spacer for month label row */}
-          <div className="h-[14px]" />
-          {dayRows.map((di) => (
-            <div key={di} className="flex h-[11px] items-center sm:h-[13px]">
-              {di === 1 || di === 3 || di === 5 ? (
-                <span className="w-6 pr-1 text-right text-[9px] leading-none text-[var(--text-tertiary)]">
-                  {DAY_LABELS[di]}
-                </span>
-              ) : (
-                <span className="w-6" />
-              )}
-            </div>
+      <div className="flex">
+        <div className={clsx(ROWS, 'mr-1 shrink-0 py-1')} aria-hidden>
+          <span />
+          {[0, 1, 2, 3, 4, 5, 6].map((row) => (
+            <span
+              key={row}
+              className="flex w-6 items-center justify-end pr-1 text-[9px] leading-none text-[var(--text-tertiary)]"
+            >
+              {LABELED_ROWS.get(row)}
+            </span>
           ))}
         </div>
 
-        {/* Grid */}
-        <div className="no-scrollbar flex flex-1 gap-[3px] overflow-x-auto pb-1">
-          {weeks.map((week, wi) => (
-            <div key={wi} className="flex shrink-0 flex-col gap-[3px]">
-              {/* Month label */}
-              <div className="flex h-[14px] items-end">
-                {monthLabels[wi] && (
-                  <span className="whitespace-nowrap text-[9px] font-medium leading-none text-[var(--text-tertiary)]">
-                    {monthLabels[wi]}
-                  </span>
-                )}
-              </div>
-              {/* Day cells */}
-              {Array.from({ length: 7 }).map((_, di) => {
-                const d = week[di]
-                if (!d)
-                  return <div key={di} className="h-[11px] w-[11px] sm:h-[13px] sm:w-[13px]" />
-                const todayCell = isToday(parseISO(d.date))
-                const dayOfWeek = getDay(parseISO(d.date))
-                const dayName = DAY_LABELS[dayOfWeek]
-                return (
+        <div
+          ref={scroller}
+          onScroll={readEdges}
+          style={{ maskImage: fade, WebkitMaskImage: fade }}
+          className="no-scrollbar min-w-0 flex-1 overflow-x-auto"
+        >
+          <div className="flex w-max gap-[3px] p-1">
+            {weeks.map((week) => (
+              <div key={week.cells[0]?.key} className={clsx(ROWS, 'shrink-0')}>
+                <span className="flex items-end whitespace-nowrap text-[9px] font-medium leading-none text-[var(--text-tertiary)]">
+                  {week.month}
+                </span>
+                {week.cells.map((cell) => (
                   <button
-                    key={d.date}
+                    key={cell.key}
                     type="button"
-                    aria-label={`${dayName}, ${format(parseISO(d.date), 'MMMM d')}: ${d.total > 0 ? fmt(d.total) : 'No spending'}`}
-                    title={`${dayName}, ${format(parseISO(d.date), 'MMM d')} · ${d.total > 0 ? fmt(d.total) : 'No spending'}`}
-                    onClick={() => d.total > 0 && navigate(`/ledger?date=${d.date}`)}
+                    aria-label={cell.label}
+                    title={cell.title}
+                    onClick={() => cell.total > 0 && navigate(`/ledger?date=${cell.key}`)}
+                    style={{ gridRowStart: cell.row + 2 }}
                     className={clsx(
                       'h-[17px] w-[17px] rounded-[5px] border transition-transform hover:scale-125 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent sm:h-[19px] sm:w-[19px]',
-                      colors[level(d.total)],
-                      todayCell &&
+                      LEVEL_CLASSES[cell.level],
+                      cell.key === today &&
                         'shadow-[0_0_8px_-2px_rgba(34,211,238,0.55)] ring-2 ring-accent ring-offset-2 ring-offset-surface-1',
-                      d.total > 0 ? 'cursor-pointer' : 'cursor-default',
+                      cell.total > 0 ? 'cursor-pointer' : 'cursor-default',
                     )}
                   />
-                )
-              })}
-            </div>
-          ))}
+                ))}
+              </div>
+            ))}
+          </div>
         </div>
       </div>
 
       {/* Footer */}
-      <div className="mt-2.5 flex items-center justify-between text-[10px] text-[var(--text-tertiary)]">
+      <div className="mt-2.5 flex items-center justify-between gap-2 text-[10px] text-[var(--text-tertiary)]">
         <span>
-          {firstEntry && lastEntry && (
-            <>
-              {format(parseISO(firstEntry.date), 'MMM d')}
-              {' – '}
-              {format(parseISO(lastEntry.date), 'MMM d, yyyy')}
-            </>
-          )}
+          {shortDate(data.start)} – {shortDateYear(data.end)}
         </span>
         <div className="flex items-center gap-1">
           <span>less</span>
-          {colors.map((c, i) => (
-            <span key={i} className={clsx('h-[10px] w-[10px] rounded-[2px] border', c)} />
+          {LEVEL_CLASSES.map((c) => (
+            <span key={c} className={clsx('h-[10px] w-[10px] rounded-[2px] border', c)} />
           ))}
           <span>more</span>
         </div>

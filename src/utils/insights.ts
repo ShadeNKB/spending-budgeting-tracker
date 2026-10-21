@@ -1,5 +1,19 @@
-import { parseISO, differenceInDays, startOfMonth, endOfMonth } from 'date-fns'
-import type { Expense, CategoryBudgets } from '../types'
+import { activeCaps, categoryTotals, projectedMonthCents } from '../lib/analytics'
+import {
+  addDays,
+  addMonths,
+  daysInMonth,
+  keyDay,
+  keyMonth,
+  keyYear,
+  lastNDays,
+  monthKeyOf,
+  monthName,
+  monthRange,
+  type DayKey,
+} from '../lib/dates'
+import { sumRange, toCents, type LedgerIndex } from '../lib/ledgerIndex'
+import type { CategoryBudgets } from '../types'
 
 export type InsightTone = 'up' | 'down' | 'warn' | 'info' | 'good'
 
@@ -10,76 +24,62 @@ export interface Insight {
   detail?: string // secondary context
 }
 
-function sumBy(items: Expense[], pred: (e: Expense) => boolean): number {
-  let s = 0
-  for (const e of items) if (pred(e)) s += e.amount
-  return s
-}
-
-function groupByCategory(items: Expense[]): Record<string, number> {
-  const out: Record<string, number> = {}
-  for (const e of items) out[e.category] = (out[e.category] ?? 0) + e.amount
-  return out
-}
-
 /**
- * Compute 2–4 narrative insights for the Dashboard.
- * Ordering: budget alerts → week deltas → uncategorized → month-pace.
+ * Compute up to 4 narrative insights for the Insights screen, from the shared periods:
+ * budget alerts → last 7 days vs the previous 7 → uncategorised → month pace vs last month.
+ * Every amount goes through `fmt`, so the copy follows the currency setting.
  */
-export function computeInsights(allExpenses: Expense[], budgets: CategoryBudgets): Insight[] {
+export function computeInsights(
+  index: LedgerIndex,
+  budgets: CategoryBudgets,
+  today: DayKey,
+  fmt: (n: number) => string,
+): Insight[] {
   const out: Insight[] = []
-  const now = new Date()
-
-  const sevenAgo = new Date(now)
-  sevenAgo.setDate(now.getDate() - 7)
-  const fourteenAgo = new Date(now)
-  fourteenAgo.setDate(now.getDate() - 14)
-  const monthStart = startOfMonth(now)
-  const monthEnd = endOfMonth(now)
-  const daysInMonth = monthEnd.getDate()
-  const dayOfMonth = now.getDate()
-  const daysLeft = Math.max(0, daysInMonth - dayOfMonth)
-
-  const withinRange = (e: Expense, start: Date, end: Date) => {
-    const d = parseISO(e.date)
-    return d >= start && d < end
-  }
+  const month = monthKeyOf(today)
+  const thisMonth = monthRange(month)
+  const dom = keyDay(today)
+  const dim = daysInMonth(keyYear(today), keyMonth(today))
+  const daysLeft = dim - dom + 1 // today included
+  const daysLeftText =
+    daysLeft === 1
+      ? `Last day of ${monthName(month)}`
+      : `${String(daysLeft)} days left in ${monthName(month)}`
 
   // ── 1. Budget alerts (most urgent first) ───────────────────────
-  const budgetEntries = Object.entries(budgets).filter(([, cap]) => cap > 0)
-  for (const [cat, cap] of budgetEntries) {
-    const spent = sumBy(
-      allExpenses,
-      (e) => e.category === cat && withinRange(e, monthStart, monthEnd),
-    )
-    const pct = spent / cap
-    if (pct >= 1) {
+  // "Over" means past the cap, the same rule as Pulse; exactly at the cap reads 100%.
+  const monthByCategory = categoryTotals(index, thisMonth)
+  for (const [cat, cap] of activeCaps(budgets)) {
+    const spent = monthByCategory.get(cat) ?? 0
+    const capCents = toCents(cap)
+    const pct = spent / capCents
+    if (spent > capCents) {
       out.push({
         id: `budget-over-${cat}`,
         tone: 'warn',
         title: `${cat} is over budget`,
-        detail: `$${spent.toFixed(0)} of $${cap.toFixed(0)} · ${daysLeft}d left in ${now.toLocaleString('en-US', { month: 'long' })}`,
+        detail: `${fmt(spent / 100)} of ${fmt(cap)} · ${daysLeftText}`,
       })
     } else if (pct >= 0.85) {
       out.push({
         id: `budget-near-${cat}`,
         tone: 'warn',
-        title: `${cat} at ${Math.round(pct * 100)}% of budget`,
-        detail: `${daysLeft} day${daysLeft === 1 ? '' : 's'} left this month`,
+        title: `${cat} at ${String(Math.round(pct * 100))}% of budget`,
+        detail: daysLeftText,
       })
     }
   }
 
-  // ── 2. Week-over-week category jumps ───────────────────────────
-  const thisWeek = groupByCategory(allExpenses.filter((e) => withinRange(e, sevenAgo, now)))
-  const lastWeek = groupByCategory(allExpenses.filter((e) => withinRange(e, fourteenAgo, sevenAgo)))
+  // ── 2. Last 7 days vs the previous 7, per category ─────────────
+  const thisWeek = categoryTotals(index, lastNDays(today, 7))
+  const lastWeek = categoryTotals(index, { start: addDays(today, -13), end: addDays(today, -7) })
   const deltas: { cat: string; pct: number; diff: number }[] = []
-  for (const [cat, cur] of Object.entries(thisWeek)) {
-    const prev = lastWeek[cat] ?? 0
-    if (prev === 0) continue
+  for (const [cat, cur] of thisWeek) {
+    const prev = lastWeek.get(cat) ?? 0
+    if (prev <= 0) continue
     const pct = (cur - prev) / prev
-    if (Math.abs(pct) >= 0.3 && Math.abs(cur - prev) >= 5) {
-      deltas.push({ cat, pct, diff: cur - prev })
+    if (Math.abs(pct) >= 0.3 && Math.abs(cur - prev) >= 500) {
+      deltas.push({ cat, pct, diff: (cur - prev) / 100 })
     }
   }
   deltas.sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct))
@@ -88,53 +88,51 @@ export function computeInsights(allExpenses: Expense[], budgets: CategoryBudgets
     out.push({
       id: `trend-${d.cat}`,
       tone: up ? 'up' : 'down',
-      title: `${d.cat} ${up ? 'up' : 'down'} ${Math.round(Math.abs(d.pct) * 100)}% this week`,
-      detail: `vs last 7 days ($${Math.abs(d.diff).toFixed(0)} ${up ? 'more' : 'less'})`,
+      title: `${d.cat} ${up ? 'up' : 'down'} ${String(Math.round(Math.abs(d.pct) * 100))}% in the last 7 days`,
+      detail: `vs the previous 7 days (${fmt(Math.abs(d.diff))} ${up ? 'more' : 'less'})`,
     })
   }
 
   // ── 3. Uncategorized transactions ──────────────────────────────
-  const uncat = allExpenses.filter(
-    (e) => !e.category || e.category === 'Other' || e.category === 'Uncategorized',
-  ).length
+  let uncat = 0
+  for (const e of index.expenses) {
+    if (!e.category || e.category === 'Other' || e.category === 'Uncategorized') uncat++
+  }
   if (uncat >= 3) {
     out.push({
       id: 'uncategorized',
       tone: 'info',
-      title: `${uncat} transactions need a category`,
+      title: `${String(uncat)} transactions need a category`,
       detail: 'Assign them to improve your breakdown',
     })
   }
 
   // ── 4. Month pace (only if nothing else to say) ────────────────
-  if (out.length < 2 && dayOfMonth > 3) {
-    const thisMonth = sumBy(allExpenses, (e) => withinRange(e, monthStart, monthEnd))
-    const fraction = dayOfMonth / daysInMonth
-    const projected = fraction > 0 ? thisMonth / fraction : 0
+  // The projection Pulse budgets use: rent or a subscription paid on the 1st counts once.
+  if (out.length < 2 && dom > 3) {
+    const projected = projectedMonthCents(index, today)
+    const prevMonth = addMonths(month, -1)
+    const lastMonth = sumRange(index, monthRange(prevMonth)).cents
 
-    const lastMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1)
-    const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0)
-    const lastMonthTotal = sumBy(allExpenses, (e) => withinRange(e, lastMonthStart, lastMonthEnd))
-
-    if (projected > 0 && lastMonthTotal > 0) {
-      const diff = projected - lastMonthTotal
-      const pct = diff / lastMonthTotal
+    if (projected > 0 && lastMonth > 0) {
+      const pct = (projected - lastMonth) / lastMonth
       if (Math.abs(pct) >= 0.08) {
+        const share = String(Math.round(Math.abs(pct) * 100))
         out.push({
           id: 'month-pace',
           tone: pct > 0 ? 'up' : 'good',
           title:
             pct > 0
-              ? `Pacing ${Math.round(pct * 100)}% higher than last month`
-              : `Pacing ${Math.round(Math.abs(pct) * 100)}% lower than last month`,
-          detail: `Projected $${projected.toFixed(0)} · last month $${lastMonthTotal.toFixed(0)}`,
+              ? `Pacing ${share}% higher than last month`
+              : `Pacing ${share}% lower than last month`,
+          detail: `Projected ${fmt(projected / 100)} · ${monthName(prevMonth)} ${fmt(lastMonth / 100)}`,
         })
       }
     }
   }
 
   // ── 5. Success state (good news if nothing flagged) ────────────
-  if (out.length === 0 && allExpenses.length > 0) {
+  if (out.length === 0 && index.expenses.length > 0) {
     out.push({
       id: 'all-clear',
       tone: 'good',
@@ -144,10 +142,4 @@ export function computeInsights(allExpenses: Expense[], budgets: CategoryBudgets
   }
 
   return out.slice(0, 4)
-}
-
-export function daysLeftInMonth(): number {
-  const now = new Date()
-  const end = endOfMonth(now)
-  return Math.max(0, differenceInDays(end, now))
 }

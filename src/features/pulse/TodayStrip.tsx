@@ -4,7 +4,7 @@ import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { colorFromString } from '../../lib/analytics'
 import type { Expense } from '../../types'
 
-export function TodayStrip({ entries, total }: { entries: Expense[]; total: number }) {
+export function TodayStrip({ entries, total }: { entries: readonly Expense[]; total: number }) {
   const navigate = useNavigate()
   const fmt = useFormatMoney()
 

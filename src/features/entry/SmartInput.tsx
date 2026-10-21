@@ -1,12 +1,19 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from 'react'
-import { Sparkles, CornerDownLeft, X, CalendarDays, PenLine } from 'lucide-react'
-import { format } from 'date-fns'
+import { Sparkles, CornerDownLeft, X, CalendarDays, PenLine, AlertTriangle } from 'lucide-react'
 import clsx from 'clsx'
-import { parseExpense } from '../../utils/parseExpense'
+import { parseExpense, quickAddDateLabel, quickAddStoredDate } from '../../utils/parseExpense'
+import {
+  CONFIRM_DELAY_MS,
+  isAmountTooLarge,
+  isUnusualAmount,
+  type AmountConfirmation,
+} from '../../utils/amountGuard'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useToast } from '../../hooks/useToast'
 import { useHaptic } from '../../hooks/useHaptic'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
+import { useToday } from '../../hooks/useToday'
+import { keyToLocalNoon } from '../../lib/dates'
 import { Pill } from '../../ui/Pill'
 import { colorFromString } from '../../lib/analytics'
 
@@ -28,40 +35,63 @@ export function SmartInput({
   dense?: boolean
 }) {
   const [value, setValue] = useState('')
+  // Set when a large amount is flagged; a later Add on the same text confirms it.
+  const [flagged, setFlagged] = useState<AmountConfirmation | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  // Set by a commit, cleared by typing: a second Enter or tap before the text changes adds nothing.
+  const committedRef = useRef(false)
   const addExpense = useExpenseStore((s) => s.addExpense)
   const categoryMappings = useExpenseStore((s) => s.categoryMappings)
+  const categories = useExpenseStore((s) => s.categories)
   const consumeUndo = useExpenseStore((s) => s.consumeUndo)
   const toast = useToast()
   const vibrate = useHaptic()
   const fmt = useFormatMoney()
+  // Relative dates ("yesterday", "31 dec") follow the day, even when the app stays open overnight.
+  const today = useToday()
 
   useEffect(() => {
     if (autoFocus) inputRef.current?.focus()
   }, [autoFocus])
 
-  const parsed = useMemo(() => parseExpense(value, categoryMappings), [value, categoryMappings])
-  const commitAmount = parsed.itemName && parsed.amount && parsed.amount > 0 ? parsed.amount : null
-  const canCommit = commitAmount !== null
+  const parsed = useMemo(
+    () => parseExpense(value, categoryMappings, { categories, now: keyToLocalNoon(today) }),
+    [value, categoryMappings, categories, today],
+  )
+  const amount = parsed.amount !== null && parsed.amount > 0 ? parsed.amount : null
+  const tooLarge = amount !== null && isAmountTooLarge(amount)
+  const canCommit = parsed.itemName !== '' && amount !== null && !tooLarge
+  const confirming = canCommit && flagged?.text === value
 
-  const today = format(new Date(), 'yyyy-MM-dd')
-  const parsedDateLabel =
-    parsed.parsedDate && parsed.parsedDate !== today
-      ? format(new Date(parsed.parsedDate + 'T12:00:00'), 'MMM d')
-      : null
+  const parsedDateLabel = quickAddDateLabel(parsed.parsedDate, keyToLocalNoon(today))
 
-  const commit = () => {
-    if (commitAmount === null) return
+  const edit = (next: string) => {
+    committedRef.current = false
+    setFlagged(null)
+    setValue(next)
+  }
+
+  /** `at` is the triggering event's timeStamp, so a double tap cannot confirm its own warning. */
+  const commit = (at: number) => {
+    if (committedRef.current || !canCommit) return
+    if (confirming) {
+      if (at - flagged.at < CONFIRM_DELAY_MS) return
+    } else if (isUnusualAmount(amount, useExpenseStore.getState().expenses)) {
+      setFlagged({ text: value, at })
+      vibrate([10, 60, 10])
+      return
+    }
     const created = addExpense({
       itemName: parsed.itemName,
-      amount: commitAmount,
+      amount,
       category: parsed.suggestedCategory,
-      date: parsed.parsedDate ? new Date(parsed.parsedDate + 'T12:00:00').toISOString() : undefined,
+      date: quickAddStoredDate(parsed.parsedDate),
     })
+    committedRef.current = true
     vibrate(10)
     toast.success(
-      `${parsedDateLabel ? `${parsedDateLabel} / ` : ''}Added "${created.itemName}" - ${fmt(created.amount)}`,
+      `Added "${created.itemName}" · ${fmt(created.amount)}${parsedDateLabel ? ` · ${parsedDateLabel}` : ''}`,
       {
         action: {
           label: 'Undo',
@@ -79,8 +109,15 @@ export function SmartInput({
       if (entry) useExpenseStore.getState().clearUndo(entry.id)
     }, 6000)
     setValue('')
+    setFlagged(null)
     onCommit?.()
   }
+
+  const status = confirming
+    ? `Large amount, ${fmt(amount)}. Press Confirm to add it.`
+    : tooLarge
+      ? 'Amount too large.'
+      : ''
 
   return (
     <>
@@ -96,13 +133,14 @@ export function SmartInput({
           <input
             ref={inputRef}
             value={value}
-            onChange={(e) => setValue(e.target.value)}
+            onChange={(e) => edit(e.target.value)}
             onKeyDown={(e) => {
+              if (e.nativeEvent.isComposing) return
               if (e.key === 'Enter') {
                 e.preventDefault()
-                commit()
+                if (!e.repeat) commit(e.timeStamp)
               } else if (e.key === 'Escape') {
-                setValue('')
+                edit('')
                 inputRef.current?.blur()
               }
             }}
@@ -117,7 +155,7 @@ export function SmartInput({
           {value && (
             <button
               type="button"
-              onClick={() => setValue('')}
+              onClick={() => edit('')}
               className="shrink-0 text-[var(--text-tertiary)] transition hover:text-white"
               aria-label="Clear quick entry"
             >
@@ -137,16 +175,18 @@ export function SmartInput({
 
           <button
             type="button"
-            onClick={commit}
+            onClick={(e) => commit(e.timeStamp)}
             disabled={!canCommit}
             className={clsx(
               'inline-flex shrink-0 items-center gap-1 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition',
-              canCommit
-                ? 'bg-accent text-surface-0 hover:bg-accent-hover active:scale-95'
-                : 'cursor-not-allowed bg-surface-2 text-[var(--text-tertiary)]',
+              !canCommit
+                ? 'cursor-not-allowed bg-surface-2 text-[var(--text-tertiary)]'
+                : confirming
+                  ? 'bg-warning text-surface-0 hover:brightness-110 active:scale-95'
+                  : 'bg-accent text-surface-0 hover:bg-accent-hover active:scale-95',
             )}
           >
-            Add <CornerDownLeft size={12} />
+            {confirming ? 'Confirm' : 'Add'} <CornerDownLeft size={12} />
           </button>
         </div>
 
@@ -157,10 +197,17 @@ export function SmartInput({
                 <span className="max-w-[140px] truncate">{parsed.itemName}</span>
               </Pill>
             )}
-            {parsed.amount != null && parsed.amount > 0 ? (
-              <Pill tone="accent">${parsed.amount.toFixed(2)}</Pill>
+            {tooLarge ? (
+              <Pill tone="warning">Amount too large</Pill>
+            ) : amount !== null ? (
+              <Pill tone={confirming ? 'warning' : 'accent'}>{fmt(amount)}</Pill>
             ) : (
               <Pill tone="warning">add amount</Pill>
+            )}
+            {confirming && (
+              <Pill tone="warning">
+                <AlertTriangle size={10} /> Large amount — confirm to add
+              </Pill>
             )}
             {parsed.suggestedCategory && (
               <Pill tone="info">
@@ -172,12 +219,15 @@ export function SmartInput({
               </Pill>
             )}
             {parsedDateLabel && (
-              <Pill tone="default">
+              <Pill tone="accent">
                 <CalendarDays size={10} /> {parsedDateLabel}
               </Pill>
             )}
           </div>
         )}
+        <span role="status" className="sr-only">
+          {status}
+        </span>
       </div>
 
       <Suspense fallback={null}>
