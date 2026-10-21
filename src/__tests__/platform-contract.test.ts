@@ -372,7 +372,7 @@ describe('vercel.json: security headers and SPA rewrite', () => {
     expect(headers.get('X-Frame-Options')).toBe('DENY')
     expect(headers.get('Cross-Origin-Opener-Policy')).toBe('same-origin')
     expect(headers.get('Permissions-Policy')).toBe(
-      'camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), hid=(), bluetooth=(), midi=(), display-capture=()',
+      'camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), hid=(), midi=(), display-capture=()',
     )
   })
 
