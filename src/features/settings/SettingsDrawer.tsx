@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { format } from 'date-fns'
 import {
   Plus,
@@ -31,8 +31,8 @@ import { SyncPanel } from './SyncPanel'
 import { useToast } from '../../hooks/useToast'
 import { useCurrencySymbol, useFormatMoney } from '../../hooks/useFormatMoney'
 import { downloadJSON, downloadCSV } from '../../lib/download'
+import { expensesToCsv } from '../../lib/csv'
 import { colorFromString } from '../../lib/analytics'
-import { dayKeyOfStored } from '../../lib/dates'
 import { BackupTooLargeError, parseBackup } from '../../lib/backup'
 import type { BackupData } from '../../types'
 
@@ -46,6 +46,9 @@ export function SettingsDrawer() {
   const theme = useUIStore((s) => s.theme)
   const setTheme = useUIStore((s) => s.setTheme)
   const [isMobile, setIsMobile] = useState(false)
+  // Stable: Sheet re-runs its opening focus when onClose changes, which sent focus to the close
+  // button on every tab switch (and away from a control another panel asked to focus).
+  const close = useCallback(() => setOpen(false), [setOpen])
 
   useEffect(() => {
     const query = window.matchMedia('(max-width: 767px)')
@@ -58,7 +61,7 @@ export function SettingsDrawer() {
   return (
     <Sheet
       open={open}
-      onClose={() => setOpen(false)}
+      onClose={close}
       title="Settings"
       side={isMobile ? 'bottom' : 'right'}
       width={460}
@@ -314,7 +317,9 @@ function BudgetsPanel() {
                   defaultValue={current ?? ''}
                   aria-label={`Monthly budget for ${c}`}
                   placeholder="—"
-                  className="h-8 w-24 rounded-md border border-white/[0.06] bg-surface-2 px-2 text-right font-mono text-[13px] tabular-nums text-white outline-none [color-scheme:dark] focus:border-accent/60"
+                  // Wider on touch screens, where the text is floored at 16 px (index.css,
+                  // against iOS focus zoom): 9 characters (123456.78) still fit.
+                  className="h-8 w-24 rounded-md border border-white/[0.06] bg-surface-2 px-2 text-right font-mono text-[13px] tabular-nums text-white outline-none [color-scheme:dark] focus:border-accent/60 [@media(pointer:coarse)]:w-28"
                   onBlur={(e) => {
                     const v = parseFloat(e.target.value)
                     if (Number.isFinite(v) && v > 0) {
@@ -345,6 +350,10 @@ function BackupPanel() {
   const clearAllExpenses = useExpenseStore((s) => s.clearAllExpenses)
   const fileRef = useRef<HTMLInputElement>(null)
   const toast = useToast()
+  // Sync's "Export backup" sends focus here.
+  const takeFocus = useCallback((button: HTMLButtonElement | null) => {
+    if (button && useUIStore.getState().takeSettingsFocus('backup-download')) button.focus()
+  }, [])
   const [pendingImport, setPendingImport] = useState<{ data: BackupData; count: number } | null>(
     null,
   )
@@ -355,20 +364,8 @@ function BackupPanel() {
     toast.success('Backup downloaded')
   }
 
-  const escapeCsvField = (value: string | number | undefined) => {
-    const raw = String(value ?? '')
-    return `"${raw.replace(/"/g, '""')}"`
-  }
-
   const exportCsv = () => {
-    const headers = ['Date', 'Item', 'Category', 'Amount', 'Notes']
-    const rows = expenses.map((e) =>
-      [dayKeyOfStored(e.date) ?? e.date, e.itemName, e.category, e.amount, e.notes]
-        .map(escapeCsvField)
-        .join(','),
-    )
-    const csv = [headers.join(','), ...rows].join('\n')
-    downloadCSV(`spendtrack-${format(new Date(), 'yyyy-MM-dd')}.csv`, csv)
+    downloadCSV(`spendtrack-${format(new Date(), 'yyyy-MM-dd')}.csv`, expensesToCsv(expenses))
     toast.success('CSV exported')
   }
 
@@ -461,7 +458,7 @@ function BackupPanel() {
         </div>
       )}
 
-      <Button onClick={exportJson} variant="primary">
+      <Button ref={takeFocus} onClick={exportJson} variant="primary">
         <Download size={14} /> Download JSON backup
       </Button>
       <Button onClick={exportCsv} variant="ghost">

@@ -6,6 +6,7 @@
 import { storage, WRITER_VERSION } from '../services/storage'
 import {
   PayloadTooLargeError,
+  SEEN_MAX,
   SyncTransportError,
   contentKey,
   isSyncableExpense,
@@ -18,10 +19,11 @@ import {
   type SyncPayload,
   type WriterStamp,
 } from '../services/syncService'
+import { DEFAULT_CATEGORIES } from '../constants'
 import { isRecord } from '../lib/backup'
 import { canon, fnv1a } from '../lib/canon'
 import { nextStampIso, stampMs } from '../lib/stamps'
-import type { BackupData, Expense } from '../types'
+import type { BackupData, CategoryMappings, Expense } from '../types'
 import {
   ackPendingEdits,
   clearPendingEdits,
@@ -31,12 +33,17 @@ import {
   sameValue,
   useExpenseStore,
   type PendingEdit,
+  type PendingSnapshot,
 } from './useExpenseStore'
-import { useUIStore } from './useUIStore'
+import { syncPanelShown, useUIStore } from './useUIStore'
 import {
-  clockTime,
+  FAILING_AFTER_MS,
+  failingSinceMessage,
+  failureSeverity,
+  isPaused,
   lastSyncCode,
   syncMessage,
+  syncPillShown,
   useSyncStore,
   type SyncErrorKind,
   type SyncFailure,
@@ -54,10 +61,14 @@ const RETRY_MAX_MS = 60_000
 const REMOTE_COALESCE_MS = 300
 const REMOTE_MIN_GAP_MS = 2000
 const RESUME_AFTER_MS = 30_000
+// A landed push that carried pending changes is checked by one more pull this much later; see
+// `scheduleCheck`.
+const CHECK_AFTER_MS = 2500
 // An older device that overrides our push is not pushed over again for this long.
 const OLD_WRITER_MEMO_MS = 10 * 60_000
-const FAILING_TOAST_AFTER_MS = 10 * 60_000
 const ECHO_MEMORY = 8
+// This tab's pushes it can still recognise in a relay copy's `wr` (see `ownPushes`).
+const OWN_PUSH_MEMORY = 64
 const TOAST_MS = 12_000
 const STREAK_KINDS: ReadonlySet<SyncFailure['kind']> = new Set([
   'network',
@@ -77,6 +88,9 @@ let subscribingGen: number | null = null
 let pushTimer: ReturnType<typeof setTimeout> | null = null
 let retryTimer: ReturnType<typeof setTimeout> | null = null
 let remoteTimer: ReturnType<typeof setTimeout> | null = null
+let checkTimer: ReturnType<typeof setTimeout> | null = null
+// The newest pending-change seq a landed push was checked on (see `scheduleCheck`).
+let checkedSeq = -1
 let retryAttempt = 0
 let lastRemoteCycleAt = Number.NEGATIVE_INFINITY
 
@@ -92,11 +106,34 @@ let again = false
 let queued: Waiter[] = []
 let current: Waiter[] = []
 
-// Local writes are counted; `ackedRev` is the count the relay is known to hold.
+// Local writes are counted; `ackedRev` is the count the relay is known to have received.
 let localRev = 0
 let ackedRev = -1
+
+/**
+ * This tab's pushes (sent, whether or not the answer came back), each with the pending-change
+ * seq it carried. There is no compare-and-set on the v4 wire: a push from another device that
+ * was built on a pull taken before ours landed can still land over it, and whole-record
+ * last-writer-wins would then drop our changes everywhere. So pending changes are acknowledged
+ * only when another device's push names one of ours in its `wr` lineage (it was built on a
+ * relay copy that held ours, see `ackedByLineage`), or holds exactly our state. Until then the
+ * rebase keeps re-applying them over copies that never saw them.
+ */
+const ownPushes = new Map<string, number>()
 // True while a merge is applied to the store, so it is not counted as a local write.
 let applying = false
+
+/**
+ * The relay's category names and item mappings as this device last saw them (pulled, or
+ * pushed and landed). Against it, a name the relay lost or a mapping it changed since is
+ * another device's removal or pick, not news from here to union back. Unknown (null) until the
+ * first pull of a setup; `categories` is null while the relay's list is unreadable.
+ */
+interface RelayLists {
+  categories: ReadonlySet<string> | null
+  mappings: Readonly<CategoryMappings>
+}
+let relaySeen: RelayLists | null = null
 
 // Echo filter: what this tab sent recently.
 const sentRevs: string[] = []
@@ -139,6 +176,8 @@ function clearTimers() {
   clearRetry()
   if (remoteTimer) clearTimeout(remoteTimer)
   remoteTimer = null
+  if (checkTimer) clearTimeout(checkTimer)
+  checkTimer = null
 }
 
 function stopRealtime() {
@@ -164,14 +203,46 @@ function newRev(): string {
     .replace(/=+$/, '')
 }
 
-function writerStamp(): WriterStamp {
+function writerStamp(seen: readonly string[]): WriterStamp {
   return {
     app: WRITER_VERSION,
     dev: storage.getDeviceId(),
     rev: newRev(),
     at: new Date().toISOString(),
+    seen,
   }
 }
+
+/** Remembers a push of this tab and the pending-change seq it carries. */
+function noteOwnPush(rev: string, seq: number) {
+  ownPushes.set(rev, seq)
+  if (ownPushes.size > OWN_PUSH_MEMORY) {
+    const oldest = ownPushes.keys().next()
+    if (!oldest.done) ownPushes.delete(oldest.value)
+  }
+}
+
+/**
+ * The pending-change seq that a relay copy acknowledges: the newest of this tab's pushes that a
+ * push from another client was built on. `chain` is the copy's rev, then its lineage, newest
+ * first; everything after the first rev that is not ours was seen by that client.
+ */
+function ackedByLineage(chain: readonly string[]): number | null {
+  const other = chain.findIndex((rev) => !ownPushes.has(rev))
+  let acked: number | null = null
+  for (const rev of other < 0 ? [] : chain.slice(other + 1)) {
+    const seq = ownPushes.get(rev)
+    if (seq !== undefined && (acked === null || seq > acked)) acked = seq
+  }
+  return acked
+}
+
+/**
+ * The lineage our push names: the copy it is built on and that copy's lineage, without this
+ * tab's own revs (a newer push of ours supersedes them, and only we look for them).
+ */
+const lineageFor = (chain: readonly string[]): string[] =>
+  chain.filter((rev) => rev !== '' && !ownPushes.has(rev)).slice(0, SEEN_MAX)
 
 // ---------------------------------------------------------------------------
 // Results
@@ -194,15 +265,15 @@ function succeed(snapRev: number, pushed: boolean, changedLocal: boolean, waitin
   return { ok: true, pushed, changedLocal } satisfies SyncResult
 }
 
-function acknowledge(snapRev: number, snapSeq: number) {
-  ackedRev = snapRev
-  ackPendingEdits(snapSeq)
-}
-
 function goOffline(): SyncResult {
   clearRetry()
-  const message = syncMessage('offline')
   const prev = useSyncStore.getState().lastError
+  // A pause outlasts the outage: coming back online does not end it, so being offline must
+  // not promise a sync. The pause, its banner and its words stay.
+  if (prev !== null && isPaused(prev.kind)) {
+    return { ok: false, error: prev.kind, message: prev.message }
+  }
+  const message = syncMessage('offline')
   useSyncStore.setState({
     cloudStatus: 'offline',
     lastError: {
@@ -226,7 +297,7 @@ function pause(reason: SyncPauseReason, message: string): SyncResult {
   const group = reason === 'too-large' ? 'too-large' : 'moved'
   if (!toastedOnce.has(group)) {
     toastedOnce.add(group)
-    if (!ownerWaiting()) toast(reason === 'too-large' ? 'error' : 'warning', message)
+    if (!ownerWaiting()) toast(failureSeverity({ kind: reason, since: Date.now() }), message)
   }
   return { ok: false, error: reason, message }
 }
@@ -245,15 +316,30 @@ function fail(err: unknown): SyncResult {
   useSyncStore.setState({ cloudStatus: 'error', lastError: { kind, message, since } })
   scheduleRetry()
   // The pill is desktop-only, so a long failure streak in the background also gets one toast
-  // on the phone. A cycle the owner asked for shows its own result instead.
-  if (!streakToasted && !ownerWaiting() && Date.now() - since >= FAILING_TOAST_AFTER_MS) {
+  // on the phone. A cycle the owner asked for shows its own result instead, and where the pill
+  // or the open Sync panel already says so, a toast would only say it twice.
+  if (!streakToasted && !ownerWaiting() && Date.now() - since >= FAILING_AFTER_MS) {
     streakToasted = true
-    toast(
-      'error',
-      `Sync has been failing since ${clockTime(since)}. Your changes are saved on this device.`,
-    )
+    if (!syncPillShown() && !syncPanelShown(useUIStore.getState())) {
+      toast(failureSeverity({ kind, since }), failingSinceMessage(since))
+    }
   }
   return { ok: false, error: kind, message }
+}
+
+/**
+ * A push from another device built on a pull taken before ours landed can land over ours
+ * about a round trip later; this pull, soon after, sees it and rebases our pending changes over
+ * it even if its realtime event is lost. If the network has gone meanwhile, its failure starts
+ * the retries that catch up once it is back. It acknowledges nothing by itself (see
+ * `ownPushes`).
+ */
+function scheduleCheck() {
+  if (checkTimer) clearTimeout(checkTimer)
+  checkTimer = setTimeout(() => {
+    checkTimer = null
+    void requestCycle()
+  }, CHECK_AFTER_MS)
 }
 
 function scheduleRetry() {
@@ -276,8 +362,11 @@ const sameContent = (a: Expense, b: Expense) =>
 
 interface Rebased {
   data: BackupData
-  /** Relay copies newer than a pending edit's base, now merged here (they become the base). */
-  seen: Expense[]
+  /**
+   * Relay copies newer than a pending edit's base, now merged here (see `notePendingBase`),
+   * each with the copy this device wrote over it, if it did.
+   */
+  seen: { copy: Expense; written: Expense | null }[]
 }
 
 /**
@@ -286,7 +375,8 @@ interface Rebased {
  * A relay copy no newer than what an edit was built on carries nothing new, so plain
  * last-writer-wins stands: a stale overwrite on the relay (there is no compare-and-set on the
  * v4 wire) or an old device's unstamped re-file cannot come back through the rebase. A field
- * both sides changed goes to the newer record, as plain last-writer-wins would.
+ * both sides changed goes to the newer record, as plain last-writer-wins would, unless the
+ * other copy holds a value this device held (then the other device has not changed it).
  */
 function rebase(
   merged: BackupData,
@@ -297,26 +387,124 @@ function rebase(
   if (edits.size === 0) return { data: merged, seen: [] }
   const mine = new Map(local.map((e) => [e.id, e]))
   const theirs = new Map(remote.expenses.map((e) => [e.id, e]))
-  const seen: Expense[] = []
+  const seen: Rebased['seen'] = []
   const now = Date.now()
   const expenses = merged.expenses.map((m) => {
     const edit = edits.get(m.id)
     const l = mine.get(m.id)
     const r = theirs.get(m.id)
     if (!edit || !l || !r || stampOf(r) <= edit.baseStamp) return m
-    seen.push(r)
     const candidate: Expense = { ...r }
     for (const field of edit.fields) {
-      const theirsUntouched = sameValue(field, r[field], edit.base[field])
+      // Holding the base or a value written here is no change from the other side.
+      const own = edit.own.get(field) ?? [edit.base[field]]
+      const theirsUntouched = own.some((value) => sameValue(field, r[field], value))
       Object.assign(candidate, { [field]: (theirsUntouched ? l : m)[field] })
     }
-    if (sameContent(candidate, m)) return m // nothing to add to the merge's winner
-    if (sameContent(candidate, r)) return r // the relay copy already holds our edits
-    return { ...candidate, updatedAt: nextStampIso(now, stampOf(l), stampOf(r)) }
+    // Nothing to add to the merge's winner, or the relay copy already holds our edits.
+    const kept = sameContent(candidate, m) ? m : sameContent(candidate, r) ? r : null
+    if (kept) {
+      seen.push({ copy: r, written: null })
+      return kept
+    }
+    const written = { ...candidate, updatedAt: nextStampIso(now, stampOf(l), stampOf(r)) }
+    seen.push({ copy: r, written })
+    return written
   })
   const changed = expenses.some((e, i) => e !== merged.expenses[i])
   return { data: changed ? { ...merged, expenses } : merged, seen }
 }
+
+/**
+ * A v0.8.4 device re-files rows by keyword (and renames) without touching their stamps, so its
+ * copy ties with this one and differs only in the category. The content tie-break would adopt
+ * its re-file for some rows (F-015 spreading again); this device keeps its own copy instead.
+ * Only for a legacy writer: v0.8.5 and v5 stamp every change, so a tie from them is a real tie
+ * that every device must resolve alike.
+ */
+function keepLocalRefiles(
+  merged: BackupData,
+  local: readonly Expense[],
+  remote: readonly Expense[],
+): BackupData {
+  const mine = new Map(local.map((e) => [e.id, e]))
+  const theirs = new Map(remote.map((e) => [e.id, e]))
+  const expenses = merged.expenses.map((m) => {
+    const l = mine.get(m.id)
+    const r = theirs.get(m.id)
+    if (!l || !r || m === l || l.category === r.category || stampOf(l) !== stampOf(r)) return m
+    if (canon({ ...l, category: undefined }) !== canon({ ...r, category: undefined })) return m
+    return l
+  })
+  return expenses.some((e, i) => e !== merged.expenses[i]) ? { ...merged, expenses } : merged
+}
+
+/** Category names a row (readable or not, here or on the relay) or a budget still uses. */
+function usedNames(merged: BackupData, ...others: readonly (readonly unknown[])[]): Set<string> {
+  const used = new Set(Object.keys(merged.budgets ?? {}))
+  for (const e of merged.expenses) used.add(e.category)
+  for (const rows of others) {
+    for (const row of rows)
+      if (isRecord(row) && typeof row.category === 'string') used.add(row.category)
+  }
+  return used
+}
+
+const ownValue = (record: Readonly<CategoryMappings>, key: string): string | undefined =>
+  Object.hasOwn(record, key) ? record[key] : undefined
+
+/**
+ * Category names and item mappings carry no stamps on the v4 wire, so the pure merge can only
+ * union names and keep the larger mapping value: a rename, a removal or a new pick for an item
+ * would come back undone. Changes made here win until a pull sees the relay holding them (as
+ * field edits do, so a stale peer push cannot take them away). A change made elsewhere is told
+ * apart from this device's own state by the relay copy last seen here, and adopted. A name a row
+ * or budget uses is always kept, and a relay list that cannot be read removes nothing.
+ */
+function rebaseLists(
+  merged: BackupData,
+  local: BackupData,
+  remote: BackupData,
+  remoteListReadable: boolean,
+  snap: PendingSnapshot,
+  used: ReadonlySet<string>,
+): Pick<BackupData, 'categories' | 'categoryMappings'> {
+  const here = new Set(local.categories)
+  const there = new Set(remote.categories)
+  const seenNames = remoteListReadable ? (relaySeen?.categories ?? null) : null
+  const kept = merged.categories.filter((name) => {
+    if (used.has(name)) return true
+    const mine = snap.categories.get(name)
+    if (mine !== undefined) return mine
+    // Gone from one side since the relay copy seen here: removed there or here, so not news.
+    return seenNames === null || !seenNames.has(name) || (here.has(name) && there.has(name))
+  })
+
+  const seenMappings = relaySeen?.mappings ?? null
+  const mappings = Object.entries(merged.categoryMappings).map(([key, value]): [string, string] => {
+    const l = ownValue(local.categoryMappings, key)
+    const r = ownValue(remote.categoryMappings, key)
+    if (l === undefined || r === undefined || l === r) return [key, value]
+    // Picked here: ours, unless the relay holds a pick this device never held: another device
+    // picked without having seen ours, and its pick, which landed, wins.
+    const own = snap.mappings.get(key)
+    if (own) return [key, own.includes(r) ? l : r]
+    // Unchanged here since the relay copy seen last: the relay holds another device's pick.
+    if (seenMappings !== null && ownValue(seenMappings, key) === l) return [key, r]
+    return [key, value]
+  })
+
+  return {
+    categories: kept.length > 0 ? kept : [...DEFAULT_CATEGORIES],
+    categoryMappings: Object.fromEntries(mappings),
+  }
+}
+
+/** The lists a payload holds, as the base for the next merge. */
+const listsOf = (data: Pick<BackupData, 'categories' | 'categoryMappings'>): RelayLists => ({
+  categories: new Set(data.categories),
+  mappings: data.categoryMappings,
+})
 
 type Step =
   | { kind: 'done'; result: SyncResult }
@@ -324,9 +512,10 @@ type Step =
       kind: 'push'
       payload: SyncPayload
       snapRev: number
-      snapSeq: number
       changedLocal: boolean
       memoKey: string | null
+      /** The pending-change seq the push carries, if it carries any (see `scheduleCheck`). */
+      pendingSeq: number | null
     }
 
 /**
@@ -341,6 +530,13 @@ function mergeStep(code: string, raw: unknown): Step {
   }
   if (rem.kind === 'invalid') throw new InvalidRemoteError(rem.reason)
 
+  // Who wrote the relay copy, and what it was built on (v0.8.5 copies only). Changes another
+  // client has built on are acknowledged before the merge: they are its to change now.
+  const chain = rem.kind === 'ok' && rem.writer === 'v085' ? [rem.rev ?? '', ...rem.seen] : []
+  const ownCopy = rem.kind === 'ok' && rem.rev !== null && ownPushes.has(rem.rev)
+  const acked = ackedByLineage(chain)
+  if (acked !== null) ackPendingEdits(acked)
+
   const snapRev = localRev
   const snap = pendingEditsSnapshot()
   clearPushTimer() // this cycle carries every change made so far
@@ -350,15 +546,42 @@ function mergeStep(code: string, raw: unknown): Step {
   const readable = local.expenses.filter(isSyncableExpense)
   const unreadable = local.expenses.filter((row) => !isSyncableExpense(row))
   const mine: BackupData = { ...local, expenses: readable }
-  const { data: merged, seen } =
-    rem.kind === 'ok'
-      ? rebase(mergeBackups(mine, rem.data), readable, rem.data, snap.edits)
-      : { data: mine, seen: [] }
+  const legacy = rem.kind === 'ok' && rem.writer === 'legacy'
+  let merged = mine
+  let seen: Rebased['seen'] = []
+  if (rem.kind === 'ok') {
+    const plain = mergeBackups(mine, rem.data)
+    const tied = legacy ? keepLocalRefiles(plain, readable, rem.data.expenses) : plain
+    ;({ data: merged, seen } = rebase(tied, readable, rem.data, snap.edits))
+  }
   const known = new Set([...merged.expenses.map((e) => e.id), ...(merged.deletedIds ?? [])])
   const keep = unreadable.filter((row) => {
     const id = idOf(row)
     return id === undefined || !known.has(id)
   })
+
+  // Relay rows we could not read go back as they were, unless they have been deleted.
+  const dead = new Set(merged.deletedIds ?? [])
+  const passthrough =
+    rem.kind === 'ok'
+      ? rem.passthrough.filter((row) => {
+          const id = idOf(row)
+          return id === undefined || !dead.has(id)
+        })
+      : []
+
+  if (rem.kind === 'ok') {
+    // A relay list that is not a list of names (damaged) tells nothing about removals.
+    const listReadable = isRecord(raw) && Array.isArray(raw.categories) && raw.categories.length > 0
+    const used = usedNames(merged, keep, passthrough)
+    merged = { ...merged, ...rebaseLists(merged, local, rem.data, listReadable, snap, used) }
+    relaySeen = {
+      ...listsOf(rem.data),
+      categories: listReadable ? new Set(rem.data.categories) : null,
+    }
+  } else {
+    relaySeen = listsOf({ categories: [], categoryMappings: {} })
+  }
 
   applying = true
   let changedLocal: boolean
@@ -370,21 +593,11 @@ function mergeStep(code: string, raw: unknown): Step {
     applying = false
   }
   // Those relay copies are part of this device's state now: the base of its pending edits.
-  for (const copy of seen) notePendingBase(copy.id, copy)
+  for (const { copy, written } of seen) notePendingBase(copy.id, copy, written)
 
-  // Relay rows we could not read go back as they were, unless they have been deleted.
-  const dead = new Set(merged.deletedIds ?? [])
-  const passthrough =
-    rem.kind === 'ok'
-      ? rem.passthrough.filter((row) => {
-          const id = idOf(row)
-          return id === undefined || !dead.has(id)
-        })
-      : []
   const outgoing = { ...merged, expenses: [...passthrough, ...merged.expenses], version: '4.0' }
   const outKey = contentKey(outgoing)
 
-  const legacy = rem.kind === 'ok' && rem.writer === 'legacy'
   const pushedBefore = pushedThisSession.has(code)
   // An old device wrote after this one: tell the owner to update it.
   if (legacy && pushedBefore) useSyncStore.setState({ legacyWriterAt: Date.now() })
@@ -394,7 +607,10 @@ function mergeStep(code: string, raw: unknown): Step {
   // Equal content needs no push, except once per session over an old writer's row: the row
   // then carries our stamp, so other devices (and v5) stop reading it as an old device's write.
   if (equal && !(legacy && !pushedBefore)) {
-    acknowledge(snapRev, snap.seq)
+    ackedRev = snapRev
+    // Another client wrote exactly our state, so it holds our changes and builds on them from
+    // here on. Our own copy read back proves nothing: a stale push may still land over it.
+    if (!ownCopy) ackPendingEdits(snap.seq)
     return { kind: 'done', result: succeed(snapRev, false, changedLocal, false) }
   }
   if (
@@ -406,10 +622,20 @@ function mergeStep(code: string, raw: unknown): Step {
     return { kind: 'done', result: succeed(snapRev, false, changedLocal, true) }
   }
 
-  const payload: SyncPayload = { ...outgoing, wr: writerStamp() }
-  // Remembered before sending, so our own echo is filtered however early it arrives.
+  const payload: SyncPayload = { ...outgoing, wr: writerStamp(lineageFor(chain)) }
+  // Remembered before sending, so our own echo is filtered however early it arrives, and a
+  // push that lands although its answer never came back (a timeout) is still known as ours.
   remember(sentRevs, payload.wr.rev)
-  return { kind: 'push', payload, snapRev, snapSeq: snap.seq, changedLocal, memoKey }
+  noteOwnPush(payload.wr.rev, snap.seq)
+  const pending = snap.edits.size > 0 || snap.categories.size > 0 || snap.mappings.size > 0
+  return {
+    kind: 'push',
+    payload,
+    snapRev,
+    changedLocal,
+    memoKey,
+    pendingSeq: pending ? snap.seq : null,
+  }
 }
 
 async function runCycle(): Promise<SyncResult> {
@@ -445,7 +671,16 @@ async function runCycle(): Promise<SyncResult> {
   remember(sentUpdatedAt, Date.parse(updatedAt))
   pushedThisSession.add(code)
   if (step.memoKey !== null) oldWriterMemo.set(step.memoKey, Date.now())
-  acknowledge(step.snapRev, step.snapSeq)
+  relaySeen = listsOf(step.payload)
+  // The relay received this state, so "Synced" is honest. The pending changes it carried stay
+  // pending until another client builds on them (see `ownPushes`).
+  ackedRev = step.snapRev
+  // Once per batch of pending changes: a later push that carries only changes already checked
+  // on gives the check nothing new to look for.
+  if (step.pendingSeq !== null && step.pendingSeq > checkedSeq) {
+    checkedSeq = step.pendingSeq
+    scheduleCheck()
+  }
   return succeed(step.snapRev, true, step.changedLocal, false)
 }
 
@@ -469,8 +704,11 @@ async function runLoop(): Promise<void> {
       }
       for (const waiter of current) waiter.resolve(result)
       current = []
-      if (!result.ok && gen === setupGen) {
-        // A failed cycle ends the loop: the backoff retry or the next trigger runs the next one.
+      // A failed cycle ends the loop when its backoff retry runs the next one, so a failing
+      // server is not hammered. A failure that schedules no retry (offline, paused) leaves
+      // nothing to run a trigger that came in during the cycle, and the `online` that ends an
+      // outage is exactly such a trigger: that one gets a fresh cycle.
+      if (!result.ok && gen === setupGen && (retryTimer !== null || result.error === 'off')) {
         for (const waiter of queued) waiter.resolve(result)
         queued = []
         again = false
@@ -561,8 +799,10 @@ export async function setupSync(syncId: string, user: boolean): Promise<SyncResu
   stopRealtime()
   clearTimers()
   retryAttempt = 0
+  checkedSeq = -1
   if (previous !== syncId) clearPendingEdits() // they were relative to the old relay copy
   ackedRev = -1 // nothing is known to be on this relay until the first cycle
+  relaySeen = null
   useSyncStore.setState({
     syncId,
     cloudStatus: 'idle',
@@ -583,6 +823,7 @@ export function stop(): void {
   stopRealtime()
   clearTimers()
   retryAttempt = 0
+  relaySeen = null
 }
 
 export function triggerSync(opts?: { resetBackoff?: boolean }): Promise<SyncResult> {
@@ -619,7 +860,12 @@ function onLocalChange() {
   if (applying || !useExpenseStore.getState().hydrated) return
   localRev++
   if (!configured()) return
-  if (!useSyncStore.getState().pendingLocal) useSyncStore.setState({ pendingLocal: true })
+  // A change the relay has not seen: the next cycle pushes it, even over an old device's copy
+  // (the old-writer memo holds back only the exact push that device already overwrote).
+  const { pendingLocal, waitingForOld } = useSyncStore.getState()
+  if (!pendingLocal || waitingForOld) {
+    useSyncStore.setState({ pendingLocal: true, waitingForOld: false })
+  }
   scheduleSyncPush()
 }
 
@@ -650,7 +896,8 @@ function onOnline() {
 }
 
 function onOffline() {
-  // Offline replaces the last failure: no retry runs now, so nothing may still say retrying.
+  // Offline replaces the last failure (no retry runs now, so nothing may still say retrying),
+  // except a pause, which going offline does not end.
   if (configured()) goOffline()
 }
 

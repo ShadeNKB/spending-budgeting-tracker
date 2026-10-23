@@ -63,6 +63,17 @@ interface RelayState {
   pushes: PushRecord[]
   legacyWrites: number
   nextClient: number
+  /** Per-client latency overrides (undefined: the shared latency). */
+  pushLatencyFor: ((client: number) => number | undefined) | null
+  pullLatencyFor: ((client: number) => number | undefined) | null
+  /** When in a push's latency the write lands (0..1). */
+  writeFraction: number
+  /** When in a pull's latency the row is read (0..1); the answer still comes at the end. */
+  pullReadFraction: number
+  /** The realtime socket is down: no events, and a (re)subscribe answers CHANNEL_ERROR. */
+  realtimeDown: boolean
+  /** Clients without a network: their requests fail with status 0 and they get no events. */
+  offlineClients: Set<number>
 }
 
 declare global {
@@ -88,6 +99,12 @@ function freshRelay(): RelayState {
     pushes: [],
     legacyWrites: 0,
     nextClient: 1,
+    pushLatencyFor: null,
+    pullLatencyFor: null,
+    writeFraction: 0.5,
+    pullReadFraction: 1,
+    realtimeDown: false,
+    offlineClients: new Set(),
   }
 }
 
@@ -128,8 +145,10 @@ export function failNext(op: 'pull' | 'push', ...failures: Failure[]): void {
 
 function fanOut(writer: FakeClient | null, syncId: string, row: RelayRow, insert: boolean): void {
   const r = relay()
+  if (r.realtimeDown) return
   for (const channel of r.channels) {
     if (!channel.matches(syncId)) continue
+    if (r.offlineClients.has(channel.client.id)) continue
     if (!r.selfEcho && writer !== null && channel.client === writer) continue
     const event: ChangeEvent = {
       eventType: insert ? 'INSERT' : 'UPDATE',
@@ -191,7 +210,8 @@ export class FakeChannel {
     const r = relay()
     r.channels.add(this)
     setTimeout(() => {
-      if (relay().channels.has(this)) this.emit('SUBSCRIBED')
+      if (relay().channels.has(this))
+        this.emit(relay().realtimeDown ? 'CHANNEL_ERROR' : 'SUBSCRIBED')
     }, r.subscribeDelay)
     return this
   }
@@ -277,7 +297,9 @@ class Query implements PromiseLike<RelayResponse> {
 
   private execute(): Promise<RelayResponse> {
     const r = relay()
-    const failure = r.failures[this.op === 'select' ? 'pull' : 'push'].shift()
+    const failure: Failure | undefined = r.offlineClients.has(this.client.id)
+      ? { status: 0 }
+      : r.failures[this.op === 'select' ? 'pull' : 'push'].shift()
     if (this.op === 'select') {
       r.pulls++
       this.client.pulls++
@@ -288,7 +310,10 @@ class Query implements PromiseLike<RelayResponse> {
     if (failure && 'hang' in failure) return new Promise<RelayResponse>(() => undefined)
 
     return new Promise<RelayResponse>((resolve) => {
-      const latency = this.op === 'select' ? r.latency.pull : r.latency.push
+      const latency =
+        this.op === 'select'
+          ? (r.pullLatencyFor?.(this.client.id) ?? r.latency.pull)
+          : (r.pushLatencyFor?.(this.client.id) ?? r.latency.push)
       const timers: ReturnType<typeof setTimeout>[] = []
       const onAbort = () => {
         timers.forEach(clearTimeout)
@@ -302,7 +327,22 @@ class Query implements PromiseLike<RelayResponse> {
       if (failure && 'abortable' in failure) return // settles only through the abort signal
 
       if (this.op === 'upsert' && !failure) {
-        timers.push(setTimeout(() => this.write(), Math.floor(latency / 2)))
+        timers.push(setTimeout(() => this.write(), Math.floor(latency * r.writeFraction)))
+      }
+      // A slow download (or a page frozen between the read and its continuation) answers with
+      // the row as it was when it was read.
+      let read: RelayRow | undefined
+      const readEarly = this.op === 'select' && !failure && r.pullReadFraction < 1
+      if (readEarly) {
+        timers.push(
+          setTimeout(
+            () => {
+              const row = relay().rows.get(this.syncId)
+              read = row ? { ...row, payload: clone(row.payload) } : undefined
+            },
+            Math.floor(latency * r.pullReadFraction),
+          ),
+        )
       }
       timers.push(
         setTimeout(() => {
@@ -317,7 +357,7 @@ class Query implements PromiseLike<RelayResponse> {
             resolve({ data: null, error: null, status: 201 })
             return
           }
-          const row = relay().rows.get(this.syncId)
+          const row = readEarly ? read : relay().rows.get(this.syncId)
           resolve({
             data: row ? { payload: clone(row.payload), updated_at: row.updated_at } : null,
             error: null,
@@ -486,6 +526,13 @@ export function expense(id: string, over: Partial<Expense> = {}): Expense {
     createdAt: T0,
     ...over,
   }
+}
+
+/** The realtime socket drops (every live channel reports CHANNEL_ERROR) or comes back. */
+export function dropRealtime(down: boolean): void {
+  const r = relay()
+  r.realtimeDown = down
+  if (down) for (const channel of [...r.channels]) channel.emit('CHANNEL_ERROR')
 }
 
 /** A v4 relay payload holding `expenses`. */

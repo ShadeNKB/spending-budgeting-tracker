@@ -1,5 +1,56 @@
 # Changelog
 
+## 0.9.1 — 2026-10-21
+
+Track 5 of the overhaul: platform, resilience and security. The app now survives deploys and screen crashes without cutting you off from your data. It also behaves properly as an installed iPhone app, keeps its own fonts offline, and is served with an enforcing Content-Security-Policy.
+
+### Fixed
+
+- **Opening a screen right after a deploy no longer crashes the app.** The old service worker activated each new build straight away and deleted the files the open page still needed. The next screen then received `index.html` instead of code, and React Router's developer error page replaced the whole app. The "App updated" toast meant to warn about this closed itself at once, because `duration: 0` became a 0 ms timer. Now a new build waits until you accept it. A missing `/assets/*` or `/fonts/*` file returns 404 instead of the HTML page. A stale screen file reloads the page once: at most once a minute, never while offline, and never over typed text or an open sheet (F-028).
+- **One broken screen no longer locks you out.** A crash now shows a card inside the app, and the header and tab bar keep working. The card explains what happened in plain words and offers **Reload**, **Go to Pulse** and **Download my data**. Technical details sit behind a disclosure. If the app shell itself fails, a full-page version offers the same actions. Settings, the command palette, the add sheet and the hotkey list each fail on their own card (Reload / Close) and never take the app down. When the failure is because you are offline, the card says so instead of sending you to the browser's offline page (F-005, boundary half).
+- **On the installed iPhone app, the header no longer sits under the status bar.** The sticky header now covers the top safe area. In landscape, the header, content and sheets clear the notch. The demo and offline banners now sit below the header (F-029).
+- **No more dark flash for light-theme users.** A tiny script applies the saved theme before the first frame is drawn. The browser chrome (`theme-color`), native controls and scrollbars (`color-scheme`) follow the theme at load and on every change (F-106).
+- **iOS no longer zooms the page when you tap a text field.** On touch screens, every text input, select and textarea is at least 16 px. Selects and the "More..." category chip still draw their label at the design size, so nothing grows or gets cut off. Laptop sizes are unchanged, and pinch zoom still works (F-075).
+- **CSV exports are safe to open in Excel, Google Sheets and Numbers.** Any cell that would run as a formula gets a leading apostrophe: one starting with = + - @, tab or CR, including full-width versions and ones hidden behind spaces. Amounts stay numbers. Files start with a UTF-8 BOM, so non-English item names display correctly in Excel, and use CRLF line endings. A bad stored date is exported as text instead of breaking the export. Ledger and Settings now share one CSV writer (F-069).
+- **The header no longer repaints 60 times a second.** The logo glow was an endless box-shadow animation under the blurred header. It caused about 600 repaints in 5 seconds while the app sat idle; now there are none. This saves battery on phones (F-099).
+- **The add sheet keeps the cursor in "What".** Right after opening, the sheet used to move focus to Close. With lazy loading it could also lose the first keystrokes, or pull focus out of a field when the app re-rendered.
+- **The "More categories" select in the add and edit sheets has an accessible name.** axe used to report it as a critical `select-name` error.
+- **Install icons display correctly.** The transparent icons were declared "maskable", so Android launchers cropped them. There are now opaque, full-bleed maskable icons, and the iPhone home-screen icon is opaque. The manifest was linked twice and is now linked once (F-102).
+
+### Added
+
+- **Update banner.** When a new version is ready, a strip in the header says "A new version of SpendTrack is ready." with **Reload** and **Later**, and it never closes on its own. If you have typed something or a sheet is open, Reload asks first: "Reloading will clear what you've typed." (**Reload anyway** / **Keep editing**). Other open tabs say "SpendTrack was updated in another tab." The app checks for updates when it comes back to the foreground and every hour, at most once an hour and never while offline. After **Later**, the banner comes back 6 hours later (F-028).
+- **Download my data.** Every error card can save `spendtrack-backup-raw-YYYY-MM-DD-HHmm.json` (local time). The file holds everything this browser stored, copied byte for byte without parsing, so it works even when the data is what crashed. The sync code and other secret-like keys are left out (F-005).
+- **"Add expense" app shortcut.** Long-press the installed app icon (Android and desktop Chromium) to go straight to the add sheet. The shortcut opens `/pulse?add=1`; the sheet opens once, after your data has loaded, and the link is cleaned up (F-102).
+- **Security headers on every response.** An enforcing Content-Security-Policy:
+  - scripts only from the app itself, plus the one hashed inline theme script
+  - self-hosted fonts only
+  - images from the app or `data:` only
+  - network connections only to the app and Supabase (https and wss)
+  - no framing and no plugins
+
+  Also `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-Frame-Options: DENY`, `Cross-Origin-Opener-Policy: same-origin`, and a `Permissions-Policy` that turns off camera, microphone, location, payment and device APIs (F-067).
+
+### Changed
+
+- **Fonts are self-hosted and work offline.** IBM Plex Sans and JetBrains Mono (latin, weights 400 to 700, SIL OFL) now ship in `public/fonts` and are precached. The render-blocking Google Fonts request is gone, and the app makes no requests to Google. The old Google Fonts cache is deleted after the first load (F-103).
+- **Faster start.** framer-motion and every overlay (Settings, palette, add sheet, toasts, hotkeys) now load on first open or once the app is idle, never before first paint. `index.html` no longer preloads framer-motion. In a phone test with 4× CPU throttling and 2,000 expenses:
+  - code downloaded before the page finished loading fell from 178 KB to 140 KB
+  - the first tap on + now opens the add sheet in about 0.5 s instead of 1.5 s (F-051)
+- **Smaller offline cache.** The service worker no longer precaches any PNG, including the 263 KB `og.png`, or any duplicate file, and now includes the 8 fonts. The precache went from 34 entries / 1,225 KiB to 30 / 906 KiB (F-098).
+- **Logo glow** brightens once on load and again on hover or keyboard focus. It stays still under reduced motion (F-099).
+- **Bigger phone header buttons.** The logo, palette and Settings buttons are 44 px touch targets on phones, and the bar keeps its height.
+- **Installed app.** The manifest `id` stays `/pulse`, so existing installs are kept. Launching the app again focuses the window that is already open. The portrait lock is removed, so landscape works, with notch padding. Theme and splash colours now match the warm surfaces (`#0c0b0a`) (F-102, F-106).
+
+### Changed (engineering)
+
+- The service worker is prompt-style: `registerType: 'prompt'`, no `skipWaiting`, `clientsClaim` kept. The app registers `/sw.js` itself in production, and `registerSW.js` is no longer shipped.
+- `vite preview` serves the production headers from `vercel.json`, so smoke, a11y and e2e runs happen under the real CSP.
+- Every `lazy()` and `import()` goes through `importWithReload`. A contract test fails if a new unwrapped one appears (the Supabase client is the one allowed exception).
+- Contract tests pin the inline-script hash to the CSP, plus the exact header values, the rewrite regex, the fonts, the icons and the theme table. This track adds 352 unit tests (1,007 in total after merging with 0.9.0, all green in three timezones) and new e2e specs: a CSP walk with negative controls, resilience tests and CSV tests (170 e2e tests pass on Chromium and iPhone WebKit). Total JS is 679.7 KB of the 700 KB budget; replacing framer-motion with CSS is planned to win back headroom.
+- `ToastHost` now treats `duration <= 0` as sticky instead of closing the toast at once.
+- `scripts/render-icons.mjs` renders the opaque icons with the Playwright Chromium that is already installed. No new dependencies.
+
 ## 0.9.0 — 2026-10-21
 
 Track 3 of the overhaul: every number on screen is now correct and matches between screens, and the app no longer freezes on a real history. Money shows in your own currency (Singapore dollars on a Singapore device), and quick add understands Singapore place names and dates.

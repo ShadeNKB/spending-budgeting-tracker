@@ -2,9 +2,98 @@
 @tailwind components;
 @tailwind utilities;
 
+/* --- Self-hosted fonts ---------------------------------------------
+   Latin subsets of IBM Plex Sans and JetBrains Mono, vendored in public/fonts (see the README
+   there) and precached by the service worker, so the app keeps its typefaces offline. `swap`
+   paints text at once in the fallback stack; the unicode-range lets CJK and other item names
+   fall back per glyph instead of downloading anything. */
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url('/fonts/ibm-plex-sans-latin-400-normal.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url('/fonts/ibm-plex-sans-latin-500-normal.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url('/fonts/ibm-plex-sans-latin-600-normal.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'IBM Plex Sans';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url('/fonts/ibm-plex-sans-latin-700-normal.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url('/fonts/jetbrains-mono-latin-400-normal.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url('/fonts/jetbrains-mono-latin-500-normal.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 600;
+  src: url('/fonts/jetbrains-mono-latin-600-normal.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 700;
+  src: url('/fonts/jetbrains-mono-latin-700-normal.woff2') format('woff2');
+  unicode-range:
+    U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329,
+    U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
 /* --- Design tokens ------------------------------------------------ */
 @layer base {
   :root {
+    /* Native controls, scrollbars and the canvas paint dark unless the light theme is on. */
+    color-scheme: dark;
+
     /* Surfaces — warm-neutral charcoal ramp (warmer/softer redesign 2026-06-14;
        was cool OLED blue-black). R>G>B for subtle warmth without sepia. */
     --surface-0: #0c0b0a;
@@ -106,6 +195,8 @@
 
   /* -- Light mode token overrides --------------------------------- */
   [data-theme='light'] {
+    color-scheme: light;
+
     /* Surface channels — warm off-whites (warmer/softer redesign) */
     --surface-0-ch: 250 248 245;
     --surface-1-ch: 255 253 251;
@@ -1170,13 +1261,46 @@
     overflow: hidden;
   }
 
-  @keyframes logo-glow {
+  /* -- Logo glow ---------------------------------------------------
+     The glow is painted once on a pseudo-element and only its opacity changes, which the
+     compositor handles without repainting the blurred sticky header. One breath on load,
+     emphasis while the logo link is hovered or focused, nothing infinite. */
+  .logo-glow {
+    position: relative;
+  }
+  .logo-glow::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    box-shadow: 0 0 22px -2px rgba(34, 211, 238, 0.7);
+    opacity: 0.6;
+    pointer-events: none;
+    animation: logo-glow-breath 3.2s ease-in-out 1;
+    transition: opacity 300ms ease-out;
+  }
+  a:focus-visible > .logo-glow::after {
+    opacity: 1;
+  }
+  /* Real hover only: a tap on a phone must not leave the glow stuck on. */
+  @media (hover: hover) {
+    a:hover > .logo-glow::after {
+      opacity: 1;
+    }
+  }
+  @keyframes logo-glow-breath {
     0%,
     100% {
-      box-shadow: 0 0 12px -2px rgba(34, 211, 238, 0.45);
+      opacity: 0.6;
     }
     50% {
-      box-shadow: 0 0 22px -2px rgba(34, 211, 238, 0.7);
+      opacity: 1;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .logo-glow::after {
+      animation: none;
+      transition: none;
     }
   }
 
@@ -1389,5 +1513,31 @@
   .route-fade-in {
     animation: route-fade-in 180ms cubic-bezier(0.2, 0, 0, 1);
     will-change: opacity, transform;
+  }
+}
+
+/* --- iOS focus-zoom floor -------------------------------------------
+   iOS Safari zooms the page whenever a text control under 16px gets focus, and the zoom stays
+   after blur. On touch-first devices every text input, select and textarea is floored at 16px.
+   Unlayered and !important on purpose: this accessibility floor must beat every component
+   font-size utility (text-[13px], md:text-sm, ...). No control is larger than 16px today, so
+   nothing shrinks, and fine pointers (laptops) keep their design sizes. Never add maximum-scale
+   to the viewport instead: it blocks pinch zoom. */
+@media (pointer: coarse) {
+  input:not(
+    [type='checkbox'],
+    [type='radio'],
+    [type='range'],
+    [type='color'],
+    [type='file'],
+    [type='button'],
+    [type='submit'],
+    [type='reset'],
+    [type='image'],
+    [type='hidden']
+  ),
+  select,
+  textarea {
+    font-size: 16px !important;
   }
 }

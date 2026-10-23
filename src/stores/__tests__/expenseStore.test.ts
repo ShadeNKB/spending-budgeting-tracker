@@ -196,6 +196,7 @@ describe('updateExpense', () => {
       fields: new Set(['amount']),
       baseStamp: Date.parse(T1),
       base: { amount: 1 },
+      own: new Map([['amount', [1, 45]]]),
     })
   })
 
@@ -236,6 +237,7 @@ describe('undo is a forward write (F-011)', () => {
       fields: new Set(['amount']),
       baseStamp: Date.parse(editStamp),
       base: { amount: 45 },
+      own: new Map([['amount', [45, 4.5]]]),
     })
   })
 
@@ -307,23 +309,80 @@ describe('pending field edits', () => {
       fields: new Set(['amount', 'notes']),
       baseStamp: Date.parse(T1),
       base: { amount: 4.5, notes: 'a' },
+      // Every value this device held: a relay copy holding any of them changed nothing.
+      own: new Map<string, unknown[]>([
+        ['amount', [4.5, 45, 46]],
+        ['notes', ['a', 'b']],
+      ]),
     })
   })
 
-  it('moves the base to a newer merged copy, never to an older one', () => {
+  it("moves the base to another device's newer copy, never to an older one", () => {
     seed({ expenses: [row('e1', { amount: 4.5, updatedAt: T1 })] })
     const store = device.expense.useExpenseStore
     store.getState().updateExpense('e1', { amount: 45 })
     const newer = row('e1', { amount: 9, updatedAt: '2026-10-05T00:00:00.000Z' })
-    device.expense.notePendingBase('e1', row('e1', { amount: 1, updatedAt: T1 }))
+    device.expense.notePendingBase('e1', row('e1', { amount: 1, updatedAt: T1 }), null)
     expect(device.expense.pendingEditsSnapshot().edits.get('e1')?.base).toEqual({ amount: 4.5 })
-    device.expense.notePendingBase('e1', newer)
+    device.expense.notePendingBase('e1', newer, null)
     expect(device.expense.pendingEditsSnapshot().edits.get('e1')).toMatchObject({
       baseStamp: Date.parse('2026-10-05T00:00:00.000Z'),
       base: { amount: 9 },
+      // That copy's value joins every value held before: the base and the edit stay.
+      own: new Map([['amount', [4.5, 45, 9]]]),
     })
-    device.expense.notePendingBase('e2', newer) // nothing pending there: no entry is created
+    device.expense.notePendingBase('e2', newer, null) // nothing pending: no entry is created
     expect(device.expense.pendingEditsSnapshot().edits.has('e2')).toBe(false)
+  })
+
+  it('never moves the base to a copy this device wrote (its own push read back)', () => {
+    seed({ expenses: [row('e1', { amount: 4.5, updatedAt: T1 })] })
+    const store = device.expense.useExpenseStore
+    store.getState().updateExpense('e1', { amount: 45 })
+    const mine = store.getState().expenses[0]
+    if (!mine) throw new Error('no e1')
+    device.expense.notePendingBase('e1', mine, null)
+    // A stale copy from another device, newer than the base but older than ours, is still news.
+    expect(device.expense.pendingEditsSnapshot().edits.get('e1')).toMatchObject({
+      baseStamp: Date.parse(T1),
+      own: new Map([['amount', [4.5, 45]]]),
+    })
+
+    // A copy the rebase wrote here is this device's own as well.
+    const theirs = row('e1', {
+      amount: 4.5,
+      notes: 'laptop',
+      updatedAt: '2026-10-19T08:00:01.000Z',
+    })
+    const rebased = { ...theirs, amount: 45, updatedAt: '2026-10-19T08:00:01.001Z' }
+    device.expense.notePendingBase('e1', theirs, rebased)
+    device.expense.notePendingBase('e1', rebased, null)
+    expect(device.expense.pendingEditsSnapshot().edits.get('e1')?.baseStamp).toBe(
+      Date.parse(theirs.updatedAt ?? ''),
+    )
+  })
+
+  it('acknowledges field by field: a later edit of another field of the record stays', () => {
+    seed({ expenses: [row('e1', { amount: 4.5, notes: 'a', updatedAt: T1 })] })
+    const store = device.expense.useExpenseStore
+    store.getState().updateExpense('e1', { amount: 45 })
+    const pushed = device.expense.pendingEditsSnapshot().seq
+    store.getState().updateExpense('e1', { notes: 'b' })
+    device.expense.ackPendingEdits(pushed)
+    expect(device.expense.pendingEditsSnapshot().edits.get('e1')).toEqual({
+      fields: new Set(['notes']),
+      baseStamp: Date.parse(T1),
+      base: { amount: 4.5, notes: 'a' },
+      own: new Map([['notes', ['a', 'b']]]),
+    })
+    // A field written again after the acknowledged push stays too.
+    store.getState().updateExpense('e1', { amount: 50 })
+    device.expense.ackPendingEdits(pushed)
+    expect(device.expense.pendingEditsSnapshot().edits.get('e1')?.fields).toEqual(
+      new Set(['notes', 'amount']),
+    )
+    device.expense.ackPendingEdits(device.expense.pendingEditsSnapshot().seq)
+    expect(device.expense.pendingEditsSnapshot().edits.size).toBe(0)
   })
 })
 

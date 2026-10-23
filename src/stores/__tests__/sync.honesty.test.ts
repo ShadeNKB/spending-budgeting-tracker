@@ -47,6 +47,7 @@ afterEach(() => {
   vi.clearAllTimers()
   vi.useRealTimers()
   vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
 })
 
 async function connected(expenses: Expense[] = [expense('e1')]): Promise<Device> {
@@ -182,6 +183,71 @@ describe('too large: paused, one toast, merging continues (AC-18)', () => {
   })
 })
 
+describe('going offline never ends a pause, nor promises a sync it will not run', () => {
+  const setOnline = (online: boolean) => {
+    Object.defineProperty(navigator, 'onLine', { value: online, configurable: true })
+    window.dispatchEvent(new Event(online ? 'online' : 'offline'))
+  }
+  afterEach(() => {
+    Object.defineProperty(navigator, 'onLine', { value: true, configurable: true })
+  })
+  const big = Array.from({ length: 4000 }, (_, i) =>
+    expense(`b${String(i)}`, { itemName: `Expense ${String(i)}`, notes: 'x'.repeat(200) }),
+  )
+  const willSync = (device: Device) => toastsOf(device).filter((t) => /will sync/.test(t.message))
+
+  it.each([
+    ['too large', 'too-large', () => connected(big)],
+    [
+      'moved',
+      'moved',
+      async () => {
+        const phone = await connected()
+        seedRow(SYNC_CODE, { version: '4.0', expenses: 'moved', categories: [] })
+        await trigger(phone)
+        return phone
+      },
+    ],
+  ] as const)(
+    '%s: offline keeps the pause, its words and its result',
+    async (_label, kind, open) => {
+      const phone = await open()
+      const paused = phone.sync.useSyncStore.getState()
+      expect(paused).toMatchObject({ cloudStatus: 'paused', lastError: { kind } })
+
+      setOnline(false)
+      expect(phone.sync.useSyncStore.getState()).toMatchObject({
+        cloudStatus: 'paused',
+        lastError: paused.lastError,
+      })
+      // Sync now while offline: the pause, never "will sync when you're back".
+      const result = await trigger(phone)
+      expect(result).toEqual({ ok: false, error: kind, message: paused.lastError?.message })
+      expect(phone.sync.useSyncStore.getState().lastError).toEqual(paused.lastError)
+      expect(willSync(phone)).toEqual([])
+
+      setOnline(true)
+      await advance(5000)
+      expect(phone.sync.useSyncStore.getState()).toMatchObject({
+        cloudStatus: 'paused',
+        lastError: { kind },
+      })
+      expect(willSync(phone)).toEqual([])
+    },
+  )
+
+  it('a retried failure is replaced by offline (no retry runs while offline)', async () => {
+    const phone = await connected()
+    failNext('pull', { status: 503 }, { status: 503 }, { status: 503 }, { status: 503 })
+    expect(await trigger(phone, 20_000)).toMatchObject({ ok: false, error: 'server' })
+    setOnline(false)
+    expect(phone.sync.useSyncStore.getState()).toMatchObject({
+      cloudStatus: 'offline',
+      lastError: { kind: 'offline' },
+    })
+  })
+})
+
 describe('a long failure streak (AC-19)', () => {
   it('keeps the start of the streak and shows one toast after 10 minutes', async () => {
     const phone = await connected()
@@ -222,6 +288,26 @@ describe('a long failure streak (AC-19)', () => {
     await advance(2 * MINUTE) // the next background failure shows it
     expect(streakToasts()).toHaveLength(1)
   })
+
+  it.each([
+    ['the Sync panel is open', 'panel'],
+    ['the pill is on screen (1280 px and up)', 'pill'],
+  ] as const)('shows no streak toast where %s: that says it already', async (_label, where) => {
+    const phone = await connected()
+    if (where === 'panel') {
+      phone.ui.useUIStore.setState({ settingsOpen: true, settingsTab: 'sync' })
+    } else {
+      vi.stubGlobal('matchMedia', (query: string) => ({
+        matches: query === phone.sync.SYNC_PILL_MEDIA,
+        media: query,
+      }))
+    }
+    failNext('pull', ...Array.from({ length: 40 }, (): Failure => ({ status: 503 })))
+    await trigger(phone)
+    await advance(12 * MINUTE)
+    expect(phone.sync.useSyncStore.getState().lastError?.kind).toBe('server')
+    expect(toastsOf(phone).filter((t) => t.message.startsWith('Sync has been failing'))).toEqual([])
+  })
 })
 
 describe('fences fail closed and resume (AC-20)', () => {
@@ -259,6 +345,38 @@ describe('fences fail closed and resume (AC-20)', () => {
       expect(relayRows()).toHaveLength(2)
     },
   )
+
+  it('a trigger that arrives while a paused cycle is on the wire gets a cycle of its own', async () => {
+    // A pause schedules no retry, so resolving the later trigger with the paused result would
+    // leave nothing to sync until yet another trigger.
+    const phone = await connected()
+    seedRow(SYNC_CODE, { version: '4.0', expenses: 'moved', categories: [] })
+    relay().latency = { pull: 1000, push: 50, realtime: 20 }
+    const first = phone.sync.useSyncStore.getState().triggerSync()
+    await advance(400) // the pull is on the wire and will read the fence
+    const second = phone.sync.useSyncStore.getState().triggerSync()
+
+    expect(await settle(first, 700)).toMatchObject({ ok: false, error: 'moved' })
+    seedRow(SYNC_CODE, payloadOf([expense('e1')])) // the fence is gone
+    expect(await settle(second, 2000)).toMatchObject({ ok: true })
+    expect(phone.sync.useSyncStore.getState()).toMatchObject({
+      cloudStatus: 'synced',
+      lastError: null,
+    })
+  })
+
+  it('a trigger during a failing cycle that retries resolves with that failure (no hammering)', async () => {
+    const phone = await connected()
+    relay().latency = { pull: 1000, push: 50, realtime: 20 }
+    failNext('pull', { status: 503 })
+    const first = phone.sync.useSyncStore.getState().triggerSync()
+    await advance(400)
+    const second = phone.sync.useSyncStore.getState().triggerSync()
+    const pulls = relay().pulls
+    expect(await settle(first, 700)).toMatchObject({ ok: false, error: 'server' })
+    expect(await settle(second, 10)).toMatchObject({ ok: false, error: 'server' })
+    expect(relay().pulls).toBe(pulls) // the 2 s backoff retry runs the next one
+  })
 })
 
 describe('lenient pulls: unreadable rows are never merged and never deleted (AC-21, AC-22)', () => {
@@ -269,6 +387,8 @@ describe('lenient pulls: unreadable rows are never merged and never deleted (AC-
     { ...expense('b4'), amount: null },
     { ...expense('b5'), notes: { x: 1 } },
     { ...expense('b6'), category: {} },
+    { ...expense('b7'), amount: 0 },
+    { ...expense('b8'), amount: -5 },
     { itemName: 'no id', amount: 1, category: 'Other', date: '2026-10-01' },
     null,
   ]
@@ -308,6 +428,20 @@ describe('lenient pulls: unreadable rows are never merged and never deleted (AC-
     expect(relayIds).toContain('e1')
   })
 
+  it('keeps a local row with no positive amount here and never sends it', async () => {
+    const zero = { ...expense('zero'), amount: 0 }
+    const phone = await bootDevice({ persist: true, storedRows: [expense('e1'), zero] })
+    await connect(phone)
+    phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
+    await advance(5000)
+
+    const stored: readonly unknown[] = phone.expense.useExpenseStore.getState().expenses
+    expect(stored).toContainEqual(zero)
+    const relayIds = relayRows().map((r) => (isRecord(r) ? r.id : r))
+    expect(relayIds).toContain('e1')
+    expect(relayIds).not.toContain('zero')
+  })
+
   it('drops a local unreadable row once the relay has deleted its id', async () => {
     const bad = { ...expense('bad'), date: 'last tuesday' }
     seedRow(SYNC_CODE, payloadOf([expense('e1')], { deletedIds: ['bad'] }))
@@ -337,6 +471,9 @@ describe('the writer stamp and local markers (AC-28)', () => {
       const wr = isRecord(push.payload) && isRecord(push.payload.wr) ? push.payload.wr : {}
       expect(wr.rev).toMatch(/^[A-Za-z0-9_-]{22}$/)
       expect(new Date(String(wr.at)).toISOString()).toBe(wr.at)
+      // The lineage: the revs of the copies it was built on, never its own.
+      expect(Array.isArray(wr.seen)).toBe(true)
+      expect(wr.seen).not.toContain(wr.rev)
       revs.add(wr.rev)
     }
     expect(revs.size).toBe(pushes.length)

@@ -19,8 +19,12 @@ import {
 import { Button } from '../../ui/Button'
 import { Input } from '../../ui/Input'
 import {
+  FAILING_AFTER_MS,
   OLD_DEVICE_WAITING,
+  failingSinceMessage,
   failureSeverity,
+  isFailing,
+  pausedDetail,
   syncMessage,
   useSyncStore,
   type CloudStatus,
@@ -29,10 +33,15 @@ import {
 } from '../../stores/useSyncStore'
 import { useUIStore } from '../../stores/useUIStore'
 import { syncEnabled } from '../../services/syncConfig'
+import { useTick } from '../../hooks/useTick'
 import { useToast } from '../../hooks/useToast'
 import clsx from 'clsx'
 
 const LEGACY_BANNER_MS = 24 * 60 * 60_000
+
+// The code generated on this device in this session: the "Link your phone" steps are for it,
+// not for a device that joined a code or reloaded.
+let generatedCode: string | null = null
 
 function timeAgo(ts: number): string {
   const s = Math.floor((Date.now() - ts) / 1000)
@@ -60,8 +69,39 @@ const ERROR_LABEL: Record<SyncFailure['kind'], string> = {
 type Tone = 'muted' | 'accent' | 'positive' | 'info' | 'warning' | 'negative'
 
 /** The row colour of a failure: the same meaning as on the pill and in the toasts. */
-const failureTone = (kind: SyncFailure['kind']): Extract<Tone, 'warning' | 'negative'> =>
-  failureSeverity(kind) === 'warning' ? 'warning' : 'negative'
+const failureTone = (failure: SyncFailure): Extract<Tone, 'warning' | 'negative'> =>
+  failureSeverity(failure) === 'warning' ? 'warning' : 'negative'
+
+/**
+ * A failure in the banner's words. The status row above it already says "Sync paused", and
+ * once a retried failure has lasted 10 minutes the banner says since when.
+ */
+const bannerText = (failure: SyncFailure): string =>
+  isFailing(failure) ? failingSinceMessage(failure.since) : pausedDetail(failure.message)
+
+const isFence = (failure: SyncFailure | null): boolean =>
+  failure?.kind === 'moved' || failure?.kind === 'update-required'
+
+/** What the banners say about a failure (offline has no banner: the status row says it). */
+function failureBanner(failure: SyncFailure | null): string | null {
+  if (!failure || failure.kind === 'offline') return null
+  return isFence(failure) ? syncMessage('moved') : bannerText(failure)
+}
+
+/**
+ * Re-renders once when a retried failure reaches 10 minutes, so its colour and words turn then
+ * and not at the next retry.
+ */
+function useFailingTurn(failure: SyncFailure | null): void {
+  const [, setTurned] = useState(0)
+  useEffect(() => {
+    if (!failure || isFailing(failure)) return undefined
+    const at = failure.since + FAILING_AFTER_MS
+    if (!isFailing(failure, at)) return undefined // offline or paused: never turns
+    const timer = setTimeout(() => setTurned((n) => n + 1), at - Date.now())
+    return () => clearTimeout(timer)
+  }, [failure])
+}
 
 const ROW_TEXT: Record<Tone, string> = {
   muted: 'text-[var(--text-tertiary)]',
@@ -72,11 +112,12 @@ const ROW_TEXT: Record<Tone, string> = {
   negative: 'text-negative',
 }
 
+// 'info' is neutral grey, as on the pill: cyan means a sync in progress, and nothing is.
 const ROW_DOT: Record<Tone, string> = {
   muted: 'bg-white/20',
   accent: 'bg-accent',
   positive: 'bg-positive',
-  info: 'bg-accent/50',
+  info: 'bg-[var(--text-tertiary)]',
   warning: 'bg-warning',
   negative: 'bg-negative',
 }
@@ -119,21 +160,54 @@ function statusView(s: StatusInput): StatusView {
         busy,
       }
     }
-    return { label: ERROR_LABEL[failure.kind], tone: failureTone(failure.kind), busy }
+    return { label: ERROR_LABEL[failure.kind], tone: failureTone(failure), busy }
+  }
+  // The relay holds the old device's copy, not this one: saved, but not "Synced". Before
+  // pending, which a held-back push leaves set: nothing is due until something changes here.
+  if (s.waitingForOld) {
+    return { label: 'Saved here · other device needs update', tone: 'info', busy }
   }
   if (busy && (s.pendingLocal || s.lastSyncAt === null)) {
     return { label: 'Syncing…', tone: 'accent', busy }
   }
   if (s.pendingLocal) return { label: 'Saved here · syncing soon', tone: 'accent', busy }
-  // The relay holds the old device's copy, not this one: saved, but not "Synced".
-  if (s.waitingForOld) {
-    return { label: 'Saved here · other device needs update', tone: 'info', busy }
-  }
   const ago = s.lastSyncAt === null ? '' : ` · ${timeAgo(s.lastSyncAt)}`
   return { label: `Synced${ago}`, tone: 'positive', busy }
 }
 
 type BannerTone = 'error' | 'warning' | 'info'
+
+/** A busy button that keeps keyboard focus: it looks and acts disabled, but is not `disabled`. */
+const ARIA_DISABLED = 'aria-disabled:pointer-events-none aria-disabled:opacity-40'
+
+type SetupLead = 'generated' | 'connected'
+
+/**
+ * A failed first sync after Generate or Connect, led by what did happen. A pause promises no
+ * sync "yet": it lasts until the owner acts. When a banner now says why (`bannerSaysWhy`), the
+ * toast leaves the why to it, so the same sentence is not said twice.
+ */
+function setupFailure(
+  lead: SetupLead,
+  result: Extract<SyncResult, { ok: false }>,
+  bannerSaysWhy: boolean,
+): string {
+  const done = lead === 'generated' ? 'Sync code created' : 'Connected'
+  switch (result.error) {
+    case 'too-large':
+      return bannerSaysWhy
+        ? `${done}. Sync is paused.`
+        : `${done}. Sync is paused: ${pausedDetail(result.message)}`
+    case 'moved':
+    case 'update-required':
+      return bannerSaysWhy ? `${done}. Sync is paused.` : `${done}. ${result.message}`
+  }
+  const but =
+    lead === 'generated'
+      ? "Sync code created, but the first sync didn't finish"
+      : "Connected, but couldn't sync yet"
+  return bannerSaysWhy ? `${but}.` : `${but}: ${result.message}`
+}
 
 /** Controls that take focus after a view swap (see `focusNext`). */
 type FocusTarget = 'sync-now' | 'generate' | 'cancel' | 'disconnect'
@@ -141,7 +215,7 @@ type FocusTarget = 'sync-now' | 'generate' | 'cancel' | 'disconnect'
 const BANNER_TONE: Record<BannerTone, string> = {
   error: 'border-negative/20 bg-negative/10 text-negative',
   warning: 'border-warning/25 bg-warning/10 text-warning',
-  info: 'border-accent/15 bg-accent/[0.04] text-[var(--text-secondary)]',
+  info: 'border-white/[0.1] bg-white/[0.03] text-[var(--text-secondary)]',
 }
 
 function SyncBanner({
@@ -158,7 +232,7 @@ function SyncBanner({
   return (
     <div
       className={clsx(
-        'flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-md border px-2.5 py-2 text-[11px] leading-relaxed',
+        'flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-md border px-2.5 py-2 text-[13px] leading-relaxed md:text-[11px]',
         BANNER_TONE[tone],
       )}
     >
@@ -208,8 +282,8 @@ function SyncBanners() {
   const lastError = useSyncStore((s) => s.lastError)
   const legacyWriterAt = useSyncStore((s) => s.legacyWriterAt)
   const waitingForOld = useSyncStore((s) => s.waitingForOld)
-  const setSettingsTab = useUIStore((s) => s.setSettingsTab)
-  const fenced = lastError?.kind === 'moved' || lastError?.kind === 'update-required'
+  const focusSettings = useUIStore((s) => s.focusSettings)
+  const fenced = isFence(lastError)
   const legacySeen = legacyWriterAt !== null && Date.now() - legacyWriterAt < LEGACY_BANNER_MS
   const failing = lastError !== null && lastError.kind !== 'offline' && !fenced
 
@@ -234,21 +308,21 @@ function SyncBanners() {
       )}
       {failing && (
         <SyncBanner
-          tone="error"
+          tone={failureSeverity(lastError) === 'warning' ? 'warning' : 'error'}
           icon={AlertCircle}
           action={
-            // The message says to export a backup: one tap to the place that does it.
+            // The message says to export a backup: one tap to the button that does it.
             lastError.kind === 'too-large' ? (
               <BannerAction
                 tone="error"
                 icon={Download}
                 label="Export backup"
-                onClick={() => setSettingsTab('backup')}
+                onClick={() => focusSettings('backup', 'backup-download')}
               />
             ) : undefined
           }
         >
-          {lastError.message}
+          {bannerText(lastError)}
         </SyncBanner>
       )}
       {(legacySeen || waitingForOld) && (
@@ -331,6 +405,9 @@ function SyncContent() {
   // it mounts, so keyboard and screen-reader focus stays in the panel, never on <body>.
   const focusNext = useRef<FocusTarget | null>(null)
   const statusId = useId()
+  useFailingTurn(lastError)
+  // "Synced · 2m ago" ages while the panel stays open, as on the pill.
+  useTick(15_000)
 
   /** A ref that focuses its element on mount when it is the successor asked for. */
   const focusWhenShown = (target: FocusTarget) => (element: HTMLElement | null) => {
@@ -368,22 +445,46 @@ function SyncContent() {
     }
   }
 
-  /** A failed result in its own colour; 'off' means sync was switched off meanwhile: no toast. */
-  const reportFailure = (result: SyncResult, prefix = '') => {
+  /**
+   * A failed result in its colour: the streak it belongs to decides (a retried failure turns red
+   * after 10 minutes). 'off' means sync was switched off meanwhile: no toast.
+   */
+  const reportFailure = (result: SyncResult, message?: string) => {
     if (result.ok || result.error === 'off') return
-    const message = `${prefix}${result.message}`
-    if (failureTone(result.error) === 'warning') toast.warning(message)
-    else toast.error(message)
+    const streak = useSyncStore.getState().lastError
+    const since = streak?.kind === result.error ? streak.since : Date.now()
+    const text = message ?? result.message
+    if (failureSeverity({ kind: result.error, since }) === 'warning') toast.warning(text)
+    else toast.error(text)
   }
 
+  /**
+   * The banners now say something about the last failure that they did not say before the
+   * request (`before`): their live region announces it, so a toast must not say it again.
+   */
+  const bannerNowSays = (before: string | null): boolean => {
+    const shown = failureBanner(useSyncStore.getState().lastError)
+    return shown !== null && shown !== before
+  }
+
+  /** Held back for an old device: saved here, but the relay does not hold this copy. */
+  const heldBack = () => useSyncStore.getState().waitingForOld
+
   const handleGenerate = async () => {
+    // aria-disabled, not disabled, while setting up: the button keeps keyboard focus.
+    if (connecting) return
     focusNext.current = 'sync-now'
+    const code = crypto.randomUUID()
+    generatedCode = code
+    const before = failureBanner(useSyncStore.getState().lastError)
     await runRequest(
       setConnecting,
-      () => setupSync(crypto.randomUUID()),
+      () => setupSync(code),
       (result) => {
-        if (result.ok) toast.success('Sync code generated — enter it on your other device')
-        else reportFailure(result, "Sync code created, but the first sync didn't finish: ")
+        if (!result.ok)
+          reportFailure(result, setupFailure('generated', result, bannerNowSays(before)))
+        else if (heldBack()) toast.info(OLD_DEVICE_WAITING)
+        else toast.success('Sync code generated — enter it on your other device')
       },
     )
     dropFocusRequest('sync-now')
@@ -391,7 +492,7 @@ function SyncContent() {
 
   const handleConnect = async () => {
     const trimmed = codeInput.trim().toLowerCase()
-    if (!trimmed) return
+    if (!trimmed || connecting) return
     const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
     if (!uuidRegex.test(trimmed)) {
       toast.error('Invalid sync code — paste the full code from your other device')
@@ -399,12 +500,15 @@ function SyncContent() {
     }
     // The code is saved either way; a failed first sync keeps retrying in the background.
     focusNext.current = 'sync-now'
+    const before = failureBanner(useSyncStore.getState().lastError)
     await runRequest(
       setConnecting,
       () => setupSync(trimmed),
       (result) => {
-        if (result.ok) toast.success('Connected — data synced')
-        else reportFailure(result, "Connected, but couldn't sync yet: ")
+        if (!result.ok)
+          reportFailure(result, setupFailure('connected', result, bannerNowSays(before)))
+        else if (heldBack()) toast.info(OLD_DEVICE_WAITING)
+        else toast.success('Connected — data synced')
       },
     )
     dropFocusRequest('sync-now')
@@ -431,14 +535,20 @@ function SyncContent() {
   const handleManualSync = () => {
     // aria-disabled, not disabled, while it runs: the button keeps keyboard focus.
     if (manualSyncing) return
+    // A result that puts a new banner up is said by the banner (its live region announces it); a
+    // toast would say the same sentence a second time. A result the banners already showed
+    // changes nothing there, so the toast is what tells the owner the tap was answered.
+    const before = useSyncStore.getState()
+    const shownBefore = { failure: failureBanner(before.lastError), waiting: before.waitingForOld }
     void runRequest(
       setManualSyncing,
       () => triggerSync({ resetBackoff: true }),
       (result) => {
-        if (!result.ok) reportFailure(result)
-        // Held back for an old device: saved here, but the relay does not hold this copy.
-        else if (useSyncStore.getState().waitingForOld) toast.info(OLD_DEVICE_WAITING)
-        else toast.success('Synced')
+        if (!result.ok) {
+          if (!bannerNowSays(shownBefore.failure)) reportFailure(result)
+        } else if (heldBack()) {
+          if (shownBefore.waiting) toast.info(OLD_DEVICE_WAITING)
+        } else toast.success('Synced')
       },
     )
   }
@@ -504,7 +614,8 @@ function SyncContent() {
           ref={focusWhenShown('generate')}
           onClick={handleGenerate}
           variant="primary"
-          disabled={connecting}
+          aria-disabled={connecting}
+          className={ARIA_DISABLED}
         >
           {connecting ? <Loader2 size={14} className="animate-spin" /> : <Cloud size={14} />}
           {connecting ? 'Setting up…' : 'Generate sync code for this device'}
@@ -525,15 +636,20 @@ function SyncContent() {
               value={codeInput}
               onChange={(e) => setCodeInput(e.target.value)}
               onKeyDown={(e) => {
-                if (e.key === 'Enter') void handleConnect()
+                if (e.key !== 'Enter') return
+                // Without this, the Enter's own activation (keypress) lands on Sync now, which
+                // the connected view focuses as it mounts, and runs a second cycle.
+                e.preventDefault()
+                void handleConnect()
               }}
               className="min-w-0"
             />
           </div>
           <Button
             onClick={handleConnect}
-            disabled={!codeInput.trim() || connecting}
-            className="mt-0 shrink-0 self-end"
+            disabled={!codeInput.trim()}
+            aria-disabled={connecting}
+            className={clsx('mt-0 shrink-0 self-end', ARIA_DISABLED)}
           >
             {connecting ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
             Connect
@@ -619,7 +735,7 @@ function SyncContent() {
         </div>
       </div>
 
-      {!lastSyncAt && (
+      {syncId === generatedCode && (
         <div className="flex flex-col gap-2.5 rounded-lg border border-accent/15 bg-accent/[0.04] p-3.5">
           <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-white">
             <Smartphone size={12} className="text-accent" /> Link your phone in 3 steps

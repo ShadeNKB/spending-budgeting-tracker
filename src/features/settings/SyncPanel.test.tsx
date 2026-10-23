@@ -2,6 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { SyncPanel } from './SyncPanel'
 import {
+  OLD_DEVICE_WAITING,
+  clockTime,
+  failingSinceMessage,
   syncMessage,
   useSyncStore,
   type SyncFailure,
@@ -17,6 +20,7 @@ vi.mock('../../services/syncConfig', async (importOriginal) => ({
 
 const CODE = '11111111-1111-4111-8111-111111111111'
 const NOW = Date.UTC(2026, 9, 19, 8, 0, 0)
+const TEN_MINUTES = 10 * 60_000
 const OK: SyncResult = { ok: true, pushed: true, changedLocal: false }
 const NETWORK: SyncResult = { ok: false, error: 'network', message: syncMessage('network') }
 const OFF: SyncResult = { ok: false, error: 'off', message: syncMessage('off') }
@@ -74,23 +78,62 @@ describe('Sync now', () => {
     expect(toasts()).toEqual([['success', 'Synced']])
   })
 
-  it('does not say Synced when the push was held back for an old device', async () => {
-    connectedPanel({
-      triggerSync: () => {
-        useSyncStore.setState({ waitingForOld: true })
-        return Promise.resolve({ ok: true, pushed: false, changedLocal: false })
-      },
+  it.each([
+    [false, []],
+    [true, [['info', OLD_DEVICE_WAITING]]],
+  ])(
+    'does not say Synced when the push was held back for an old device (banner up before: %s)',
+    async (before, expected) => {
+      connectedPanel({
+        waitingForOld: before,
+        triggerSync: () => {
+          useSyncStore.setState({ waitingForOld: true })
+          return Promise.resolve({ ok: true, pushed: false, changedLocal: false })
+        },
+      })
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Sync now' }))
+        await Promise.resolve()
+      })
+      // A banner that goes up says it (its region announces it); one already up does not, so
+      // then the toast answers the tap. Never both, never Synced.
+      expect(screen.getByText(OLD_DEVICE_WAITING)).toBeInTheDocument()
+      expect(toasts()).toEqual(expected)
+    },
+  )
+
+  it('says one failure once: the banner as it appears, a toast only when the banner was up', async () => {
+    const network = failure('network')
+    const failNow = () => {
+      useSyncStore.setState({ cloudStatus: 'error', lastError: network })
+      return Promise.resolve(NETWORK)
+    }
+    connectedPanel({ triggerSync: failNow })
+    expect(screen.queryByText(syncMessage('network'))).toBeNull() // no banner yet
+    const said: string[] = []
+    const watch = new MutationObserver(() => {
+      const text = document.querySelector('[role="status"]')?.textContent ?? ''
+      if (text !== said.at(-1)) said.push(text)
     })
+    const banners = document.querySelector('[role="status"]')
+    if (!banners) throw new Error('no banner region')
+    watch.observe(banners, { subtree: true, childList: true, characterData: true })
+
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Sync now' }))
       await Promise.resolve()
     })
-    expect(toasts()).toEqual([
-      [
-        'info',
-        "Your other device keeps overwriting the synced copy until it's updated. Everything is saved here.",
-      ],
-    ])
+    expect(said).toEqual([syncMessage('network')]) // the banner region, once
+    expect(toasts()).toEqual([]) // and no toast saying it again
+
+    // The same failure again: nothing changes on screen, so the toast answers the tap.
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Sync now' }))
+      await Promise.resolve()
+    })
+    watch.disconnect()
+    expect(said).toEqual([syncMessage('network')])
+    expect(toasts()).toEqual([['warning', syncMessage('network')]])
   })
 
   it('shows the failure, never Synced, for ok:false', async () => {
@@ -99,7 +142,7 @@ describe('Sync now', () => {
       fireEvent.click(screen.getByRole('button', { name: 'Sync now' }))
       await Promise.resolve()
     })
-    expect(toasts()).toEqual([['error', syncMessage('network')]])
+    expect(toasts()).toEqual([['warning', syncMessage('network')]])
   })
 
   it('is busy only while its own request runs, keeps focus, and has a 44 px target on phones', async () => {
@@ -139,19 +182,36 @@ describe('Sync now', () => {
     })
   })
 
+  // One severity everywhere: amber while a retried failure is young, red once it has failed
+  // for 10 minutes, red for refused access.
   it.each([
     ['offline', 'warning'],
     ['moved', 'warning'],
     ['update-required', 'warning'],
-    ['network', 'error'],
+    ['network', 'warning'],
+    ['server', 'warning'],
+    ['invalid', 'warning'],
     ['permission', 'error'],
-  ] as const)('reports %s in its own colour (%s)', async (kind, tone) => {
+  ] as const)('reports a fresh %s failure in its own colour (%s)', async (kind, tone) => {
     connectedPanel({ triggerSync: () => Promise.resolve(failed(kind)) })
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Sync now' }))
       await Promise.resolve()
     })
     expect(toasts()).toEqual([[tone, syncMessage(kind)]])
+  })
+
+  it('reports a failure that has lasted 10 minutes in red', async () => {
+    connectedPanel({
+      cloudStatus: 'error',
+      lastError: { ...failure('network'), since: NOW - TEN_MINUTES },
+      triggerSync: () => Promise.resolve(failed('network')),
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Sync now' }))
+      await Promise.resolve()
+    })
+    expect(toasts()).toEqual([['error', syncMessage('network')]])
   })
 
   it('says nothing when sync was switched off while it ran', async () => {
@@ -185,23 +245,149 @@ describe('Connect and Generate', () => {
     expect(input).toHaveValue('')
   })
 
+  it.each(['Connect', 'Generate'] as const)(
+    '%s says the old device holds the relay when the first push was held back',
+    async (action) => {
+      useSyncStore.setState({
+        setupSync: () => {
+          useSyncStore.setState({ syncId: CODE, cloudStatus: 'synced', waitingForOld: true })
+          return Promise.resolve({ ok: true, pushed: false, changedLocal: false })
+        },
+      })
+      render(<SyncPanel />)
+      if (action === 'Connect') {
+        fireEvent.change(screen.getByPlaceholderText('Paste sync code from another device'), {
+          target: { value: CODE },
+        })
+      }
+      await act(async () => {
+        fireEvent.click(
+          screen.getByRole('button', { name: action === 'Connect' ? 'Connect' : /Generate/ }),
+        )
+        await Promise.resolve()
+      })
+      expect(toasts()).toEqual([['info', OLD_DEVICE_WAITING]])
+    },
+  )
+
   it('Connect with ok:false says so, keeps the code and clears the input', async () => {
     const input = await connectWith(NETWORK)
     expect(toasts()).toEqual([
-      ['error', `Connected, but couldn't sync yet: ${syncMessage('network')}`],
+      ['warning', `Connected, but couldn't sync yet: ${syncMessage('network')}`],
     ])
     expect(input).toHaveValue('')
+  })
+
+  it.each([
+    [
+      'too-large' as const,
+      'error',
+      "Connected. Sync is paused: Your data (1228 KB) is too large for the sync server. It's still saved here — export a backup.",
+    ],
+    ['moved' as const, 'warning', `Connected. ${syncMessage('moved')}`],
+    ['update-required' as const, 'warning', `Connected. ${syncMessage('update-required')}`],
+  ])('Connect into a %s pause promises no sync "yet"', async (error, kind, message) => {
+    await connectWith({ ok: false, error, message: syncMessage(error, 1228) })
+    expect(toasts()).toEqual([[kind, message]])
+  })
+
+  it.each([
+    ['too-large' as const, 'error', 'Connected. Sync is paused.'],
+    ['moved' as const, 'warning', 'Connected. Sync is paused.'],
+    ['network' as const, 'warning', "Connected, but couldn't sync yet."],
+  ])(
+    'Connect into a %s failure the banner explains: the toast leaves the why to it',
+    async (kind, tone, message) => {
+      const lastError = failure(kind)
+      const setupSync = vi.fn(() => {
+        useSyncStore.setState({ syncId: CODE, cloudStatus: 'error', lastError })
+        return Promise.resolve({ ok: false, error: kind, message: lastError.message } as const)
+      })
+      useSyncStore.setState({ setupSync })
+      render(<SyncPanel />)
+      fireEvent.change(screen.getByPlaceholderText('Paste sync code from another device'), {
+        target: { value: CODE },
+      })
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+        await Promise.resolve()
+      })
+      expect(toasts()).toEqual([[tone, message]])
+      const region = document.querySelector('[role="status"]')
+      expect(region?.textContent).toContain(
+        kind === 'moved'
+          ? syncMessage('moved')
+          : kind === 'too-large'
+            ? 'too large'
+            : lastError.message,
+      )
+    },
+  )
+
+  it('Enter in the code field connects once: its activation never presses Sync now too', async () => {
+    const setupSync = vi.fn(() => {
+      useSyncStore.setState({ syncId: CODE, cloudStatus: 'synced', lastSyncAt: NOW })
+      return Promise.resolve(OK)
+    })
+    const triggerSync = vi.fn(() => Promise.resolve(OK))
+    useSyncStore.setState({ setupSync, triggerSync })
+    render(<SyncPanel />)
+    const input = screen.getByPlaceholderText('Paste sync code from another device')
+    fireEvent.change(input, { target: { value: CODE } })
+    let notCancelled = true
+    await act(async () => {
+      notCancelled = fireEvent.keyDown(input, { key: 'Enter' })
+      await Promise.resolve()
+    })
+    // The default action (keypress, which activates whatever has focus by then) is cancelled.
+    expect(notCancelled).toBe(false)
+    expect(setupSync).toHaveBeenCalledTimes(1)
+    expect(triggerSync).not.toHaveBeenCalled()
+    expect(toasts()).toEqual([['success', 'Connected — data synced']])
+  })
+
+  it('Generate keeps focus while it sets up (aria-disabled, not disabled), and runs once', async () => {
+    let finish: (r: SyncResult) => void = () => undefined
+    const pending = new Promise<SyncResult>((resolve) => (finish = resolve))
+    const setupSync = vi.fn(() => pending)
+    useSyncStore.setState({ setupSync })
+    render(<SyncPanel />)
+    const generate = screen.getByRole('button', { name: /Generate sync code/ })
+    generate.focus()
+    fireEvent.click(generate)
+    const busy = screen.getByRole('button', { name: /Setting up/ })
+    expect(busy).toBe(generate)
+    expect(busy).toHaveAttribute('aria-disabled', 'true')
+    expect(busy).toBeEnabled()
+    expect(busy).toHaveFocus()
+    fireEvent.click(busy) // a second press while it runs does nothing
+    const connect = screen.getByRole('button', { name: 'Connect' })
+    fireEvent.change(screen.getByPlaceholderText('Paste sync code from another device'), {
+      target: { value: CODE },
+    })
+    expect(connect).toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(connect) // nor does Connect
+    expect(setupSync).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      finish(OK)
+      await pending
+    })
+    expect(generate).toHaveAttribute('aria-disabled', 'false')
   })
 
   it.each([
     [OK, ['success', 'Sync code generated — enter it on your other device']],
     [
       NETWORK,
-      ['error', `Sync code created, but the first sync didn't finish: ${syncMessage('network')}`],
+      ['warning', `Sync code created, but the first sync didn't finish: ${syncMessage('network')}`],
     ],
+    [failed('moved'), ['warning', `Sync code created. ${syncMessage('moved')}`]],
     [
-      failed('moved'),
-      ['warning', `Sync code created, but the first sync didn't finish: ${syncMessage('moved')}`],
+      { ok: false, error: 'too-large', message: syncMessage('too-large', 1228) } as const,
+      [
+        'error',
+        "Sync code created. Sync is paused: Your data (1228 KB) is too large for the sync server. It's still saved here — export a backup.",
+      ],
     ],
     [OFF, null],
   ])('Generate reports the first sync honestly (%j)', async (result, toast) => {
@@ -246,6 +432,19 @@ describe('Connect and Generate', () => {
 })
 
 describe('status row', () => {
+  it('ages "Synced · just now" while the panel stays open', () => {
+    connectedPanel({ lastSyncAt: NOW })
+    expect(statusRow()).toHaveTextContent('Synced · just now')
+    act(() => {
+      vi.advanceTimersByTime(5 * 60_000)
+    })
+    expect(statusRow()).toHaveTextContent('Synced · 5m ago')
+    act(() => {
+      vi.advanceTimersByTime(25 * 60_000)
+    })
+    expect(statusRow()).toHaveTextContent('Synced · 30m ago')
+  })
+
   it.each([
     [{ cloudStatus: 'idle' as const }, 'Ready'],
     [{ cloudStatus: 'synced' as const, pendingLocal: true }, 'Saved here · syncing soon'],
@@ -259,6 +458,19 @@ describe('status row', () => {
     [
       { cloudStatus: 'synced' as const, waitingForOld: true },
       'Saved here · other device needs update',
+    ],
+    // Held back with nothing new here: no push is due, so not "syncing soon".
+    [
+      { cloudStatus: 'synced' as const, pendingLocal: true, waitingForOld: true },
+      'Saved here · other device needs update',
+    ],
+    // The row keeps naming what is wrong; the banner under it says since when.
+    [
+      {
+        cloudStatus: 'error' as const,
+        lastError: { ...failure('server'), since: NOW - TEN_MINUTES },
+      },
+      'Sync server error',
     ],
     [{ cloudStatus: 'offline' as const }, "Offline — will sync when you're back"],
     [{ cloudStatus: 'paused' as const }, 'Sync paused'],
@@ -293,7 +505,15 @@ describe('status row', () => {
   it.each([
     [{ cloudStatus: 'paused' as const, lastError: failure('moved') }, 'text-warning'],
     [{ cloudStatus: 'paused' as const, lastError: failure('too-large') }, 'text-negative'],
-    [{ cloudStatus: 'error' as const, lastError: failure('server') }, 'text-negative'],
+    [{ cloudStatus: 'error' as const, lastError: failure('server') }, 'text-warning'],
+    [
+      {
+        cloudStatus: 'error' as const,
+        lastError: { ...failure('server'), since: NOW - TEN_MINUTES },
+      },
+      'text-negative',
+    ],
+    [{ cloudStatus: 'error' as const, lastError: failure('permission') }, 'text-negative'],
     [{ cloudStatus: 'offline' as const }, 'text-warning'],
     [{ cloudStatus: 'synced' as const, waitingForOld: true }, 'text-[var(--text-secondary)]'],
     [{ cloudStatus: 'synced' as const }, 'text-positive'],
@@ -304,6 +524,15 @@ describe('status row', () => {
 })
 
 describe('banners', () => {
+  it('shows a held-back push in neutral grey, as the pill does (cyan means a sync in progress)', () => {
+    connectedPanel({ waitingForOld: true })
+    const dot = statusRow().previousElementSibling
+    expect(dot).toHaveClass('bg-[var(--text-tertiary)]')
+    const banner = screen.getByText(OLD_DEVICE_WAITING).closest('div')
+    expect(banner).toHaveClass('border-white/[0.1]', 'bg-white/[0.03]')
+    expect(`${dot?.className ?? ''} ${banner?.className ?? ''}`).not.toMatch(/accent/)
+  })
+
   it.each(['network', 'server', 'permission', 'invalid'] as const)(
     'explains a %s failure in its own words',
     (kind) => {
@@ -315,15 +544,53 @@ describe('banners', () => {
     },
   )
 
-  it('explains too-large with the size, and opens Backup in one tap', () => {
+  it('turns a retried failure red, and says since when, once it has lasted 10 minutes', () => {
+    const since = NOW - 9 * 60_000
+    connectedPanel({ cloudStatus: 'error', lastError: { ...failure('network'), since } })
+    const banner = () => screen.getByText(syncMessage('network')).closest('div')
+    expect(banner()).toHaveClass('text-warning')
+    expect(statusRow()).toHaveClass('text-warning')
+
+    act(() => {
+      vi.advanceTimersByTime(60_000)
+    })
+    const failing = screen.getByText(failingSinceMessage(since))
+    expect(failing.closest('div')).toHaveClass('text-negative')
+    expect(failingSinceMessage(since)).toBe(
+      `Sync has been failing since ${clockTime(since)}. Your changes are saved on this device.`,
+    )
+    expect(statusRow()).toHaveTextContent("Can't reach the sync server")
+    expect(statusRow()).toHaveClass('text-negative')
+  })
+
+  it('explains too-large with the size under the row, without repeating "Sync paused"', () => {
     const message = syncMessage('too-large', 1365)
     connectedPanel({ cloudStatus: 'paused', lastError: { kind: 'too-large', message, since: NOW } })
-    expect(screen.getByText(message)).toBeInTheDocument()
-    expect(message).toContain('1365 KB')
+    expect(message).toMatch(/^Sync paused: your data \(1365 KB\)/)
+    expect(statusRow()).toHaveTextContent('Sync paused')
+    const banners = screen.getByRole('status')
+    expect(banners).toHaveTextContent(
+      "Your data (1365 KB) is too large for the sync server. It's still saved here — export a backup.",
+    )
+    expect(banners).not.toHaveTextContent('Sync paused')
+  })
+
+  it('Export backup opens Backup and asks for its Download button to take focus', () => {
+    const message = syncMessage('too-large', 1365)
+    connectedPanel({ cloudStatus: 'paused', lastError: { kind: 'too-large', message, since: NOW } })
     const button = screen.getByRole('button', { name: 'Export backup' })
     expect(button).toHaveClass('h-11', 'md:h-8')
     fireEvent.click(button)
-    expect(useUIStore.getState().settingsTab).toBe('backup')
+    expect(useUIStore.getState()).toMatchObject({
+      settingsTab: 'backup',
+      settingsFocus: 'backup-download',
+    })
+  })
+
+  it('sets banner text at 13 px on phones (11 px from md up)', () => {
+    connectedPanel({ cloudStatus: 'error', lastError: failure('server') })
+    const banner = screen.getByText(syncMessage('server')).closest('div')
+    expect(banner).toHaveClass('text-[13px]', 'md:text-[11px]')
   })
 
   it.each(['moved', 'update-required'] as const)('offers a working Reload when sync %s', (kind) => {
@@ -453,6 +720,30 @@ describe('focus stays in the panel when its view changes', () => {
     input.focus()
     act(() => useSyncStore.setState({ syncId: CODE, cloudStatus: 'synced', lastSyncAt: NOW }))
     expect(screen.getByRole('button', { name: 'Sync now' })).not.toHaveFocus()
+  })
+})
+
+describe('the "Link your phone" steps', () => {
+  const steps = () => screen.queryByText('Link your phone in 3 steps')
+
+  it('show after Generate, for the code generated here', async () => {
+    useSyncStore.setState({
+      setupSync: (code) => {
+        useSyncStore.setState({ syncId: code, cloudStatus: 'synced', lastSyncAt: NOW })
+        return Promise.resolve(OK)
+      },
+    })
+    render(<SyncPanel />)
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate sync code/ }))
+      await Promise.resolve()
+    })
+    expect(steps()).toBeInTheDocument()
+  })
+
+  it('stay hidden on a device linked to a code it did not generate in this session', () => {
+    connectedPanel({ lastSyncAt: null })
+    expect(steps()).not.toBeInTheDocument()
   })
 })
 

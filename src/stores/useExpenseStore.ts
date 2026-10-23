@@ -130,66 +130,181 @@ function changedFields(prev: Expense, patch: Partial<Expense>): EditableField[] 
 }
 
 // ---------------------------------------------------------------------------
-// Pending field edits: edits not yet known to be on the relay. Sync rebases them onto a
-// newer remote copy so a concurrent edit of another field on another device survives.
-// Each edit keeps what it was built on, so only a relay copy newer than that counts as news.
-// In memory only (the durable outbox is PR-2).
+// Pending changes: changes another device is not yet known to hold. Sync rebases pending field
+// edits onto a newer remote copy, so a concurrent edit of another field on another device
+// survives. A change stays pending until a push from another device that was built on one of
+// this device's pushes carrying it comes back (`ackPendingEdits`, see the sync engine), so a
+// stale push that lands later cannot take it away. In memory only (the durable outbox is PR-2).
 // ---------------------------------------------------------------------------
 
 /** A record's pending fields and the base they were edited on. */
 export interface PendingEdit {
   readonly fields: ReadonlySet<EditableField>
-  /** Stamp of the newest copy of the record this device held when editing or merged since. */
+  /** Stamp of the copy this device edited, or of a newer copy from another device merged since. */
   readonly baseStamp: number
   /** Each pending field's value in that copy. */
   readonly base: Readonly<EditableValues>
+  /**
+   * Each pending field's values this device has held since its first edit: the base, every value
+   * written here and the values of other devices' copies merged since. A relay copy holding one
+   * of them has not changed the field since that device saw this one's value.
+   */
+  readonly own: ReadonlyMap<EditableField, readonly unknown[]>
 }
 
-const pendingEdits = new Map<string, PendingEdit & { seq: number }>()
+interface PendingRecord {
+  baseStamp: number
+  base: EditableValues
+  /** Per field: the change that last wrote it here (`seq`) and the values this device held. */
+  fields: Map<EditableField, { seq: number; own: readonly unknown[] }>
+  /** Stamps of the copies of this record written here: this device's own copies, not news. */
+  mine: Set<number>
+}
+
+const pendingEdits = new Map<string, PendingRecord>()
 let editSeq = 0
 
-function markPending(id: string, fields: readonly EditableField[], before: Expense) {
-  const current = pendingEdits.get(id)
-  // A field already pending keeps its base: the value before this device first changed it.
-  const base: EditableValues = { ...current?.base }
-  for (const field of fields) {
-    if (!current?.fields.has(field)) Object.assign(base, { [field]: before[field] })
-  }
-  pendingEdits.set(id, {
-    fields: new Set([...(current?.fields ?? []), ...fields]),
-    baseStamp: current?.baseStamp ?? stampOf(before),
-    base,
-    seq: ++editSeq,
-  })
+// Category names and item mappings have no stamps on the v4 wire either: the merge unions names
+// and picks the larger mapping value. Changes made here are kept over the relay copy while
+// they are pending, with the same acknowledgement as field edits.
+/** Category names this device added (true) or removed (false). */
+const pendingCategories = new Map<string, { present: boolean; seq: number }>()
+/** Item mappings this device set, with every value each has held here since before then. */
+const pendingMappings = new Map<string, { own: readonly (string | undefined)[]; seq: number }>()
+
+function notePendingCategory(name: string, present: boolean) {
+  pendingCategories.set(name, { present, seq: ++editSeq })
 }
 
-/** A copy of the pending edits; `seq` acknowledges exactly these later. */
-export function pendingEditsSnapshot(): {
+function notePendingMapping(key: string, before: string | undefined, after: string) {
+  const own = pendingMappings.get(key)?.own ?? [before]
+  pendingMappings.set(key, { own: own.includes(after) ? own : [...own, after], seq: ++editSeq })
+}
+
+/** `values` with `value` added, unless the field already holds it there. */
+function withValue(
+  field: EditableField,
+  values: readonly unknown[],
+  value: unknown,
+): readonly unknown[] {
+  return values.some((held) => sameValue(field, held, value)) ? values : [...values, value]
+}
+
+/** Records that this device wrote `fields` of `id`, from `before` to `after`. */
+function markPending(
+  id: string,
+  fields: readonly EditableField[],
+  before: Expense,
+  after: Expense,
+) {
+  const seq = ++editSeq
+  const entry: PendingRecord = pendingEdits.get(id) ?? {
+    baseStamp: stampOf(before),
+    base: {},
+    fields: new Map(),
+    mine: new Set(),
+  }
+  for (const field of fields) {
+    const held = entry.fields.get(field)
+    // A field already pending keeps its base: the value before this device first changed it.
+    if (!held) Object.assign(entry.base, { [field]: before[field] })
+    entry.fields.set(field, {
+      seq,
+      own: withValue(field, held ? held.own : [before[field]], after[field]),
+    })
+  }
+  entry.mine.add(stampOf(after))
+  pendingEdits.set(id, entry)
+}
+
+/** What this device changed and another device is not yet known to hold. */
+export interface PendingSnapshot {
+  /** Acknowledges exactly these changes later (`ackPendingEdits`). */
   seq: number
   edits: ReadonlyMap<string, PendingEdit>
-} {
+  /** Category names added (true) or removed (false) here. */
+  categories: ReadonlyMap<string, boolean>
+  /**
+   * Item mappings set here, with every value each has held here since before then (a relay
+   * copy holding one of them has not been changed by another device).
+   */
+  mappings: ReadonlyMap<string, readonly (string | undefined)[]>
+}
+
+/** A copy of the pending changes; `seq` acknowledges exactly these later. */
+export function pendingEditsSnapshot(): PendingSnapshot {
   const edits = new Map<string, PendingEdit>()
-  for (const [id, { fields, baseStamp, base }] of pendingEdits) {
-    edits.set(id, { fields: new Set(fields), baseStamp, base: { ...base } })
+  for (const [id, entry] of pendingEdits) {
+    const own = new Map<EditableField, readonly unknown[]>()
+    for (const [field, pending] of entry.fields) own.set(field, pending.own)
+    edits.set(id, {
+      fields: new Set(entry.fields.keys()),
+      baseStamp: entry.baseStamp,
+      base: { ...entry.base },
+      own,
+    })
   }
-  return { seq: editSeq, edits }
+  const categories = new Map<string, boolean>()
+  for (const [name, { present }] of pendingCategories) categories.set(name, present)
+  const mappings = new Map<string, readonly (string | undefined)[]>()
+  for (const [key, { own }] of pendingMappings) mappings.set(key, own)
+  return { seq: editSeq, edits, categories, mappings }
 }
 
-/** A newer copy of `id` was merged here: the record's pending edits now build on it. */
-export function notePendingBase(id: string, copy: Expense): void {
+/**
+ * A copy of `id` from the relay, newer than its pending edits' base, was merged here, and
+ * `written` is the copy this device then wrote over it (a rebase), if any. A copy from another
+ * device becomes the base, and its values join the edits' own values. One of this device's own
+ * copies (its push read back, or carried on in another device's push) moves nothing: a stale
+ * copy from another device can be newer than the base and older than ours, and still be news.
+ */
+export function notePendingBase(id: string, copy: Expense, written: Expense | null): void {
   const entry = pendingEdits.get(id)
+  if (!entry) return
+  if (written) entry.mine.add(stampOf(written))
   const stamp = stampOf(copy)
-  if (!entry || stamp <= entry.baseStamp) return
-  pendingEdits.set(id, { ...entry, baseStamp: stamp, base: pickFields(copy, entry.fields) })
+  if (entry.mine.has(stamp) || stamp <= entry.baseStamp) return
+  for (const [field, pending] of entry.fields) {
+    entry.fields.set(field, { seq: pending.seq, own: withValue(field, pending.own, copy[field]) })
+  }
+  entry.baseStamp = stamp
+  entry.base = pickFields(copy, entry.fields.keys())
 }
 
-/** Forgets the edits made up to `seq` (the relay holds them now). */
+/** Forgets the changes made up to `seq` (another device holds them now), field by field. */
 export function ackPendingEdits(seq: number): void {
-  for (const [id, entry] of pendingEdits) if (entry.seq <= seq) pendingEdits.delete(id)
+  for (const [id, entry] of pendingEdits) {
+    for (const [field, pending] of entry.fields) if (pending.seq <= seq) entry.fields.delete(field)
+    if (entry.fields.size === 0) pendingEdits.delete(id)
+  }
+  for (const pending of [pendingCategories, pendingMappings]) {
+    for (const [key, entry] of pending) if (entry.seq <= seq) pending.delete(key)
+  }
 }
 
 export function clearPendingEdits(): void {
   pendingEdits.clear()
+  pendingCategories.clear()
+  pendingMappings.clear()
+}
+
+/**
+ * Re-files every row in `from` to `to` as an edit of each row's category: a forward stamp, so
+ * last-writer-wins on every device (v0.8.4 included) adopts it instead of the tie-break undoing
+ * it, and a pending field, so a concurrent edit of another field on a v0.8.5 device survives
+ * (the rebase). Rows in other categories keep their objects.
+ */
+function refile(expenses: Expense[], from: string, to: string): Expense[] {
+  if (from === to) return expenses
+  const now = Date.now()
+  const next = expenses.map((e) => {
+    const id = idOf(e)
+    if (id === undefined || e.category !== from) return e
+    const refiled = { ...e, category: to, updatedAt: nextStampIso(now, stampOf(e)) }
+    markPending(id, ['category'], e, refiled)
+    return refiled
+  })
+  return next.some((e, i) => e !== expenses[i]) ? next : expenses
 }
 
 // ---------------------------------------------------------------------------
@@ -344,12 +459,17 @@ export const useExpenseStore = create<ExpenseState>()(
         createdAt: now,
       }
 
+      // The category picked for this item name is learned, and kept pending for sync.
+      const normalized = expense.itemName.toLowerCase().trim()
+      const known = get().categoryMappings
+      const before = Object.hasOwn(known, normalized) ? known[normalized] : undefined
+      const learn = category !== 'Other' && normalized !== '' && before !== category
+      if (learn) notePendingMapping(normalized, before, category)
+
       set((s) => {
-        const normalized = expense.itemName.toLowerCase().trim()
-        const nextMappings =
-          category !== 'Other' && normalized
-            ? { ...s.categoryMappings, [normalized]: category }
-            : s.categoryMappings
+        const nextMappings = learn
+          ? { ...s.categoryMappings, [normalized]: category }
+          : s.categoryMappings
         const undo: UndoEntry = {
           id: `add-${expense.id}`,
           label: `Added "${expense.itemName}"`,
@@ -382,7 +502,7 @@ export const useExpenseStore = create<ExpenseState>()(
         ...pickFields(patch, fields),
         updatedAt: nextStampIso(now, stampOf(prev)),
       }
-      markPending(id, fields, prev)
+      markPending(id, fields, prev, next)
       set((s) => ({
         expenses: s.expenses.map((e) => (idOf(e) === id ? next : e)),
         undoStack: [
@@ -400,7 +520,7 @@ export const useExpenseStore = create<ExpenseState>()(
                 ...pickFields(prev, fields),
                 updatedAt: nextStampIso(Date.now(), stampOf(current)),
               }
-              markPending(id, fields, current)
+              markPending(id, fields, current, restored)
               set((st) => ({ expenses: st.expenses.map((e) => (idOf(e) === id ? restored : e)) }))
             },
           },
@@ -446,8 +566,9 @@ export const useExpenseStore = create<ExpenseState>()(
 
     addCategory: (name) => {
       const t = name.trim()
-      if (!t) return
-      set((s) => (s.categories.includes(t) ? s : { categories: [...s.categories, t] }))
+      if (!t || get().categories.includes(t)) return
+      notePendingCategory(t, true)
+      set((s) => ({ categories: [...s.categories, t] }))
     },
 
     renameCategory: (from, to) => {
@@ -458,11 +579,14 @@ export const useExpenseStore = create<ExpenseState>()(
       // old category from the list (don't add a duplicate) and reassign all
       // expenses + budget keys from `from` to the existing `target`.
       const targetExists = existing.includes(target)
+      const expenses = refile(get().expenses, from, target)
+      notePendingCategory(from, false)
+      notePendingCategory(target, true)
       set((s) => ({
         categories: targetExists
           ? s.categories.filter((c) => c !== from)
           : s.categories.map((c) => (c === from ? target : c)),
-        expenses: s.expenses.map((e) => (e.category === from ? { ...e, category: target } : e)),
+        expenses,
         budgets:
           s.budgets[from] !== undefined
             ? {
@@ -492,9 +616,12 @@ export const useExpenseStore = create<ExpenseState>()(
 
     removeCategory: (name) => {
       const now = new Date().toISOString()
+      // Its rows move to Other, as edits that sync (see refile).
+      const expenses = refile(get().expenses, name, 'Other')
+      notePendingCategory(name, false)
       set((s) => ({
         categories: s.categories.filter((c) => c !== name),
-        expenses: s.expenses.map((e) => (e.category === name ? { ...e, category: 'Other' } : e)),
+        expenses,
         budgets: Object.fromEntries(Object.entries(s.budgets).filter(([k]) => k !== name)),
         budgetUpdatedAt: Object.fromEntries(
           Object.entries(s.budgetUpdatedAt).filter(([k]) => k !== name),

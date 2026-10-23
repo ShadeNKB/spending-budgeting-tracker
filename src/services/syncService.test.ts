@@ -12,7 +12,7 @@ import {
   stubRelayEnv,
   type FakeChannel,
 } from '../__tests__/fakeRelay'
-import { contentKey, isSyncableExpense, mergeBackups, readRemote } from './syncService'
+import { SEEN_MAX, contentKey, isSyncableExpense, mergeBackups, readRemote } from './syncService'
 
 vi.mock(
   '@supabase/supabase-js',
@@ -246,6 +246,10 @@ describe('isSyncableExpense', () => {
     ['itemName missing', { ...row('e1'), itemName: undefined }],
     ["amount 'abc'", { ...row('e1'), amount: 'abc' }],
     ['amount null', { ...row('e1'), amount: null }],
+    // No screen can enter these (add and import reject them): rendered, they skew every total.
+    ['amount 0', { ...row('e1'), amount: 0 }],
+    ['amount -5', { ...row('e1'), amount: -5 }],
+    ['amount Infinity', { ...row('e1'), amount: Number.POSITIVE_INFINITY }],
     ["date 'last tuesday'", { ...row('e1'), date: 'last tuesday' }],
     ["date '18/10/2026'", { ...row('e1'), date: '18/10/2026' }],
     ['category {}', { ...row('e1'), category: {} }],
@@ -269,7 +273,7 @@ describe('contentKey', () => {
 
   it('ignores exportDate, version, wr, x5, key order and collection order', () => {
     const shuffled = {
-      wr: { app: '0.8.5', dev: 'abc123', rev: 'r', at: T2 },
+      wr: { app: '0.8.5', dev: 'abc123', rev: 'r', at: T2, seen: ['q', 'p'] },
       x5: { schema: 5, min: 4 },
       version: '5.0',
       exportDate: T2,
@@ -346,6 +350,27 @@ describe('readRemote', () => {
     })
   })
 
+  it("reads a v0.8.5 copy's rev and lineage leniently, and no lineage from other writers", () => {
+    const wr = { app: '0.8.5', dev: 'a', rev: 'r9', at: T1, seen: ['r8', 'r7'] }
+    expect(readRemote({ ...doc(), wr })).toMatchObject({ rev: 'r9', seen: ['r8', 'r7'] })
+    // Not strings, empty or far too long: not revs. Capped at SEEN_MAX, newest first.
+    const long = Array.from({ length: SEEN_MAX + 5 }, (_, i) => `s${String(i)}`)
+    const messy = { ...wr, rev: 42, seen: [null, '', 'x'.repeat(65), ...long, { rev: 'r1' }] }
+    expect(readRemote({ ...doc(), wr: messy })).toMatchObject({
+      rev: null,
+      seen: long.slice(0, SEEN_MAX),
+    })
+    expect(readRemote({ ...doc(), wr: { ...wr, seen: 'r8' } })).toMatchObject({ seen: [] })
+    expect(readRemote({ ...doc(), wr: { app: '0.8.5' } })).toMatchObject({ rev: null, seen: [] })
+    // A v5 copy (x5 wins over wr) and an old device's copy carry none.
+    expect(readRemote({ ...doc(), wr, x5: { schema: 5, min: 4 } })).toMatchObject({
+      writer: 'v5',
+      rev: null,
+      seen: [],
+    })
+    expect(readRemote(doc())).toMatchObject({ writer: 'legacy', rev: null, seen: [] })
+  })
+
   it('merges readable rows only and passes every unreadable row through untouched', () => {
     const bad: unknown[] = [
       { ...row('b1'), date: 'last tuesday' },
@@ -391,7 +416,7 @@ describe('pullSync / pushSync', () => {
 
   const payload = {
     ...doc({ expenses: [row('e1')] }),
-    wr: { app: '0.8.5', dev: 'abc123', rev: 'r1', at: T1 },
+    wr: { app: '0.8.5', dev: 'abc123', rev: 'r1', at: T1, seen: [] },
   }
 
   it('pulls the payload, or null when there is no row', async () => {
@@ -587,7 +612,7 @@ describe('subscribeSync', () => {
   it('passes the changed payload and updated_at to the handler', async () => {
     const { svc, handlers, unsubscribe } = await subscribe()
     await advance(10)
-    const body = { ...doc(), wr: { app: '0.8.5', dev: 'abc123', rev: 'r1', at: T1 } }
+    const body = { ...doc(), wr: { app: '0.8.5', dev: 'abc123', rev: 'r1', at: T1, seen: [] } }
     vi.setSystemTime(new Date(T2))
     await settle(svc.pushSync('sync-code', body), 10)
     expect(handlers.onRemoteChange).toHaveBeenCalledWith({ payload: body, updatedAt: T2 })

@@ -294,6 +294,12 @@ describe('old writers (v0.8.4 and earlier) on the relay', () => {
       itemName: 'Kopi',
       amount: 1.5,
     })
+    // At once, not at the next cycle: a change the relay has not seen is pending, no longer held
+    // back (the pill and the status row then say "Syncing…", not "Update old device").
+    expect(phone.sync.useSyncStore.getState()).toMatchObject({
+      waitingForOld: false,
+      pendingLocal: true,
+    })
     const before = relay().pushes.length
     await advance(4000)
     clearInterval(chatter)

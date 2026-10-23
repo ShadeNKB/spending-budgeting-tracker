@@ -70,10 +70,17 @@ function relayWith(row: Expense, over: Record<string, unknown> = {}): Record<str
   }
 }
 
-/** The writer stamp of another v0.8.5 device. */
-const v085 = (rev: string) => ({
-  wr: { app: '0.8.5', dev: 'aaaaaa', rev, at: new Date().toISOString() },
+/** The writer stamp of another v0.8.5 device, built on the relay copies named in `seen`. */
+const v085 = (rev: string, seen: string[] = []) => ({
+  wr: { app: '0.8.5', dev: 'aaaaaa', rev, at: new Date().toISOString(), seen },
 })
+
+/** The rev of the push the relay holds. */
+function relayRev(): string {
+  const payload = rowPayload(SYNC_CODE)
+  const wr = isRow(payload) ? payload.wr : undefined
+  return isRow(wr) && typeof wr.rev === 'string' ? wr.rev : ''
+}
 
 const iso = (ms: number) => new Date(ms).toISOString()
 
@@ -135,16 +142,25 @@ describe('concurrent edits of different fields both survive (AC-11)', () => {
     expect(relayRow('e1')).toMatchObject({ amount: 45, notes: 'with Wei Jie' })
   })
 
-  it('acknowledges pending edits after the landed push, and only then', async () => {
-    const { phone } = await pair()
+  it('acknowledges pending edits only when the other device builds on the landed push', async () => {
+    const { phone, laptop } = await pair()
     phone.expense.useExpenseStore.getState().updateExpense('e1', { amount: 45 })
     expect(phone.expense.pendingEditsSnapshot().edits.has('e1')).toBe(true)
     relay().latency.push = 5000
     void phone.sync.useSyncStore.getState().triggerSync()
     await advance(1000) // pulled, merged, push in flight
     expect(phone.expense.pendingEditsSnapshot().edits.has('e1')).toBe(true)
-    await advance(5000)
+    await advance(5000) // landed: still pending, a stale peer push could land over it
+    expect(phone.expense.pendingEditsSnapshot().edits.has('e1')).toBe(true)
+    await advance(20_000) // the laptop adopted it, the check pulled: still nothing proves it
+    expect(rowOf(laptop, 'e1')?.amount).toBe(45)
+    expect(phone.expense.pendingEditsSnapshot().edits.has('e1')).toBe(true)
+
+    relay().latency.push = 200
+    laptop.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
+    await advance(20_000) // the laptop's push names the phone's
     expect(phone.expense.pendingEditsSnapshot().edits.has('e1')).toBe(false)
+    expect(rowOf(phone, 'e1')?.amount).toBe(45)
   })
 
   it("the edit sheet's full patch on a quick-add row keeps the other device's date change", async () => {
@@ -226,8 +242,12 @@ describe('the rebase adds only news: a relay copy no newer than the edit base ch
     await connect(phone)
     const stale = rowPayload(SYNC_CODE)
     phone.expense.useExpenseStore.getState().updateExpense('x', { notes: 'N1' })
-    await advance(5000)
+    await advance(15_000)
     expect(relayRow('x')).toMatchObject({ notes: 'N1' })
+    // Another device built on the phone's push: the edit is acknowledged.
+    const landed = rowPayload(SYNC_CODE)
+    writeAsOther(SYNC_CODE, { ...(isRow(landed) ? landed : {}), ...v085('r-built', [relayRev()]) })
+    await advance(5000)
     expect(phone.expense.pendingEditsSnapshot().edits.size).toBe(0)
 
     // A peer's merge of a pull that predates the phone's push lands over it.

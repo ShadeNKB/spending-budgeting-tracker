@@ -3,9 +3,11 @@
 // read. Builds without a relay (`syncEnabled` false) drop the engine entirely.
 
 import { create } from 'zustand'
+import { importWithReload } from '../lib/chunkReload'
 import { storage } from '../services/storage'
 import { syncEnabled } from '../services/syncConfig'
 import { clearPendingEdits } from './useExpenseStore'
+import type * as SyncEngineModule from './syncEngine'
 
 export type SyncErrorKind = 'network' | 'server' | 'permission' | 'invalid'
 export type SyncPauseReason = 'too-large' | 'moved' | 'update-required'
@@ -70,30 +72,104 @@ export function syncMessage(
   }
 }
 
+/** Paused until the owner acts (reload, or export and trim): no retry, and offline ends nothing. */
+export function isPaused(kind: SyncFailure['kind']): kind is SyncPauseReason {
+  return kind === 'too-large' || kind === 'moved' || kind === 'update-required'
+}
+
+/** Where TopBar shows the sync pill (Tailwind `xl`); below it the pill is not rendered. */
+export const SYNC_PILL_MEDIA = '(min-width: 1280px)'
+
+/** The sync pill is on screen, so it shows (and announces) what sync is doing. */
+export function syncPillShown(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia(SYNC_PILL_MEDIA).matches
+  )
+}
+
+const PAUSED_PREFIX = 'Sync paused: '
+
+/**
+ * A message as a surface that already says "Sync paused" shows it (the pill's tooltip and
+ * announcement, the panel's banner): without the prefix a standalone toast needs.
+ */
+export function pausedDetail(message: string): string {
+  if (!message.startsWith(PAUSED_PREFIX)) return message
+  const detail = message.slice(PAUSED_PREFIX.length)
+  return detail.charAt(0).toUpperCase() + detail.slice(1)
+}
+
 /** Shown when an older device keeps overwriting the relay copy (pill tooltip, panel, toast). */
 export const OLD_DEVICE_WAITING =
   "Your other device keeps overwriting the synced copy until it's updated. Everything is saved here."
 
-/**
- * One meaning per colour on every sync surface (pill, status row, banner, toast): amber for
- * what the owner waits out or fixes with a reload, red for a failure.
- */
-export function failureSeverity(kind: SyncFailure['kind']): 'warning' | 'error' {
-  return kind === 'offline' || kind === 'moved' || kind === 'update-required' ? 'warning' : 'error'
+/** A failure streak this old is "failing since HH:mm", in red, on every surface. */
+export const FAILING_AFTER_MS = 10 * 60_000
+
+/** The pill, the panel and the one background toast say this once a streak is failing. */
+export function failingSinceMessage(since: number): string {
+  return `Sync has been failing since ${clockTime(since)}. Your changes are saved on this device.`
+}
+
+/** A failure the engine keeps retrying (not offline, not paused) that has lasted 10 minutes. */
+export function isFailing(failure: Pick<SyncFailure, 'kind' | 'since'>, now = Date.now()): boolean {
+  switch (failure.kind) {
+    case 'network':
+    case 'server':
+    case 'invalid':
+    case 'permission':
+      return now - failure.since >= FAILING_AFTER_MS
+    default:
+      return false
+  }
 }
 
 /**
- * The code this device synced with last. The store holds none until the first setup of a
- * session, so a code saved by an earlier session counts as the same code, not a switch.
+ * One meaning per colour on every sync surface (pill, status row, banner, toast), decided here
+ * only: amber for what the owner waits out (offline, a retry still young) or fixes with a
+ * reload; red for what needs them (refused access, too large) and for a retry that has been
+ * failing for 10 minutes.
  */
-export function lastSyncCode(): string | null {
-  const current = useSyncStore.getState().syncId
-  if (current !== null) return current
+export function failureSeverity(
+  failure: Pick<SyncFailure, 'kind' | 'since'>,
+  now = Date.now(),
+): 'warning' | 'error' {
+  switch (failure.kind) {
+    case 'offline':
+    case 'moved':
+    case 'update-required':
+      return 'warning'
+    case 'network':
+    case 'server':
+    case 'invalid':
+      return isFailing(failure, now) ? 'error' : 'warning'
+    case 'permission':
+    case 'too-large':
+      return 'error'
+  }
+}
+
+// The code this device synced with before a Disconnect. Pending field edits are relative to
+// it, so connecting to it again keeps them; another code clears them (see `lastSyncCode`).
+let disconnectedCode: string | null = null
+
+function savedCode(): string | null {
   try {
     return storage.getSyncId()
   } catch {
     return null
   }
+}
+
+/**
+ * The code this device synced with last. The store holds none until the first setup of a
+ * session, so a code saved by an earlier session counts as the same code, not a switch; after
+ * a Disconnect it is the code disconnected from.
+ */
+export function lastSyncCode(): string | null {
+  return useSyncStore.getState().syncId ?? savedCode() ?? disconnectedCode
 }
 
 /** Local wall-clock time as HH:mm. */
@@ -106,7 +182,7 @@ export function clockTime(ts: number): string {
 // The lazy engine
 // ---------------------------------------------------------------------------
 
-type SyncEngine = typeof import('./syncEngine')
+type SyncEngine = typeof SyncEngineModule
 
 let engine: SyncEngine | null = null
 let loading: Promise<SyncEngine> | null = null
@@ -120,7 +196,9 @@ const offResult = (): SyncResult => ({ ok: false, error: 'off', message: syncMes
 /** Loads the sync engine chunk once (a failed load is retried on the next use) and starts it. */
 export function loadSyncEngine(): Promise<SyncEngine> {
   if (!loading) {
-    const attempt = import('./syncEngine').then((loaded) => {
+    // A stale chunk after a deploy reloads the page once (online, nothing typed); otherwise the
+    // error reaches the caller, which keeps the code and sets up again on the next trigger.
+    const attempt = importWithReload(() => import('./syncEngine')).then((loaded) => {
       loaded.start()
       engine = loaded
       return loaded
@@ -172,8 +250,12 @@ export const useSyncStore = create<SyncState>((set, get) => ({
 
   initSync: () => {
     if (!syncEnabled) return
-    const saved = storage.getSyncId()
-    if (saved) void setup(saved, false)
+    const saved = savedCode()
+    if (!saved) return
+    // Linked from the first frame: while the engine chunk loads, the panel shows this code, not
+    // the unlinked view with its Generate button.
+    if (get().syncId === null) set({ syncId: saved, cloudStatus: 'idle' })
+    void setup(saved, false)
   },
 
   setupSync: (syncId) => (syncEnabled ? setup(syncId, true) : Promise.resolve(offResult())),
@@ -186,7 +268,9 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     } catch {
       // Storage unavailable: the code is forgotten for this session anyway.
     }
-    clearPendingEdits()
+    // Pending field edits stay: reconnecting to this code still rebases them. Setting up a
+    // different code clears them (they are relative to this code's relay copy).
+    disconnectedCode = get().syncId ?? disconnectedCode
     set({
       syncId: null,
       cloudStatus: 'off',

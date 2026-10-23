@@ -14,6 +14,10 @@ const THEME_KEY = 'spendtrack:theme'
 
 export type Theme = 'dark' | 'light' | 'system'
 
+export type SettingsTab = 'categories' | 'budgets' | 'backup' | 'sync'
+/** A control in Settings that another panel can send focus to. */
+export type SettingsControl = 'backup-download'
+
 // Preferences are best-effort: if storage is unavailable they last for this session only.
 function persistPreference(key: string, value: string): void {
   try {
@@ -68,7 +72,9 @@ interface UIState {
   toasts: Toast[]
   paletteOpen: boolean
   settingsOpen: boolean
-  settingsTab: 'categories' | 'budgets' | 'backup' | 'sync'
+  settingsTab: SettingsTab
+  /** A control that takes focus when it next mounts (asked for by another panel). */
+  settingsFocus: SettingsControl | null
   addSheetOpen: boolean
   hotkeysOpen: boolean
   smartInputFocused: boolean
@@ -80,7 +86,11 @@ interface UIState {
 
   setPaletteOpen: (v: boolean) => void
   setSettingsOpen: (v: boolean) => void
-  setSettingsTab: (v: UIState['settingsTab']) => void
+  setSettingsTab: (v: SettingsTab) => void
+  /** Opens `tab` with focus on `control`. */
+  focusSettings: (tab: SettingsTab, control: SettingsControl) => void
+  /** True once, for the control focus was asked for: it then takes focus. */
+  takeSettingsFocus: (control: SettingsControl) => boolean
   setAddSheetOpen: (v: boolean) => void
   setHotkeysOpen: (v: boolean) => void
   setSmartInputFocused: (v: boolean) => void
@@ -88,11 +98,16 @@ interface UIState {
   setTheme: (v: Theme) => void
 }
 
-export const useUIStore = create<UIState>((set) => ({
+/** Settings is open on its Sync tab, whose status row and banners say what sync is doing. */
+export const syncPanelShown = (s: Pick<UIState, 'settingsOpen' | 'settingsTab'>): boolean =>
+  s.settingsOpen && s.settingsTab === 'sync'
+
+export const useUIStore = create<UIState>((set, get) => ({
   toasts: [],
   paletteOpen: false,
   settingsOpen: false,
   settingsTab: 'categories',
+  settingsFocus: null,
   addSheetOpen: false,
   hotkeysOpen: false,
   smartInputFocused: false,
@@ -100,6 +115,12 @@ export const useUIStore = create<UIState>((set) => ({
   theme: readTheme(),
 
   pushToast: (t) => {
+    // The same news twice (a background failure and the owner's own retry) shows once. A toast
+    // with an action is never merged: each Undo undoes its own change.
+    const same = t.action
+      ? undefined
+      : get().toasts.find((x) => !x.action && x.kind === t.kind && x.message === t.message)
+    if (same) return same.id
     const id = Math.random().toString(36).slice(2)
     set((s) => ({ toasts: [...s.toasts, { ...t, id }] }))
     return id
@@ -109,6 +130,12 @@ export const useUIStore = create<UIState>((set) => ({
   setPaletteOpen: (v) => set({ paletteOpen: v }),
   setSettingsOpen: (v) => set({ settingsOpen: v }),
   setSettingsTab: (v) => set({ settingsTab: v }),
+  focusSettings: (tab, control) => set({ settingsTab: tab, settingsFocus: control }),
+  takeSettingsFocus: (control) => {
+    if (get().settingsFocus !== control) return false
+    set({ settingsFocus: null })
+    return true
+  },
   setAddSheetOpen: (v) => set({ addSheetOpen: v }),
   setHotkeysOpen: (v) => set({ hotkeysOpen: v }),
   setSmartInputFocused: (v) => set({ smartInputFocused: v }),

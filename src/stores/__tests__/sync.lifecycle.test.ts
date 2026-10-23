@@ -8,6 +8,7 @@ import {
   connect,
   expense,
   failNext,
+  loadDevice,
   relay,
   relayRows,
   resetRelay,
@@ -257,5 +258,21 @@ describe('realtime re-subscribe catches up (AC-27)', () => {
     expect(relay().channels.size).toBe(1)
     expect(phone.sync.useSyncStore.getState().cloudStatus).toBe('synced')
     expect(relayRows()).toContainEqual(expect.objectContaining({ id: 'e1' }))
+  })
+})
+
+describe('start-up with a saved code', () => {
+  it('is linked from the first frame, before the engine chunk has loaded', async () => {
+    const phone = await loadDevice()
+    phone.expense.useExpenseStore.setState({ hydrated: true, expenses: [expense('e1')] })
+    localStorage.setItem('syncId', SYNC_CODE)
+    phone.sync.installSync()
+    // Synchronously: the panel never offers Generate to a linked device while sync loads.
+    expect(phone.sync.useSyncStore.getState()).toMatchObject({ syncId: SYNC_CODE })
+    await advance(5000)
+    expect(phone.sync.useSyncStore.getState()).toMatchObject({
+      syncId: SYNC_CODE,
+      cloudStatus: 'synced',
+    })
   })
 })

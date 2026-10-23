@@ -3,6 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -592,6 +593,71 @@ describe('CLI in a temp git repo', { timeout: 60_000 }, () => {
 
     put(repo, 'config.json', '{"theme":"light"}')
     expect(commit(['-a', '-m', 'clean edit']).status).toBe(0)
+  })
+
+  it('the hook needs no node when no JSON file is staged, and says so when one is', () => {
+    const repo = makeRepo('hook without node')
+    put(repo, '.githooks/pre-commit', readFileSync(join(ROOT, '.githooks', 'pre-commit')))
+    chmodSync(join(repo, '.githooks', 'pre-commit'), 0o755)
+    git(repo, ['config', 'core.hooksPath', '.githooks'])
+    // A PATH with git and the shell tools but no node (a GUI client, a fresh machine).
+    const exe = process.platform === 'win32' ? 'node.exe' : 'node'
+    const pathKey = Object.keys(env).find((key) => key.toUpperCase() === 'PATH') ?? 'PATH'
+    const withoutNode = String(env[pathKey] ?? '')
+      .split(delimiter)
+      .filter((dir) => dir !== '' && !existsSync(join(dir, exe)))
+      .join(delimiter)
+    const commit = (message) =>
+      spawnSync('git', ['commit', '-q', '-m', message], {
+        cwd: repo,
+        env: { ...env, [pathKey]: withoutNode },
+        encoding: 'utf8',
+        windowsHide: true,
+      })
+
+    put(repo, 'notes/todo.md', 'buy kopi')
+    put(repo, 'src/app.ts', 'export {}')
+    git(repo, ['add', '-A'])
+    const plain = commit('no json')
+    expect(plain.stderr).toBe('')
+    expect(plain.status).toBe(0)
+
+    put(repo, 'Config Files/settings.JSON', unrelatedJson)
+    git(repo, ['add', '-A'])
+    const json = commit('json staged')
+    expect(json.status).not.toBe(0)
+    expect(json.stderr).toMatch(/node is not on PATH/)
+  })
+
+  it('the hook sees a JSON path whose type changes (a symlink restaged as a backup file)', () => {
+    const repo = makeRepo('hook type change')
+    // data/export.json is committed as a symlink (mode 120000) before the hook is installed.
+    put(repo, 'link.txt', 'export-target.json')
+    const link = git(repo, ['hash-object', '-w', 'link.txt']).trim()
+    git(repo, ['update-index', '--add', '--cacheinfo', `120000,${link},data/export.json`])
+    git(repo, ['commit', '-q', '-m', 'link'])
+    put(repo, '.githooks/pre-commit', readFileSync(join(ROOT, '.githooks', 'pre-commit')))
+    chmodSync(join(repo, '.githooks', 'pre-commit'), 0o755)
+    put(repo, 'scripts/check-no-backups.mjs', readFileSync(SCRIPT))
+    git(repo, ['config', 'core.hooksPath', '.githooks'])
+
+    // Restaged as a regular file holding a backup, which git lists as T. Staged explicitly:
+    // git on Windows (core.symlinks false) keeps a symlink's mode on `add`.
+    put(repo, 'data/export.json', v4Backup)
+    const file = git(repo, ['hash-object', '-w', 'data/export.json']).trim()
+    git(repo, ['update-index', '--cacheinfo', `100644,${file},data/export.json`])
+    expect(git(repo, ['diff', '--cached', '--name-status'])).toMatch(/^T\tdata\/export\.json$/m)
+
+    // The guard's staged scan lists T, so the hook must not skip it: the guard runs and refuses.
+    const commit = spawnSync('git', ['commit', '-q', '-m', 'type change'], {
+      cwd: repo,
+      env,
+      encoding: 'utf8',
+      windowsHide: true,
+    })
+    expect(commit.status).not.toBe(0)
+    expect(`${commit.stdout}${commit.stderr}`).toContain('data/export.json')
+    expect(git(repo, ['log', '--format=%s'])).toBe('link\n')
   })
 
   it('npm run hooks:install points git at .githooks and makes the hook executable', () => {

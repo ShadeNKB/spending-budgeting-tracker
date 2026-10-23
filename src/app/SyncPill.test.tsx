@@ -2,7 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen } from '@testing-library/react'
 import { SyncPill } from './SyncPill'
 import { useExpenseStore } from '../stores/useExpenseStore'
-import { OLD_DEVICE_WAITING, clockTime, syncMessage, useSyncStore } from '../stores/useSyncStore'
+import { useUIStore } from '../stores/useUIStore'
+import {
+  OLD_DEVICE_WAITING,
+  clockTime,
+  pausedDetail,
+  syncMessage,
+  useSyncStore,
+} from '../stores/useSyncStore'
 
 // A build with sync configured; no request is made here, the stores are set directly.
 vi.mock('../services/syncConfig', async (importOriginal) => ({
@@ -15,6 +22,7 @@ const MINUTE = 60_000
 
 const initialExpense = useExpenseStore.getState()
 const initialSync = useSyncStore.getState()
+const initialUI = useUIStore.getState()
 
 beforeEach(() => {
   vi.useFakeTimers()
@@ -25,6 +33,7 @@ afterEach(() => {
   cleanup()
   useExpenseStore.setState(initialExpense, true)
   useSyncStore.setState(initialSync, true)
+  useUIStore.setState(initialUI, true)
   vi.useRealTimers()
 })
 
@@ -89,7 +98,7 @@ describe('SyncPill', () => {
     expect(pillText()).toBe('Sync retrying')
   })
 
-  it('says since when after 10 minutes of failures', () => {
+  it('says since when after 10 minutes of failures, and turns red then', () => {
     const since = NOW - 10 * MINUTE
     useSyncStore.setState({
       ...connected,
@@ -99,6 +108,33 @@ describe('SyncPill', () => {
     render(<SyncPill />)
     expect(pillText()).toBe(`Sync failing since ${clockTime(since)}`)
     expect(clockTime(since)).toMatch(/^\d\d:\d\d$/)
+    expect(pill()).toHaveClass('text-negative')
+  })
+
+  it('turns from amber to red on its own when the retries reach 10 minutes', () => {
+    useSyncStore.setState({
+      ...connected,
+      cloudStatus: 'error',
+      lastError: { kind: 'network', message: syncMessage('network'), since: NOW - 9 * MINUTE },
+    })
+    render(<SyncPill />)
+    expect(pill()).toHaveClass('text-warning')
+    act(() => {
+      vi.advanceTimersByTime(MINUTE)
+    })
+    expect(pill()).toHaveClass('text-negative')
+    expect(pillText()).toMatch(/^Sync failing since /)
+  })
+
+  it('shows refused access in red from the first failure', () => {
+    useSyncStore.setState({
+      ...connected,
+      cloudStatus: 'error',
+      lastError: { kind: 'permission', message: syncMessage('permission'), since: NOW },
+    })
+    render(<SyncPill />)
+    expect(pillText()).toBe('Sync retrying')
+    expect(pill()).toHaveClass('text-negative')
   })
 
   it.each([
@@ -114,9 +150,11 @@ describe('SyncPill', () => {
     })
     render(<SyncPill />)
     expect(pillText()).toBe('Sync paused')
-    expect(pill()).toHaveAttribute('title', message)
+    // Said once: the label already says "Sync paused".
+    expect(pill()).toHaveAttribute('title', pausedDetail(message))
     expect(pill()).toHaveClass(colour)
-    expect(announced()).toBe(`Sync paused. ${message}`)
+    expect(announced()).toBe(`Sync paused. ${pausedDetail(message)}`)
+    expect(announced().match(/Sync paused/g)).toHaveLength(1)
   })
 
   it('shows offline, and whether anything is waiting to sync', () => {
@@ -137,6 +175,36 @@ describe('SyncPill', () => {
     expect(pillText()).toBe('Update old device')
     expect(pill()).toHaveAttribute('title', OLD_DEVICE_WAITING)
     expect(announced()).toBe(`Update old device. ${OLD_DEVICE_WAITING}`)
+  })
+
+  it('shows the old device, not a spinner, when the held-back change is all that is pending', () => {
+    // The last cycle held the push back and nothing changed here since: no push is due.
+    useSyncStore.setState({
+      ...connected,
+      cloudStatus: 'synced',
+      pendingLocal: true,
+      waitingForOld: true,
+    })
+    render(<SyncPill />)
+    expect(pillText()).toBe('Update old device')
+    expect(pill().querySelector('.animate-spin')).toBeNull()
+  })
+
+  it.each([
+    [
+      'warn',
+      {
+        cloudStatus: 'error' as const,
+        lastError: { kind: 'network' as const, message: syncMessage('network'), since: NOW },
+      },
+      '[[data-theme=light]_&]:text-[#92400e]',
+    ],
+    ['saved', { cloudStatus: 'synced' as const }, '[[data-theme=light]_&]:text-[#166534]'],
+  ])('darkens the %s text in the light theme to AA contrast', (_tone, state, light) => {
+    // amber-700 and green-700 on the tinted pill measured under 4.5:1; the 800s clear it.
+    useSyncStore.setState({ ...connected, ...state })
+    render(<SyncPill />)
+    expect(pill()).toHaveClass(light)
   })
 
   it('caps its width, so a long label cannot squeeze quick add', () => {
@@ -160,26 +228,29 @@ describe('SyncPill', () => {
     expect(pillText()).toBe('Saving…')
   })
 
-  it('keeps the clock out of the live region: an idle minute announces nothing', () => {
+  it('announces nothing while all is well: no saving, no syncing, no clock', () => {
     useSyncStore.setState({ ...connected, cloudStatus: 'synced', pendingLocal: false })
     render(<SyncPill />)
     const region = screen.getByRole('status')
-    expect(announced()).toBe('Synced')
+    expect(announced()).toBe('')
+    act(() => useExpenseStore.setState({ syncStatus: 'saving' }))
+    expect(pillText()).toBe('Saving…')
+    act(() => useExpenseStore.setState({ syncStatus: 'saved', lastSavedAt: NOW }))
+    act(() => useSyncStore.setState({ pendingLocal: true }))
+    expect(pillText()).toBe('Syncing…')
+    act(() => useSyncStore.setState({ pendingLocal: false, lastSyncAt: NOW }))
     act(() => {
       vi.advanceTimersByTime(60_000)
     })
-    expect(pillText()).toBe('Synced · 3m ago') // the visible time moves on
+    expect(pillText()).toBe('Synced · 1m ago') // the visible time moves on
     expect(screen.getByRole('status')).toBe(region)
-    expect(announced()).toBe('Synced')
+    expect(announced()).toBe('')
   })
 
-  it('keeps one live region across state changes, so each new label is announced', () => {
+  it('announces a failure, then the recovery once settled, through one live region', () => {
     useSyncStore.setState({ ...connected, cloudStatus: 'synced', pendingLocal: false })
     render(<SyncPill />)
     const region = screen.getByRole('status')
-    act(() => useSyncStore.setState({ pendingLocal: true }))
-    expect(screen.getByRole('status')).toBe(region)
-    expect(region).toHaveTextContent('Syncing…')
     act(() =>
       useSyncStore.setState({
         cloudStatus: 'error',
@@ -187,6 +258,58 @@ describe('SyncPill', () => {
       }),
     )
     expect(screen.getByRole('status')).toBe(region)
+    expect(region).toHaveTextContent(`Sync retrying. ${syncMessage('network')}`)
+    // The retry succeeds with a change still on its way: not yet a recovery to announce.
+    act(() => useSyncStore.setState({ cloudStatus: 'synced', lastError: null, pendingLocal: true }))
+    expect(pillText()).toBe('Syncing…')
     expect(region).toHaveTextContent('Sync retrying')
+    act(() => useSyncStore.setState({ pendingLocal: false }))
+    expect(screen.getByRole('status')).toBe(region)
+    expect(announced()).toBe('Synced')
+  })
+
+  it('stays silent while Settings is open on Sync, whose banners and toasts speak for it', () => {
+    useSyncStore.setState({ ...connected, cloudStatus: 'synced', pendingLocal: false })
+    useUIStore.setState({ settingsOpen: true, settingsTab: 'sync' })
+    render(<SyncPill />)
+    const network = { kind: 'network' as const, message: syncMessage('network'), since: NOW }
+    act(() => useSyncStore.setState({ cloudStatus: 'error', lastError: network }))
+    expect(pillText()).toBe('Sync retrying') // still shown, not announced
+    expect(announced()).toBe('')
+    act(() => useSyncStore.setState({ cloudStatus: 'synced', lastError: null }))
+    expect(announced()).toBe('')
+
+    // Closed again: nothing it followed is announced late; the next problem is, and so is its
+    // recovery.
+    act(() => useUIStore.setState({ settingsOpen: false }))
+    expect(announced()).toBe('')
+    act(() => useSyncStore.setState({ cloudStatus: 'error', lastError: network }))
+    expect(announced()).toBe(`Sync retrying. ${syncMessage('network')}`)
+    act(() => useSyncStore.setState({ cloudStatus: 'synced', lastError: null }))
+    expect(announced()).toBe('Synced')
+  })
+
+  it('a failure that began while the panel was open still gets its recovery announced', () => {
+    useSyncStore.setState({ ...connected, cloudStatus: 'synced', pendingLocal: false })
+    useUIStore.setState({ settingsOpen: true, settingsTab: 'sync' })
+    render(<SyncPill />)
+    const network = { kind: 'network' as const, message: syncMessage('network'), since: NOW }
+    act(() => useSyncStore.setState({ cloudStatus: 'error', lastError: network }))
+    act(() => useUIStore.setState({ settingsOpen: false }))
+    act(() => useSyncStore.setState({ cloudStatus: 'synced', lastError: null }))
+    expect(announced()).toBe('Synced')
+  })
+
+  it('speaks while Settings is open on another tab (no sync banner there)', () => {
+    useSyncStore.setState({ ...connected, cloudStatus: 'synced', pendingLocal: false })
+    useUIStore.setState({ settingsOpen: true, settingsTab: 'categories' })
+    render(<SyncPill />)
+    act(() =>
+      useSyncStore.setState({
+        cloudStatus: 'error',
+        lastError: { kind: 'network', message: syncMessage('network'), since: NOW },
+      }),
+    )
+    expect(announced()).toBe(`Sync retrying. ${syncMessage('network')}`)
   })
 })

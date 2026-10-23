@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type KeyboardEvent } from 'react'
+import { useId, useState, type KeyboardEvent } from 'react'
 import { CalendarDays, ChevronDown } from 'lucide-react'
 import { Sheet } from '../../ui/Sheet'
 import { Input } from '../../ui/Input'
@@ -19,6 +19,16 @@ interface Props {
   prefill?: { itemName?: string; amount?: number; category?: string; date?: string }
 }
 
+function formFrom(prefill: Props['prefill'], today: string) {
+  return {
+    itemName: prefill?.itemName ?? '',
+    amount: prefill?.amount ? String(prefill.amount) : '',
+    category: prefill?.category ?? '',
+    date: prefill?.date ?? today,
+    notes: '',
+  }
+}
+
 export function AddExpenseSheet({ open, onClose, prefill }: Props) {
   const categories = useExpenseStore((s) => s.categories)
   const addExpense = useExpenseStore((s) => s.addExpense)
@@ -35,31 +45,22 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
   const dayLabel = (day: DayKey) =>
     keyYear(day) === keyYear(today) ? shortDate(day) : shortDateYear(day)
 
-  const [form, setForm] = useState({
-    itemName: prefill?.itemName ?? '',
-    amount: prefill?.amount ? String(prefill.amount) : '',
-    category: prefill?.category ?? '',
-    date: prefill?.date ?? today,
-    notes: '',
-  })
+  const [form, setForm] = useState(() => formFrom(prefill, today))
   const [errors, setErrors] = useState<Partial<typeof form>>({})
 
-  // Sync form when sheet opens (handles prefill from SmartInput re-opens)
-  useEffect(() => {
+  // Refill the form each time the sheet opens (SmartInput passes what was typed as a prefill),
+  // and only then: refilling on later prefill or date changes would wipe what the user typed.
+  // Done while rendering, not in an effect. The sheet often mounts already open (on its first
+  // tap, once its chunk has loaded), and an effect after that render runs once the form is on
+  // screen, where it could wipe the first keystrokes.
+  const [openSeen, setOpenSeen] = useState(open)
+  if (open !== openSeen) {
+    setOpenSeen(open)
     if (open) {
-      setForm({
-        itemName: prefill?.itemName ?? '',
-        amount: prefill?.amount ? String(prefill.amount) : '',
-        category: prefill?.category ?? '',
-        date: prefill?.date ?? today,
-        notes: '',
-      })
+      setForm(formFrom(prefill, today))
       setErrors({})
     }
-    // Intentionally only resets when the sheet opens. Re-running on every
-    // `prefill`/`today` change would clobber whatever the user was typing.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
+  }
 
   const set = (k: keyof typeof form, v: string) => {
     setForm((f) => ({ ...f, [k]: v }))
@@ -126,7 +127,7 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
   const isCustomActive = !isPreset
 
   return (
-    <Sheet open={open} onClose={onClose} title="Add expense" side="bottom">
+    <Sheet open={open} onClose={onClose} title="Add expense" side="bottom" initialFocus="content">
       <div className="flex flex-col gap-3 px-4 pb-6 pt-2">
         {/* Date selector */}
         <div className="no-scrollbar flex gap-2 overflow-x-auto pb-0.5">
@@ -214,11 +215,19 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
               </button>
             ))}
             {categories.length > 8 && (
-              <div className="relative">
+              // A chip like its neighbours: the 12 px label is drawn here, and the native select
+              // sits invisibly on top to take the tap. Touch screens floor the select's own text
+              // at 16 px (index.css, against iOS focus zoom), which would make this chip bigger
+              // than the rest.
+              <div className="relative inline-flex h-[30px] max-w-full items-center rounded-full border border-white/[0.08] bg-surface-2 pl-2.5 pr-6 text-[12px] text-[var(--text-secondary)] focus-within:border-accent/60 focus-within:shadow-[0_0_0_3px_rgba(34,211,238,0.18)]">
+                <span aria-hidden className="min-w-0 truncate">
+                  {categories.slice(8).includes(form.category) ? form.category : 'More...'}
+                </span>
                 <select
+                  aria-label="More categories"
                   value={form.category}
                   onChange={(e) => set('category', e.target.value)}
-                  className="h-[30px] appearance-none rounded-full border border-white/[0.08] bg-surface-2 pl-2.5 pr-6 text-[12px] text-[var(--text-secondary)] outline-none"
+                  className="absolute inset-0 h-full w-full cursor-pointer appearance-none rounded-full opacity-0"
                 >
                   <option value="">More...</option>
                   {categories.slice(8).map((c) => (

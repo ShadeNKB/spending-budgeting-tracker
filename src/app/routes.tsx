@@ -1,13 +1,20 @@
-import { createBrowserRouter, Navigate } from 'react-router-dom'
+import { createBrowserRouter, Navigate, type RouteObject } from 'react-router-dom'
 import { lazy, Suspense } from 'react'
 import { AppShell } from './AppShell'
+import { RouteError } from './RouteError'
 import { PulseScreen } from '../features/pulse/PulseScreen'
+import { importWithReload } from '../lib/chunkReload'
 
+// A stale chunk after a deploy reloads the page once instead of failing (see chunkReload).
 const LedgerScreen = lazy(() =>
-  import('../features/ledger/LedgerScreen').then((m) => ({ default: m.LedgerScreen })),
+  importWithReload(() => import('../features/ledger/LedgerScreen')).then((m) => ({
+    default: m.LedgerScreen,
+  })),
 )
 const InsightsScreen = lazy(() =>
-  import('../features/insights/InsightsScreen').then((m) => ({ default: m.InsightsScreen })),
+  importWithReload(() => import('../features/insights/InsightsScreen')).then((m) => ({
+    default: m.InsightsScreen,
+  })),
 )
 
 // A plain element rather than a component: this module exports the router config,
@@ -24,32 +31,43 @@ const screenSkeleton = (
   </div>
 )
 
-export const router = createBrowserRouter([
+export const appRoutes: RouteObject[] = [
   {
     path: '/',
     element: <AppShell />,
+    // The shell itself failed: a full-page recovery card.
+    errorElement: <RouteError scope="app" />,
     children: [
-      // Render PulseScreen directly at "/" — avoids Navigate redirect that causes
-      // AnimatePresence mode="wait" to show a blank frame on first cold visit.
-      { index: true, element: <PulseScreen /> },
-      { path: 'pulse', element: <PulseScreen /> },
       {
-        path: 'ledger',
-        element: (
-          <Suspense fallback={screenSkeleton}>
-            <LedgerScreen />
-          </Suspense>
-        ),
+        // Pathless layout route: a screen error renders inside the shell's <Outlet/>, so
+        // the TopBar, TabBar and overlays stay usable. The router clears it on navigation.
+        errorElement: <RouteError scope="screen" />,
+        children: [
+          // Render PulseScreen directly at "/" — avoids Navigate redirect that causes
+          // AnimatePresence mode="wait" to show a blank frame on first cold visit.
+          { index: true, element: <PulseScreen /> },
+          { path: 'pulse', element: <PulseScreen /> },
+          {
+            path: 'ledger',
+            element: (
+              <Suspense fallback={screenSkeleton}>
+                <LedgerScreen />
+              </Suspense>
+            ),
+          },
+          {
+            path: 'insights',
+            element: (
+              <Suspense fallback={screenSkeleton}>
+                <InsightsScreen />
+              </Suspense>
+            ),
+          },
+          { path: '*', element: <Navigate to="/pulse" replace /> },
+        ],
       },
-      {
-        path: 'insights',
-        element: (
-          <Suspense fallback={screenSkeleton}>
-            <InsightsScreen />
-          </Suspense>
-        ),
-      },
-      { path: '*', element: <Navigate to="/pulse" replace /> },
     ],
   },
-])
+]
+
+export const router = createBrowserRouter(appRoutes)

@@ -43,9 +43,21 @@ export type WriterClass = 'v5' | 'v085' | 'legacy'
 export interface WriterStamp {
   app: string
   dev: string
+  /** This push. */
   rev: string
   at: string
+  /**
+   * The lineage: the rev of the relay copy this push was built on, then that copy's lineage,
+   * newest first, without the writer's own earlier revs. A client that finds one of its pushes
+   * here knows this writer had seen it.
+   */
+  seen: readonly string[]
 }
+
+/** How many revs `wr.seen` names at most. */
+export const SEEN_MAX = 16
+// A rev is 22 characters; anything far longer is not one of ours.
+const REV_MAX_LENGTH = 64
 
 /** What a v0.8.5 push sends: the v4 payload plus `wr`. Rows we could not read ride along as-is. */
 export type SyncPayload = Omit<BackupData, 'expenses'> & {
@@ -58,7 +70,16 @@ export type RemoteRead =
   | { kind: 'moved' }
   | { kind: 'update-required' }
   | { kind: 'invalid'; reason: string }
-  | { kind: 'ok'; data: BackupData; passthrough: unknown[]; writer: WriterClass; key: string }
+  | {
+      kind: 'ok'
+      data: BackupData
+      passthrough: unknown[]
+      writer: WriterClass
+      key: string
+      /** A v0.8.5 copy's `wr.rev` and `wr.seen` (null and empty for other writers). */
+      rev: string | null
+      seen: readonly string[]
+    }
 
 export class PayloadTooLargeError extends Error {
   constructor(public bytes: number) {
@@ -138,8 +159,9 @@ const optionalText = (value: unknown): boolean =>
   value === undefined || value === null || typeof value === 'string'
 
 /**
- * A row v0.8 can merge and render: string id, name and category, a finite amount and a
- * parseable date. Unknown extra fields (v5 `day`, `fs`, `h`, …) are allowed and kept.
+ * A row v0.8 can merge and render: string id, name and category, a finite amount above zero
+ * (what add and import accept) and a parseable date. Unknown extra fields (v5 `day`, `fs`, `h`,
+ * …) are allowed and kept.
  */
 export function isSyncableExpense(row: unknown): row is Expense {
   if (!isRecord(row)) return false
@@ -150,6 +172,7 @@ export function isSyncableExpense(row: unknown): row is Expense {
     typeof itemName === 'string' &&
     typeof amount === 'number' &&
     Number.isFinite(amount) &&
+    amount > 0 &&
     typeof date === 'string' &&
     isValid(parseISO(date)) &&
     typeof category === 'string' &&
@@ -165,6 +188,16 @@ function writerOf(raw: Record<string, unknown>): WriterClass {
   return 'legacy'
 }
 
+const isRev = (value: unknown): value is string =>
+  typeof value === 'string' && value !== '' && value.length <= REV_MAX_LENGTH
+
+/** A v0.8.5 copy's rev and lineage, read leniently (anything else counts as unknown). */
+function lineageOf(wr: unknown): { rev: string | null; seen: string[] } {
+  if (!isRecord(wr)) return { rev: null, seen: [] }
+  const seen: readonly unknown[] = Array.isArray(wr.seen) ? wr.seen : []
+  return { rev: isRev(wr.rev) ? wr.rev : null, seen: seen.filter(isRev).slice(0, SEEN_MAX) }
+}
+
 /** Classifies and reads a pulled payload. Never throws. */
 export function readRemote(raw: unknown): RemoteRead {
   if (raw === null || raw === undefined) return { kind: 'empty' }
@@ -177,6 +210,7 @@ export function readRemote(raw: unknown): RemoteRead {
     return { kind: 'invalid', reason: 'the synced copy has no expense list' }
 
   const items: readonly unknown[] = rows
+  const writer = writerOf(raw)
   const expenses: Expense[] = []
   const passthrough: unknown[] = []
   for (const item of items) {
@@ -197,8 +231,9 @@ export function readRemote(raw: unknown): RemoteRead {
       version: '4.0',
     },
     passthrough,
-    writer: writerOf(raw),
+    writer,
     key: contentKey(raw),
+    ...(writer === 'v085' ? lineageOf(raw.wr) : { rev: null, seen: [] }),
   }
 }
 
