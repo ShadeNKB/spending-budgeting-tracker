@@ -2,12 +2,14 @@
 // old-writer rules: claim stamp, memo and banner evidence (§10.3, §11.4 on the v4 wire).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Expense } from '../../types'
+import { isRecord } from '../../lib/backup'
 import {
   SYNC_CODE,
   advance,
   bootDevice,
   connect,
   expense,
+  failNext,
   payloadOf,
   relay,
   relayRows,
@@ -15,6 +17,7 @@ import {
   retireDevices,
   rowPayload,
   seedRow,
+  setClientOffline,
   settle,
   stubRelayEnv,
   writeAsLegacy,
@@ -188,6 +191,18 @@ describe('echo filter and coalescing (AC-8)', () => {
     expect(phone.sync.useSyncStore.getState().cloudStatus).toBe('synced')
   })
 
+  it('treats a write that kept our rev but changed the content as news, not as our echo', async () => {
+    const phone = await connected()
+    const own = rowPayload(SYNC_CODE)
+    if (!isRecord(own) || !Array.isArray(own.expenses)) throw new Error('no relay row')
+    const rows: readonly unknown[] = own.expenses
+    const before = counts()
+    writeAsOther(SYNC_CODE, { ...own, expenses: [...rows, expense('h1')] }) // our wr, kept
+    await advance(5000)
+    expect(since(before).pulls).toBe(1)
+    expect(phone.expense.useExpenseStore.getState().expenses.map((e) => e.id)).toContain('h1')
+  })
+
   it('pulls once, 300 ms after a foreign event', async () => {
     await connected()
     const before = counts()
@@ -241,6 +256,59 @@ describe('echo filter and coalescing (AC-8)', () => {
   })
 })
 
+// No compare-and-set on the v4 wire: a push the server commits after the client gave up on it
+// (its 15 s deadline) can land over a newer push. Its echo carries our own rev and content, but
+// it is news: the relay went back. The writer must notice, not wait for an unrelated trigger.
+describe('a push that lands after its deadline, over a newer one (a ghost)', () => {
+  const ids = (rows: readonly unknown[]) => rows.flatMap((r) => (isRecord(r) ? [r.id] : []))
+
+  it('is repaired by the writer at once, with the other device closed', async () => {
+    relay().latency = { pull: 200, push: 300, realtime: 100 }
+    const phone = await bootDevice({ expenses: [expense('e1')] })
+    await connect(phone)
+    const laptop = await bootDevice({ expenses: [expense('e1')] })
+    const laptopClient = relay().nextClient
+    await connect(laptop)
+    await advance(10_000)
+    setClientOffline(laptopClient, true) // the laptop is closed: only the phone can repair
+
+    failNext('push', { ghost: 25_000 }) // P1 never answers, and lands 25 s after it was sent
+    const x1 = phone.expense.useExpenseStore.getState().addExpense({ itemName: 'x1', amount: 1 })
+    await advance(10_000)
+    const x2 = phone.expense.useExpenseStore.getState().addExpense({ itemName: 'x2', amount: 2 })
+    // P1's deadline passes, the retry pushes P2 (x1 and x2), then P1 lands over it.
+    await advance(30_000)
+    expect(relay().ghostsLanded).toBe(1)
+    expect(ids(relayRows())).toEqual(expect.arrayContaining([x1.id, x2.id]))
+    expect(phone.sync.useSyncStore.getState()).toMatchObject({
+      cloudStatus: 'synced',
+      pendingLocal: false,
+      lastError: null,
+    })
+
+    // Quiet afterwards, and the laptop gets x2 when it opens.
+    const idle = counts()
+    await advance(10 * MINUTE)
+    expect(since(idle).upserts).toBe(0)
+    setClientOffline(laptopClient, false)
+    await advance(70_000)
+    expect(laptop.expense.useExpenseStore.getState().expenses.map((e) => e.id)).toContain(x2.id)
+  })
+
+  it('costs no cycle when an answered push echoes late, after a newer one was sent', async () => {
+    // Answered pushes landed in the order they were sent: a late echo of one is only late.
+    relay().latency = { pull: 100, push: 100, realtime: 4000 }
+    const phone = await bootDevice({ expenses: [expense('e1')] })
+    await connect(phone, 10_000)
+    const before = counts()
+    phone.expense.useExpenseStore.getState().addExpense({ itemName: 'a', amount: 1 })
+    await advance(3500) // the first push is answered; its echo is still on the way
+    phone.expense.useExpenseStore.getState().addExpense({ itemName: 'b', amount: 2 })
+    await advance(MINUTE)
+    expect(since(before)).toEqual({ pulls: 2, upserts: 2 })
+  })
+})
+
 describe('old writers (v0.8.4 and earlier) on the relay', () => {
   const ours = [expense('e1', { category: 'Zzz', updatedAt: '2026-10-10T00:00:00.000Z' })]
   // The old device's copy of e1: same stamp, different content (it re-files categories).
@@ -280,6 +348,30 @@ describe('old writers (v0.8.4 and earlier) on the relay', () => {
     expect(ourPushes() + claim).toBeLessThanOrEqual(4)
     // Our data is intact meanwhile.
     expect(phone.expense.useExpenseStore.getState().expenses[0]?.category).toBe('Zzz')
+  })
+
+  // Our push over an old device's copy is compared without item-pick stamps (it drops them), so
+  // its echo must be recognised the same way, or every such push costs a second cycle.
+  it('knows its own push over an old device copy as its echo, item-pick stamps and all', async () => {
+    const mine = [expense('e1'), expense('e2')]
+    const phone = await bootDevice({ expenses: mine })
+    phone.expense.useExpenseStore.setState({
+      categoryMappings: { kopi: 'Meals' },
+      mappingUpdatedAt: { kopi: '2026-10-18T08:00:00.000Z' },
+    })
+    await connect(phone)
+    await advance(MINUTE)
+
+    // The old device writes its copy: an entry of its own, not ours yet, and no pick stamps.
+    const before = counts()
+    writeAsLegacy(
+      SYNC_CODE,
+      payloadOf([expense('e1'), expense('old1')], { categoryMappings: { kopi: 'Meals' } }),
+    )
+    await advance(MINUTE)
+    // One cycle for its write, which pushes the merge over it; the echo of that push is ours.
+    expect(since(before)).toEqual({ pulls: 1, upserts: 1 })
+    expect(relayRows()).toHaveLength(3)
   })
 
   it('still pushes a new local add at once while an old device chatters', async () => {

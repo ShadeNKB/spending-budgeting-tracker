@@ -23,12 +23,15 @@ function backup(state: Device['expense']['useExpenseStore']): BackupData {
 const copy = <T>(value: T): T => structuredClone(value)
 
 let device: Device
+let sharing: typeof import('../applySync')
 
 beforeEach(async () => {
   vi.useFakeTimers()
   vi.setSystemTime(NOW)
   localStorage.clear()
   device = await loadDevice()
+  // The engine's lazy module, in this device's module graph.
+  sharing = await import('../applySync')
 })
 
 afterEach(() => {
@@ -42,6 +45,7 @@ function seed(over: Partial<BackupData> = {}) {
     expenses: [row('e1'), row('e2', { amount: 2 })],
     categories: ['Other', 'Meals'],
     categoryMappings: { kopi: 'Meals' },
+    mappingUpdatedAt: { kopi: T1 },
     budgets: { Meals: 300 },
     budgetUpdatedAt: { Meals: T1 },
     budgetDeletedAt: {},
@@ -58,7 +62,7 @@ describe('applySync', () => {
     let notifications = 0
     const unsubscribe = store.subscribe(() => notifications++)
 
-    const changed = store.getState().applySync(copy(backup(store)))
+    const changed = sharing.applySync(copy(backup(store)))
 
     unsubscribe()
     expect(changed).toBe(false)
@@ -67,6 +71,7 @@ describe('applySync', () => {
     expect(after.expenses).toBe(before.expenses)
     expect(after.categories).toBe(before.categories)
     expect(after.categoryMappings).toBe(before.categoryMappings)
+    expect(after.mappingUpdatedAt).toBe(before.mappingUpdatedAt)
     expect(after.budgets).toBe(before.budgets)
     expect(after.budgetUpdatedAt).toBe(before.budgetUpdatedAt)
     expect(after.budgetDeletedAt).toBe(before.budgetDeletedAt)
@@ -80,7 +85,7 @@ describe('applySync', () => {
     const data = copy(backup(store))
     data.expenses.reverse()
     data.deletedIds = ['b', 'a']
-    expect(store.getState().applySync(data)).toBe(false)
+    expect(sharing.applySync(data)).toBe(false)
     expect(store.getState().expenses).toBe(before.expenses)
     expect(store.getState().deletedIds).toBe(before.deletedIds)
   })
@@ -95,7 +100,7 @@ describe('applySync', () => {
     let notifications = 0
     const unsubscribe = store.subscribe(() => notifications++)
 
-    expect(store.getState().applySync(data)).toBe(true)
+    expect(sharing.applySync(data)).toBe(true)
 
     unsubscribe()
     const after = store.getState()
@@ -113,7 +118,7 @@ describe('applySync', () => {
     const store = device.expense.useExpenseStore
     const data = copy(backup(store))
     data.expenses.push(row('g', { itemName: 'GitHub shares', category: 'Investment' }))
-    store.getState().applySync(data)
+    sharing.applySync(data)
     expect(store.getState().expenses.map((e) => [e.itemName, e.category])).toEqual([
       ['Kitchen towel', 'Other'],
       ['GitHub shares', 'Investment'],
@@ -132,7 +137,7 @@ describe('applySync', () => {
       ...backup(store),
       expenses: [copy(row('e1')), badDate, ...rows.slice(2)],
     }
-    expect(store.getState().applySync(data)).toBe(false)
+    expect(sharing.applySync(data)).toBe(false)
     expect(store.getState().expenses).toBe(rows)
   })
 })
@@ -181,7 +186,6 @@ describe('updateExpense', () => {
     expect(notifications).toBe(0)
     expect(store.getState().expenses).toBe(before)
     expect(store.getState().undoStack).toEqual([])
-    expect(device.expense.pendingEditsSnapshot().edits.size).toBe(0)
   })
 
   it('applies only the editable fields that change and stamps now', () => {
@@ -192,12 +196,6 @@ describe('updateExpense', () => {
       .updateExpense('e1', { amount: 45, id: 'hijack', createdAt: 'x', category: 'Other' })
     const e1 = store.getState().expenses.find((e) => e.id === 'e1')
     expect(e1).toEqual({ ...row('e1'), amount: 45, updatedAt: new Date(NOW).toISOString() })
-    expect(device.expense.pendingEditsSnapshot().edits.get('e1')).toEqual({
-      fields: new Set(['amount']),
-      baseStamp: Date.parse(T1),
-      base: { amount: 1 },
-      own: new Map([['amount', [1, 45]]]),
-    })
   })
 
   it('stamps strictly after a record whose updatedAt is ahead of this clock', () => {
@@ -224,7 +222,6 @@ describe('undo is a forward write (F-011)', () => {
     const editStamp = store.getState().expenses[0]?.updatedAt ?? ''
     const entry = store.getState().undoStack.at(-1)
     expect(entry?.id).toMatch(/^update-e1-/)
-    device.expense.ackPendingEdits(device.expense.pendingEditsSnapshot().seq)
 
     vi.setSystemTime(NOW - 60_000) // even with the clock stepping back
     store.getState().consumeUndo(entry?.id ?? '')
@@ -232,13 +229,6 @@ describe('undo is a forward write (F-011)', () => {
     const e1 = store.getState().expenses[0]
     expect(e1?.amount).toBe(4.5)
     expect(Date.parse(e1?.updatedAt ?? '')).toBeGreaterThan(Date.parse(editStamp))
-    // Pending again, built on the acknowledged edit it reverts.
-    expect(device.expense.pendingEditsSnapshot().edits.get('e1')).toEqual({
-      fields: new Set(['amount']),
-      baseStamp: Date.parse(editStamp),
-      base: { amount: 45 },
-      own: new Map([['amount', [45, 4.5]]]),
-    })
   })
 
   it('does nothing when the edited record was deleted meanwhile', () => {
@@ -276,113 +266,201 @@ describe('undo is a forward write (F-011)', () => {
   })
 })
 
-describe('pending field edits', () => {
-  it('acknowledges only the entries made up to a snapshot', () => {
-    seed()
+const ISO = (ms: number) => new Date(ms).toISOString()
+const AHEAD = '2026-10-20T08:00:00.000Z' // a day ahead of this device's clock
+
+describe('item mappings carry a stamp per key', () => {
+  it('stamps a newly learned pick, and a changed pick strictly after its last stamp', () => {
+    seed({ categoryMappings: {}, mappingUpdatedAt: {} })
     const store = device.expense.useExpenseStore
-    store.getState().updateExpense('e1', { amount: 7 })
-    const snap = device.expense.pendingEditsSnapshot()
-    store.getState().updateExpense('e2', { notes: 'later' })
-    device.expense.ackPendingEdits(snap.seq)
-    const edits = device.expense.pendingEditsSnapshot().edits
-    expect(edits.has('e1')).toBe(false)
-    expect(edits.get('e2')?.fields).toEqual(new Set(['notes']))
-    device.expense.clearPendingEdits()
-    expect(device.expense.pendingEditsSnapshot().edits.size).toBe(0)
+    store.getState().addExpense({ itemName: 'Grab', amount: 5, category: 'Transport' })
+    expect(store.getState().categoryMappings).toEqual({ grab: 'Transport' })
+    expect(store.getState().mappingUpdatedAt).toEqual({ grab: ISO(NOW) })
+
+    store.setState({ mappingUpdatedAt: { grab: AHEAD } }) // set on a device whose clock runs ahead
+    store.getState().addExpense({ itemName: 'grab ', amount: 5, category: 'Meals' })
+    expect(store.getState().categoryMappings).toEqual({ grab: 'Meals' })
+    expect(store.getState().mappingUpdatedAt).toEqual({ grab: '2026-10-20T08:00:00.001Z' })
   })
 
-  it('hands out a snapshot that later edits do not change', () => {
-    seed()
+  it('leaves the mappings and their stamps alone when the pick is unchanged or Other', () => {
+    seed({ categoryMappings: { kopi: 'Meals' }, mappingUpdatedAt: { kopi: T1 } })
     const store = device.expense.useExpenseStore
-    store.getState().updateExpense('e1', { amount: 7 })
-    const snap = device.expense.pendingEditsSnapshot()
-    store.getState().updateExpense('e1', { itemName: 'renamed' })
-    expect(snap.edits.get('e1')?.fields).toEqual(new Set(['amount']))
+    const before = store.getState()
+    store.getState().addExpense({ itemName: 'Kopi', amount: 1.5 }) // the learned pick, again
+    store.getState().addExpense({ itemName: 'stamps', amount: 2, category: 'Other' })
+    expect(store.getState().categoryMappings).toBe(before.categoryMappings)
+    expect(store.getState().mappingUpdatedAt).toBe(before.mappingUpdatedAt)
   })
 
-  it('keeps the base of a field from its first edit, and takes each new field at its own', () => {
-    seed({ expenses: [row('e1', { amount: 4.5, notes: 'a', updatedAt: T1 })] })
+  it('round-trips through export, import, applySync, storage and hydrate', () => {
     const store = device.expense.useExpenseStore
-    store.getState().updateExpense('e1', { amount: 45 })
-    store.getState().updateExpense('e1', { amount: 46, notes: 'b' })
-    expect(device.expense.pendingEditsSnapshot().edits.get('e1')).toEqual({
-      fields: new Set(['amount', 'notes']),
-      baseStamp: Date.parse(T1),
-      base: { amount: 4.5, notes: 'a' },
-      // Every value this device held: a relay copy holding any of them changed nothing.
-      own: new Map<string, unknown[]>([
-        ['amount', [4.5, 45, 46]],
-        ['notes', ['a', 'b']],
-      ]),
+    store.getState().hydrate()
+    device.expense.installPersistence()
+    store.getState().addExpense({ itemName: 'grab', amount: 5, category: 'Transport' })
+    expect(backup(store).mappingUpdatedAt).toEqual({ grab: ISO(NOW) })
+    device.expense.flushPendingSave()
+    expect(JSON.parse(localStorage.getItem('categoryMappingUpdatedAt') ?? '{}')).toEqual({
+      grab: ISO(NOW),
+    })
+
+    store.getState().hydrate()
+    expect(store.getState().mappingUpdatedAt).toEqual({ grab: ISO(NOW) })
+
+    // A stamp for a key the file has no mapping for is dropped on import.
+    store.getState().importBackup({
+      ...backup(store),
+      categoryMappings: { grab: 'Meals' },
+      mappingUpdatedAt: { grab: T1, gone: T1 },
+    })
+    expect(store.getState().mappingUpdatedAt).toEqual({ grab: T1 })
+
+    const stamped = { ...backup(store), mappingUpdatedAt: { grab: AHEAD } }
+    expect(sharing.applySync(stamped)).toBe(true)
+    expect(store.getState().mappingUpdatedAt).toEqual({ grab: AHEAD })
+    const kept = store.getState().mappingUpdatedAt
+    expect(sharing.applySync(copy(backup(store)))).toBe(false)
+    expect(store.getState().mappingUpdatedAt).toBe(kept)
+  })
+})
+
+describe('a category rename or removal is a set of stamped changes', () => {
+  it('re-files rows with forward stamps and leaves other rows untouched', () => {
+    const other = row('e2')
+    seed({ expenses: [row('e1', { category: 'Meals', updatedAt: AHEAD }), other] })
+    const store = device.expense.useExpenseStore
+    store.getState().renameCategory('Meals', 'Dining')
+    const [e1, e2] = store.getState().expenses
+    expect(e1).toMatchObject({ category: 'Dining', updatedAt: '2026-10-20T08:00:00.001Z' })
+    expect(e2).toBe(other)
+  })
+
+  it('points the item mappings at the new name, each with a fresh stamp', () => {
+    seed({
+      categoryMappings: { kopi: 'Meals', teh: 'Meals', grab: 'Transport' },
+      mappingUpdatedAt: { kopi: AHEAD, grab: T1 },
+    })
+    const store = device.expense.useExpenseStore
+    store.getState().renameCategory('Meals', 'Dining')
+    expect(store.getState().categoryMappings).toEqual({
+      kopi: 'Dining',
+      teh: 'Dining',
+      grab: 'Transport',
+    })
+    expect(store.getState().mappingUpdatedAt).toEqual({
+      kopi: '2026-10-20T08:00:00.001Z',
+      teh: ISO(NOW),
+      grab: T1,
     })
   })
 
-  it("moves the base to another device's newer copy, never to an older one", () => {
-    seed({ expenses: [row('e1', { amount: 4.5, updatedAt: T1 })] })
+  it('moves the budget under a fresh stamp and tombstones the old name', () => {
+    seed({ budgets: { Meals: 300 }, budgetUpdatedAt: { Meals: AHEAD }, budgetDeletedAt: {} })
     const store = device.expense.useExpenseStore
-    store.getState().updateExpense('e1', { amount: 45 })
-    const newer = row('e1', { amount: 9, updatedAt: '2026-10-05T00:00:00.000Z' })
-    device.expense.notePendingBase('e1', row('e1', { amount: 1, updatedAt: T1 }), null)
-    expect(device.expense.pendingEditsSnapshot().edits.get('e1')?.base).toEqual({ amount: 4.5 })
-    device.expense.notePendingBase('e1', newer, null)
-    expect(device.expense.pendingEditsSnapshot().edits.get('e1')).toMatchObject({
-      baseStamp: Date.parse('2026-10-05T00:00:00.000Z'),
-      base: { amount: 9 },
-      // That copy's value joins every value held before: the base and the edit stay.
-      own: new Map([['amount', [4.5, 45, 9]]]),
+    store.getState().renameCategory('Meals', 'Dining')
+    expect(store.getState()).toMatchObject({
+      budgets: { Dining: 300 },
+      budgetUpdatedAt: { Dining: ISO(NOW) },
+      // Strictly after the old name's set stamp, so the removal wins the merge everywhere.
+      budgetDeletedAt: { Meals: '2026-10-20T08:00:00.001Z' },
     })
-    device.expense.notePendingBase('e2', newer, null) // nothing pending: no entry is created
-    expect(device.expense.pendingEditsSnapshot().edits.has('e2')).toBe(false)
   })
 
-  it('never moves the base to a copy this device wrote (its own push read back)', () => {
-    seed({ expenses: [row('e1', { amount: 4.5, updatedAt: T1 })] })
+  it('keeps an existing target budget and its stamp when renaming onto it', () => {
+    seed({
+      categories: ['Other', 'Meals', 'Dining'],
+      budgets: { Meals: 300, Dining: 100 },
+      budgetUpdatedAt: { Meals: T1, Dining: T1 },
+      budgetDeletedAt: {},
+    })
     const store = device.expense.useExpenseStore
-    store.getState().updateExpense('e1', { amount: 45 })
-    const mine = store.getState().expenses[0]
-    if (!mine) throw new Error('no e1')
-    device.expense.notePendingBase('e1', mine, null)
-    // A stale copy from another device, newer than the base but older than ours, is still news.
-    expect(device.expense.pendingEditsSnapshot().edits.get('e1')).toMatchObject({
-      baseStamp: Date.parse(T1),
-      own: new Map([['amount', [4.5, 45]]]),
+    store.getState().renameCategory('Meals', 'Dining')
+    expect(store.getState()).toMatchObject({
+      categories: ['Other', 'Dining'],
+      budgets: { Dining: 100 },
+      budgetUpdatedAt: { Dining: T1 },
+      budgetDeletedAt: { Meals: ISO(NOW) },
     })
-
-    // A copy the rebase wrote here is this device's own as well.
-    const theirs = row('e1', {
-      amount: 4.5,
-      notes: 'laptop',
-      updatedAt: '2026-10-19T08:00:01.000Z',
-    })
-    const rebased = { ...theirs, amount: 45, updatedAt: '2026-10-19T08:00:01.001Z' }
-    device.expense.notePendingBase('e1', theirs, rebased)
-    device.expense.notePendingBase('e1', rebased, null)
-    expect(device.expense.pendingEditsSnapshot().edits.get('e1')?.baseStamp).toBe(
-      Date.parse(theirs.updatedAt ?? ''),
-    )
   })
 
-  it('acknowledges field by field: a later edit of another field of the record stays', () => {
-    seed({ expenses: [row('e1', { amount: 4.5, notes: 'a', updatedAt: T1 })] })
-    const store = device.expense.useExpenseStore
-    store.getState().updateExpense('e1', { amount: 45 })
-    const pushed = device.expense.pendingEditsSnapshot().seq
-    store.getState().updateExpense('e1', { notes: 'b' })
-    device.expense.ackPendingEdits(pushed)
-    expect(device.expense.pendingEditsSnapshot().edits.get('e1')).toEqual({
-      fields: new Set(['notes']),
-      baseStamp: Date.parse(T1),
-      base: { amount: 4.5, notes: 'a' },
-      own: new Map([['notes', ['a', 'b']]]),
+  it('a removal moves rows and mappings to Other and tombstones the budget, all stamped', () => {
+    seed({
+      expenses: [row('e1', { category: 'Meals' })],
+      categoryMappings: { kopi: 'Meals' },
+      mappingUpdatedAt: { kopi: T1 },
+      budgets: { Meals: 300 },
+      budgetUpdatedAt: { Meals: AHEAD },
     })
-    // A field written again after the acknowledged push stays too.
-    store.getState().updateExpense('e1', { amount: 50 })
-    device.expense.ackPendingEdits(pushed)
-    expect(device.expense.pendingEditsSnapshot().edits.get('e1')?.fields).toEqual(
-      new Set(['notes', 'amount']),
-    )
-    device.expense.ackPendingEdits(device.expense.pendingEditsSnapshot().seq)
-    expect(device.expense.pendingEditsSnapshot().edits.size).toBe(0)
+    const store = device.expense.useExpenseStore
+    store.getState().removeCategory('Meals')
+    expect(store.getState()).toMatchObject({
+      categories: ['Other'],
+      expenses: [{ id: 'e1', category: 'Other', updatedAt: ISO(NOW) }],
+      categoryMappings: { kopi: 'Other' },
+      mappingUpdatedAt: { kopi: ISO(NOW) },
+      budgets: {},
+      budgetUpdatedAt: {},
+      budgetDeletedAt: { Meals: '2026-10-20T08:00:00.001Z' },
+    })
+  })
+
+  it('a removal of a name nothing uses changes only the list', () => {
+    seed({ categories: ['Other', 'Meals', 'Gym'] })
+    const store = device.expense.useExpenseStore
+    const before = store.getState()
+    store.getState().removeCategory('Gym')
+    const after = store.getState()
+    expect(after.categories).toEqual(['Other', 'Meals'])
+    for (const key of [
+      'expenses',
+      'categoryMappings',
+      'mappingUpdatedAt',
+      'budgets',
+      'budgetUpdatedAt',
+      'budgetDeletedAt',
+    ] as const) {
+      expect(after[key]).toBe(before[key])
+    }
+  })
+
+  it('treats an item or category named like an Object prototype key as a plain key', () => {
+    const mappings: Record<string, string> = Object.fromEntries([['__proto__', 'Meals']])
+    seed({ categoryMappings: mappings, mappingUpdatedAt: {}, budgets: {} })
+    const store = device.expense.useExpenseStore
+    store.getState().renameCategory('Meals', 'Dining')
+    const after = store.getState().categoryMappings
+    expect(Object.hasOwn(after, '__proto__')).toBe(true)
+    expect(Object.getOwnPropertyDescriptor(after, '__proto__')?.value).toBe('Dining')
+    store.getState().removeCategory('constructor') // no own budget of that name: nothing moves
+    expect(store.getState().budgetDeletedAt).toEqual({})
+  })
+})
+
+describe('budget stamps move forward', () => {
+  it('a set is stamped strictly after the last set or delete of its key', () => {
+    seed({ budgets: { Meals: 300 }, budgetUpdatedAt: { Meals: AHEAD }, budgetDeletedAt: {} })
+    const store = device.expense.useExpenseStore
+    store.getState().setBudget('Meals', 350)
+    expect(store.getState().budgetUpdatedAt.Meals).toBe('2026-10-20T08:00:00.001Z')
+    store.getState().setBudget('Gym', 50)
+    expect(store.getState().budgetUpdatedAt.Gym).toBe(ISO(NOW))
+  })
+
+  it('a removal is stamped strictly after the set it removes; a later set clears it', () => {
+    seed({ budgets: { Meals: 300 }, budgetUpdatedAt: { Meals: AHEAD }, budgetDeletedAt: {} })
+    const store = device.expense.useExpenseStore
+    store.getState().removeBudget('Meals')
+    expect(store.getState()).toMatchObject({
+      budgets: {},
+      budgetUpdatedAt: {},
+      budgetDeletedAt: { Meals: '2026-10-20T08:00:00.001Z' },
+    })
+    store.getState().setBudget('Meals', 200)
+    expect(store.getState()).toMatchObject({
+      budgets: { Meals: 200 },
+      budgetUpdatedAt: { Meals: '2026-10-20T08:00:00.002Z' },
+      budgetDeletedAt: {},
+    })
   })
 })
 
@@ -399,5 +477,187 @@ describe('flushPendingSave', () => {
     device.expense.flushPendingSave()
     expect(localStorage.getItem('expenses')).toContain(added.id)
     expect(localStorage.getItem('spendtrack:app')).toBe('0.8.5')
+  })
+})
+
+// A save that failed (storage full, or WebKit refusing writes on a nearly full iPhone) leaves
+// storage behind the store. It must be retried on purpose, by the next flush, even with no new
+// change in between: otherwise an OS kill of the hidden app loses everything since.
+describe('a save that failed is retried by the next flush', () => {
+  const quota = () => new DOMException('The quota has been exceeded.', 'QuotaExceededError')
+  const hide = () => {
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+    try {
+      document.dispatchEvent(new Event('visibilitychange'))
+    } finally {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+    }
+  }
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('when the failed attempt was itself a flush (hidden while storage was full)', () => {
+    const store = device.expense.useExpenseStore
+    store.getState().hydrate()
+    device.expense.installPersistence()
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw quota()
+    })
+    const added = store.getState().addExpense({ itemName: 'unsaved', amount: 2 })
+    hide() // the flush runs at once and fails
+    expect(store.getState().syncStatus).toBe('error')
+    setItem.mockRestore() // room again
+    vi.advanceTimersByTime(60_000) // nothing changes meanwhile
+    expect(localStorage.getItem('expenses')).toBeNull()
+    hide()
+    expect(localStorage.getItem('expenses')).toContain(added.id)
+    expect(store.getState().syncStatus).toBe('saved')
+  })
+
+  it('when the failed attempt was the debounced save', () => {
+    const store = device.expense.useExpenseStore
+    store.getState().hydrate()
+    device.expense.installPersistence()
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw quota()
+    })
+    const added = store.getState().addExpense({ itemName: 'unsaved', amount: 2 })
+    vi.advanceTimersByTime(400) // the 400 ms save fails
+    expect(store.getState().syncStatus).toBe('error')
+    setItem.mockRestore()
+    device.expense.flushPendingSave()
+    expect(localStorage.getItem('expenses')).toContain(added.id)
+  })
+
+  it('and a flush after a save that worked writes nothing', () => {
+    const store = device.expense.useExpenseStore
+    store.getState().hydrate()
+    device.expense.installPersistence()
+    store.getState().addExpense({ itemName: 'kopi', amount: 1.5 })
+    vi.advanceTimersByTime(400)
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    device.expense.flushPendingSave()
+    hide()
+    expect(setItem).not.toHaveBeenCalled()
+  })
+})
+
+describe('the network state at start-up', () => {
+  afterEach(() => {
+    Object.defineProperty(navigator, 'onLine', { value: true, configurable: true })
+  })
+
+  // The store reads navigator.onLine when it loads, and AppShell installs the listeners a little
+  // later (its bootstrap effect): going offline in between must still show the offline strip.
+  it('is read again when persistence starts listening', () => {
+    const store = device.expense.useExpenseStore
+    expect(store.getState().isOffline).toBe(false)
+    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true })
+    window.dispatchEvent(new Event('offline')) // before anything listens
+    expect(store.getState().isOffline).toBe(false)
+    device.expense.installPersistence()
+    expect(store.getState().isOffline).toBe(true)
+  })
+})
+
+describe('the persistence layer flushes on hide by itself', () => {
+  it('without a sync code (no engine loaded), an add is in localStorage when the app is hidden', () => {
+    const store = device.expense.useExpenseStore
+    store.getState().hydrate()
+    device.expense.installPersistence()
+    const added = store.getState().addExpense({ itemName: 'kopi', amount: 1.5 })
+    expect(localStorage.getItem('expenses')).toBeNull() // the 400 ms save has not run
+
+    Object.defineProperty(document, 'visibilityState', { value: 'hidden', configurable: true })
+    try {
+      document.dispatchEvent(new Event('visibilitychange'))
+    } finally {
+      Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
+    }
+    expect(localStorage.getItem('expenses')).toContain(added.id)
+  })
+})
+
+describe('budgets: a set that changes nothing writes nothing', () => {
+  it('re-setting the value a budget has keeps every object (no stamp, no save, no sync)', () => {
+    seed()
+    const store = device.expense.useExpenseStore
+    const before = store.getState()
+    store.getState().setBudget('Meals', 300)
+    const after = store.getState()
+    expect(after.budgets).toBe(before.budgets)
+    expect(after.budgetUpdatedAt).toBe(before.budgetUpdatedAt)
+    expect(after.budgetDeletedAt).toBe(before.budgetDeletedAt)
+    store.getState().setBudget('Meals', 301)
+    expect(store.getState().budgets.Meals).toBe(301)
+  })
+
+  it('refuses an amount that is not a finite number above zero', () => {
+    seed()
+    const store = device.expense.useExpenseStore
+    const before = store.getState().budgets
+    for (const amount of [Number.NaN, Number.POSITIVE_INFINITY, 0, -5]) {
+      store.getState().setBudget('Meals', amount)
+      store.getState().setBudget('Gym', amount)
+    }
+    expect(store.getState().budgets).toBe(before)
+  })
+})
+
+describe('names that are also Object.prototype keys', () => {
+  it.each(['constructor', 'Constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf'])(
+    '%s has no learned category until one is picked, and then exactly that one',
+    (itemName) => {
+      seed({ categoryMappings: {}, mappingUpdatedAt: {} })
+      const store = device.expense.useExpenseStore
+      expect(store.getState().getSmartCategory(itemName)).toBeNull()
+      const first = store.getState().addExpense({ itemName, amount: 7 })
+      expect(first.category).toBe('Other')
+      expect(store.getState().categoryMappings).toEqual({})
+
+      store.getState().addExpense({ itemName, amount: 7, category: 'Meals' })
+      const key = itemName.toLowerCase()
+      expect(Object.hasOwn(store.getState().categoryMappings, key)).toBe(true)
+      expect(store.getState().getSmartCategory(itemName)).toBe('Meals')
+      expect(store.getState().addExpense({ itemName, amount: 7 }).category).toBe('Meals')
+    },
+  )
+
+  it('a budget for a category named "constructor" is stamped with its own stamp', () => {
+    seed()
+    const store = device.expense.useExpenseStore
+    sharing.applySync({
+      ...backup(store),
+      budgets: { constructor: 40 },
+      budgetUpdatedAt: {},
+      budgetDeletedAt: {},
+    })
+    // Not Object's constructor function: the key has no stamp, so the legacy one.
+    expect(store.getState().budgetUpdatedAt).toEqual({ constructor: '1970-01-01T00:00:00.000Z' })
+  })
+})
+
+describe('rows in storage that are not objects', () => {
+  it('a null row is dropped on load; adds, undo and every row reader keep working', () => {
+    localStorage.setItem(
+      'expenses',
+      JSON.stringify([null, row('e1', { itemName: 'Chicken rice' })]),
+    )
+    const store = device.expense.useExpenseStore
+    store.getState().hydrate()
+    device.expense.installPersistence()
+    expect(store.getState().expenses).toEqual([row('e1', { itemName: 'Chicken rice' })])
+
+    const added = store.getState().addExpense({ itemName: 'kopi 2', amount: 2 })
+    const undo = store.getState().undoStack.at(-1)
+    if (!undo) throw new Error('no undo entry')
+    store.getState().consumeUndo(undo.id)
+    expect(store.getState().expenses.map((e) => e.id)).toEqual(['e1'])
+    expect(store.getState().deletedIds).toContain(added.id)
+    vi.advanceTimersByTime(1000)
+    expect(JSON.parse(localStorage.getItem('expenses') ?? '[]')).toEqual([
+      row('e1', { itemName: 'Chicken rice' }),
+    ])
   })
 })

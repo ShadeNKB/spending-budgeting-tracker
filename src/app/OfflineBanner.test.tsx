@@ -40,11 +40,35 @@ describe('OfflineBanner', () => {
     ['sync paused: too large', { syncId: 'code', lastError: failure('too-large') }, true],
     ['sync paused: moved', { syncId: 'code', lastError: failure('moved') }, true],
     ['sync paused: update', { syncId: 'code', lastError: failure('update-required') }, true],
+    ['sync paused: reload to load sync', { syncId: 'code', lastError: failure('reload') }, true],
+    // Not about the connection: coming back online ends neither.
+    ['refused access', { syncId: 'code', lastError: failure('permission') }, true],
+    [
+      'a retry failing for 10 minutes',
+      { syncId: 'code', lastError: { ...failure('server'), since: Date.now() - 10 * 60_000 } },
+      true,
+    ],
+    // WebKit never loads a failed chunk again in that tab.
+    [
+      "sync's code failed to load here",
+      { syncId: 'code', lastError: failure('offline'), engineFailed: true },
+      true,
+    ],
   ])('promises nothing with %s', (_label, state, relay) => {
     build.syncEnabled = relay
     useSyncStore.setState(state)
     render(<OfflineBanner />)
     expect(screen.getByText(SAVED)).toBeInTheDocument()
     expect(screen.queryByText(/will sync/)).toBeNull()
+  })
+
+  // amber-700 on the 10 % amber tint measured 4.29:1 in the light theme (12 px text needs 4.5);
+  // axe only reports it as "incomplete". The pill's amber-800 measures about 6:1 there.
+  it('darkens its text in the light theme to AA contrast', () => {
+    render(<OfflineBanner />)
+    expect(screen.getByText(SAVED)).toHaveClass(
+      'text-warning',
+      '[[data-theme=light]_&]:text-[#92400e]',
+    )
   })
 })

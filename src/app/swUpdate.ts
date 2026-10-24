@@ -90,6 +90,12 @@ export interface UpdateController {
    * or straight away when nothing is waiting. Defaults to a reload.
    */
   reloadToLatest(go?: () => void): void
+  /**
+   * Looks for a new build now, whatever the hourly schedule says: sync found the relay moved
+   * to a newer version, so one is out. A build it finds installs and waits as usual, so the
+   * next Reload (the banner's, or `reloadToLatest`) runs it.
+   */
+  checkNow(): void
 }
 
 export function createUpdateController(deps: UpdateControllerDeps): UpdateController {
@@ -152,13 +158,16 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
     worker.addEventListener('statechange', onStateChange)
   }
 
+  const update = (reg: SwRegistrationLike) => {
+    lastCheckAt = now()
+    reg.update().catch(() => undefined)
+  }
+
   const checkForUpdate = () => {
     if (!registration || doc.visibilityState !== 'visible' || !isOnline()) return
-    const at = now()
-    const elapsed = at - lastCheckAt
+    const elapsed = now() - lastCheckAt
     if (elapsed >= 0 && elapsed < UPDATE_CHECK_INTERVAL_MS) return
-    lastCheckAt = at
-    registration.update().catch(() => undefined)
+    update(registration)
   }
 
   const onControllerChange = () => {
@@ -298,6 +307,10 @@ export function createUpdateController(deps: UpdateControllerDeps): UpdateContro
       // Tapped before the page finished loading: register now rather than wait for load.
       void register().then(settle)
       setTimeout(settle, RELOAD_FALLBACK_MS)
+    },
+    checkNow() {
+      // Before registration the page load itself has just checked.
+      if (registration && isOnline()) update(registration)
     },
   }
 }

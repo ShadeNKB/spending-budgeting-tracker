@@ -12,7 +12,7 @@ import {
   stubRelayEnv,
   type FakeChannel,
 } from '../__tests__/fakeRelay'
-import { SEEN_MAX, contentKey, isSyncableExpense, mergeBackups, readRemote } from './syncService'
+import { contentKey, isSyncableExpense, mergeBackups, readRemote } from './syncService'
 
 vi.mock(
   '@supabase/supabase-js',
@@ -44,6 +44,13 @@ const doc = (over: Partial<BackupData> = {}): BackupData => ({
   version: '4.0',
   ...over,
 })
+
+/** `{a: {a: … {a: 1}}}`, `levels` objects deep. */
+function deep(levels: number): unknown {
+  let value: unknown = 1
+  for (let i = 0; i < levels; i++) value = { a: value }
+  return value
+}
 
 /** Both merge orders give the same content, and merging the result again changes nothing. */
 function expectJoin(a: BackupData, b: BackupData): BackupData {
@@ -86,12 +93,68 @@ describe('mergeBackups', () => {
     expect(merged.expenses[0]?.amount).toBe(2)
   })
 
-  it('resolves a mapping conflict to the larger value, in both orders', () => {
+  it('resolves an unstamped mapping conflict to the larger value, in both orders', () => {
     const merged = expectJoin(
       doc({ categoryMappings: { coffee: 'Drinks', tea: 'Drinks' } }),
       doc({ categoryMappings: { coffee: 'Food & Dining' } }),
     )
     expect(merged.categoryMappings).toEqual({ coffee: 'Food & Dining', tea: 'Drinks' })
+    expect(merged.mappingUpdatedAt).toEqual({})
+  })
+
+  it('keeps the newer stamped mapping per key, with its stamp, in both orders', () => {
+    const merged = expectJoin(
+      doc({
+        categoryMappings: { grab: 'Meals', kopi: 'Drinks' },
+        mappingUpdatedAt: { grab: T2, kopi: T1 },
+      }),
+      doc({
+        categoryMappings: { grab: 'Transport', kopi: 'Meals' },
+        mappingUpdatedAt: { grab: T1, kopi: T2 },
+      }),
+    )
+    // "Transport" is the larger value, but "Meals" was picked later.
+    expect(merged.categoryMappings).toEqual({ grab: 'Meals', kopi: 'Meals' })
+    expect(merged.mappingUpdatedAt).toEqual({ grab: T2, kopi: T2 })
+  })
+
+  it('lets any stamped pick beat an unstamped one (a v0.8.4 push drops the stamps)', () => {
+    const merged = expectJoin(
+      doc({ categoryMappings: { grab: 'Meals' }, mappingUpdatedAt: { grab: T1 } }),
+      doc({ categoryMappings: { grab: 'Transport' } }),
+    )
+    expect(merged.categoryMappings).toEqual({ grab: 'Meals' })
+    expect(merged.mappingUpdatedAt).toEqual({ grab: T1 })
+  })
+
+  it('breaks an equal-stamp mapping tie by the larger value, then the larger stamp text', () => {
+    const tie = expectJoin(
+      doc({ categoryMappings: { grab: 'Meals' }, mappingUpdatedAt: { grab: T1 } }),
+      doc({ categoryMappings: { grab: 'Transport' }, mappingUpdatedAt: { grab: T1 } }),
+    )
+    expect(tie.categoryMappings).toEqual({ grab: 'Transport' })
+    const sameInstant = '2026-10-01T04:00:00Z' // T1, written without milliseconds
+    const text = expectJoin(
+      doc({ categoryMappings: { grab: 'Meals' }, mappingUpdatedAt: { grab: T1 } }),
+      doc({ categoryMappings: { grab: 'Meals' }, mappingUpdatedAt: { grab: sameInstant } }),
+    )
+    expect(text.mappingUpdatedAt).toEqual({ grab: sameInstant })
+  })
+
+  it('orders an out-of-window mapping stamp as 0 and does not keep it', () => {
+    const merged = expectJoin(
+      doc({
+        categoryMappings: { grab: 'Transport' },
+        mappingUpdatedAt: { grab: '9999-12-31T00:00:00.000Z' },
+      }),
+      doc({ categoryMappings: { grab: 'Meals' }, mappingUpdatedAt: { grab: T1 } }),
+    )
+    expect(merged.categoryMappings).toEqual({ grab: 'Meals' })
+    const alone = mergeBackups(
+      doc({ categoryMappings: { grab: 'Transport' }, mappingUpdatedAt: { grab: 'soon', x: T1 } }),
+      doc(),
+    )
+    expect(alone.mappingUpdatedAt).toEqual({})
   })
 
   it.each([
@@ -256,6 +319,7 @@ describe('isSyncableExpense', () => {
     ['notes {x:1}', { ...row('e1'), notes: { x: 1 } }],
     ['createdAt 5', { ...row('e1'), createdAt: 5 }],
     ['updatedAt {}', { ...row('e1'), updatedAt: {} }],
+    ['an extra field nested 17 levels deep', { ...row('e1'), x: deep(17) }],
   ])('rejects a row with %s', (_label, value) => {
     expect(isSyncableExpense(value)).toBe(false)
   })
@@ -273,7 +337,7 @@ describe('contentKey', () => {
 
   it('ignores exportDate, version, wr, x5, key order and collection order', () => {
     const shuffled = {
-      wr: { app: '0.8.5', dev: 'abc123', rev: 'r', at: T2, seen: ['q', 'p'] },
+      wr: { app: '0.8.5', dev: 'abc123', rev: 'r', at: T2 },
       x5: { schema: 5, min: 4 },
       version: '5.0',
       exportDate: T2,
@@ -301,6 +365,14 @@ describe('contentKey', () => {
     expect(contentKey({ ...base, categoryMappings: {} })).not.toBe(contentKey(base))
     expect(contentKey({ ...base, deletedIds: ['x'] })).not.toBe(contentKey(base))
     expect(contentKey({ ...base, budgets: { Meals: 301 } })).not.toBe(contentKey(base))
+    expect(contentKey({ ...base, mappingUpdatedAt: { kopi: T2 } })).not.toBe(contentKey(base))
+  })
+
+  it('treats a missing mappingUpdatedAt as empty, and ignores it on request (a v0.8.4 copy)', () => {
+    const stamped = { ...base, mappingUpdatedAt: { kopi: T1 } }
+    expect(contentKey({ ...base, mappingUpdatedAt: {} })).toBe(contentKey(base))
+    expect(contentKey(stamped, { mappingStamps: false })).toBe(contentKey(base))
+    expect(contentKey(stamped, { mappingStamps: false })).not.toBe(contentKey(stamped))
   })
 
   it('canonicalises non-array collections raw, so garbage never equals a clean payload', () => {
@@ -350,25 +422,16 @@ describe('readRemote', () => {
     })
   })
 
-  it("reads a v0.8.5 copy's rev and lineage leniently, and no lineage from other writers", () => {
-    const wr = { app: '0.8.5', dev: 'a', rev: 'r9', at: T1, seen: ['r8', 'r7'] }
-    expect(readRemote({ ...doc(), wr })).toMatchObject({ rev: 'r9', seen: ['r8', 'r7'] })
-    // Not strings, empty or far too long: not revs. Capped at SEEN_MAX, newest first.
-    const long = Array.from({ length: SEEN_MAX + 5 }, (_, i) => `s${String(i)}`)
-    const messy = { ...wr, rev: 42, seen: [null, '', 'x'.repeat(65), ...long, { rev: 'r1' }] }
-    expect(readRemote({ ...doc(), wr: messy })).toMatchObject({
-      rev: null,
-      seen: long.slice(0, SEEN_MAX),
-    })
-    expect(readRemote({ ...doc(), wr: { ...wr, seen: 'r8' } })).toMatchObject({ seen: [] })
-    expect(readRemote({ ...doc(), wr: { app: '0.8.5' } })).toMatchObject({ rev: null, seen: [] })
-    // A v5 copy (x5 wins over wr) and an old device's copy carry none.
-    expect(readRemote({ ...doc(), wr, x5: { schema: 5, min: 4 } })).toMatchObject({
-      writer: 'v5',
-      rev: null,
-      seen: [],
-    })
-    expect(readRemote(doc())).toMatchObject({ writer: 'legacy', rev: null, seen: [] })
+  it('reads the mapping stamps, keeping only string entries', () => {
+    const raw = {
+      ...doc({ categoryMappings: { grab: 'Meals' } }),
+      mappingUpdatedAt: { grab: T1, bad: 5 },
+    }
+    const read = readRemote(raw)
+    expect(read).toMatchObject({ kind: 'ok' })
+    if (read.kind !== 'ok') return
+    expect(read.data.mappingUpdatedAt).toEqual({ grab: T1 })
+    expect(readRemote(doc())).toMatchObject({ data: { mappingUpdatedAt: {} } })
   })
 
   it('merges readable rows only and passes every unreadable row through untouched', () => {
@@ -389,7 +452,23 @@ describe('readRemote', () => {
     expect(read.data.expenses).toEqual([good])
     expect(read.passthrough).toEqual(bad)
     expect(read.data.categories).toEqual([])
-    expect(read.key).toBe(contentKey(raw))
+  })
+
+  // JSON.parse reads any depth; a hostile row nested thousands of levels deep once overflowed
+  // the content key, so every device failed the read and retried forever without syncing.
+  it('reads a payload with values nested thousands of levels deep, passing such a row through', () => {
+    const hostile = { ...row('h1'), x: deep(5000) }
+    const raw = {
+      ...doc({ expenses: [row('g1')] }),
+      expenses: [row('g1'), hostile],
+      categoryMappings: { kopi: 'Meals', junk: deep(5000) },
+    }
+    const read = readRemote(raw)
+    if (read.kind !== 'ok') throw new Error(`expected ok, got ${read.kind}`)
+    expect(read.data.expenses).toEqual([row('g1')])
+    expect(read.passthrough).toEqual([hostile])
+    expect(read.data.categoryMappings).toEqual({ kopi: 'Meals' })
+    expect(() => contentKey(raw)).not.toThrow()
   })
 })
 
@@ -416,7 +495,7 @@ describe('pullSync / pushSync', () => {
 
   const payload = {
     ...doc({ expenses: [row('e1')] }),
-    wr: { app: '0.8.5', dev: 'abc123', rev: 'r1', at: T1, seen: [] },
+    wr: { app: '0.8.5', dev: 'abc123', rev: 'r1', at: T1 },
   }
 
   it('pulls the payload, or null when there is no row', async () => {
@@ -612,7 +691,7 @@ describe('subscribeSync', () => {
   it('passes the changed payload and updated_at to the handler', async () => {
     const { svc, handlers, unsubscribe } = await subscribe()
     await advance(10)
-    const body = { ...doc(), wr: { app: '0.8.5', dev: 'abc123', rev: 'r1', at: T1, seen: [] } }
+    const body = { ...doc(), wr: { app: '0.8.5', dev: 'abc123', rev: 'r1', at: T1 } }
     vi.setSystemTime(new Date(T2))
     await settle(svc.pushSync('sync-code', body), 10)
     expect(handlers.onRemoteChange).toHaveBeenCalledWith({ payload: body, updatedAt: T2 })

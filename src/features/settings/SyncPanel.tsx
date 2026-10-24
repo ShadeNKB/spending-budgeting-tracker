@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import {
   Cloud,
   CloudOff,
@@ -24,8 +24,11 @@ import {
   failingSinceMessage,
   failureSeverity,
   isFailing,
+  needsReload,
   pausedDetail,
+  reloadSpendTrack,
   syncMessage,
+  syncsWhenOnline,
   useSyncStore,
   type CloudStatus,
   type SyncFailure,
@@ -64,6 +67,7 @@ const ERROR_LABEL: Record<SyncFailure['kind'], string> = {
   'too-large': 'Sync paused',
   moved: 'Sync paused',
   'update-required': 'Sync paused',
+  reload: 'Sync paused',
 }
 
 type Tone = 'muted' | 'accent' | 'positive' | 'info' | 'warning' | 'negative'
@@ -130,6 +134,8 @@ interface StatusInput {
   waitingForOld: boolean
   /** The owner's own Sync now is on the wire. */
   manual: boolean
+  /** Offline, sync runs by itself once the device is back (`syncsWhenOnline`). */
+  resumes: boolean
 }
 
 interface StatusView {
@@ -145,10 +151,19 @@ interface StatusView {
  * retry after a failure keeps showing the failure, never an older "Synced".
  */
 function statusView(s: StatusInput): StatusView {
+  // Linked, before the first cycle (the engine's code may still be loading): nothing is known
+  // to be on the relay yet.
   if (s.status === 'off' || s.status === 'idle') {
-    return { label: 'Ready', tone: 'muted', busy: false }
+    return { label: 'Starting sync…', tone: 'accent', busy: true }
   }
-  if (s.status === 'offline') return { label: ERROR_LABEL.offline, tone: 'warning', busy: false }
+  if (s.status === 'offline') {
+    // The promise only when sync will run by itself: not when its code failed to load here.
+    return {
+      label: s.resumes ? ERROR_LABEL.offline : 'Offline · not synced',
+      tone: 'warning',
+      busy: false,
+    }
+  }
   if (s.manual) return { label: 'Syncing…', tone: 'accent', busy: true }
   const busy = s.status === 'syncing'
   const failure = s.lastError
@@ -183,16 +198,17 @@ const ARIA_DISABLED = 'aria-disabled:pointer-events-none aria-disabled:opacity-4
 type SetupLead = 'generated' | 'connected'
 
 /**
- * A failed first sync after Generate or Connect, led by what did happen. A pause promises no
- * sync "yet": it lasts until the owner acts. When a banner now says why (`bannerSaysWhy`), the
- * toast leaves the why to it, so the same sentence is not said twice.
+ * A failed first sync after Generate or Connect, led by what did happen: the code was created
+ * or saved, never "connected" (the relay may have refused it). A pause promises no sync "yet":
+ * it lasts until the owner acts, and so does refused access. When a banner now says why
+ * (`bannerSaysWhy`), the toast leaves the why to it, so the same sentence is not said twice.
  */
 function setupFailure(
   lead: SetupLead,
   result: Extract<SyncResult, { ok: false }>,
   bannerSaysWhy: boolean,
 ): string {
-  const done = lead === 'generated' ? 'Sync code created' : 'Connected'
+  const done = lead === 'generated' ? 'Sync code created' : 'Code saved'
   switch (result.error) {
     case 'too-large':
       return bannerSaysWhy
@@ -200,12 +216,15 @@ function setupFailure(
         : `${done}. Sync is paused: ${pausedDetail(result.message)}`
     case 'moved':
     case 'update-required':
+    case 'reload':
       return bannerSaysWhy ? `${done}. Sync is paused.` : `${done}. ${result.message}`
+    case 'permission':
+      return `${done}, but the sync server refused access.`
   }
   const but =
     lead === 'generated'
-      ? "Sync code created, but the first sync didn't finish"
-      : "Connected, but couldn't sync yet"
+      ? `${done}, but the first sync didn't finish`
+      : `${done}, but couldn't sync yet`
   return bannerSaysWhy ? `${but}.` : `${but}: ${result.message}`
 }
 
@@ -218,122 +237,119 @@ const BANNER_TONE: Record<BannerTone, string> = {
   info: 'border-white/[0.1] bg-white/[0.03] text-[var(--text-secondary)]',
 }
 
-function SyncBanner({
-  tone,
-  icon: Icon,
-  children,
-  action,
-}: {
-  tone: BannerTone
-  icon: LucideIcon
-  children: ReactNode
-  action?: ReactNode
-}) {
-  return (
-    <div
-      className={clsx(
-        'flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-md border px-2.5 py-2 text-[13px] leading-relaxed md:text-[11px]',
-        BANNER_TONE[tone],
-      )}
-    >
-      <Icon size={12} className="shrink-0" aria-hidden="true" />
-      <span className="min-w-0 flex-1 basis-40">{children}</span>
-      {action}
-    </div>
-  )
-}
-
 const ACTION_TONE: Record<Exclude<BannerTone, 'info'>, string> = {
   error: 'border-negative/30 text-negative hover:bg-negative/10',
   warning: 'border-warning/30 text-warning hover:bg-warning/10',
 }
 
-function BannerAction({
-  tone,
-  icon: Icon,
-  label,
-  onClick,
-}: {
-  tone: Exclude<BannerTone, 'info'>
+interface BannerView {
+  key: 'reload' | 'failing' | 'old-device'
+  tone: BannerTone
   icon: LucideIcon
-  label: string
-  onClick: () => void
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={clsx(
-        'inline-flex h-11 shrink-0 items-center gap-1.5 rounded-md border px-3 text-[12px] font-medium transition md:h-8',
-        ACTION_TONE[tone],
-      )}
-    >
-      <Icon size={12} aria-hidden="true" /> {label}
-    </button>
-  )
+  text: string
+  action?: { icon: LucideIcon; label: string; onClick: () => void }
 }
 
-/**
- * What the owner must know about sync right now, worst first. One live region that is always
- * mounted (empty when all is well), so a banner that appears while the panel is open is
- * announced: screen readers read what is added to a region, not a region added with it.
- */
-function SyncBanners() {
+/** What the old-device banner says: one sentence when both apply. */
+function oldDeviceText(seen: boolean, waiting: boolean): string | null {
+  if (seen && waiting) {
+    return 'An older SpendTrack (0.8.4 or earlier) on your other device keeps overwriting the synced copy. Open it and reload; everything is saved here.'
+  }
+  if (seen) return 'Another device runs an older SpendTrack (0.8.4 or earlier). Open it and reload.'
+  return waiting ? OLD_DEVICE_WAITING : null
+}
+
+/** What the owner must know about sync right now, worst first. */
+function useBanners(): BannerView[] {
   const lastError = useSyncStore((s) => s.lastError)
   const legacyWriterAt = useSyncStore((s) => s.legacyWriterAt)
   const waitingForOld = useSyncStore((s) => s.waitingForOld)
   const focusSettings = useUIStore((s) => s.focusSettings)
-  const fenced = isFence(lastError)
+  const banners: BannerView[] = []
+  if (lastError && needsReload(lastError.kind)) {
+    banners.push({
+      key: 'reload',
+      tone: 'warning',
+      icon: AlertCircle,
+      text: failureBanner(lastError) ?? '',
+      // A new build that is already waiting takes over first; a plain reload would come back
+      // on the old one, to the same pause.
+      action: { icon: RefreshCw, label: 'Reload', onClick: reloadSpendTrack },
+    })
+  } else if (lastError && lastError.kind !== 'offline') {
+    banners.push({
+      key: 'failing',
+      tone: failureSeverity(lastError) === 'warning' ? 'warning' : 'error',
+      icon: AlertCircle,
+      text: bannerText(lastError),
+      // The message says to export a backup: one tap to the button that does it.
+      action:
+        lastError.kind === 'too-large'
+          ? {
+              icon: Download,
+              label: 'Export backup',
+              onClick: () => focusSettings('backup', 'backup-download'),
+            }
+          : undefined,
+    })
+  }
   const legacySeen = legacyWriterAt !== null && Date.now() - legacyWriterAt < LEGACY_BANNER_MS
-  const failing = lastError !== null && lastError.kind !== 'offline' && !fenced
+  const old = oldDeviceText(legacySeen, waitingForOld)
+  if (old !== null) banners.push({ key: 'old-device', tone: 'info', icon: Info, text: old })
+  return banners
+}
 
+/**
+ * The banners, and one live region that is always mounted (empty when all is well), so a
+ * banner that appears while the panel is open is announced: screen readers read what is added
+ * to a region, not a region added with it. The region holds the sentences only, as the pill's
+ * does: a button inside it would be read as part of the sentence ("…to update. Reload"). The
+ * banner shows the same words to the eye, and its button is described by them.
+ */
+function SyncBanners() {
+  const banners = useBanners()
+  const idBase = useId()
+  const textId = (key: BannerView['key']) => `${idBase}-${key}`
   return (
-    // Empty, it takes no space; with a banner, the margin stands in for the card's gap.
-    <div role="status" className="flex flex-col gap-2 [&:not(:empty)]:mt-3">
-      {fenced && (
-        <SyncBanner
-          tone="warning"
-          icon={AlertCircle}
-          action={
-            <BannerAction
-              tone="warning"
-              icon={RefreshCw}
-              label="Reload"
-              onClick={() => window.location.reload()}
-            />
-          }
-        >
-          {syncMessage('moved')}
-        </SyncBanner>
-      )}
-      {failing && (
-        <SyncBanner
-          tone={failureSeverity(lastError) === 'warning' ? 'warning' : 'error'}
-          icon={AlertCircle}
-          action={
-            // The message says to export a backup: one tap to the button that does it.
-            lastError.kind === 'too-large' ? (
-              <BannerAction
-                tone="error"
-                icon={Download}
-                label="Export backup"
-                onClick={() => focusSettings('backup', 'backup-download')}
-              />
-            ) : undefined
-          }
-        >
-          {bannerText(lastError)}
-        </SyncBanner>
-      )}
-      {(legacySeen || waitingForOld) && (
-        <SyncBanner tone="info" icon={Info}>
-          {legacySeen &&
-            'Another device runs an older SpendTrack (0.8.4 or earlier). Open it and reload.'}
-          {legacySeen && waitingForOld && ' '}
-          {waitingForOld && OLD_DEVICE_WAITING}
-        </SyncBanner>
-      )}
-    </div>
+    <>
+      <div role="status" className="sr-only">
+        {banners.map((b) => (
+          <p key={b.key} id={textId(b.key)}>
+            {b.text}
+          </p>
+        ))}
+      </div>
+      {/* Empty, it takes no space; with a banner, the margin stands in for the card's gap. */}
+      <div className="flex flex-col gap-2 [&:not(:empty)]:mt-3">
+        {banners.map(({ key, tone, icon: Icon, text, action }) => (
+          <div
+            key={key}
+            className={clsx(
+              'flex flex-wrap items-center gap-x-2 gap-y-1.5 rounded-md border px-2.5 py-2 text-[13px] leading-relaxed md:text-[11px]',
+              BANNER_TONE[tone],
+            )}
+          >
+            <Icon size={12} className="shrink-0" aria-hidden="true" />
+            <span aria-hidden="true" className="min-w-0 flex-1 basis-40">
+              {text}
+            </span>
+            {action && tone !== 'info' && (
+              <button
+                type="button"
+                onClick={action.onClick}
+                aria-describedby={textId(key)}
+                className={clsx(
+                  'inline-flex h-11 shrink-0 items-center gap-1.5 rounded-md border px-3 text-[12px] font-medium transition md:h-8',
+                  ACTION_TONE[tone],
+                )}
+              >
+                <action.icon size={12} aria-hidden="true" /> {action.label}
+              </button>
+            )}
+          </div>
+        ))}
+      </div>
+    </>
   )
 }
 
@@ -387,6 +403,7 @@ function SyncContent() {
   const lastError = useSyncStore((s) => s.lastError)
   const pendingLocal = useSyncStore((s) => s.pendingLocal)
   const waitingForOld = useSyncStore((s) => s.waitingForOld)
+  const resumes = useSyncStore(syncsWhenOnline)
   const setupSync = useSyncStore((s) => s.setupSync)
   const disconnectSync = useSyncStore((s) => s.disconnectSync)
   const triggerSync = useSyncStore((s) => s.triggerSync)
@@ -570,6 +587,7 @@ function SyncContent() {
     lastError,
     waitingForOld,
     manual: manualSyncing,
+    resumes,
   })
 
   if (!syncId) {

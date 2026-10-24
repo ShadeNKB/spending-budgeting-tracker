@@ -21,8 +21,7 @@ const SOURCES = import.meta.glob<string>(
 // The Supabase client is a library, not a screen, and syncService loads it on demand. Vite
 // still routes that import through its preload helper, so a failed load fires
 // vite:preloadError and the one-shot automatic reload (installPreloadErrorRecovery) recovers
-// it. There is no in-page retry: syncService keeps the rejected client promise for the life of
-// the page.
+// it. syncService also drops a failed (or stalled) load, so the next sync cycle loads again.
 const ALLOWED_BARE_IMPORTS = new Set(['/src/services/syncService.ts'])
 
 const count = (text: string, pattern: RegExp) => [...text.matchAll(pattern)].length

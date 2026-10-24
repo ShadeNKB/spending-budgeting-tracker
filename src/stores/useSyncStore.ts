@@ -3,14 +3,16 @@
 // read. Builds without a relay (`syncEnabled` false) drop the engine entirely.
 
 import { create } from 'zustand'
-import { importWithReload } from '../lib/chunkReload'
+import { getUpdateController } from '../app/swUpdate'
+import { STUCK_HINT, importWithReload, reloadedRecently } from '../lib/chunkReload'
 import { storage } from '../services/storage'
 import { syncEnabled } from '../services/syncConfig'
-import { clearPendingEdits } from './useExpenseStore'
+import { syncPanelShown, useUIStore } from './useUIStore'
 import type * as SyncEngineModule from './syncEngine'
 
 export type SyncErrorKind = 'network' | 'server' | 'permission' | 'invalid'
-export type SyncPauseReason = 'too-large' | 'moved' | 'update-required'
+/** `reload`: the sync engine's code did not load on this page, and only a reload fetches it again. */
+export type SyncPauseReason = 'too-large' | 'moved' | 'update-required' | 'reload'
 export type SyncResult =
   | { ok: true; pushed: boolean; changedLocal: boolean }
   | { ok: false; error: SyncErrorKind | SyncPauseReason | 'off' | 'offline'; message: string }
@@ -35,6 +37,12 @@ interface SyncState {
   waitingForOld: boolean
   /** When a v0.8.4-or-older device last wrote over this device's push. */
   legacyWriterAt: number | null
+  /**
+   * The sync engine's code failed to load on this page. The next resume, 'online' or Sync now
+   * loads it again, which may fail again (WebKit keeps a failed load for the life of the tab),
+   * so nothing promises a sync meanwhile.
+   */
+  engineFailed: boolean
 
   initSync: () => void
   setupSync: (syncId: string) => Promise<SyncResult>
@@ -57,7 +65,7 @@ export function syncMessage(
     case 'network':
       return "Couldn't reach the sync server. Your changes are saved on this device."
     case 'server':
-      return 'The sync server had a problem. Retrying automatically.'
+      return 'The sync server had a problem. Your changes are saved on this device.'
     case 'permission':
       return 'The sync server refused access. Your data is safe on this device.'
     case 'invalid':
@@ -67,6 +75,8 @@ export function syncMessage(
     case 'moved':
     case 'update-required':
       return 'Sync moved to a newer version. Reload SpendTrack to update.'
+    case 'reload':
+      return "Sync couldn't start on this page. Reload SpendTrack to sync. Your changes are saved on this device."
     case 'off':
       return "Sync isn't set up on this device."
   }
@@ -74,7 +84,12 @@ export function syncMessage(
 
 /** Paused until the owner acts (reload, or export and trim): no retry, and offline ends nothing. */
 export function isPaused(kind: SyncFailure['kind']): kind is SyncPauseReason {
-  return kind === 'too-large' || kind === 'moved' || kind === 'update-required'
+  return kind === 'too-large' || kind === 'moved' || kind === 'update-required' || kind === 'reload'
+}
+
+/** Paused until SpendTrack is reloaded: the relay moved to a newer version, or sync's code did not load. */
+export function needsReload(kind: SyncFailure['kind']): boolean {
+  return kind === 'moved' || kind === 'update-required' || kind === 'reload'
 }
 
 /** Where TopBar shows the sync pill (Tailwind `xl`); below it the pill is not rendered. */
@@ -140,6 +155,7 @@ export function failureSeverity(
     case 'offline':
     case 'moved':
     case 'update-required':
+    case 'reload':
       return 'warning'
     case 'network':
     case 'server':
@@ -151,9 +167,56 @@ export function failureSeverity(
   }
 }
 
-// The code this device synced with before a Disconnect. Pending field edits are relative to
-// it, so connecting to it again keeps them; another code clears them (see `lastSyncCode`).
-let disconnectedCode: string | null = null
+/**
+ * A failure that is not about this device's connection: a pause, refused access, or a retry
+ * that has been failing for 10 minutes. Going offline keeps it (its words stay true), and
+ * coming back online does not end it by itself.
+ */
+export function keptOffline(
+  failure: Pick<SyncFailure, 'kind' | 'since'>,
+  now = Date.now(),
+): boolean {
+  return isPaused(failure.kind) || failure.kind === 'permission' || isFailing(failure, now)
+}
+
+/**
+ * Offline, sync will run by itself once the device is back: it is set up, its code loaded, and
+ * nothing it already knows stands in the way. Only then may a surface promise a sync.
+ */
+export function syncsWhenOnline(
+  s: Pick<SyncState, 'syncId' | 'lastError' | 'engineFailed'>,
+): boolean {
+  return s.syncId !== null && !s.engineFailed && !(s.lastError && keptOffline(s.lastError))
+}
+
+/** Reloads SpendTrack. A new build that is already waiting takes over first. */
+export function reloadSpendTrack(): void {
+  getUpdateController().reloadToLatest()
+}
+
+/** Sync's state says a new build is out (the relay moved on, or a stale chunk): look for it now. */
+export function lookForNewBuild(): void {
+  getUpdateController().checkNow()
+}
+
+const SYNC_TOAST_MS = 12_000
+
+/** A sync toast. One that asks for a reload carries the Reload, as the panel's banner does. */
+export function syncToast(kind: 'error' | 'warning', message: string, withReload = false): void {
+  useUIStore.getState().pushToast({
+    kind,
+    message,
+    duration: SYNC_TOAST_MS,
+    ...(withReload ? { action: { label: 'Reload', onClick: reloadSpendTrack } } : {}),
+  })
+}
+
+/**
+ * Nothing on screen says what sync is doing: the pill is desktop-only and Settings › Sync is
+ * closed, so a toast is the only way the owner hears it.
+ */
+export const noSyncSurface = (): boolean =>
+  !syncPillShown() && !syncPanelShown(useUIStore.getState())
 
 function savedCode(): string | null {
   try {
@@ -163,13 +226,24 @@ function savedCode(): string | null {
   }
 }
 
+let codeWarned = false
+
 /**
- * The code this device synced with last. The store holds none until the first setup of a
- * session, so a code saved by an earlier session counts as the same code, not a switch; after
- * a Disconnect it is the code disconnected from.
+ * Saves the sync code. When storage refuses it (full), the code still works for this session,
+ * but this device forgets it when SpendTrack closes: the owner hears that, once.
  */
-export function lastSyncCode(): string | null {
-  return useSyncStore.getState().syncId ?? savedCode() ?? disconnectedCode
+export function keepCode(syncId: string): void {
+  try {
+    storage.saveSyncId(syncId)
+  } catch {
+    // Checked below: the code may already be there (start-up re-saves the saved code).
+  }
+  if (savedCode() === syncId || codeWarned) return
+  codeWarned = true
+  syncToast(
+    'warning',
+    "This device couldn't save the sync code, so it forgets it when SpendTrack closes. Free up space, then connect again.",
+  )
 }
 
 /** Local wall-clock time as HH:mm. */
@@ -211,6 +285,46 @@ export function loadSyncEngine(): Promise<SyncEngine> {
   return loading
 }
 
+const isOffline = () => typeof navigator !== 'undefined' && !navigator.onLine
+
+let reloadToasted = false
+
+/**
+ * The engine chunk did not load. Nothing retries on a timer here, so the state never says
+ * "retrying", and nothing promises a sync: WebKit never fetches a failed chunk again in that
+ * tab. Offline, the next 'online' or resume sets up again. Online, the browser keeps the
+ * failed import for the life of the page (a stale chunk it could not reload for, with a
+ * dialog open), so only a reload fetches it again, and the state says so; after an automatic
+ * reload that did not help, it also says how to get unstuck.
+ */
+function engineMissing(syncId: string, user: boolean): Extract<SyncResult, { ok: false }> {
+  const prev = useSyncStore.getState().lastError
+  const offline = isOffline()
+  const kind = offline ? 'offline' : 'reload'
+  const message = offline
+    ? "You're offline. Changes are saved on this device."
+    : reloadedRecently()
+      ? `${syncMessage('reload')} ${STUCK_HINT}`
+      : syncMessage('reload')
+  useSyncStore.setState({
+    syncId,
+    cloudStatus: offline ? 'offline' : 'paused',
+    pendingLocal: true,
+    engineFailed: true,
+    lastError: { kind, message, since: prev?.kind === kind ? prev.since : Date.now() },
+  })
+  if (!offline) {
+    // A stale engine chunk usually means a new build is out: the Reload then runs it.
+    if (prev?.kind !== 'reload') lookForNewBuild()
+    // Once per session, where nothing else says it (the owner's own request reports itself).
+    if (!reloadToasted) {
+      reloadToasted = true
+      if (!user && noSyncSurface()) syncToast(failureSeverity({ kind, since: 0 }), message, true)
+    }
+  }
+  return { ok: false, error: kind, message }
+}
+
 async function setup(syncId: string, user: boolean): Promise<SyncResult> {
   const ticket = ++setupTicket
   let loaded: SyncEngine
@@ -218,25 +332,14 @@ async function setup(syncId: string, user: boolean): Promise<SyncResult> {
     loaded = await loadSyncEngine()
   } catch {
     if (ticket !== setupTicket) return offResult()
-    // The chunk did not load (offline before it was cached): keep the code, as a failed first
-    // sync does, and set up again on the next resume, 'online' or Sync now.
-    const previous = lastSyncCode()
-    try {
-      storage.saveSyncId(syncId)
-    } catch {
-      // Not persisted (storage full): the code still works for this session.
-    }
-    if (previous !== syncId) clearPendingEdits()
-    const message = syncMessage('network')
-    useSyncStore.setState({
-      syncId,
-      cloudStatus: 'error',
-      pendingLocal: true,
-      lastError: { kind: 'network', message, since: Date.now() },
-    })
-    return { ok: false, error: 'network', message }
+    // Keep the code, as a failed first sync does, and set up again on the next resume,
+    // 'online' or Sync now.
+    keepCode(syncId)
+    return engineMissing(syncId, user)
   }
-  return ticket === setupTicket ? loaded.setupSync(syncId, user) : offResult()
+  if (ticket !== setupTicket) return offResult()
+  if (useSyncStore.getState().engineFailed) useSyncStore.setState({ engineFailed: false })
+  return loaded.setupSync(syncId, user)
 }
 
 export const useSyncStore = create<SyncState>((set, get) => ({
@@ -247,14 +350,16 @@ export const useSyncStore = create<SyncState>((set, get) => ({
   pendingLocal: false,
   waitingForOld: false,
   legacyWriterAt: null,
+  engineFailed: false,
 
   initSync: () => {
     if (!syncEnabled) return
     const saved = savedCode()
     if (!saved) return
     // Linked from the first frame: while the engine chunk loads, the panel shows this code, not
-    // the unlinked view with its Generate button.
-    if (get().syncId === null) set({ syncId: saved, cloudStatus: 'idle' })
+    // the unlinked view with its Generate button. Nothing is known to be on the relay until the
+    // first cycle, so a change made meanwhile reads "Syncing…", never "Saved".
+    if (get().syncId === null) set({ syncId: saved, cloudStatus: 'idle', pendingLocal: true })
     void setup(saved, false)
   },
 
@@ -268,9 +373,6 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     } catch {
       // Storage unavailable: the code is forgotten for this session anyway.
     }
-    // Pending field edits stay: reconnecting to this code still rebases them. Setting up a
-    // different code clears them (they are relative to this code's relay copy).
-    disconnectedCode = get().syncId ?? disconnectedCode
     set({
       syncId: null,
       cloudStatus: 'off',
@@ -279,6 +381,7 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       pendingLocal: false,
       waitingForOld: false,
       legacyWriterAt: null,
+      engineFailed: false,
     })
   },
 

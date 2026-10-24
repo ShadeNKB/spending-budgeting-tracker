@@ -1,8 +1,9 @@
 // Cross-device sync layer (v4 wire).
 // - Local-first: localStorage is the source of truth, Supabase is a stateless relay.
-// - Per-expense last-writer-wins by `updatedAt ?? createdAt`, ties broken by content, so
-//   every device resolves a merge the same way whatever the order (no ping-pong).
+// - Per-expense last-writer-wins by `updatedAt ?? createdAt` (whole records), ties broken by
+//   content, so every device resolves a merge the same way whatever the order (no ping-pong).
 // - Tombstones (`deletedIds`) are unioned across devices and always win.
+// - Category names are unioned. Item mappings: per-key last-writer-wins via `mappingUpdatedAt`.
 // - Budgets: per-key last-writer-wins via `budgetUpdatedAt` / `budgetDeletedAt`.
 // - Pulled payloads are read leniently: unreadable rows are kept on the relay, never merged.
 // - Only the lazy sync engine imports this module, and the Supabase JS SDK is loaded lazily
@@ -17,7 +18,7 @@ import { isValid, parseISO } from 'date-fns'
 import type { BackupData, Expense } from '../types'
 import { DEFAULT_CATEGORIES } from '../constants'
 import { isNumber, isRecord, isString, listOf, recordOf } from '../lib/backup'
-import { canon, canonRow } from '../lib/canon'
+import { canon, canonRow, nestsWithin } from '../lib/canon'
 import { LEGACY_STAMP_ISO, stampMs } from '../lib/stamps'
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from './syncConfig'
 
@@ -43,21 +44,10 @@ export type WriterClass = 'v5' | 'v085' | 'legacy'
 export interface WriterStamp {
   app: string
   dev: string
-  /** This push. */
+  /** This push: its realtime echo is recognised by it. */
   rev: string
   at: string
-  /**
-   * The lineage: the rev of the relay copy this push was built on, then that copy's lineage,
-   * newest first, without the writer's own earlier revs. A client that finds one of its pushes
-   * here knows this writer had seen it.
-   */
-  seen: readonly string[]
 }
-
-/** How many revs `wr.seen` names at most. */
-export const SEEN_MAX = 16
-// A rev is 22 characters; anything far longer is not one of ours.
-const REV_MAX_LENGTH = 64
 
 /** What a v0.8.5 push sends: the v4 payload plus `wr`. Rows we could not read ride along as-is. */
 export type SyncPayload = Omit<BackupData, 'expenses'> & {
@@ -75,10 +65,6 @@ export type RemoteRead =
       data: BackupData
       passthrough: unknown[]
       writer: WriterClass
-      key: string
-      /** A v0.8.5 copy's `wr.rev` and `wr.seen` (null and empty for other writers). */
-      rev: string | null
-      seen: readonly string[]
     }
 
 export class PayloadTooLargeError extends Error {
@@ -158,10 +144,14 @@ async function connect(): Promise<SupabaseClient> {
 const optionalText = (value: unknown): boolean =>
   value === undefined || value === null || typeof value === 'string'
 
+// A v5 row nests 2 levels (`fs.amount` is an array); anything far deeper is not a row.
+const ROW_MAX_NESTING = 16
+
 /**
  * A row v0.8 can merge and render: string id, name and category, a finite amount above zero
  * (what add and import accept) and a parseable date. Unknown extra fields (v5 `day`, `fs`, `h`,
- * …) are allowed and kept.
+ * …) are allowed and kept, unless they nest absurdly deep: such a row (only a hostile writer
+ * makes one) could not even be saved here, so it rides along unread like any unreadable row.
  */
 export function isSyncableExpense(row: unknown): row is Expense {
   if (!isRecord(row)) return false
@@ -178,7 +168,8 @@ export function isSyncableExpense(row: unknown): row is Expense {
     typeof category === 'string' &&
     optionalText(row.notes) &&
     (row.createdAt === undefined || typeof row.createdAt === 'string') &&
-    (row.updatedAt === undefined || typeof row.updatedAt === 'string')
+    (row.updatedAt === undefined || typeof row.updatedAt === 'string') &&
+    nestsWithin(row, ROW_MAX_NESTING)
   )
 }
 
@@ -186,16 +177,6 @@ function writerOf(raw: Record<string, unknown>): WriterClass {
   if (isRecord(raw.x5)) return 'v5'
   if (isRecord(raw.wr)) return 'v085'
   return 'legacy'
-}
-
-const isRev = (value: unknown): value is string =>
-  typeof value === 'string' && value !== '' && value.length <= REV_MAX_LENGTH
-
-/** A v0.8.5 copy's rev and lineage, read leniently (anything else counts as unknown). */
-function lineageOf(wr: unknown): { rev: string | null; seen: string[] } {
-  if (!isRecord(wr)) return { rev: null, seen: [] }
-  const seen: readonly unknown[] = Array.isArray(wr.seen) ? wr.seen : []
-  return { rev: isRev(wr.rev) ? wr.rev : null, seen: seen.filter(isRev).slice(0, SEEN_MAX) }
 }
 
 /** Classifies and reads a pulled payload. Never throws. */
@@ -223,6 +204,7 @@ export function readRemote(raw: unknown): RemoteRead {
       expenses,
       categories: listOf(raw.categories, isString),
       categoryMappings: recordOf(raw.categoryMappings, isString),
+      mappingUpdatedAt: recordOf(raw.mappingUpdatedAt, isString),
       budgets: recordOf(raw.budgets, isNumber),
       budgetUpdatedAt: recordOf(raw.budgetUpdatedAt, isString),
       budgetDeletedAt: recordOf(raw.budgetDeletedAt, isString),
@@ -232,8 +214,6 @@ export function readRemote(raw: unknown): RemoteRead {
     },
     passthrough,
     writer,
-    key: contentKey(raw),
-    ...(writer === 'v085' ? lineageOf(raw.wr) : { rev: null, seen: [] }),
   }
 }
 
@@ -257,13 +237,17 @@ function sortedSet(value: unknown): unknown {
  * Canonical content of a payload. Ignores `exportDate`, `version`, `wr`, `x5`, key order and
  * the order of expenses, categories and tombstones. Non-array collections are kept raw, so a
  * damaged relay copy never equals a clean one (our next push repairs it).
+ *
+ * `mappingStamps: false` also ignores `mappingUpdatedAt`: a v0.8.4 writer drops it on every
+ * push, so against its copy only the mappings themselves can be compared.
  */
-export function contentKey(payload: unknown): string {
+export function contentKey(payload: unknown, opts: { mappingStamps?: boolean } = {}): string {
   const p = isRecord(payload) ? payload : {}
   return canon({
     expenses: sortedList(p.expenses, canonRow),
     categories: sortedSet(p.categories),
     categoryMappings: p.categoryMappings,
+    mappingUpdatedAt: opts.mappingStamps === false ? {} : (p.mappingUpdatedAt ?? {}),
     budgets: p.budgets,
     budgetUpdatedAt: p.budgetUpdatedAt,
     budgetDeletedAt: p.budgetDeletedAt ?? {},
@@ -290,16 +274,59 @@ function pickExpense(l: Expense, r: Expense): Expense {
 
 const larger = (a: string, b: string): string => (a >= b ? a : b)
 
+interface MappingSide {
+  value: string
+  /** The stamp as written (kept verbatim), or undefined. */
+  at: string | undefined
+  /** Its order: 0 when absent or outside the stamp window. */
+  t: number
+}
+
+function mappingSide(
+  values: Map<string, string>,
+  stamps: Map<string, string>,
+  key: string,
+): MappingSide | null {
+  const value = values.get(key)
+  if (value === undefined) return null
+  const at = stamps.get(key)
+  return { value, at, t: stampMs(at) }
+}
+
+/** The newer pick; on equal stamps the larger value, then the larger stamp text. */
+function pickMapping(l: MappingSide, r: MappingSide): MappingSide {
+  if (l.t !== r.t) return l.t > r.t ? l : r
+  if (l.value !== r.value) return l.value > r.value ? l : r
+  return (l.at ?? '') >= (r.at ?? '') ? l : r
+}
+
+/**
+ * Item mappings, per key last-writer-wins by `mappingUpdatedAt`. A key without a stamp (written
+ * before 0.8.5, or dropped by a v0.8.4 push) orders as 0, so equal-stamp conflicts go to the
+ * larger value on every device alike. Only stamps inside the window are kept.
+ */
 function mergeMappings(
-  local: Record<string, string>,
-  remote: Record<string, string>,
-): Record<string, string> {
-  const out = new Map<string, string>(ownEntries(remote))
-  for (const [key, value] of ownEntries(local)) {
-    const other = out.get(key)
-    out.set(key, other === undefined ? value : larger(value, other))
+  local: BackupData,
+  remote: BackupData,
+): Pick<BackupData, 'categoryMappings' | 'mappingUpdatedAt'> {
+  const lv = new Map(ownEntries(local.categoryMappings))
+  const rv = new Map(ownEntries(remote.categoryMappings))
+  const ls = new Map(ownEntries(local.mappingUpdatedAt))
+  const rs = new Map(ownEntries(remote.mappingUpdatedAt))
+  const mappings: [string, string][] = []
+  const stamps: [string, string][] = []
+  for (const key of new Set([...lv.keys(), ...rv.keys()])) {
+    const l = mappingSide(lv, ls, key)
+    const r = mappingSide(rv, rs, key)
+    const winner = l && r ? pickMapping(l, r) : (l ?? r)
+    if (!winner) continue
+    mappings.push([key, winner.value])
+    if (winner.t > 0 && winner.at !== undefined) stamps.push([key, winner.at])
   }
-  return Object.fromEntries(out)
+  return {
+    categoryMappings: Object.fromEntries(mappings),
+    mappingUpdatedAt: Object.fromEntries(stamps),
+  }
 }
 
 interface BudgetSide {
@@ -418,7 +445,7 @@ export function mergeBackups(local: BackupData, remote: BackupData): BackupData 
   return {
     expenses: merged,
     categories,
-    categoryMappings: mergeMappings(local.categoryMappings, remote.categoryMappings),
+    ...mergeMappings(local, remote),
     ...mergeBudgets(local, remote),
     deletedIds: [...tombstones].slice(-TOMBSTONE_CAP),
     exportDate: new Date().toISOString(),

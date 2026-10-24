@@ -1,10 +1,9 @@
-// Category rename and remove, and the category an item name maps to, have no stamps on the v4
-// wire. The pure merge only unions names and picks the larger mapping value, so these changes
-// were undone by the next sync (rows re-filed back by the tie-break, the old name back in the
-// list, the older pick back in the mapping). Re-filed rows now carry a forward stamp and a
-// pending category edit; list and mapping changes stay pending until another device builds on
-// the push that carried them, and another device's changes are told apart by the relay copy
-// seen last.
+// Category rename and remove, item mappings and the category list on the v4 wire.
+// - A rename or removal re-files its rows, its item mappings and its budget as stamped writes,
+//   so last-writer-wins on every device adopts them and nothing undoes them.
+// - Item mappings carry a stamp per key (`mappingUpdatedAt`): the pick made last wins.
+// - The category list is a union: a removed or renamed-away name can come back in the list
+//   (known v4 limit, fixed by the v5 rename table); no row, mapping or budget follows it back.
 // Scenarios ported from the final review's adversarial harness (twoDevice, legacy).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Expense } from '../../types'
@@ -23,6 +22,8 @@ import {
   retireDevices,
   rowPayload,
   seedRow,
+  setClientOffline,
+  setVisibility,
   stubRelayEnv,
   writeAsLegacy,
   writeAsOther,
@@ -38,6 +39,7 @@ vi.setConfig({ testTimeout: 60_000 })
 
 const NOW = Date.UTC(2026, 9, 19, 8, 0, 0)
 const MINUTE = 60_000
+const DAY = 24 * 60 * MINUTE
 const LATENCY = { pull: 200, push: 200, realtime: 100 }
 
 beforeEach(() => {
@@ -45,6 +47,7 @@ beforeEach(() => {
   vi.setSystemTime(NOW)
   localStorage.clear()
   Object.defineProperty(navigator, 'onLine', { value: true, configurable: true })
+  Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
   stubRelayEnv()
   resetRelay()
 })
@@ -54,6 +57,7 @@ afterEach(() => {
   vi.clearAllTimers()
   vi.useRealTimers()
   vi.unstubAllEnvs()
+  Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
 })
 
 const store = (d: Device) => d.expense.useExpenseStore
@@ -70,20 +74,22 @@ function relayPayload(): Record<string, unknown> {
   return rest
 }
 
-/** The writer stamp of another v0.8.5 device (not this one's echo), built on `seen`. */
-const peer = (rev: string, seen: string[] = []) => ({
-  wr: { app: '0.8.5', dev: 'aaaaaa', rev, at: '', seen },
-})
-
-/** The rev of the relay copy (the push it holds). */
-function relayRev(): string {
-  const payload = rowPayload(SYNC_CODE)
-  const wr = isRecord(payload) ? payload.wr : undefined
-  return isRecord(wr) && typeof wr.rev === 'string' ? wr.rev : ''
-}
+/** The writer stamp of another v0.8.5 device (not this one's echo). */
+const peer = (rev: string) => ({ wr: { app: '0.8.5', dev: 'aaaaaa', rev, at: '' } })
 
 const relayCategories = (): unknown => relayPayload().categories
 const relayMappings = (): unknown => relayPayload().categoryMappings
+
+/** Runs `write` as a device whose clock is `skew` ms off (its stamps carry the skew). */
+function withClock(skew: number, write: () => void): void {
+  const now = Date.now()
+  vi.setSystemTime(now + skew)
+  try {
+    write()
+  } finally {
+    vi.setSystemTime(now)
+  }
+}
 
 function expectConverged(...devices: Device[]): void {
   const key = contentKey(rowPayload(SYNC_CODE))
@@ -94,6 +100,18 @@ async function expectQuiet(ms = 10 * MINUTE): Promise<void> {
   const upserts = relay().upserts
   await advance(ms)
   expect(relay().upserts).toBe(upserts)
+}
+
+/** Several sync cycles on `device`: Sync now, hide and show, and realtime catch-ups. */
+async function manyCycles(device: Device): Promise<void> {
+  for (let i = 0; i < 5; i++) {
+    void device.sync.useSyncStore.getState().triggerSync()
+    await advance(5000)
+    setVisibility('hidden')
+    await advance(1000)
+    setVisibility('visible')
+    await advance(40_000)
+  }
 }
 
 /** One device with `rows`, connected and settled. */
@@ -121,81 +139,64 @@ describe('a category rename or removal sticks on the device that made it', () =>
   it.each([
     ['Meals', 'Dining'],
     ['Meals', 'Snacks'],
-  ])(
-    'renaming %s to %s keeps the rows and the list renamed across sync cycles',
-    async (from, to) => {
-      const phone = await single(['e1', 'e2'].map((id) => expense(id, { category: from })))
-      S(phone).renameCategory(from, to)
-      expect(categoriesOf(phone)).toEqual([to, to])
+  ])('renaming %s to %s keeps the rows renamed across sync cycles', async (from, to) => {
+    const phone = await single(['e1', 'e2'].map((id) => expense(id, { category: from })))
+    S(phone).renameCategory(from, to)
+    expect(categoriesOf(phone)).toEqual([to, to])
 
-      await advance(MINUTE)
-      void phone.sync.useSyncStore.getState().triggerSync()
-      await advance(MINUTE)
+    await manyCycles(phone)
 
-      expect(categoriesOf(phone)).toEqual([to, to])
-      expect(S(phone).categories).toContain(to)
-      expect(S(phone).categories).not.toContain(from)
-      expect(relayCategories()).toEqual(expect.not.arrayContaining([from]))
-      expect(relayRows()).toEqual(
-        expect.arrayContaining([expect.objectContaining({ id: 'e1', category: to })]),
-      )
-      expectConverged(phone)
-      await expectQuiet()
-
-      // The re-filed rows stay pending until another device builds on the push that carried
-      // them; then they are its to change, and the rename still holds.
-      expect(phone.expense.pendingEditsSnapshot().edits.size).toBe(2)
-      const relayCopy = relayPayload()
-      writeAsOther(SYNC_CODE, { ...relayCopy, ...peer('r-laptop', [relayRev()]) })
-      await advance(MINUTE)
-      expect(phone.expense.pendingEditsSnapshot().edits.size).toBe(0)
-      expect(categoriesOf(phone)).toEqual([to, to])
-      expect(S(phone).categories).not.toContain(from)
-    },
-  )
-
-  it.each(['Transport', 'Bills'])(
-    'removing %s keeps its rows in Other and the name out of the list',
-    async (name) => {
-      const phone = await single(
-        ['e1', 'e2'].map((id) => expense(id, { category: name })),
-        ['Other', 'Meals', name],
-      )
-      S(phone).removeCategory(name)
-      await advance(MINUTE)
-      void phone.sync.useSyncStore.getState().triggerSync()
-      await advance(MINUTE)
-
-      expect(categoriesOf(phone)).toEqual(['Other', 'Other'])
-      expect(S(phone).categories).not.toContain(name)
-      expectConverged(phone)
-      await expectQuiet()
-    },
-  )
-
-  it('re-filed rows carry a forward stamp and a pending category edit; others are untouched', async () => {
-    const stamp = '2026-10-20T08:00:00.000Z' // a day ahead of this device's clock
-    const other = expense('e2', { category: 'Other' })
-    const phone = await single([expense('e1', { category: 'Meals', updatedAt: stamp }), other])
-    S(phone).renameCategory('Meals', 'Dining')
-    expect(Date.parse(rowOf(phone, 'e1')?.updatedAt ?? '')).toBeGreaterThan(Date.parse(stamp))
-    expect(rowOf(phone, 'e2')).toBe(other)
-    const { edits } = phone.expense.pendingEditsSnapshot()
-    expect(edits.get('e1')?.fields).toEqual(new Set(['category']))
-    expect(edits.has('e2')).toBe(false)
+    expect(categoriesOf(phone)).toEqual([to, to])
+    expect(S(phone).categories).toContain(to)
+    expect(relayRows()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: 'e1', category: to }),
+        expect.objectContaining({ id: 'e2', category: to }),
+      ]),
+    )
+    expectConverged(phone)
+    await expectQuiet()
   })
 
-  it('the latest category picked for an item name is kept', async () => {
+  it.each(['Transport', 'Bills'])('removing %s keeps its rows in Other', async (name) => {
+    const phone = await single(
+      ['e1', 'e2'].map((id) => expense(id, { category: name })),
+      ['Other', 'Meals', name],
+    )
+    S(phone).removeCategory(name)
+    await manyCycles(phone)
+
+    expect(categoriesOf(phone)).toEqual(['Other', 'Other'])
+    expectConverged(phone)
+    await expectQuiet()
+  })
+
+  it('the category list is a union: a renamed-away name comes back, empty (known v4 limit)', async () => {
+    const phone = await single([expense('e1', { category: 'Meals' })])
+    S(phone).renameCategory('Meals', 'Dining')
+    expect(S(phone).categories).not.toContain('Meals')
+    await advance(MINUTE)
+    expect(S(phone).categories).toEqual(expect.arrayContaining(['Dining', 'Meals']))
+    // Nothing else follows the name back.
+    expect(categoriesOf(phone)).toEqual(['Dining'])
+    expectConverged(phone)
+    await expectQuiet()
+  })
+
+  it('a correction of the category picked for an item sticks across many sync cycles', async () => {
     const phone = await single([])
     S(phone).addExpense({ itemName: 'grab', amount: 5, category: 'Transport' })
-    await advance(10_000)
-    S(phone).addExpense({ itemName: 'grab', amount: 5, category: 'Meals' })
-    await advance(10_000)
-    void phone.sync.useSyncStore.getState().triggerSync()
     await advance(MINUTE)
+    expect(relayMappings()).toEqual({ grab: 'Transport' })
+
+    // "Transport" > "Meals": a larger-value tie-break would bring Transport back.
+    S(phone).addExpense({ itemName: 'grab', amount: 5, category: 'Meals' })
+    await manyCycles(phone)
 
     expect(S(phone).categoryMappings.grab).toBe('Meals')
     expect(relayMappings()).toEqual({ grab: 'Meals' })
+    expect(S(phone).getSmartCategory('grab')).toBe('Meals')
+    expectConverged(phone)
     await expectQuiet()
   })
 })
@@ -203,15 +204,25 @@ describe('a category rename or removal sticks on the device that made it', () =>
 describe('two v0.8.5 devices', () => {
   const meals = () => ['e1', 'e2'].map((id) => expense(id, { category: 'Meals' }))
 
-  it('converge to a rename made on one of them, list included, then go quiet', async () => {
+  it('converge to a rename made on one of them: rows, mappings and budget, then go quiet', async () => {
     const { phone, laptop } = await pair(meals)
+    for (const d of [phone, laptop]) {
+      store(d).setState({
+        categoryMappings: { kopi: 'Meals' },
+        mappingUpdatedAt: { kopi: '2026-10-01T00:00:00.000Z' },
+        budgets: { Meals: 300 },
+        budgetUpdatedAt: { Meals: '2026-10-01T00:00:00.000Z' },
+      })
+    }
+    await advance(MINUTE)
     S(phone).renameCategory('Meals', 'Dining')
     await advance(MINUTE)
 
     for (const d of [phone, laptop]) {
       expect(categoriesOf(d)).toEqual(['Dining', 'Dining'])
       expect(S(d).categories).toContain('Dining')
-      expect(S(d).categories).not.toContain('Meals')
+      expect(S(d).categoryMappings).toEqual({ kopi: 'Dining' })
+      expect(S(d).budgets).toEqual({ Dining: 300 })
     }
     expectConverged(phone, laptop)
     await expectQuiet()
@@ -222,37 +233,34 @@ describe('two v0.8.5 devices', () => {
     S(phone).removeCategory('Meals')
     await advance(MINUTE)
 
-    for (const d of [phone, laptop]) {
-      expect(categoriesOf(d)).toEqual(['Other', 'Other'])
-      expect(S(d).categories).not.toContain('Meals')
-    }
+    for (const d of [phone, laptop]) expect(categoriesOf(d)).toEqual(['Other', 'Other'])
     expectConverged(phone, laptop)
     await expectQuiet()
   })
 
   it.each([
     ['the laptop edits 500 ms before the rename', true, 500],
-    ['the laptop edits at the same moment', false, 0],
     ['the laptop edits 500 ms after the rename', false, 500],
     ['the laptop edits 3 s after the rename', false, 3000],
   ])(
-    'a concurrent amount edit of a re-filed row survives (%s)',
+    'a concurrent edit of a re-filed row: the later record wins it whole (%s)',
     async (_label, laptopFirst, gap) => {
       const { phone, laptop } = await pair(meals)
-      const first = laptopFirst
-        ? () => S(laptop).updateExpense('e1', { amount: 9 })
-        : () => S(phone).renameCategory('Meals', 'Dining')
-      const second = laptopFirst
-        ? () => S(phone).renameCategory('Meals', 'Dining')
-        : () => S(laptop).updateExpense('e1', { amount: 9 })
-      first()
+      const rename = () => S(phone).renameCategory('Meals', 'Dining')
+      const edit = () => S(laptop).updateExpense('e1', { amount: 9 })
+      if (laptopFirst) edit()
+      else rename()
       await advance(gap)
-      second()
+      if (laptopFirst) rename()
+      else edit()
       await advance(MINUTE)
 
+      // Whole-record last-writer-wins: the later of the two writes holds e1.
+      const e1 = laptopFirst ? { category: 'Dining', amount: 1 } : { category: 'Meals', amount: 9 }
       for (const d of [phone, laptop]) {
-        expect(rowOf(d, 'e1')).toMatchObject({ category: 'Dining', amount: 9 })
+        expect(rowOf(d, 'e1')).toMatchObject(e1)
         expect(rowOf(d, 'e2')).toMatchObject({ category: 'Dining' })
+        expect(S(d).categories).toEqual(expect.arrayContaining(['Dining', 'Meals']))
       }
       expectConverged(phone, laptop)
       await expectQuiet()
@@ -282,7 +290,42 @@ describe('two v0.8.5 devices', () => {
     await advance(MINUTE)
     expect(S(phone).categoryMappings.grab).toBe('Transport')
 
-    // "Transport" > "Meals": the pure merge alone would bring Transport back on every device.
+    S(phone).addExpense({ itemName: 'grab', amount: 5, category: 'Meals' })
+    await advance(MINUTE)
+
+    for (const d of [phone, laptop]) expect(S(d).categoryMappings.grab).toBe('Meals')
+    expectConverged(phone, laptop)
+    await expectQuiet()
+  })
+
+  it.each([
+    ['a day behind', -DAY],
+    ['a day ahead', DAY],
+  ])(
+    'a correction on a device whose clock runs %s still wins once it has seen the pick',
+    async (_label, skew) => {
+      const { phone, laptop } = await pair(() => [])
+      withClock(-skew, () => {
+        S(laptop).addExpense({ itemName: 'grab', amount: 5, category: 'Transport' })
+      })
+      await advance(MINUTE)
+      expect(S(phone).categoryMappings.grab).toBe('Transport')
+
+      withClock(skew, () => {
+        S(phone).addExpense({ itemName: 'grab', amount: 5, category: 'Meals' })
+      })
+      await advance(MINUTE)
+
+      for (const d of [phone, laptop]) expect(S(d).categoryMappings.grab).toBe('Meals')
+      expectConverged(phone, laptop)
+      await expectQuiet()
+    },
+  )
+
+  it('concurrent picks for one item converge to the later stamp on both devices', async () => {
+    const { phone, laptop } = await pair(() => [])
+    S(laptop).addExpense({ itemName: 'grab', amount: 5, category: 'Transport' })
+    await advance(10)
     S(phone).addExpense({ itemName: 'grab', amount: 5, category: 'Meals' })
     await advance(MINUTE)
 
@@ -304,18 +347,115 @@ describe('two v0.8.5 devices', () => {
   })
 })
 
+describe('names that are also Object.prototype keys are plain names', () => {
+  const own = (record: unknown, key: string): unknown =>
+    isRecord(record) && Object.hasOwn(record, key) ? record[key] : undefined
+
+  it('an item named "__proto__" with a picked category: one mapping everywhere, then quiet', async () => {
+    const { phone, laptop } = await pair(() => [])
+    S(phone).addExpense({ itemName: '__proto__', amount: 3, category: 'Meals' })
+    await advance(MINUTE)
+
+    for (const d of [phone, laptop]) {
+      expect(own(S(d).categoryMappings, '__proto__')).toBe('Meals')
+      expect(own(S(d).mappingUpdatedAt, '__proto__')).toEqual(expect.any(String))
+    }
+    expect(own(relayMappings(), '__proto__')).toBe('Meals')
+    expectConverged(phone, laptop)
+    await expectQuiet()
+  })
+
+  it('a category named "__proto__" with a budget: one budget everywhere, then quiet', async () => {
+    const { phone, laptop } = await pair(() => [])
+    S(phone).addCategory('__proto__')
+    S(phone).setBudget('__proto__', 100)
+    await advance(MINUTE)
+
+    for (const d of [phone, laptop]) {
+      expect(own(S(d).budgets, '__proto__')).toBe(100)
+      expect(S(d).categories).toContain('__proto__')
+    }
+    expect(own(relayPayload().budgets, '__proto__')).toBe(100)
+    expectConverged(phone, laptop)
+    await expectQuiet()
+  })
+
+  it.each(['Constructor', '__proto__', 'toString', 'hasOwnProperty'])(
+    'an item named %s with no category picked is filed under Other and reaches the other device',
+    async (itemName) => {
+      const { phone, laptop } = await pair(() => [])
+      const added = S(phone).addExpense({ itemName, amount: 7 })
+      expect(added.category).toBe('Other')
+      expect(S(phone).categoryMappings).toEqual({})
+      await advance(MINUTE)
+
+      expect(rowOf(laptop, added.id)).toMatchObject({ itemName, category: 'Other', amount: 7 })
+      expect(relayRows()).toContainEqual(expect.objectContaining({ id: added.id }))
+      expectConverged(phone, laptop)
+      await expectQuiet()
+    },
+  )
+})
+
+describe('a budget field left unchanged is no edit', () => {
+  it("re-setting the shown value cannot revert the other device's newer change", async () => {
+    const start = (): Expense[] => []
+    const phone = await bootDevice({ expenses: start() })
+    const laptop = await bootDevice({ expenses: start() })
+    relay().latency = LATENCY
+    await connect(phone)
+    const laptopClient = relay().nextClient
+    await connect(laptop)
+    await advance(20_000)
+    S(phone).setBudget('Meals', 200)
+    await advance(MINUTE)
+    expect(S(laptop).budgets.Meals).toBe(200)
+
+    // The laptop drops off the network for a moment; the phone raises the budget.
+    setClientOffline(laptopClient, true)
+    S(phone).setBudget('Meals', 300)
+    await advance(10_000)
+    // On the laptop the Budgets list still shows 200: the owner tabs through the field.
+    vi.setSystemTime(Date.now() + 1000)
+    const before = S(laptop).budgetUpdatedAt
+    S(laptop).setBudget('Meals', 200)
+    expect(S(laptop).budgetUpdatedAt).toBe(before) // no fresh stamp
+    setClientOffline(laptopClient, false)
+    window.dispatchEvent(new Event('online'))
+    await advance(MINUTE)
+
+    for (const d of [phone, laptop]) expect(S(d).budgets.Meals).toBe(300)
+    expectConverged(phone, laptop)
+    await expectQuiet()
+  })
+})
+
 describe('what the relay copy cannot take away', () => {
   it('a new category survives a peer push built on a pull from before it landed', async () => {
     const phone = await single([])
     const stale = relayPayload()
     S(phone).addCategory('Gym')
-    await advance(3000 + 2 * LATENCY.pull) // pushed, not yet confirmed
+    await advance(3000 + 2 * LATENCY.pull)
     expect(relayCategories()).toEqual(expect.arrayContaining(['Gym']))
     writeAsOther(SYNC_CODE, { ...stale, ...peer('r-stale') })
     await advance(MINUTE)
 
     expect(S(phone).categories).toContain('Gym')
     expect(relayCategories()).toEqual(expect.arrayContaining(['Gym']))
+  })
+
+  it('a mapping correction survives a peer push built on a pull from before it landed', async () => {
+    const phone = await single([])
+    S(phone).addExpense({ itemName: 'grab', amount: 5, category: 'Transport' })
+    await advance(MINUTE)
+    const stale = relayPayload()
+    S(phone).addExpense({ itemName: 'grab', amount: 5, category: 'Meals' })
+    await advance(MINUTE)
+    writeAsOther(SYNC_CODE, { ...stale, ...peer('r-stale') })
+    await advance(MINUTE)
+
+    expect(S(phone).categoryMappings.grab).toBe('Meals')
+    expect(relayMappings()).toEqual({ grab: 'Meals' })
   })
 
   it('a damaged category list on the relay removes no category here', async () => {
@@ -337,8 +477,8 @@ describe('what the relay copy cannot take away', () => {
   })
 })
 
-describe('an old (v0.8.4) device re-filing a row without a stamp (§12.3 row 23)', () => {
-  it('a re-file at the same stamp is not adopted: the copy here is kept', async () => {
+describe('an old (v0.8.4) device on the relay', () => {
+  it('a re-file at the same stamp is not adopted: the copy here is kept (§12.3 row 23)', async () => {
     const towel = expense('k1', { itemName: 'Kitchen towel', category: 'Other' })
     const phone = await single([
       towel,
@@ -380,5 +520,30 @@ describe('an old (v0.8.4) device re-filing a row without a stamp (§12.3 row 23)
     })
     await advance(MINUTE)
     expect(rowOf(phone, 'k1')).toMatchObject({ category: 'Shopping', amount: 2 })
+  })
+
+  it('its copy without mapping stamps neither reverts a pick nor draws pushes over the stamps', async () => {
+    const phone = await single([])
+    S(phone).addExpense({ itemName: 'grab', amount: 5, category: 'Meals' })
+    await advance(MINUTE)
+    // The old device keeps its own pick ("Transport" > "Meals") and drops the stamps.
+    writeAsLegacy(SYNC_CODE, {
+      ...relayPayload(),
+      categoryMappings: { grab: 'Transport' },
+      mappingUpdatedAt: undefined,
+    })
+    await advance(MINUTE)
+    expect(S(phone).categoryMappings.grab).toBe('Meals')
+    expect(relayMappings()).toEqual({ grab: 'Meals' })
+
+    // It writes again with the same mappings, only without the stamps: nothing to send.
+    const pushes = relay().pushes.length
+    writeAsLegacy(SYNC_CODE, { ...relayPayload(), mappingUpdatedAt: undefined })
+    await advance(MINUTE)
+    expect(relay().pushes.length).toBe(pushes)
+    expect(phone.sync.useSyncStore.getState()).toMatchObject({
+      cloudStatus: 'synced',
+      waitingForOld: false,
+    })
   })
 })

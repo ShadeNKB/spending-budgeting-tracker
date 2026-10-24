@@ -4,12 +4,14 @@ import type {
   CategoryColors,
   CategoryBudgets,
   CategoryBudgetTimestamps,
+  CategoryMappingTimestamps,
 } from '../types'
-import { isNumber, isString, listOf, recordOf } from '../lib/backup'
+import { isNumber, isRecord, isString, listOf, recordOf } from '../lib/backup'
 
 const KEY_EXPENSES = 'expenses'
 const KEY_CATEGORIES = 'categories'
 const KEY_MAPPINGS = 'categoryMappings'
+const KEY_MAPPING_UPDATED_AT = 'categoryMappingUpdatedAt'
 const KEY_COLORS = 'categoryColors'
 const KEY_BUDGETS = 'categoryBudgets'
 const KEY_BUDGET_UPDATED_AT = 'categoryBudgetUpdatedAt'
@@ -74,19 +76,23 @@ function safeSet(key: string, value: string): void {
 }
 
 export const storage = {
+  /**
+   * The stored rows. An entry that is not an object (a `null` after corruption) carries no
+   * data and is dropped, so no reader dereferences it; object rows are kept as they are.
+   */
   getExpenses(): Expense[] {
     try {
       const raw = localStorage.getItem(KEY_EXPENSES)
       if (!raw) return []
       const parsed = JSON.parse(raw) as unknown
-      if (Array.isArray(parsed)) return parsed as Expense[]
+      if (Array.isArray(parsed)) return listOf(parsed, isRecord) as unknown as Expense[]
     } catch {
       try {
         const raw = localStorage.getItem(KEY_EXPENSES)
         if (raw) {
           const repaired = raw.replace(/,(\s*[}\]])/g, '$1')
           const parsed = JSON.parse(repaired) as unknown
-          if (Array.isArray(parsed)) return parsed as Expense[]
+          if (Array.isArray(parsed)) return listOf(parsed, isRecord) as unknown as Expense[]
         }
       } catch {
         localStorage.removeItem(KEY_EXPENSES)
@@ -127,6 +133,20 @@ export const storage = {
 
   saveCategoryMappings(data: CategoryMappings): void {
     safeSet(KEY_MAPPINGS, JSON.stringify(data))
+  },
+
+  getMappingUpdatedAt(): CategoryMappingTimestamps {
+    try {
+      const raw = localStorage.getItem(KEY_MAPPING_UPDATED_AT)
+      if (raw) return recordOf(JSON.parse(raw), isString)
+    } catch {
+      localStorage.removeItem(KEY_MAPPING_UPDATED_AT)
+    }
+    return {}
+  },
+
+  saveMappingUpdatedAt(data: CategoryMappingTimestamps): void {
+    safeSet(KEY_MAPPING_UPDATED_AT, JSON.stringify(data))
   },
 
   getCategoryColors(): CategoryColors {
@@ -209,10 +229,12 @@ export const storage = {
     budgetUpdatedAt?: CategoryBudgetTimestamps,
     budgetDeletedAt?: CategoryBudgetTimestamps,
     deletedIds?: string[],
+    mappingUpdatedAt?: CategoryMappingTimestamps,
   ): void {
     this.saveExpenses(expenses)
     this.saveCategories(categories)
     this.saveCategoryMappings(mappings)
+    if (mappingUpdatedAt !== undefined) this.saveMappingUpdatedAt(mappingUpdatedAt)
     if (budgets !== undefined) this.saveBudgets(budgets)
     if (budgetUpdatedAt !== undefined) this.saveBudgetUpdatedAt(budgetUpdatedAt)
     if (budgetDeletedAt !== undefined) this.saveBudgetDeletedAt(budgetDeletedAt)

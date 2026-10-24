@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { SettingsDrawer } from './SettingsDrawer'
+import { useExpenseStore } from '../../stores/useExpenseStore'
 import { syncMessage, useSyncStore } from '../../stores/useSyncStore'
 import { useUIStore } from '../../stores/useUIStore'
 
@@ -13,6 +14,7 @@ vi.mock('../../services/syncConfig', async (importOriginal) => ({
 const CODE = '11111111-1111-4111-8111-111111111111'
 const NOW = Date.UTC(2026, 9, 19, 8, 0, 0)
 
+const initialExpense = useExpenseStore.getState()
 const initialSync = useSyncStore.getState()
 const initialUI = useUIStore.getState()
 
@@ -28,6 +30,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  useExpenseStore.setState(initialExpense, true)
   useSyncStore.setState(initialSync, true)
   useUIStore.setState(initialUI, true)
   vi.useRealTimers()
@@ -35,7 +38,7 @@ afterEach(() => {
 })
 
 /** The drawer open on `tab`, after the sheet's opening focus has run. */
-function openOn(tab: 'sync' | 'backup') {
+function openOn(tab: 'sync' | 'backup' | 'budgets' | 'categories') {
   useUIStore.setState({ settingsOpen: true, settingsTab: tab })
   render(<SettingsDrawer />)
   act(() => {
@@ -71,5 +74,58 @@ describe('SettingsDrawer focus', () => {
     })
     // The sheet's own opening focus does not run again on a tab switch either.
     expect(backupTab).toHaveFocus()
+  })
+})
+
+describe('Budgets', () => {
+  const T1 = '2026-10-01T04:00:00.000Z'
+
+  it('leaving a budget field unchanged writes nothing and says nothing', () => {
+    useExpenseStore.setState({
+      categories: ['Other', 'Meals'],
+      budgets: { Meals: 200 },
+      budgetUpdatedAt: { Meals: T1 },
+    })
+    openOn('budgets')
+    const before = useExpenseStore.getState()
+    const field = screen.getByRole('spinbutton', { name: 'Monthly budget for Meals' })
+    fireEvent.focus(field)
+    fireEvent.blur(field)
+    expect(useExpenseStore.getState().budgetUpdatedAt).toBe(before.budgetUpdatedAt)
+    expect(useUIStore.getState().toasts).toEqual([])
+
+    fireEvent.change(field, { target: { value: '250' } })
+    fireEvent.blur(field)
+    expect(useExpenseStore.getState().budgets).toEqual({ Meals: 250 })
+    expect(useUIStore.getState().toasts).toHaveLength(1)
+  })
+
+  it('shows categories named "constructor" and "__proto__" with no budget and their real counts', () => {
+    useExpenseStore.setState({
+      categories: ['Other', 'constructor', '__proto__'],
+      budgets: {},
+      expenses: [
+        {
+          id: 'e1',
+          itemName: 'x',
+          amount: 1,
+          category: '__proto__',
+          date: '2026-10-01T12:00:00',
+          createdAt: T1,
+        },
+      ],
+    })
+    openOn('budgets')
+    for (const name of ['constructor', '__proto__']) {
+      expect(screen.getByRole('spinbutton', { name: `Monthly budget for ${name}` })).toHaveValue(
+        null,
+      )
+    }
+    cleanup()
+    openOn('categories')
+    const row = (name: string) =>
+      screen.getByRole('textbox', { name: `Rename category ${name}` }).closest('li')
+    expect(row('__proto__')).toHaveTextContent(/^1$/)
+    expect(row('constructor')).toHaveTextContent(/^0$/)
   })
 })

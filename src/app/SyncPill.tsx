@@ -49,6 +49,8 @@ interface PillView {
   at?: number
   /** Why: the tooltip, and read after the label. */
   reason?: string
+  /** The words a toast says this in, if one does. */
+  news?: string
 }
 
 /**
@@ -78,6 +80,7 @@ function usePillView(): PillView {
       icon: AlertCircle,
       label: 'Sync paused',
       reason: pausedDetail(cloudError.message),
+      news: cloudError.message,
     }
   }
   if (cloudError && cloudError.kind !== 'offline') {
@@ -89,6 +92,18 @@ function usePillView(): PillView {
         icon: AlertCircle,
         label: `Sync failing since ${clockTime(cloudError.since)}`,
         reason: cloudError.message,
+        news: cloudError.message,
+      }
+    }
+    // Red says "needs you": a refusal is not something to wait out.
+    if (cloudError.kind === 'permission') {
+      return {
+        state: 'refused',
+        tone,
+        icon: AlertCircle,
+        label: 'Sync refused',
+        reason: cloudError.message,
+        news: cloudError.message,
       }
     }
     return {
@@ -97,6 +112,7 @@ function usePillView(): PillView {
       icon: AlertCircle,
       label: 'Sync retrying',
       reason: cloudError.message,
+      news: cloudError.message,
     }
   }
   if (isOffline || cloudError?.kind === 'offline') {
@@ -120,6 +136,7 @@ function usePillView(): PillView {
       icon: Info,
       label: 'Update old device',
       reason: OLD_DEVICE_WAITING,
+      news: OLD_DEVICE_WAITING,
     }
   }
   if (configured && pendingLocal) {
@@ -139,6 +156,7 @@ const ALERTS: ReadonlySet<string> = new Set([
   'save-failed',
   'paused',
   'failing',
+  'refused',
   'retrying',
   'offline',
   'waiting-for-old',
@@ -149,40 +167,71 @@ const PASSING: ReadonlySet<string> = new Set(['saving', 'syncing'])
 const spoken = (view: PillView): string =>
   view.reason ? `${view.label}. ${view.reason}` : view.label
 
+interface Said {
+  /** The pill state the region last followed. */
+  state: string
+  /** What the region holds: never a claim the pill no longer makes ('' is always true). */
+  text: string
+  /** A problem was open: the next settled state is a recovery, and is said. */
+  recovering: boolean
+  muted: boolean
+}
+
 /**
  * What the live region says: each problem as it starts, then the settled state that ends it
- * (a recovery). Saving and syncing come and go many times a minute and are never spoken. While
- * Settings is open on Sync (`muted`), its status row and banners speak for sync: the pill
- * follows along silently, so one event is announced once.
+ * (a recovery). Saving and syncing come and go many times a minute and are never spoken.
+ *
+ * Another voice can say a change instead: Settings open on Sync (`muted`), a modal whose banners
+ * (a live region) announce each problem, or a toast already on screen with the same words
+ * (`toasted`). Then the region empties instead (a removal is not announced), so one event is
+ * heard once and the region never keeps a claim that is no longer true. When the panel closes,
+ * a problem the region does not hold yet is said then.
  */
-function useAnnouncement(view: PillView, muted: boolean): string {
-  const [said, setSaid] = useState(() => ({
+function useAnnouncement(view: PillView, muted: boolean, toasted: boolean): string {
+  const [said, setSaid] = useState<Said>(() => ({
     state: view.state,
     text: ALERTS.has(view.state) ? spoken(view) : '',
     recovering: ALERTS.has(view.state),
+    muted,
   }))
-  if (view.state !== said.state) {
-    if (muted) {
-      setSaid({ ...said, state: view.state, recovering: ALERTS.has(view.state) })
-    } else if (ALERTS.has(view.state)) {
-      setSaid({ state: view.state, text: spoken(view), recovering: true })
-    } else if (PASSING.has(view.state)) {
-      setSaid({ ...said, state: view.state })
-    } else {
-      setSaid({
-        state: view.state,
-        text: said.recovering ? spoken(view) : said.text,
-        recovering: false,
-      })
+  if (view.state === said.state && muted === said.muted) return said.text
+  const alert = ALERTS.has(view.state)
+  const passing = PASSING.has(view.state)
+  let next: Said
+  if (view.state === said.state) {
+    // Only the panel opened or closed.
+    const tell = !muted && alert && said.text === ''
+    next = { ...said, muted, text: tell ? spoken(view) : said.text }
+  } else if (muted || (alert && toasted)) {
+    next = {
+      state: view.state,
+      text: '',
+      recovering: passing ? said.recovering : alert,
+      muted,
+    }
+  } else if (alert) {
+    next = { state: view.state, text: spoken(view), recovering: true, muted }
+  } else if (passing) {
+    next = { ...said, state: view.state, muted }
+  } else {
+    next = {
+      state: view.state,
+      text: said.recovering ? spoken(view) : said.text,
+      recovering: false,
+      muted,
     }
   }
-  return said.text
+  setSaid(next)
+  return next.text
 }
 
 export function SyncPill() {
   const view = usePillView()
   const muted = useUIStore(syncPanelShown)
-  const announcement = useAnnouncement(view, muted)
+  const toasted = useUIStore(
+    (s) => view.news !== undefined && s.toasts.some((t) => t.message === view.news),
+  )
+  const announcement = useAnnouncement(view, muted, toasted)
   // Re-render every 15 s so the relative times stay current and a failure turns red on time.
   useTick(15_000)
 

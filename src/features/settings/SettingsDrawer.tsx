@@ -185,10 +185,10 @@ function CategoriesPanel() {
   const [newCat, setNewCat] = useState('')
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
 
-  const counts = categories.reduce<Record<string, number>>((acc, c) => {
-    acc[c] = expenses.filter((e) => e.category === c).length
-    return acc
-  }, {})
+  // A Map: a category may be named "__proto__" or "constructor".
+  const counts = new Map(
+    categories.map((c) => [c, expenses.filter((e) => e.category === c).length]),
+  )
 
   return (
     <div className="flex flex-col gap-3">
@@ -243,7 +243,7 @@ function CategoriesPanel() {
               }}
               className="min-w-0 flex-1 bg-transparent text-[13px] text-white outline-none"
             />
-            <Pill tone="default">{counts[c] ?? 0}</Pill>
+            <Pill tone="default">{counts.get(c) ?? 0}</Pill>
             {confirmDelete === c ? (
               <div className="flex shrink-0 items-center gap-1">
                 <button
@@ -300,7 +300,8 @@ function BudgetsPanel() {
       </p>
       <ul className="flex flex-col gap-1.5">
         {categories.map((c) => {
-          const current = budgets[c]
+          // Own keys only: a category named "constructor" has no budget of Object's.
+          const current = Object.hasOwn(budgets, c) ? budgets[c] : undefined
           return (
             <li
               key={c}
@@ -322,6 +323,8 @@ function BudgetsPanel() {
                   className="h-8 w-24 rounded-md border border-white/[0.06] bg-surface-2 px-2 text-right font-mono text-[13px] tabular-nums text-white outline-none [color-scheme:dark] focus:border-accent/60 [@media(pointer:coarse)]:w-28"
                   onBlur={(e) => {
                     const v = parseFloat(e.target.value)
+                    // Leaving the field unchanged is no edit (and no toast).
+                    if (v === current) return
                     if (Number.isFinite(v) && v > 0) {
                       setBudget(c, v)
                       toast.success(`${c}: ${fmt(v)} budget set`)

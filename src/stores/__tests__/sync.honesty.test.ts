@@ -48,6 +48,8 @@ afterEach(() => {
   vi.useRealTimers()
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+  Object.defineProperty(navigator, 'onLine', { value: true, configurable: true })
 })
 
 async function connected(expenses: Expense[] = [expense('e1')]): Promise<Device> {
@@ -236,6 +238,47 @@ describe('going offline never ends a pause, nor promises a sync it will not run'
     },
   )
 
+  // Offline keeps refused access and a long streak, and nothing retries while offline: no
+  // failure's words may promise a retry (the server's said "Retrying automatically").
+  it.each([
+    'offline',
+    'network',
+    'server',
+    'permission',
+    'invalid',
+    'too-large',
+    'moved',
+    'update-required',
+    'reload',
+  ] as const)('the words for %s promise no retry', async (kind) => {
+    const { syncMessage } = await import('../useSyncStore')
+    expect(syncMessage(kind)).not.toMatch(/retr/i)
+  })
+
+  it('offline keeps refused access, its words and its result, and promises nothing', async () => {
+    const phone = await connected()
+    failNext('pull', ...Array.from({ length: 10 }, (): Failure => ({ status: 401 })))
+    expect(await trigger(phone)).toMatchObject({ ok: false, error: 'permission' })
+    const refused = phone.sync.useSyncStore.getState().lastError
+
+    setOnline(false)
+    expect(phone.sync.useSyncStore.getState()).toMatchObject({
+      cloudStatus: 'error',
+      lastError: refused,
+    })
+    expect(phone.sync.syncsWhenOnline(phone.sync.useSyncStore.getState())).toBe(false)
+    expect(await trigger(phone)).toEqual({
+      ok: false,
+      error: 'permission',
+      message: refused?.message,
+    })
+    expect(willSync(phone)).toEqual([])
+
+    setOnline(true)
+    await advance(5000)
+    expect(phone.sync.useSyncStore.getState().lastError?.kind).toBe('permission')
+  })
+
   it('a retried failure is replaced by offline (no retry runs while offline)', async () => {
     const phone = await connected()
     failNext('pull', { status: 503 }, { status: 503 }, { status: 503 }, { status: 503 })
@@ -274,6 +317,56 @@ describe('a long failure streak (AC-19)', () => {
     ).toHaveLength(1)
   })
 
+  it('keeps the start of the streak across an offline blip, and toasts it once', async () => {
+    const phone = await connected()
+    const started = Date.now()
+    failNext('pull', ...Array.from({ length: 80 }, (): Failure => ({ status: 503 })))
+    await trigger(phone)
+    await advance(10.5 * MINUTE)
+    expect(phone.sync.useSyncStore.getState().lastError).toMatchObject({
+      kind: 'server',
+      since: started,
+    })
+    const streakToasts = () =>
+      toastsOf(phone).filter((t) => t.message.startsWith('Sync has been failing'))
+    expect(streakToasts()).toHaveLength(1)
+
+    // The phone drops signal for a second: no attempt is made, so nothing is learnt, and the red
+    // "failing since" stays true offline: it is kept, not replaced by a promise to sync.
+    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true })
+    window.dispatchEvent(new Event('offline'))
+    await advance(1000)
+    expect(phone.sync.useSyncStore.getState()).toMatchObject({
+      cloudStatus: 'error',
+      lastError: { kind: 'server', since: started },
+    })
+    expect(phone.sync.syncsWhenOnline(phone.sync.useSyncStore.getState())).toBe(false)
+    Object.defineProperty(navigator, 'onLine', { value: true, configurable: true })
+    window.dispatchEvent(new Event('online'))
+    await advance(2 * MINUTE)
+
+    // Still failing since the first failure (not "retrying" from the blip), and not toasted again.
+    expect(phone.sync.useSyncStore.getState().lastError).toMatchObject({
+      kind: 'server',
+      since: started,
+    })
+    expect(phone.sync.isFailing({ kind: 'server', since: started })).toBe(true)
+    expect(streakToasts()).toHaveLength(1)
+  })
+
+  it('ends the streak at the next cycle that reaches the relay', async () => {
+    const phone = await connected()
+    failNext('pull', { status: 503 })
+    await trigger(phone)
+    const first = phone.sync.useSyncStore.getState().lastError?.since
+    await advance(5000) // the 2 s retry succeeds
+    expect(phone.sync.useSyncStore.getState().lastError).toBeNull()
+    await advance(MINUTE)
+    failNext('pull', { status: 503 })
+    await trigger(phone)
+    expect(phone.sync.useSyncStore.getState().lastError?.since).toBeGreaterThan(first ?? 0)
+  })
+
   it("leaves the streak toast to the panel when the owner's own Sync now fails", async () => {
     const phone = await connected()
     failNext('pull', ...Array.from({ length: 40 }, (): Failure => ({ status: 503 })))
@@ -307,6 +400,105 @@ describe('a long failure streak (AC-19)', () => {
     await advance(12 * MINUTE)
     expect(phone.sync.useSyncStore.getState().lastError?.kind).toBe('server')
     expect(toastsOf(phone).filter((t) => t.message.startsWith('Sync has been failing'))).toEqual([])
+  })
+})
+
+// The pill is desktop-only: on a phone a toast is the only thing on a main screen that says
+// sync has stopped. Where the pill or the open Sync panel says it, a toast would say it twice.
+describe('a phone hears what needs the owner (no pill below 1280 px)', () => {
+  const where = [
+    ['the Sync panel is open', 'panel'],
+    ['the pill is on screen (1280 px and up)', 'pill'],
+  ] as const
+  const show = (phone: Device, surface: 'panel' | 'pill') => {
+    if (surface === 'panel') {
+      phone.ui.useUIStore.setState({ settingsOpen: true, settingsTab: 'sync' })
+    } else {
+      vi.stubGlobal('matchMedia', (query: string) => ({
+        matches: query === phone.sync.SYNC_PILL_MEDIA,
+        media: query,
+      }))
+    }
+  }
+  const refusedToasts = (phone: Device) =>
+    toastsOf(phone).filter((t) => t.message === phone.sync.syncMessage('permission'))
+  /** A background cycle: a local change pushes 3 s later, with no owner waiting on it. */
+  const addInBackground = async (phone: Device) => {
+    phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
+    await advance(4000)
+  }
+
+  it('refused access is toasted at once, in red, once per session', async () => {
+    const phone = await connected()
+    failNext('pull', ...Array.from({ length: 40 }, (): Failure => ({ status: 401 })))
+    await addInBackground(phone)
+    expect(phone.sync.useSyncStore.getState().lastError?.kind).toBe('permission')
+    expect(refusedToasts(phone)).toEqual([expect.objectContaining({ kind: 'error' })])
+    phone.ui.useUIStore.setState({ toasts: [] }) // it timed out
+    await advance(5 * MINUTE) // the retries are refused too
+    expect(refusedToasts(phone)).toEqual([])
+  })
+
+  it.each(where)('refused access is not toasted where %s', async (_label, surface) => {
+    const phone = await connected()
+    show(phone, surface)
+    failNext('pull', ...Array.from({ length: 40 }, (): Failure => ({ status: 401 })))
+    await addInBackground(phone)
+    expect(phone.sync.useSyncStore.getState().lastError?.kind).toBe('permission')
+    expect(refusedToasts(phone)).toEqual([])
+  })
+
+  it("leaves refused access to the panel's own result when the owner asked", async () => {
+    const phone = await connected()
+    failNext('pull', ...Array.from({ length: 40 }, (): Failure => ({ status: 401 })))
+    expect(await trigger(phone)).toMatchObject({ ok: false, error: 'permission' })
+    expect(refusedToasts(phone)).toEqual([])
+  })
+
+  it('a move to a newer version is toasted once, with a Reload that runs the new build, which it looks for at once', async () => {
+    const phone = await connected()
+    const { getUpdateController } = await import('../../app/swUpdate')
+    const controller = getUpdateController()
+    const checkNow = vi.spyOn(controller, 'checkNow')
+    const reloadToLatest = vi.spyOn(controller, 'reloadToLatest').mockImplementation(() => {})
+    const moved = { version: '4.0', expenses: 'moved', categories: [] }
+    writeAsOther(SYNC_CODE, moved) // a background cycle reads the fence
+    await advance(5000)
+    expect(phone.sync.useSyncStore.getState()).toMatchObject({
+      cloudStatus: 'paused',
+      lastError: { kind: 'moved' },
+    })
+    expect(checkNow).toHaveBeenCalledTimes(1)
+    const toasts = toastsOf(phone)
+    expect(toasts).toEqual([
+      expect.objectContaining({
+        kind: 'warning',
+        message: phone.sync.syncMessage('moved'),
+        action: expect.objectContaining({ label: 'Reload' }) as unknown,
+      }),
+    ])
+    toasts[0]?.action?.onClick()
+    expect(reloadToLatest).toHaveBeenCalledTimes(1)
+
+    // More cycles in the same pause: no second look, no second toast.
+    phone.ui.useUIStore.setState({ toasts: [] })
+    writeAsOther(SYNC_CODE, { ...moved, categories: ['Other'] })
+    await advance(5000)
+    expect(checkNow).toHaveBeenCalledTimes(1)
+    expect(toastsOf(phone)).toEqual([])
+  })
+
+  it('leaves a pause to the open Sync panel (its banner says it), and still toasts it only once', async () => {
+    const phone = await connected()
+    show(phone, 'panel')
+    writeAsOther(SYNC_CODE, { version: '4.0', expenses: 'moved', categories: [] })
+    await advance(5000)
+    expect(phone.sync.useSyncStore.getState().lastError?.kind).toBe('moved')
+    expect(toastsOf(phone)).toEqual([])
+    phone.ui.useUIStore.setState({ settingsOpen: false })
+    writeAsOther(SYNC_CODE, { version: '4.0', expenses: 'moved', categories: ['Other'] })
+    await advance(5000)
+    expect(toastsOf(phone)).toEqual([])
   })
 })
 
@@ -407,6 +599,30 @@ describe('lenient pulls: unreadable rows are never merged and never deleted (AC-
     expect(rowPayload(SYNC_CODE)).toMatchObject({ categories: ['Other', 'Meals'] })
   })
 
+  // It used to overflow the content key's recursion: every device failed the read ('invalid')
+  // and retried forever, so sync stopped for all of them until someone rewrote the row.
+  it('a hostile row nested 3,000 levels deep rides along, and sync goes on', async () => {
+    let deep: unknown = 1
+    for (let i = 0; i < 3000; i++) deep = { a: deep }
+    const hostile = { ...expense('h1'), x: deep }
+    seedRow(SYNC_CODE, payloadOf([hostile, expense('g1')]))
+    const phone = await bootDevice({ expenses: [expense('e1')] })
+    expect(await connect(phone)).toMatchObject({ ok: true, pushed: true })
+    phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
+    await advance(MINUTE)
+
+    const state = phone.sync.useSyncStore.getState()
+    expect(state).toMatchObject({ cloudStatus: 'synced', lastError: null, pendingLocal: false })
+    const ids = phone.expense.useExpenseStore.getState().expenses.map((e) => e.id)
+    expect(ids).toHaveLength(3)
+    expect(ids).not.toContain('h1')
+    expect(relayRows()).toHaveLength(4)
+    expect(relayRows()).toContainEqual(hostile)
+    const upserts = relay().upserts
+    await advance(10 * MINUTE)
+    expect(relay().upserts).toBe(upserts)
+  })
+
   it('keeps a local unreadable row in the store and in storage, and never sends it', async () => {
     const bad = { ...expense('bad'), date: 'last tuesday' }
     // Hydrate no longer runs the category migration, so a corrupt row reaches the store.
@@ -416,9 +632,10 @@ describe('lenient pulls: unreadable rows are never merged and never deleted (AC-
     await advance(5000)
 
     const stored: readonly unknown[] = phone.expense.useExpenseStore.getState().expenses
-    expect(stored).toHaveLength(4)
+    // The null carried no data: storage drops it on load, so no reader dereferences it.
+    expect(stored).toHaveLength(3)
     expect(stored).toContainEqual(bad)
-    expect(stored).toContain(null)
+    expect(stored).not.toContain(null)
     expect(localStorage.getItem('expenses')).toContain('last tuesday')
     const relayIds = relayRows().map((r) =>
       typeof r === 'object' && r !== null && 'id' in r ? r.id : r,
@@ -471,9 +688,7 @@ describe('the writer stamp and local markers (AC-28)', () => {
       const wr = isRecord(push.payload) && isRecord(push.payload.wr) ? push.payload.wr : {}
       expect(wr.rev).toMatch(/^[A-Za-z0-9_-]{22}$/)
       expect(new Date(String(wr.at)).toISOString()).toBe(wr.at)
-      // The lineage: the revs of the copies it was built on, never its own.
-      expect(Array.isArray(wr.seen)).toBe(true)
-      expect(wr.seen).not.toContain(wr.rev)
+      expect(Object.keys(wr).sort()).toEqual(['app', 'at', 'dev', 'rev'])
       revs.add(wr.rev)
     }
     expect(revs.size).toBe(pushes.length)

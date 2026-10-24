@@ -126,21 +126,25 @@ describe('SyncPill', () => {
     expect(pillText()).toMatch(/^Sync failing since /)
   })
 
-  it('shows refused access in red from the first failure', () => {
+  it('shows refused access in red from the first failure, in words that ask for action', () => {
     useSyncStore.setState({
       ...connected,
       cloudStatus: 'error',
       lastError: { kind: 'permission', message: syncMessage('permission'), since: NOW },
     })
     render(<SyncPill />)
-    expect(pillText()).toBe('Sync retrying')
+    // Red means "needs you"; "retrying" would say "wait it out".
+    expect(pillText()).toBe('Sync refused')
     expect(pill()).toHaveClass('text-negative')
+    expect(pill()).toHaveAttribute('title', syncMessage('permission'))
+    expect(announced()).toBe(`Sync refused. ${syncMessage('permission')}`)
   })
 
   it.each([
     ['too-large', 'text-negative'],
     ['moved', 'text-warning'],
     ['update-required', 'text-warning'],
+    ['reload', 'text-warning'],
   ] as const)('shows %s as paused, coloured %s as in Settings › Sync', (kind, colour) => {
     const message = syncMessage(kind, 1200)
     useSyncStore.setState({
@@ -298,6 +302,90 @@ describe('SyncPill', () => {
     act(() => useUIStore.setState({ settingsOpen: false }))
     act(() => useSyncStore.setState({ cloudStatus: 'synced', lastError: null }))
     expect(announced()).toBe('Synced')
+  })
+
+  // Measured at 1280 px: the region said "Synced" while the pill read "Sync retrying", for good.
+  it('never keeps a claim made before the panel opened: a failure meanwhile is said on close', () => {
+    useSyncStore.setState({ ...connected, cloudStatus: 'synced', pendingLocal: false })
+    render(<SyncPill />)
+    act(() => useExpenseStore.setState({ isOffline: true }))
+    expect(announced()).toBe('Offline')
+    act(() => useExpenseStore.setState({ isOffline: false }))
+    expect(announced()).toBe('Synced')
+
+    act(() => useUIStore.setState({ settingsOpen: true, settingsTab: 'sync' }))
+    const server = { kind: 'server' as const, message: syncMessage('server'), since: NOW }
+    act(() => useSyncStore.setState({ cloudStatus: 'error', lastError: server }))
+    expect(pillText()).toBe('Sync retrying')
+    expect(announced()).toBe('') // the panel speaks; the region holds nothing untrue
+    act(() => useUIStore.setState({ settingsOpen: false }))
+    expect(announced()).toBe(`Sync retrying. ${syncMessage('server')}`)
+    act(() => {
+      vi.advanceTimersByTime(16_000)
+    })
+    expect(announced()).toBe(`Sync retrying. ${syncMessage('server')}`)
+  })
+
+  it('never keeps a problem that recovered while the panel was open', () => {
+    useSyncStore.setState({ ...connected, cloudStatus: 'synced', pendingLocal: false })
+    render(<SyncPill />)
+    const server = { kind: 'server' as const, message: syncMessage('server'), since: NOW }
+    act(() => useSyncStore.setState({ cloudStatus: 'error', lastError: server }))
+    expect(announced()).toBe(`Sync retrying. ${syncMessage('server')}`)
+    act(() => useUIStore.setState({ settingsOpen: true, settingsTab: 'sync' }))
+    act(() => useSyncStore.setState({ cloudStatus: 'synced', lastError: null, lastSyncAt: NOW }))
+    expect(pillText()).toBe('Synced · just now')
+    expect(announced()).toBe('')
+    act(() => useUIStore.setState({ settingsOpen: false }))
+    expect(announced()).toBe('')
+  })
+
+  it('opening and closing the panel with nothing changed says nothing again', () => {
+    useSyncStore.setState({ ...connected, cloudStatus: 'synced', pendingLocal: false })
+    render(<SyncPill />)
+    const server = { kind: 'server' as const, message: syncMessage('server'), since: NOW }
+    act(() => useSyncStore.setState({ cloudStatus: 'error', lastError: server }))
+    const region = screen.getByRole('status')
+    const changes: string[] = []
+    const observer = new MutationObserver(() => changes.push(region.textContent))
+    observer.observe(region, { childList: true, characterData: true, subtree: true })
+    act(() => useUIStore.setState({ settingsOpen: true, settingsTab: 'sync' }))
+    act(() => useUIStore.setState({ settingsOpen: false }))
+    observer.disconnect()
+    expect(changes).toEqual([])
+    expect(announced()).toBe(`Sync retrying. ${syncMessage('server')}`)
+  })
+
+  // At 1280 px the engine's once-per-session pause toast and the pill said nearly the same
+  // sentence one after the other.
+  it('leaves a pause to the toast already saying it, and still announces the recovery', () => {
+    useSyncStore.setState({ ...connected, cloudStatus: 'synced', pendingLocal: false })
+    render(<SyncPill />)
+    const message = syncMessage('too-large', 1228)
+    act(() => {
+      useUIStore.getState().pushToast({ kind: 'error', message, duration: 12_000 })
+      useSyncStore.setState({
+        cloudStatus: 'paused',
+        lastError: { kind: 'too-large', message, since: NOW },
+      })
+    })
+    expect(pillText()).toBe('Sync paused')
+    expect(announced()).toBe('')
+    act(() => useSyncStore.setState({ cloudStatus: 'synced', lastError: null }))
+    expect(announced()).toBe('Synced')
+  })
+
+  it('announces a pause itself when no toast says it (the once-per-session toast is spent)', () => {
+    useSyncStore.setState({ ...connected, cloudStatus: 'synced', pendingLocal: false })
+    render(<SyncPill />)
+    const message = syncMessage('too-large', 1228)
+    act(() =>
+      useSyncStore.setState({
+        cloudStatus: 'paused',
+        lastError: { kind: 'too-large', message, since: NOW },
+      }),
+    )
+    expect(announced()).toBe(`Sync paused. ${pausedDetail(message)}`)
   })
 
   it('speaks while Settings is open on another tab (no sync banner there)', () => {

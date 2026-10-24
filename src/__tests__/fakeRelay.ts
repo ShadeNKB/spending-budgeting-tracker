@@ -17,6 +17,11 @@ export type Failure =
   | { status: number; code?: string; message?: string }
   | { hang: true }
   | { abortable: true }
+  /**
+   * A push the server commits `ghost` ms after the request although it never answers: the
+   * client gives up at its deadline, and the write still lands later (over anything newer).
+   */
+  | { ghost: number }
 
 export interface RelayResponse {
   data: unknown
@@ -41,6 +46,16 @@ export interface PushRecord {
   client: number
   syncId: string
   payload: unknown
+  /** When the write landed. */
+  at: number
+  /** When the request was made (the client built the payload just before). */
+  requestedAt: number
+}
+
+/** A pull that was answered with a row: what the client got, and when. */
+export interface PullRecord {
+  client: number
+  payload: unknown
   at: number
 }
 
@@ -61,6 +76,7 @@ interface RelayState {
   pulls: number
   upserts: number
   pushes: PushRecord[]
+  pullLog: PullRecord[]
   legacyWrites: number
   nextClient: number
   /** Per-client latency overrides (undefined: the shared latency). */
@@ -72,8 +88,13 @@ interface RelayState {
   pullReadFraction: number
   /** The realtime socket is down: no events, and a (re)subscribe answers CHANNEL_ERROR. */
   realtimeDown: boolean
-  /** Clients without a network: their requests fail with status 0 and they get no events. */
+  /**
+   * Clients without a network: their requests fail with status 0, they get no events, and their
+   * channels (re)subscribe with CHANNEL_ERROR (see `setClientOffline`).
+   */
   offlineClients: Set<number>
+  /** Ghost pushes (see `Failure`) that have landed. */
+  ghostsLanded: number
 }
 
 declare global {
@@ -97,6 +118,7 @@ function freshRelay(): RelayState {
     pulls: 0,
     upserts: 0,
     pushes: [],
+    pullLog: [],
     legacyWrites: 0,
     nextClient: 1,
     pushLatencyFor: null,
@@ -105,6 +127,7 @@ function freshRelay(): RelayState {
     pullReadFraction: 1,
     realtimeDown: false,
     offlineClients: new Set(),
+    ghostsLanded: 0,
   }
 }
 
@@ -210,8 +233,10 @@ export class FakeChannel {
     const r = relay()
     r.channels.add(this)
     setTimeout(() => {
-      if (relay().channels.has(this))
-        this.emit(relay().realtimeDown ? 'CHANNEL_ERROR' : 'SUBSCRIBED')
+      const now = relay()
+      if (!now.channels.has(this)) return
+      const down = now.realtimeDown || now.offlineClients.has(this.client.id)
+      this.emit(down ? 'CHANNEL_ERROR' : 'SUBSCRIBED')
     }, r.subscribeDelay)
     return this
   }
@@ -297,6 +322,7 @@ class Query implements PromiseLike<RelayResponse> {
 
   private execute(): Promise<RelayResponse> {
     const r = relay()
+    const requestedAt = Date.now()
     const failure: Failure | undefined = r.offlineClients.has(this.client.id)
       ? { status: 0 }
       : r.failures[this.op === 'select' ? 'pull' : 'push'].shift()
@@ -308,6 +334,22 @@ class Query implements PromiseLike<RelayResponse> {
       this.client.upserts++
     }
     if (failure && 'hang' in failure) return new Promise<RelayResponse>(() => undefined)
+    if (failure && 'ghost' in failure) {
+      // It lands whatever the client does; the client only ever sees its own abort.
+      if (this.op === 'upsert') {
+        setTimeout(() => {
+          relay().ghostsLanded++
+          this.write(requestedAt)
+        }, failure.ghost)
+      }
+      return new Promise<RelayResponse>((resolve) => {
+        const onAbort = () => {
+          resolve(errorResponse(0, 'AbortError: This operation was aborted'))
+        }
+        if (this.signal?.aborted) onAbort()
+        else this.signal?.addEventListener('abort', onAbort, { once: true })
+      })
+    }
 
     return new Promise<RelayResponse>((resolve) => {
       const latency =
@@ -327,7 +369,14 @@ class Query implements PromiseLike<RelayResponse> {
       if (failure && 'abortable' in failure) return // settles only through the abort signal
 
       if (this.op === 'upsert' && !failure) {
-        timers.push(setTimeout(() => this.write(), Math.floor(latency * r.writeFraction)))
+        timers.push(
+          setTimeout(
+            () => {
+              this.write(requestedAt)
+            },
+            Math.floor(latency * r.writeFraction),
+          ),
+        )
       }
       // A slow download (or a page frozen between the read and its continuation) answers with
       // the row as it was when it was read.
@@ -347,7 +396,7 @@ class Query implements PromiseLike<RelayResponse> {
       timers.push(
         setTimeout(() => {
           this.signal?.removeEventListener('abort', onAbort)
-          if (failure) {
+          if (failure && 'status' in failure) {
             const message =
               failure.message ?? (failure.status === 0 ? 'TypeError: Failed to fetch' : 'Error')
             resolve(errorResponse(failure.status, message, failure.code))
@@ -358,6 +407,13 @@ class Query implements PromiseLike<RelayResponse> {
             return
           }
           const row = readEarly ? read : relay().rows.get(this.syncId)
+          if (row) {
+            relay().pullLog.push({
+              client: this.client.id,
+              payload: clone(row.payload),
+              at: Date.now(),
+            })
+          }
           resolve({
             data: row ? { payload: clone(row.payload), updated_at: row.updated_at } : null,
             error: null,
@@ -368,7 +424,7 @@ class Query implements PromiseLike<RelayResponse> {
     })
   }
 
-  private write(): void {
+  private write(requestedAt: number): void {
     const r = relay()
     const insert = !r.rows.has(this.syncId)
     const updatedAt =
@@ -380,6 +436,7 @@ class Query implements PromiseLike<RelayResponse> {
       syncId: this.syncId,
       payload: clone(this.row.payload),
       at: Date.now(),
+      requestedAt,
     })
     fanOut(this.client, this.syncId, row, insert)
   }
@@ -533,6 +590,20 @@ export function dropRealtime(down: boolean): void {
   const r = relay()
   r.realtimeDown = down
   if (down) for (const channel of [...r.channels]) channel.emit('CHANNEL_ERROR')
+}
+
+/**
+ * One client loses (or gets back) its network, as a phone does in a lift: its requests fail,
+ * and its realtime socket drops (CHANNEL_ERROR), so it re-subscribes once it is back.
+ */
+export function setClientOffline(clientId: number, offline: boolean): void {
+  const r = relay()
+  if (offline) r.offlineClients.add(clientId)
+  else r.offlineClients.delete(clientId)
+  if (!offline) return
+  for (const channel of [...r.channels]) {
+    if (channel.client.id === clientId) channel.emit('CHANNEL_ERROR')
+  }
 }
 
 /** A v4 relay payload holding `expenses`. */

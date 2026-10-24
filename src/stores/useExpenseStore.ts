@@ -6,7 +6,6 @@ import { storage } from '../services/storage'
 import { DEFAULT_CATEGORIES, FUSE_THRESHOLD, FUSE_SCORE_CUTOFF } from '../constants'
 import { generateId } from '../utils/helpers'
 import { isRecord } from '../lib/backup'
-import { canon, canonRow } from '../lib/canon'
 import { LEGACY_STAMP_ISO, nextStampIso, stampMs } from '../lib/stamps'
 import { DEMO_EXPENSES, DEMO_CATEGORIES, DEMO_BUDGETS, DEMO_MAPPINGS } from '../demo/seedData'
 import type {
@@ -14,6 +13,7 @@ import type {
   CategoryMappings,
   CategoryBudgets,
   CategoryBudgetTimestamps,
+  CategoryMappingTimestamps,
   BackupData,
 } from '../types'
 
@@ -33,6 +33,8 @@ interface ExpenseState {
   expenses: Expense[]
   categories: string[]
   categoryMappings: CategoryMappings
+  /** When each mapping was last set here or on another device (sync merges per key by it). */
+  mappingUpdatedAt: CategoryMappingTimestamps
   budgets: CategoryBudgets
   budgetUpdatedAt: CategoryBudgetTimestamps
   budgetDeletedAt: CategoryBudgetTimestamps
@@ -64,8 +66,6 @@ interface ExpenseState {
 
   importBackup: (data: BackupData) => void
   exportBackup: () => BackupData
-  /** Applies a merged document, sharing every unchanged object. Returns whether anything changed. */
-  applySync: (data: BackupData) => boolean
 
   setOffline: (v: boolean) => void
   consumeUndo: (id: string) => void
@@ -76,14 +76,15 @@ const persistSelectors = (s: ExpenseState) => ({
   expenses: s.expenses,
   categories: s.categories,
   categoryMappings: s.categoryMappings,
+  mappingUpdatedAt: s.mappingUpdatedAt,
   budgets: s.budgets,
   budgetUpdatedAt: s.budgetUpdatedAt,
   budgetDeletedAt: s.budgetDeletedAt,
   deletedIds: s.deletedIds,
 })
 
-/** The fields an edit can change. Sync rebases pending ones onto newer remote copies. */
-export type EditableField = 'itemName' | 'amount' | 'category' | 'date' | 'notes'
+/** The fields an edit can change. */
+type EditableField = 'itemName' | 'amount' | 'category' | 'date' | 'notes'
 const EDITABLE_FIELDS: readonly EditableField[] = [
   'itemName',
   'amount',
@@ -94,14 +95,15 @@ const EDITABLE_FIELDS: readonly EditableField[] = [
 type EditableValues = Partial<Pick<Expense, EditableField>>
 
 // Until PR-2 sanitises local data, the store can hold rows read from storage that are not
-// valid expenses (even `null`). Every lookup goes through this so such a row never throws.
+// valid expenses (objects with missing or mistyped fields; storage drops non-objects). Every
+// lookup goes through this so such a row never throws.
 const idOf = (row: unknown): string | undefined =>
   isRecord(row) && typeof row.id === 'string' ? row.id : undefined
 
 const stampOf = (e: Expense): number => stampMs(e.updatedAt ?? e.createdAt)
 
 /** Whether two values of an editable field are the same (a no-op edit). */
-export function sameValue(field: EditableField, a: unknown, b: unknown): boolean {
+function sameValue(field: EditableField, a: unknown, b: unknown): boolean {
   if (field === 'notes') return (a ?? undefined) === (b ?? undefined)
   if (field === 'date' && typeof a === 'string' && typeof b === 'string') {
     // The app shows and edits a date as a local day; it has no time of day to edit. The edit
@@ -129,229 +131,73 @@ function changedFields(prev: Expense, patch: Partial<Expense>): EditableField[] 
   })
 }
 
-// ---------------------------------------------------------------------------
-// Pending changes: changes another device is not yet known to hold. Sync rebases pending field
-// edits onto a newer remote copy, so a concurrent edit of another field on another device
-// survives. A change stays pending until a push from another device that was built on one of
-// this device's pushes carrying it comes back (`ackPendingEdits`, see the sync engine), so a
-// stale push that lands later cannot take it away. In memory only (the durable outbox is PR-2).
-// ---------------------------------------------------------------------------
-
-/** A record's pending fields and the base they were edited on. */
-export interface PendingEdit {
-  readonly fields: ReadonlySet<EditableField>
-  /** Stamp of the copy this device edited, or of a newer copy from another device merged since. */
-  readonly baseStamp: number
-  /** Each pending field's value in that copy. */
-  readonly base: Readonly<EditableValues>
-  /**
-   * Each pending field's values this device has held since its first edit: the base, every value
-   * written here and the values of other devices' copies merged since. A relay copy holding one
-   * of them has not changed the field since that device saw this one's value.
-   */
-  readonly own: ReadonlyMap<EditableField, readonly unknown[]>
-}
-
-interface PendingRecord {
-  baseStamp: number
-  base: EditableValues
-  /** Per field: the change that last wrote it here (`seq`) and the values this device held. */
-  fields: Map<EditableField, { seq: number; own: readonly unknown[] }>
-  /** Stamps of the copies of this record written here: this device's own copies, not news. */
-  mine: Set<number>
-}
-
-const pendingEdits = new Map<string, PendingRecord>()
-let editSeq = 0
-
-// Category names and item mappings have no stamps on the v4 wire either: the merge unions names
-// and picks the larger mapping value. Changes made here are kept over the relay copy while
-// they are pending, with the same acknowledgement as field edits.
-/** Category names this device added (true) or removed (false). */
-const pendingCategories = new Map<string, { present: boolean; seq: number }>()
-/** Item mappings this device set, with every value each has held here since before then. */
-const pendingMappings = new Map<string, { own: readonly (string | undefined)[]; seq: number }>()
-
-function notePendingCategory(name: string, present: boolean) {
-  pendingCategories.set(name, { present, seq: ++editSeq })
-}
-
-function notePendingMapping(key: string, before: string | undefined, after: string) {
-  const own = pendingMappings.get(key)?.own ?? [before]
-  pendingMappings.set(key, { own: own.includes(after) ? own : [...own, after], seq: ++editSeq })
-}
-
-/** `values` with `value` added, unless the field already holds it there. */
-function withValue(
-  field: EditableField,
-  values: readonly unknown[],
-  value: unknown,
-): readonly unknown[] {
-  return values.some((held) => sameValue(field, held, value)) ? values : [...values, value]
-}
-
-/** Records that this device wrote `fields` of `id`, from `before` to `after`. */
-function markPending(
-  id: string,
-  fields: readonly EditableField[],
-  before: Expense,
-  after: Expense,
-) {
-  const seq = ++editSeq
-  const entry: PendingRecord = pendingEdits.get(id) ?? {
-    baseStamp: stampOf(before),
-    base: {},
-    fields: new Map(),
-    mine: new Set(),
-  }
-  for (const field of fields) {
-    const held = entry.fields.get(field)
-    // A field already pending keeps its base: the value before this device first changed it.
-    if (!held) Object.assign(entry.base, { [field]: before[field] })
-    entry.fields.set(field, {
-      seq,
-      own: withValue(field, held ? held.own : [before[field]], after[field]),
-    })
-  }
-  entry.mine.add(stampOf(after))
-  pendingEdits.set(id, entry)
-}
-
-/** What this device changed and another device is not yet known to hold. */
-export interface PendingSnapshot {
-  /** Acknowledges exactly these changes later (`ackPendingEdits`). */
-  seq: number
-  edits: ReadonlyMap<string, PendingEdit>
-  /** Category names added (true) or removed (false) here. */
-  categories: ReadonlyMap<string, boolean>
-  /**
-   * Item mappings set here, with every value each has held here since before then (a relay
-   * copy holding one of them has not been changed by another device).
-   */
-  mappings: ReadonlyMap<string, readonly (string | undefined)[]>
-}
-
-/** A copy of the pending changes; `seq` acknowledges exactly these later. */
-export function pendingEditsSnapshot(): PendingSnapshot {
-  const edits = new Map<string, PendingEdit>()
-  for (const [id, entry] of pendingEdits) {
-    const own = new Map<EditableField, readonly unknown[]>()
-    for (const [field, pending] of entry.fields) own.set(field, pending.own)
-    edits.set(id, {
-      fields: new Set(entry.fields.keys()),
-      baseStamp: entry.baseStamp,
-      base: { ...entry.base },
-      own,
-    })
-  }
-  const categories = new Map<string, boolean>()
-  for (const [name, { present }] of pendingCategories) categories.set(name, present)
-  const mappings = new Map<string, readonly (string | undefined)[]>()
-  for (const [key, { own }] of pendingMappings) mappings.set(key, own)
-  return { seq: editSeq, edits, categories, mappings }
-}
-
 /**
- * A copy of `id` from the relay, newer than its pending edits' base, was merged here, and
- * `written` is the copy this device then wrote over it (a rebase), if any. A copy from another
- * device becomes the base, and its values join the edits' own values. One of this device's own
- * copies (its push read back, or carried on in another device's push) moves nothing: a stale
- * copy from another device can be newer than the base and older than ours, and still be news.
+ * Re-files every row in `from` to `to` with a forward stamp, so last-writer-wins on every
+ * device (v0.8.4 included) adopts the re-file instead of a tie-break undoing it. Rows in other
+ * categories keep their objects.
  */
-export function notePendingBase(id: string, copy: Expense, written: Expense | null): void {
-  const entry = pendingEdits.get(id)
-  if (!entry) return
-  if (written) entry.mine.add(stampOf(written))
-  const stamp = stampOf(copy)
-  if (entry.mine.has(stamp) || stamp <= entry.baseStamp) return
-  for (const [field, pending] of entry.fields) {
-    entry.fields.set(field, { seq: pending.seq, own: withValue(field, pending.own, copy[field]) })
-  }
-  entry.baseStamp = stamp
-  entry.base = pickFields(copy, entry.fields.keys())
-}
-
-/** Forgets the changes made up to `seq` (another device holds them now), field by field. */
-export function ackPendingEdits(seq: number): void {
-  for (const [id, entry] of pendingEdits) {
-    for (const [field, pending] of entry.fields) if (pending.seq <= seq) entry.fields.delete(field)
-    if (entry.fields.size === 0) pendingEdits.delete(id)
-  }
-  for (const pending of [pendingCategories, pendingMappings]) {
-    for (const [key, entry] of pending) if (entry.seq <= seq) pending.delete(key)
-  }
-}
-
-export function clearPendingEdits(): void {
-  pendingEdits.clear()
-  pendingCategories.clear()
-  pendingMappings.clear()
-}
-
-/**
- * Re-files every row in `from` to `to` as an edit of each row's category: a forward stamp, so
- * last-writer-wins on every device (v0.8.4 included) adopts it instead of the tie-break undoing
- * it, and a pending field, so a concurrent edit of another field on a v0.8.5 device survives
- * (the rebase). Rows in other categories keep their objects.
- */
-function refile(expenses: Expense[], from: string, to: string): Expense[] {
+function refile(expenses: Expense[], from: string, to: string, now: number): Expense[] {
   if (from === to) return expenses
-  const now = Date.now()
-  const next = expenses.map((e) => {
-    const id = idOf(e)
-    if (id === undefined || e.category !== from) return e
-    const refiled = { ...e, category: to, updatedAt: nextStampIso(now, stampOf(e)) }
-    markPending(id, ['category'], e, refiled)
-    return refiled
-  })
+  const next = expenses.map((e) =>
+    idOf(e) === undefined || e.category !== from
+      ? e
+      : { ...e, category: to, updatedAt: nextStampIso(now, stampOf(e)) },
+  )
   return next.some((e, i) => e !== expenses[i]) ? next : expenses
 }
 
-// ---------------------------------------------------------------------------
-// Structure sharing for applySync: keep every object that is equal by content, so a
-// no-op sync notifies no subscriber and nothing downstream recomputes.
-// ---------------------------------------------------------------------------
+const ownValue = <T>(record: Readonly<Record<string, T>>, key: string): T | undefined =>
+  Object.hasOwn(record, key) ? record[key] : undefined
 
-/** The next rows, reusing current objects; null when they are the same rows in any order. */
-function shareRows(current: readonly Expense[], next: readonly Expense[]): Expense[] | null {
-  const byId = new Map<string, Expense>()
-  const unused = new Map<Expense, number>()
-  for (const row of current) {
-    unused.set(row, (unused.get(row) ?? 0) + 1)
-    const id = idOf(row)
-    if (id !== undefined && !byId.has(id)) byId.set(id, row)
+/** A stamp at `now`, strictly after every stamp the key holds in `stamps`. */
+const nextKeyStamp = (now: number, key: string, ...stamps: Readonly<Record<string, string>>[]) =>
+  nextStampIso(now, ...stamps.map((at) => stampMs(ownValue(at, key))))
+
+/**
+ * Points every item mapping whose category is `from` at `to`, each with a forward stamp, so the
+ * change wins the per-key merge on every device. With no mapping on `from`, both objects are
+ * returned as they are.
+ */
+function remap(
+  mappings: CategoryMappings,
+  stamps: CategoryMappingTimestamps,
+  from: string,
+  to: string,
+  now: number,
+): Pick<ExpenseState, 'categoryMappings' | 'mappingUpdatedAt'> {
+  const keys = Object.keys(mappings).filter((key) => mappings[key] === from)
+  if (from === to || keys.length === 0) {
+    return { categoryMappings: mappings, mappingUpdatedAt: stamps }
   }
-  let changed = next.length !== current.length
-  const rows = next.map((row) => {
-    let kept = row
-    if (!unused.has(row)) {
-      const id = idOf(row)
-      const mine = id === undefined ? undefined : byId.get(id)
-      if (mine !== undefined && canonRow(mine) === canonRow(row)) kept = mine
-    }
-    const left = unused.get(kept) ?? 0
-    if (left > 0) unused.set(kept, left - 1)
-    else changed = true
-    return kept
-  })
-  return changed ? rows : null
+  // Built from entries, so an item named "__proto__" is a key like any other.
+  return {
+    categoryMappings: Object.fromEntries(
+      Object.entries(mappings).map(([key, value]) => [key, value === from ? to : value]),
+    ),
+    mappingUpdatedAt: {
+      ...stamps,
+      ...Object.fromEntries(keys.map((key) => [key, nextKeyStamp(now, key, stamps)])),
+    },
+  }
 }
 
-function keepIfSameSet(current: string[], next: string[]): string[] {
-  const a = new Set(current)
-  const b = new Set(next)
-  return a.size === b.size && [...a].every((x) => b.has(x)) ? current : next
+/** `record` without `key` (the same object when it has no such key). */
+function without<T>(record: Record<string, T>, key: string): Record<string, T> {
+  if (!Object.hasOwn(record, key)) return record
+  return Object.fromEntries(Object.entries(record).filter(([k]) => k !== key))
 }
 
-const keepIfEqual = <T>(current: T, next: T): T => (canon(current) === canon(next) ? current : next)
-
-function completeBudgetUpdatedAt(
+/** A stamp for every budget: its own when it has one, else `fallback`. */
+export function completeBudgetUpdatedAt(
   budgets: CategoryBudgets,
   existing: CategoryBudgetTimestamps | undefined,
   fallback: string,
 ): CategoryBudgetTimestamps {
   return Object.fromEntries(
-    Object.keys(budgets).map((category) => [category, existing?.[category] ?? fallback]),
+    Object.keys(budgets).map((category) => [
+      category,
+      (existing && ownValue(existing, category)) ?? fallback,
+    ]),
   )
 }
 
@@ -360,6 +206,7 @@ export const useExpenseStore = create<ExpenseState>()(
     expenses: [],
     categories: DEFAULT_CATEGORIES,
     categoryMappings: {},
+    mappingUpdatedAt: {},
     budgets: {},
     budgetUpdatedAt: {},
     budgetDeletedAt: {},
@@ -377,6 +224,7 @@ export const useExpenseStore = create<ExpenseState>()(
         let expenses = storage.getExpenses()
         let categories = storage.getCategories() ?? DEFAULT_CATEGORIES
         let categoryMappings = storage.getCategoryMappings()
+        let mappingUpdatedAt = storage.getMappingUpdatedAt()
         let budgets = storage.getBudgets()
         let budgetUpdatedAt = completeBudgetUpdatedAt(
           budgets,
@@ -391,6 +239,7 @@ export const useExpenseStore = create<ExpenseState>()(
           expenses = DEMO_EXPENSES
           categories = DEMO_CATEGORIES
           categoryMappings = DEMO_MAPPINGS
+          mappingUpdatedAt = {}
           budgets = DEMO_BUDGETS
           budgetUpdatedAt = completeBudgetUpdatedAt(DEMO_BUDGETS, undefined, LEGACY_STAMP_ISO)
           budgetDeletedAt = {}
@@ -398,6 +247,7 @@ export const useExpenseStore = create<ExpenseState>()(
           storage.saveExpenses(expenses)
           storage.saveCategories(categories)
           storage.saveCategoryMappings(categoryMappings)
+          storage.saveMappingUpdatedAt(mappingUpdatedAt)
           storage.saveBudgets(budgets)
           storage.saveBudgetUpdatedAt(budgetUpdatedAt)
           storage.saveBudgetDeletedAt(budgetDeletedAt)
@@ -407,6 +257,7 @@ export const useExpenseStore = create<ExpenseState>()(
           expenses,
           categories,
           categoryMappings,
+          mappingUpdatedAt,
           budgets,
           budgetUpdatedAt,
           budgetDeletedAt,
@@ -423,7 +274,9 @@ export const useExpenseStore = create<ExpenseState>()(
       const mappings = get().categoryMappings
       if (!itemName) return null
       const normalized = itemName.toLowerCase().trim()
-      if (mappings[normalized]) return mappings[normalized]
+      // Own keys only: "constructor" or "__proto__" would otherwise find Object.prototype.
+      const exact = ownValue(mappings, normalized)
+      if (exact) return exact
 
       const entries = Object.entries(mappings).map(([item, category]) => ({ item, category }))
       if (!entries.length) return null
@@ -448,7 +301,8 @@ export const useExpenseStore = create<ExpenseState>()(
       if (!itemName) throw new Error('Item name is required.')
       const smart = get().getSmartCategory(itemName)
       const category = input.category || smart || 'Other'
-      const now = new Date().toISOString()
+      const at = Date.now()
+      const now = new Date(at).toISOString()
       const expense: Expense = {
         id: generateId(),
         itemName,
@@ -459,31 +313,38 @@ export const useExpenseStore = create<ExpenseState>()(
         createdAt: now,
       }
 
-      // The category picked for this item name is learned, and kept pending for sync.
+      // The category picked for this item name is learned. A new or changed pick is stamped,
+      // so the latest pick wins the per-key merge on every device.
       const normalized = expense.itemName.toLowerCase().trim()
-      const known = get().categoryMappings
-      const before = Object.hasOwn(known, normalized) ? known[normalized] : undefined
-      const learn = category !== 'Other' && normalized !== '' && before !== category
-      if (learn) notePendingMapping(normalized, before, category)
+      const learn =
+        category !== 'Other' &&
+        normalized !== '' &&
+        ownValue(get().categoryMappings, normalized) !== category
 
       set((s) => {
-        const nextMappings = learn
-          ? { ...s.categoryMappings, [normalized]: category }
-          : s.categoryMappings
+        const learned: Partial<ExpenseState> = learn
+          ? {
+              categoryMappings: { ...s.categoryMappings, [normalized]: category },
+              mappingUpdatedAt: {
+                ...s.mappingUpdatedAt,
+                [normalized]: nextKeyStamp(at, normalized, s.mappingUpdatedAt),
+              },
+            }
+          : {}
         const undo: UndoEntry = {
           id: `add-${expense.id}`,
           label: `Added "${expense.itemName}"`,
           expiresAt: Date.now() + 5000,
           undo: () => {
             set((st) => ({
-              expenses: st.expenses.filter((e) => e.id !== expense.id),
+              expenses: st.expenses.filter((e) => idOf(e) !== expense.id),
               deletedIds: [...new Set([...st.deletedIds, expense.id])],
             }))
           },
         }
         return {
           expenses: [expense, ...s.expenses],
-          categoryMappings: nextMappings,
+          ...learned,
           undoStack: [...s.undoStack, undo].slice(-5),
         }
       })
@@ -502,7 +363,6 @@ export const useExpenseStore = create<ExpenseState>()(
         ...pickFields(patch, fields),
         updatedAt: nextStampIso(now, stampOf(prev)),
       }
-      markPending(id, fields, prev, next)
       set((s) => ({
         expenses: s.expenses.map((e) => (idOf(e) === id ? next : e)),
         undoStack: [
@@ -520,7 +380,6 @@ export const useExpenseStore = create<ExpenseState>()(
                 ...pickFields(prev, fields),
                 updatedAt: nextStampIso(Date.now(), stampOf(current)),
               }
-              markPending(id, fields, current, restored)
               set((st) => ({ expenses: st.expenses.map((e) => (idOf(e) === id ? restored : e)) }))
             },
           },
@@ -567,88 +426,95 @@ export const useExpenseStore = create<ExpenseState>()(
     addCategory: (name) => {
       const t = name.trim()
       if (!t || get().categories.includes(t)) return
-      notePendingCategory(t, true)
       set((s) => ({ categories: [...s.categories, t] }))
     },
 
     renameCategory: (from, to) => {
       const target = to.trim()
       if (!target || from === target) return
-      const existing = get().categories
-      // If the target name already exists, this becomes a merge. Drop the
-      // old category from the list (don't add a duplicate) and reassign all
-      // expenses + budget keys from `from` to the existing `target`.
-      const targetExists = existing.includes(target)
-      const expenses = refile(get().expenses, from, target)
-      notePendingCategory(from, false)
-      notePendingCategory(target, true)
-      set((s) => ({
-        categories: targetExists
-          ? s.categories.filter((c) => c !== from)
-          : s.categories.map((c) => (c === from ? target : c)),
-        expenses,
-        budgets:
-          s.budgets[from] !== undefined
-            ? {
-                ...Object.fromEntries(Object.entries(s.budgets).filter(([k]) => k !== from)),
-                // Prefer existing target budget if there's a conflict (don't clobber).
-                [target]: s.budgets[target] ?? s.budgets[from],
+      const now = Date.now()
+      set((s) => {
+        // If the target name already exists, this becomes a merge: the old name leaves the
+        // list and its rows, budget and item mappings move to the existing target.
+        const targetExists = s.categories.includes(target)
+        const moved = ownValue(s.budgets, from)
+        const kept = ownValue(s.budgets, target)
+        // An existing target budget is kept (not clobbered). The old name's budget leaves with
+        // a tombstone and a budget moved over is stamped, so both changes sync.
+        const budget: Partial<ExpenseState> =
+          moved === undefined
+            ? {}
+            : {
+                budgets: { ...without(s.budgets, from), [target]: kept ?? moved },
+                budgetUpdatedAt:
+                  kept === undefined
+                    ? {
+                        ...without(s.budgetUpdatedAt, from),
+                        [target]: nextKeyStamp(now, target, s.budgetUpdatedAt, s.budgetDeletedAt),
+                      }
+                    : without(s.budgetUpdatedAt, from),
+                budgetDeletedAt: {
+                  ...without(s.budgetDeletedAt, target),
+                  [from]: nextKeyStamp(now, from, s.budgetUpdatedAt, s.budgetDeletedAt),
+                },
               }
-            : s.budgets,
-        budgetUpdatedAt:
-          s.budgets[from] !== undefined
-            ? {
-                ...Object.fromEntries(
-                  Object.entries(s.budgetUpdatedAt).filter(([k]) => k !== from),
-                ),
-                [target]:
-                  s.budgetUpdatedAt[target] ?? s.budgetUpdatedAt[from] ?? new Date().toISOString(),
-              }
-            : s.budgetUpdatedAt,
-        budgetDeletedAt:
-          s.budgets[from] !== undefined
-            ? Object.fromEntries(
-                Object.entries(s.budgetDeletedAt).filter(([k]) => k !== from && k !== target),
-              )
-            : s.budgetDeletedAt,
-      }))
+        return {
+          categories: targetExists
+            ? s.categories.filter((c) => c !== from)
+            : s.categories.map((c) => (c === from ? target : c)),
+          expenses: refile(s.expenses, from, target, now),
+          ...remap(s.categoryMappings, s.mappingUpdatedAt, from, target, now),
+          ...budget,
+        }
+      })
     },
 
     removeCategory: (name) => {
-      const now = new Date().toISOString()
-      // Its rows move to Other, as edits that sync (see refile).
-      const expenses = refile(get().expenses, name, 'Other')
-      notePendingCategory(name, false)
+      const now = Date.now()
       set((s) => ({
         categories: s.categories.filter((c) => c !== name),
-        expenses,
-        budgets: Object.fromEntries(Object.entries(s.budgets).filter(([k]) => k !== name)),
-        budgetUpdatedAt: Object.fromEntries(
-          Object.entries(s.budgetUpdatedAt).filter(([k]) => k !== name),
-        ),
+        // Its rows and item mappings move to Other, as stamped changes that sync.
+        expenses: refile(s.expenses, name, 'Other', now),
+        ...remap(s.categoryMappings, s.mappingUpdatedAt, name, 'Other', now),
+        budgets: without(s.budgets, name),
+        budgetUpdatedAt: without(s.budgetUpdatedAt, name),
         budgetDeletedAt:
-          s.budgets[name] !== undefined ? { ...s.budgetDeletedAt, [name]: now } : s.budgetDeletedAt,
+          ownValue(s.budgets, name) === undefined
+            ? s.budgetDeletedAt
+            : {
+                ...s.budgetDeletedAt,
+                [name]: nextKeyStamp(now, name, s.budgetUpdatedAt, s.budgetDeletedAt),
+              },
       }))
     },
 
+    // Budget stamps are strictly after the key's last set or delete, so a change made after
+    // seeing another device's wins even when this device's clock is behind.
     setBudget: (category, amount) => {
-      if (!category || amount <= 0) return
+      if (!category || !Number.isFinite(amount) || amount <= 0) return
+      // The value it already has is no edit (leaving the budget field unchanged): a fresh stamp
+      // would beat a change the other device made that has not arrived here yet.
+      if (ownValue(get().budgets, category) === amount) return
+      const now = Date.now()
       set((s) => ({
         budgets: { ...s.budgets, [category]: amount },
-        budgetUpdatedAt: { ...s.budgetUpdatedAt, [category]: new Date().toISOString() },
-        budgetDeletedAt: Object.fromEntries(
-          Object.entries(s.budgetDeletedAt).filter(([k]) => k !== category),
-        ),
+        budgetUpdatedAt: {
+          ...s.budgetUpdatedAt,
+          [category]: nextKeyStamp(now, category, s.budgetUpdatedAt, s.budgetDeletedAt),
+        },
+        budgetDeletedAt: without(s.budgetDeletedAt, category),
       }))
     },
 
     removeBudget: (category) => {
+      const now = Date.now()
       set((s) => ({
-        budgets: Object.fromEntries(Object.entries(s.budgets).filter(([k]) => k !== category)),
-        budgetUpdatedAt: Object.fromEntries(
-          Object.entries(s.budgetUpdatedAt).filter(([k]) => k !== category),
-        ),
-        budgetDeletedAt: { ...s.budgetDeletedAt, [category]: new Date().toISOString() },
+        budgets: without(s.budgets, category),
+        budgetUpdatedAt: without(s.budgetUpdatedAt, category),
+        budgetDeletedAt: {
+          ...s.budgetDeletedAt,
+          [category]: nextKeyStamp(now, category, s.budgetUpdatedAt, s.budgetDeletedAt),
+        },
       }))
     },
 
@@ -657,6 +523,11 @@ export const useExpenseStore = create<ExpenseState>()(
         expenses: data.expenses,
         categories: data.categories.length ? data.categories : DEFAULT_CATEGORIES,
         categoryMappings: data.categoryMappings,
+        mappingUpdatedAt: Object.fromEntries(
+          Object.entries(data.mappingUpdatedAt ?? {}).filter(([key]) =>
+            Object.hasOwn(data.categoryMappings, key),
+          ),
+        ),
         budgets: data.budgets ?? {},
         budgetUpdatedAt: completeBudgetUpdatedAt(
           data.budgets ?? {},
@@ -674,6 +545,7 @@ export const useExpenseStore = create<ExpenseState>()(
         expenses: s.expenses,
         categories: s.categories,
         categoryMappings: s.categoryMappings,
+        mappingUpdatedAt: s.mappingUpdatedAt,
         budgets: s.budgets,
         budgetUpdatedAt: s.budgetUpdatedAt,
         budgetDeletedAt: s.budgetDeletedAt,
@@ -681,39 +553,6 @@ export const useExpenseStore = create<ExpenseState>()(
         exportDate: new Date().toISOString(),
         version: '4.0',
       }
-    },
-
-    applySync: (data) => {
-      const s = get()
-      const budgets = data.budgets ?? {}
-      const next = {
-        expenses: shareRows(s.expenses, data.expenses) ?? s.expenses,
-        categories: keepIfSameSet(
-          s.categories,
-          data.categories.length ? data.categories : DEFAULT_CATEGORIES,
-        ),
-        categoryMappings: keepIfEqual(s.categoryMappings, data.categoryMappings),
-        budgets: keepIfEqual(s.budgets, budgets),
-        budgetUpdatedAt: keepIfEqual(
-          s.budgetUpdatedAt,
-          completeBudgetUpdatedAt(budgets, data.budgetUpdatedAt, LEGACY_STAMP_ISO),
-        ),
-        budgetDeletedAt: keepIfEqual(s.budgetDeletedAt, data.budgetDeletedAt ?? {}),
-        deletedIds: keepIfSameSet(s.deletedIds, data.deletedIds ?? []),
-      }
-      const changed =
-        next.expenses !== s.expenses ||
-        next.categories !== s.categories ||
-        next.categoryMappings !== s.categoryMappings ||
-        next.budgets !== s.budgets ||
-        next.budgetUpdatedAt !== s.budgetUpdatedAt ||
-        next.budgetDeletedAt !== s.budgetDeletedAt ||
-        next.deletedIds !== s.deletedIds
-      if (!changed) return false
-      set(next)
-      // Remote data is written at once: no debounce window for a kill to lose it in.
-      flushPendingSave()
-      return true
     },
 
     setOffline: (v) => set({ isOffline: v }),
@@ -739,31 +578,41 @@ export const useExpenseStore = create<ExpenseState>()(
 
 // Persistence side-effect: write to localStorage on data changes.
 let saveTimer: ReturnType<typeof setTimeout> | null = null
+// The last write failed (storage full or refused): storage is behind the store until a write
+// succeeds, so every flush retries it, with or without a new change.
+let unsaved = false
 let initialized = false
 
-/** Writes a scheduled save now. No-op when nothing is scheduled or the store is not hydrated. */
+/**
+ * Writes a scheduled save, or one that failed, now. No-op when storage is up to date or the
+ * store is not hydrated.
+ */
 export function flushPendingSave(): void {
-  if (!saveTimer || !useExpenseStore.getState().hydrated) return
-  clearTimeout(saveTimer)
+  if ((!saveTimer && !unsaved) || !useExpenseStore.getState().hydrated) return
+  if (saveTimer) clearTimeout(saveTimer)
   saveTimer = null
-  try {
-    persistCurrentState()
-  } catch {
-    useExpenseStore.setState({ syncStatus: 'error' })
-  }
+  save()
 }
 
-function persistCurrentState() {
+function save() {
   const slice = persistSelectors(useExpenseStore.getState())
-  storage.saveAll(
-    slice.expenses,
-    slice.categories,
-    slice.categoryMappings,
-    slice.budgets,
-    slice.budgetUpdatedAt,
-    slice.budgetDeletedAt,
-    slice.deletedIds,
-  )
+  try {
+    storage.saveAll(
+      slice.expenses,
+      slice.categories,
+      slice.categoryMappings,
+      slice.budgets,
+      slice.budgetUpdatedAt,
+      slice.budgetDeletedAt,
+      slice.deletedIds,
+      slice.mappingUpdatedAt,
+    )
+  } catch {
+    unsaved = true
+    useExpenseStore.setState({ syncStatus: 'error' })
+    return
+  }
+  unsaved = false
   useExpenseStore.setState({ syncStatus: 'saved', lastSavedAt: Date.now() })
 }
 
@@ -778,11 +627,8 @@ export function installPersistence() {
       useExpenseStore.setState({ syncStatus: 'saving' })
       if (saveTimer) clearTimeout(saveTimer)
       saveTimer = setTimeout(() => {
-        try {
-          persistCurrentState()
-        } catch {
-          useExpenseStore.setState({ syncStatus: 'error' })
-        }
+        saveTimer = null
+        save()
       }, 400)
     },
     {
@@ -790,6 +636,7 @@ export function installPersistence() {
         a.expenses === b.expenses &&
         a.categories === b.categories &&
         a.categoryMappings === b.categoryMappings &&
+        a.mappingUpdatedAt === b.mappingUpdatedAt &&
         a.budgets === b.budgets &&
         a.budgetUpdatedAt === b.budgetUpdatedAt &&
         a.budgetDeletedAt === b.budgetDeletedAt &&
@@ -799,7 +646,8 @@ export function installPersistence() {
 
   if (typeof window !== 'undefined') {
     // Mobile OSes send visibilitychange (not pagehide) when the app is switched away from,
-    // then may kill it: write the debounced save before that can happen (F-017).
+    // then may kill it: write the debounced save, or retry one that failed, before that can
+    // happen (F-017).
     document.addEventListener('visibilitychange', () => {
       if (document.visibilityState === 'hidden') flushPendingSave()
     })
@@ -807,5 +655,9 @@ export function installPersistence() {
     window.addEventListener('beforeunload', flushPendingSave)
     window.addEventListener('online', () => useExpenseStore.getState().setOffline(false))
     window.addEventListener('offline', () => useExpenseStore.getState().setOffline(true))
+    // The store read the network state when it loaded; a change before these listeners were
+    // attached would otherwise go unseen until the next one.
+    const { isOffline, setOffline } = useExpenseStore.getState()
+    if (isOffline === navigator.onLine) setOffline(!navigator.onLine)
   }
 }

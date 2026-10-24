@@ -83,6 +83,12 @@ export function tryChunkReload(deps: ChunkReloadDeps = {}): boolean {
 }
 
 /**
+ * What to do when a reload did not help. iOS keeps a file that failed to load failed until the
+ * app is closed, and an installed app has no tab to close.
+ */
+export const STUCK_HINT = 'If this keeps happening, close SpendTrack completely and open it again.'
+
+/**
  * True when this tab reloaded automatically for a failed chunk less than a minute ago, so the
  * failure now on screen survived that reload. WebKit keeps a module URL that failed failed
  * for the life of the tab, so only closing the app fully clears it there.

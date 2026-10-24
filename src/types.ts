@@ -41,11 +41,14 @@ export type CategoryMappings = Record<string, string>
 export type CategoryColors = Record<string, string>
 export type CategoryBudgets = Record<string, number>
 export type CategoryBudgetTimestamps = Record<string, string>
+/** When each item mapping was last set (ISO). Keys without a stamp are older than any stamp. */
+export type CategoryMappingTimestamps = Record<string, string>
 
 export interface BackupData {
   expenses: Expense[]
   categories: string[]
   categoryMappings: CategoryMappings
+  mappingUpdatedAt?: CategoryMappingTimestamps
   budgets?: CategoryBudgets
   budgetUpdatedAt?: CategoryBudgetTimestamps
   budgetDeletedAt?: CategoryBudgetTimestamps

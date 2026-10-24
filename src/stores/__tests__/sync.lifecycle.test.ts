@@ -267,12 +267,60 @@ describe('start-up with a saved code', () => {
     phone.expense.useExpenseStore.setState({ hydrated: true, expenses: [expense('e1')] })
     localStorage.setItem('syncId', SYNC_CODE)
     phone.sync.installSync()
-    // Synchronously: the panel never offers Generate to a linked device while sync loads.
-    expect(phone.sync.useSyncStore.getState()).toMatchObject({ syncId: SYNC_CODE })
+    // Synchronously: the panel never offers Generate to a linked device while sync loads, and
+    // nothing is known to be on the relay yet, so a change made now reads "Syncing…".
+    expect(phone.sync.useSyncStore.getState()).toMatchObject({
+      syncId: SYNC_CODE,
+      cloudStatus: 'idle',
+      pendingLocal: true,
+    })
     await advance(5000)
     expect(phone.sync.useSyncStore.getState()).toMatchObject({
       syncId: SYNC_CODE,
       cloudStatus: 'synced',
+      pendingLocal: false,
     })
+  })
+})
+
+// Storage full: the code works for this session, but this device forgets it when SpendTrack
+// closes. That must not be silent: after a restart the device would simply not sync.
+describe('a sync code that storage refuses', () => {
+  const quota = () => new DOMException('The quota has been exceeded.', 'QuotaExceededError')
+  const forgets = (phone: Awaited<ReturnType<typeof loadDevice>>) =>
+    phone.ui.useUIStore
+      .getState()
+      .toasts.filter((t) => t.message.startsWith("This device couldn't save the sync code"))
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('still syncs, and says once that this device forgets it when SpendTrack closes', async () => {
+    const phone = await bootDevice({ expenses: [expense('e1')] })
+    const write = Storage.prototype.setItem.bind(localStorage)
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation((key: string, value: string) => {
+      if (key === 'syncId') throw quota()
+      write(key, value)
+    })
+    expect(await connect(phone)).toMatchObject({ ok: true })
+    expect(localStorage.getItem('syncId')).toBeNull()
+    expect(forgets(phone)).toEqual([expect.objectContaining({ kind: 'warning' })])
+    phone.ui.useUIStore.setState({ toasts: [] })
+    await settle(phone.sync.useSyncStore.getState().setupSync(SYNC_CODE))
+    expect(forgets(phone)).toEqual([])
+  })
+
+  it('says nothing at start-up, when the saved code is already there', async () => {
+    const phone = await loadDevice()
+    phone.expense.useExpenseStore.setState({ hydrated: true, expenses: [expense('e1')] })
+    localStorage.setItem('syncId', SYNC_CODE)
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw quota()
+    })
+    phone.sync.installSync()
+    await advance(5000)
+    expect(setItem).toHaveBeenCalledWith('syncId', SYNC_CODE) // re-saved, and refused
+    expect(phone.sync.useSyncStore.getState().cloudStatus).toBe('synced')
+    expect(forgets(phone)).toEqual([])
   })
 })

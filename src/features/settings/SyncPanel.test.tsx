@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { SyncPanel } from './SyncPanel'
+import { getUpdateController } from '../../app/swUpdate'
 import {
   OLD_DEVICE_WAITING,
   clockTime,
@@ -34,6 +35,19 @@ const failure = (kind: SyncFailure['kind']): SyncFailure => ({
   message: syncMessage(kind, 1365),
   since: NOW,
 })
+/**
+ * The banner box the eye sees showing `text`. Its words are hidden from screen readers, which
+ * hear them from the panel's one live region instead.
+ */
+function shownBanner(text: string | RegExp): HTMLElement {
+  const shown = screen
+    .getAllByText(text, { exact: typeof text !== 'string' || undefined })
+    .filter((el) => el.getAttribute('aria-hidden') === 'true')
+  const box = shown.length === 1 ? shown[0]?.closest('div') : null
+  if (!box) throw new Error(`expected one banner showing ${String(text)}, found ${shown.length}`)
+  return box
+}
+
 /** The status row: the Sync now button is described by it. */
 function statusRow(): HTMLElement {
   const button = screen.getByRole('button', { name: 'Sync now' })
@@ -97,7 +111,7 @@ describe('Sync now', () => {
       })
       // A banner that goes up says it (its region announces it); one already up does not, so
       // then the toast answers the tap. Never both, never Synced.
-      expect(screen.getByText(OLD_DEVICE_WAITING)).toBeInTheDocument()
+      expect(shownBanner(OLD_DEVICE_WAITING)).toBeInTheDocument()
       expect(toasts()).toEqual(expected)
     },
   )
@@ -188,6 +202,7 @@ describe('Sync now', () => {
     ['offline', 'warning'],
     ['moved', 'warning'],
     ['update-required', 'warning'],
+    ['reload', 'warning'],
     ['network', 'warning'],
     ['server', 'warning'],
     ['invalid', 'warning'],
@@ -273,28 +288,58 @@ describe('Connect and Generate', () => {
   it('Connect with ok:false says so, keeps the code and clears the input', async () => {
     const input = await connectWith(NETWORK)
     expect(toasts()).toEqual([
-      ['warning', `Connected, but couldn't sync yet: ${syncMessage('network')}`],
+      ['warning', `Code saved, but couldn't sync yet: ${syncMessage('network')}`],
     ])
     expect(input).toHaveValue('')
   })
+
+  // Never "Connected" for a relay that refused this device, and no "yet": waiting fixes nothing.
+  it.each([
+    ['Connect', 'Code saved, but the sync server refused access.'],
+    ['Generate', 'Sync code created, but the sync server refused access.'],
+  ] as const)(
+    '%s against a refusing relay says the code is saved and access refused',
+    async (action, message) => {
+      const refused = failure('permission')
+      useSyncStore.setState({
+        setupSync: () => {
+          useSyncStore.setState({ syncId: CODE, cloudStatus: 'error', lastError: refused })
+          return Promise.resolve({ ok: false, error: 'permission', message: refused.message })
+        },
+      })
+      render(<SyncPanel />)
+      if (action === 'Connect') {
+        fireEvent.change(screen.getByPlaceholderText('Paste sync code from another device'), {
+          target: { value: CODE },
+        })
+      }
+      await act(async () => {
+        fireEvent.click(
+          screen.getByRole('button', { name: action === 'Connect' ? 'Connect' : /Generate/ }),
+        )
+        await Promise.resolve()
+      })
+      expect(toasts()).toEqual([['error', message]])
+    },
+  )
 
   it.each([
     [
       'too-large' as const,
       'error',
-      "Connected. Sync is paused: Your data (1228 KB) is too large for the sync server. It's still saved here — export a backup.",
+      "Code saved. Sync is paused: Your data (1228 KB) is too large for the sync server. It's still saved here — export a backup.",
     ],
-    ['moved' as const, 'warning', `Connected. ${syncMessage('moved')}`],
-    ['update-required' as const, 'warning', `Connected. ${syncMessage('update-required')}`],
+    ['moved' as const, 'warning', `Code saved. ${syncMessage('moved')}`],
+    ['update-required' as const, 'warning', `Code saved. ${syncMessage('update-required')}`],
   ])('Connect into a %s pause promises no sync "yet"', async (error, kind, message) => {
     await connectWith({ ok: false, error, message: syncMessage(error, 1228) })
     expect(toasts()).toEqual([[kind, message]])
   })
 
   it.each([
-    ['too-large' as const, 'error', 'Connected. Sync is paused.'],
-    ['moved' as const, 'warning', 'Connected. Sync is paused.'],
-    ['network' as const, 'warning', "Connected, but couldn't sync yet."],
+    ['too-large' as const, 'error', 'Code saved. Sync is paused.'],
+    ['moved' as const, 'warning', 'Code saved. Sync is paused.'],
+    ['network' as const, 'warning', "Code saved, but couldn't sync yet."],
   ])(
     'Connect into a %s failure the banner explains: the toast leaves the why to it',
     async (kind, tone, message) => {
@@ -446,7 +491,8 @@ describe('status row', () => {
   })
 
   it.each([
-    [{ cloudStatus: 'idle' as const }, 'Ready'],
+    // Linked, before the first cycle (the engine may still be loading).
+    [{ cloudStatus: 'idle' as const }, 'Starting sync…'],
     [{ cloudStatus: 'synced' as const, pendingLocal: true }, 'Saved here · syncing soon'],
     [{ cloudStatus: 'synced' as const, lastSyncAt: NOW - 120_000 }, 'Synced · 2m ago'],
     [{ cloudStatus: 'syncing' as const, pendingLocal: true }, 'Syncing…'],
@@ -473,6 +519,13 @@ describe('status row', () => {
       'Sync server error',
     ],
     [{ cloudStatus: 'offline' as const }, "Offline — will sync when you're back"],
+    // The engine's code failed to load here: nothing promises it loads once back online.
+    [{ cloudStatus: 'offline' as const, engineFailed: true }, 'Offline · not synced'],
+    // Refused access outlasts an outage: the row keeps saying it offline.
+    [
+      { cloudStatus: 'error' as const, lastError: failure('permission') },
+      'Sync server refused access',
+    ],
     [{ cloudStatus: 'paused' as const }, 'Sync paused'],
     [
       {
@@ -528,9 +581,9 @@ describe('banners', () => {
     connectedPanel({ waitingForOld: true })
     const dot = statusRow().previousElementSibling
     expect(dot).toHaveClass('bg-[var(--text-tertiary)]')
-    const banner = screen.getByText(OLD_DEVICE_WAITING).closest('div')
+    const banner = shownBanner(OLD_DEVICE_WAITING)
     expect(banner).toHaveClass('border-white/[0.1]', 'bg-white/[0.03]')
-    expect(`${dot?.className ?? ''} ${banner?.className ?? ''}`).not.toMatch(/accent/)
+    expect(`${dot?.className ?? ''} ${banner.className}`).not.toMatch(/accent/)
   })
 
   it.each(['network', 'server', 'permission', 'invalid'] as const)(
@@ -540,22 +593,45 @@ describe('banners', () => {
         cloudStatus: 'error',
         lastError: { kind, message: syncMessage(kind), since: NOW },
       })
-      expect(screen.getByText(syncMessage(kind))).toBeInTheDocument()
+      expect(shownBanner(syncMessage(kind))).toBeInTheDocument()
+      expect(screen.getByRole('status')).toHaveTextContent(syncMessage(kind))
+    },
+  )
+
+  // A button inside the live region would be read as part of the sentence ("…to update.
+  // Reload"): the region holds the sentence only, and the button is described by it.
+  it.each([
+    ['moved', 'Reload', syncMessage('moved')],
+    ['reload', 'Reload', syncMessage('reload')],
+    [
+      'too-large',
+      'Export backup',
+      "Your data (1365 KB) is too large for the sync server. It's still saved here — export a backup.",
+    ],
+  ] as const)(
+    'announces a %s banner without its button, which the sentence describes',
+    (kind, name, sentence) => {
+      connectedPanel({ cloudStatus: 'paused', lastError: failure(kind) })
+      const region = screen.getByRole('status')
+      const button = screen.getByRole('button', { name })
+      expect(region).not.toContainElement(button)
+      expect(region).toHaveTextContent(sentence, { normalizeWhitespace: false })
+      expect(region.textContent).toBe(sentence)
+      expect(button).toHaveAccessibleDescription(sentence)
     },
   )
 
   it('turns a retried failure red, and says since when, once it has lasted 10 minutes', () => {
     const since = NOW - 9 * 60_000
     connectedPanel({ cloudStatus: 'error', lastError: { ...failure('network'), since } })
-    const banner = () => screen.getByText(syncMessage('network')).closest('div')
+    const banner = () => shownBanner(syncMessage('network'))
     expect(banner()).toHaveClass('text-warning')
     expect(statusRow()).toHaveClass('text-warning')
 
     act(() => {
       vi.advanceTimersByTime(60_000)
     })
-    const failing = screen.getByText(failingSinceMessage(since))
-    expect(failing.closest('div')).toHaveClass('text-negative')
+    expect(shownBanner(failingSinceMessage(since))).toHaveClass('text-negative')
     expect(failingSinceMessage(since)).toBe(
       `Sync has been failing since ${clockTime(since)}. Your changes are saved on this device.`,
     )
@@ -589,32 +665,58 @@ describe('banners', () => {
 
   it('sets banner text at 13 px on phones (11 px from md up)', () => {
     connectedPanel({ cloudStatus: 'error', lastError: failure('server') })
-    const banner = screen.getByText(syncMessage('server')).closest('div')
+    const banner = shownBanner(syncMessage('server'))
     expect(banner).toHaveClass('text-[13px]', 'md:text-[11px]')
   })
 
-  it.each(['moved', 'update-required'] as const)('offers a working Reload when sync %s', (kind) => {
-    const reload = vi.fn()
-    vi.stubGlobal('location', { reload })
+  // The service worker is prompt-style: a plain reload is served by the old worker, so the new
+  // build that is installed and waiting would never run, and the same pause would come back.
+  it.each(['moved', 'update-required'] as const)(
+    'offers a Reload that runs the waiting build when sync %s',
+    (kind) => {
+      const reloadToLatest = vi
+        .spyOn(getUpdateController(), 'reloadToLatest')
+        .mockImplementation(() => {})
+      const reload = vi.fn()
+      vi.stubGlobal('location', { reload })
+      connectedPanel({
+        cloudStatus: 'paused',
+        lastError: { kind, message: syncMessage(kind), since: NOW },
+      })
+      expect(
+        shownBanner('Sync moved to a newer version. Reload SpendTrack to update.'),
+      ).toBeInTheDocument()
+      const button = screen.getByRole('button', { name: 'Reload' })
+      expect(button).toHaveClass('h-11', 'md:h-8')
+      fireEvent.click(button)
+      expect(reloadToLatest).toHaveBeenCalledTimes(1)
+      expect(reload).not.toHaveBeenCalled()
+    },
+  )
+
+  // The engine's code did not load on this page (a stale chunk it could not reload for): only a
+  // reload fetches it again, so the panel says that and offers one, in amber.
+  it('offers a Reload that runs the newest build when sync could not start on this page', () => {
+    const reloadToLatest = vi
+      .spyOn(getUpdateController(), 'reloadToLatest')
+      .mockImplementation(() => {})
     connectedPanel({
       cloudStatus: 'paused',
-      lastError: { kind, message: syncMessage(kind), since: NOW },
+      lastError: { kind: 'reload', message: syncMessage('reload'), since: NOW },
     })
-    expect(
-      screen.getByText('Sync moved to a newer version. Reload SpendTrack to update.'),
-    ).toBeInTheDocument()
-    const button = screen.getByRole('button', { name: 'Reload' })
-    expect(button).toHaveClass('h-11', 'md:h-8')
-    fireEvent.click(button)
-    expect(reload).toHaveBeenCalledTimes(1)
+    expect(statusRow()).toHaveTextContent('Sync paused')
+    expect(shownBanner(syncMessage('reload'))).toBeInTheDocument()
+    expect(screen.queryByText(/Sync moved to a newer version/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/Can't reach|failing since/)).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Reload' }))
+    expect(reloadToLatest).toHaveBeenCalledTimes(1)
   })
 
   it('shows the old-device banner for 24 hours after an old device wrote', () => {
     connectedPanel({ legacyWriterAt: NOW - 60_000 })
     expect(
-      screen.getByText(
+      shownBanner(
         'Another device runs an older SpendTrack (0.8.4 or earlier). Open it and reload.',
-        { exact: false },
       ),
     ).toBeInTheDocument()
     cleanup()
@@ -622,11 +724,16 @@ describe('banners', () => {
     expect(screen.queryByText(/older SpendTrack/)).not.toBeInTheDocument()
   })
 
-  it('says pushes are held back while the old device keeps overwriting', () => {
+  it('says pushes are held back while the old device keeps overwriting, in one sentence when both apply', () => {
+    connectedPanel({ waitingForOld: true })
+    expect(shownBanner(OLD_DEVICE_WAITING)).toBeInTheDocument()
+    cleanup()
     connectedPanel({ legacyWriterAt: NOW, waitingForOld: true })
-    expect(
-      screen.getByText(/keeps overwriting the synced copy until it's updated/),
-    ).toBeInTheDocument()
+    const both =
+      'An older SpendTrack (0.8.4 or earlier) on your other device keeps overwriting the synced copy. Open it and reload; everything is saved here.'
+    expect(shownBanner(both)).toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent(both)
+    expect(screen.queryByText(OLD_DEVICE_WAITING)).not.toBeInTheDocument()
   })
 
   it('shows nothing when sync is healthy', () => {
@@ -644,6 +751,7 @@ describe('banners', () => {
     act(() => useSyncStore.setState({ legacyWriterAt: NOW, waitingForOld: true }))
     expect(screen.getAllByRole('status')).toEqual([region])
     expect(region).toHaveTextContent(/older SpendTrack/)
+    expect(within(region).queryByRole('button')).toBeNull()
   })
 })
 
