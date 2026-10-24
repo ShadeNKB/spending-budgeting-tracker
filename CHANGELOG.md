@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.2 — 2026-10-23
+## 0.9.2 — 2026-10-24
 
 PR-0 of the data-engine overhaul: stop the bleeding. Sync no longer loses entries you make while it runs, and it no longer reverts an undo, a category rename or an item's category. It says plainly when it fails, and it catches up when the app is hidden, reopened or back online. The sync format stays 4.0, so 0.8.4 devices can still read it. **Update the device you use least first:** a device left on 0.8.4 keeps losing its own changes, and Settings › Sync points it out. Until it updates, an edit made on the old device also sends its keyword re-filing of that entry with a fresh timestamp, so that entry's category changes on every device.
 
@@ -56,7 +56,7 @@ PR-0 of the data-engine overhaul: stop the bleeding. Sync no longer loses entrie
 - A realtime event is our own echo only when it carries a `wr.rev` we sent and the same content (a hash of its content key), from a push that cannot have landed over a newer one: the latest, or one the relay answered before anything newer was sent. So a write that kept our stamp is still merged at once, and a push that was committed after it timed out, over a newer one, is repaired by the next cycle it starts. Canonical JSON writes anything nested deeper than 64 levels as one opaque token, and a row nested more than 16 levels is not merged, so no payload can overflow the stack. Records built from untrusted keys use `Object.fromEntries`, so a key named `__proto__` stays a key.
 - `triggerSync` and `setupSync` always resolve to a typed `SyncResult` and never reject. The Supabase client's own read retry is off: a failed pull is one request, not four over about 7.5 s.
 - `scripts/check-no-backups.mjs` blocks committing personal backups (a pre-commit hook and CI step), and `.gitignore` covers backup file names. Run `npm run hooks:install` once per clone. (F-105)
-- Tests: a fake Supabase relay with latency, failures, hangs, late-landing ("ghost") pushes, realtime drops and per-device outages; a model of a 0.8.4 device ported from its shipped sync code; and a seeded two-device fuzz with an oracle (convergence, no lost add, no resurrection, no reverted write except to a concurrent edit of the same entry, quiet). The fuzz runs 72 seeds of two 0.8.5 devices and 12 seeds next to a 0.8.4 device. 1,638 unit tests pass in three time zones, and 180 e2e tests pass on Chromium and iPhone WebKit.
+- Tests: a fake Supabase relay with latency, failures, hangs, late-landing ("ghost") pushes, realtime drops and per-device outages; a model of a 0.8.4 device ported from its shipped sync code; and a seeded two-device fuzz with an oracle (convergence, no lost add, no resurrection, no reverted write except to a concurrent edit of the same entry, quiet). The fuzz runs 72 seeds of two 0.8.5 devices and 12 seeds next to a 0.8.4 device. Including the v5 data core (PR-1, not wired in yet), 2,066 unit tests pass in three time zones, and 180 e2e tests pass on Chromium and iPhone WebKit.
 
 ## 0.9.1 — 2026-10-21
 
