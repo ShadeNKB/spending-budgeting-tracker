@@ -48,6 +48,7 @@ PR-0 of the data-engine overhaul: stop the bleeding. Sync no longer loses entrie
 - **A renamed or removed category name can come back in the category list.** It comes back empty: its entries, item picks and budget stay moved. The 4.0 format merges the list of names as a union.
 - **A 0.8.4 device drops the item-pick timestamps** when it syncs, so its own picks lose to timestamped ones until it is updated.
 - **An edit made on a 0.8.4 device re-files that entry by keyword**, with a fresh timestamp, so the entry's category changes on every device. Update the old device first.
+- **An entry added on a 0.8.4 device can wait there until the next change.** If both devices upload within the same split second, the updated device's upload can land last without that entry, and the old device misses the signal to send it again. The entry stays on the old device and arrives with its next sync: after any change on either device, or once the old device is updated. Two updated devices repair this at once.
 
 ### Changed (engineering)
 
