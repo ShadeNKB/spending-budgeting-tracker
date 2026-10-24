@@ -33,6 +33,10 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      # F-105: no personal backup JSON may be tracked (scripts/check-no-backups.mjs).
+      - name: Backup guard
+        run: npm run check:backups
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -53,6 +57,11 @@ jobs:
 
       - name: Bundle size budget
         run: npm run size
+
+      # The build above has no relay settings, so the sync engine is tree-shaken out of it.
+      # This rebuilds as deployed (dummy relay values) and keeps sync code out of the main chunk.
+      - name: Relay build — eager sync weight
+        run: npm run size:relay
 
       - name: Smoke test (preview server)
         run: npm run smoke

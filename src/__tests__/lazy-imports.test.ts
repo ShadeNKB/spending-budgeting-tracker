@@ -8,17 +8,20 @@
  */
 import { describe, expect, it } from 'vitest'
 
-const SOURCES = import.meta.glob<string>(['/src/**/*.{ts,tsx}', '!/src/**/*.test.{ts,tsx}'], {
-  query: '?raw',
-  import: 'default',
-  eager: true,
-})
+// Test helpers (`__tests__` folders) load modules for tests, not chunks for the app.
+const SOURCES = import.meta.glob<string>(
+  ['/src/**/*.{ts,tsx}', '!/src/**/*.test.{ts,tsx}', '!/src/**/__tests__/**'],
+  {
+    query: '?raw',
+    import: 'default',
+    eager: true,
+  },
+)
 
 // The Supabase client is a library, not a screen, and syncService loads it on demand. Vite
 // still routes that import through its preload helper, so a failed load fires
 // vite:preloadError and the one-shot automatic reload (installPreloadErrorRecovery) recovers
-// it. There is no in-page retry: syncService keeps the rejected client promise for the life of
-// the page.
+// it. syncService also drops a failed (or stalled) load, so the next sync cycle loads again.
 const ALLOWED_BARE_IMPORTS = new Set(['/src/services/syncService.ts'])
 
 const count = (text: string, pattern: RegExp) => [...text.matchAll(pattern)].length

@@ -18,17 +18,19 @@ export function listOf<T>(value: unknown, isItem: (item: unknown) => item is T):
   return Array.isArray(value) ? value.filter(isItem) : []
 }
 
-/** Keeps the entries that pass `isEntry`; anything that is not a plain object becomes `{}`. */
+/**
+ * Keeps the entries that pass `isEntry`; anything that is not a plain object becomes `{}`.
+ * Built from entries, so a key named "__proto__" stays a key: assigning it would hit the
+ * prototype setter and drop it, and the device holding it would disagree with every other.
+ */
 export function recordOf<T>(
   value: unknown,
   isEntry: (entry: unknown) => entry is T,
 ): Record<string, T> {
   if (!isRecord(value)) return {}
-  const out: Record<string, T> = {}
-  for (const [key, entry] of Object.entries(value)) {
-    if (isEntry(entry)) out[key] = entry
-  }
-  return out
+  return Object.fromEntries(
+    Object.entries(value).filter((pair): pair is [string, T] => isEntry(pair[1])),
+  )
 }
 
 export class BackupTooLargeError extends Error {
@@ -90,6 +92,7 @@ export function parseBackup(raw: unknown): BackupData {
     expenses: rawExpenses.map((x: unknown) => parseBackupExpense(x)),
     categories: listOf(raw.categories, isString),
     categoryMappings: recordOf(raw.categoryMappings, isString),
+    mappingUpdatedAt: recordOf(raw.mappingUpdatedAt, isString),
     budgets: recordOf(raw.budgets, isNumber),
     budgetUpdatedAt: recordOf(raw.budgetUpdatedAt, isString),
     budgetDeletedAt: recordOf(raw.budgetDeletedAt, isString),

@@ -3,7 +3,7 @@ import { isRouteErrorResponse, useLocation, useNavigate, useRouteError } from 'r
 import { AlertTriangle, Download, RotateCw, WifiOff } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { SpendLogo } from '../ui/SpendLogo'
-import { isChunkLoadError, openPage, reloadedRecently } from '../lib/chunkReload'
+import { STUCK_HINT, isChunkLoadError, openPage, reloadedRecently } from '../lib/chunkReload'
 import { downloadRescueFile, type RescueOutcome } from '../lib/rescue'
 import { getUpdateController, type UpdateController } from './swUpdate'
 import { SAFE_GUTTER_X } from './safeArea'
@@ -17,9 +17,6 @@ import { SAFE_GUTTER_X } from './safeArea'
 
 type Scope = 'app' | 'screen'
 
-// iOS keeps a file that failed to load failed until the app is closed, and an installed app
-// has no tab to close.
-const STUCK = 'If this keeps happening, close SpendTrack completely and open it again.'
 const STALE = {
   title: 'SpendTrack was just updated',
   body: "Part of the app couldn't load. This usually happens right after an update or when you're offline. Reloading fixes it.",
@@ -33,7 +30,7 @@ const OFFLINE = {
 const CRASH = {
   title: 'Something went wrong',
   body: (scope: Scope) =>
-    `${scope === 'app' ? 'SpendTrack' : 'This screen'} ran into a problem and couldn't be shown. Your expenses are still saved on this device. ${STUCK}`,
+    `${scope === 'app' ? 'SpendTrack' : 'This screen'} ran into a problem and couldn't be shown. Your expenses are still saved on this device. ${STUCK_HINT}`,
 }
 const UPDATE_WAITING = 'A new version of SpendTrack is ready. Reload installs it.'
 const RESCUE_CAPTION = 'Saves a copy of everything stored in this browser, exactly as it is.'
@@ -111,7 +108,7 @@ function ErrorCard({
     ? OFFLINE.body
     : stale
       ? reloadedRecently()
-        ? `${STALE.body} ${STUCK}`
+        ? `${STALE.body} ${STUCK_HINT}`
         : STALE.body
       : CRASH.body(scope)
   const onPulse = pathname === '/' || pathname === '/pulse'

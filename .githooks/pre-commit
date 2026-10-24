@@ -1,0 +1,15 @@
+#!/bin/sh
+# Blocks commits that stage a JSON file shaped like a SpendTrack backup (F-105).
+# Opt in once per clone with `npm run hooks:install` (sets core.hooksPath to .githooks).
+# Only JSON files can be backups: a commit that stages none needs no check (and no node).
+# NUL-separated names, so a path git would quote ("caf\303\251.json") still ends in .json.
+# The same filter as the guard's staged scan (ACMRT: a type change, such as a symlink restaged
+# as a file, can bring a backup in too).
+if ! git diff --cached --name-only -z --diff-filter=ACMRT | tr '\0' '\n' | grep -qi '\.json$'; then
+  exit 0
+fi
+if ! command -v node >/dev/null 2>&1; then
+  echo "pre-commit: node is not on PATH, so the backup guard cannot run. Install Node 20+." >&2
+  exit 1
+fi
+exec node scripts/check-no-backups.mjs --staged

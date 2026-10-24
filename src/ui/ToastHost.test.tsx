@@ -21,6 +21,31 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+describe('ToastHost tones', () => {
+  const kinds = ['success', 'error', 'warning', 'info'] as const
+
+  // A tone tint as a second background class won or lost by stylesheet order: warning's came
+  // after the surface, so amber toasts were 95 % see-through over the screen under them.
+  it.each(kinds)('a %s toast has the surface as its one background', (kind) => {
+    render(<ToastHost />)
+    act(() => {
+      useUIStore.getState().pushToast({ kind, message: `A ${kind} toast` })
+    })
+    const toast = screen.getByText(`A ${kind} toast`).parentElement
+    const backgrounds = [...(toast?.classList ?? [])].filter((c) => /^bg-/.test(c))
+    expect(backgrounds).toEqual(['bg-surface-1/95'])
+  })
+
+  // Neutral grey, as the sync pill and panel show the same states: cyan means a sync in progress.
+  it('shows info in neutral grey, not the accent colour', () => {
+    render(<ToastHost />)
+    push('Sync disconnected')
+    const toast = screen.getByText('Sync disconnected').parentElement
+    expect(toast).toHaveClass('text-[var(--text-secondary)]')
+    expect(toast?.className).not.toMatch(/accent/)
+  })
+})
+
 describe('ToastHost durations', () => {
   it('dismisses a default toast after 4 s', () => {
     render(<ToastHost />)

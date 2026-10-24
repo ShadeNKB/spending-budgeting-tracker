@@ -7,11 +7,15 @@ import { useUIStore, type Toast } from '../stores/useUIStore'
 const iconFor = (k: Toast['kind']) =>
   k === 'success' ? CheckCircle2 : k === 'error' ? XCircle : k === 'warning' ? AlertTriangle : Info
 
-const toneClass: Record<Toast['kind'], string> = {
-  success: 'border-positive/30 bg-positive/5 text-positive',
-  error: 'border-negative/30 bg-negative/5 text-negative',
-  warning: 'border-warning/30 bg-warning/5 text-warning',
-  info: 'border-accent/30 bg-accent/5 text-accent',
+// The tone is the border and the icon only. The surface is the toast's one background: a tone
+// tint as a second `bg-` class won or lost by stylesheet order (warning's won, leaving amber
+// toasts 95 % see-through over whatever was under them). Info is neutral grey, as on the sync
+// pill and panel: cyan means a sync in progress there.
+const TOAST_TONE: Record<Toast['kind'], string> = {
+  success: 'border-positive/30 text-positive',
+  error: 'border-negative/30 text-negative',
+  warning: 'border-warning/30 text-warning',
+  info: 'border-white/[0.1] text-[var(--text-secondary)]',
 }
 
 function ToastItem({ toast }: { toast: Toast }) {
@@ -38,7 +42,7 @@ function ToastItem({ toast }: { toast: Toast }) {
       transition={{ type: 'spring', stiffness: 420, damping: 32 }}
       className={clsx(
         'pointer-events-auto flex w-full min-w-0 max-w-[380px] items-start gap-3 overflow-hidden rounded-xl border bg-surface-1/95 px-4 py-3 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.6)] backdrop-blur-md',
-        toneClass[toast.kind],
+        TOAST_TONE[toast.kind],
       )}
     >
       <Icon size={16} className="mt-0.5 shrink-0" />

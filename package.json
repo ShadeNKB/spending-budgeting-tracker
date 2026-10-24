@@ -2,7 +2,7 @@
   "name": "spendtrack",
   "private": true,
   "description": "A fast, local-first spending tracker with smart categorisation, real-time budgets, and optional cross-device sync.",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -45,10 +45,13 @@
     "format": "prettier --write \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\" \"scripts/**/*.mjs\" \"*.{js,ts,json,md}\"",
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\" \"scripts/**/*.mjs\" \"*.{js,ts,json,md}\"",
     "size": "node scripts/check-bundle-size.mjs",
+    "size:relay": "node scripts/check-relay-weight.mjs",
+    "check:backups": "node scripts/check-no-backups.mjs",
+    "hooks:install": "node -e \"require('node:fs').chmodSync('.githooks/pre-commit', 0o755)\" && git config core.hooksPath .githooks",
     "a11y": "axe http://localhost:4173 --exit",
     "e2e": "playwright test",
     "e2e:ui": "playwright test --ui",
-    "verify": "npm run typecheck && npm run lint && npm run format:check && npm run test:run && npm run build && npm run size && npm run smoke"
+    "verify": "npm run check:backups && npm run typecheck && npm run lint && npm run format:check && npm run test:run && npm run build && npm run size && npm run size:relay && npm run smoke"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.105.1",

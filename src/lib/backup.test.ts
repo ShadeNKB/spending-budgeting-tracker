@@ -41,6 +41,14 @@ describe('guards', () => {
     expect(recordOf(['Food'], isString)).toEqual({})
     expect(recordOf('Food', isString)).toEqual({})
   })
+
+  it('recordOf keeps a key named "__proto__" as a plain own key', () => {
+    const read = recordOf(JSON.parse('{"__proto__":"Meals","kopi":"Meals","bad":1}'), isString)
+    expect(Object.keys(read)).toEqual(['__proto__', 'kopi'])
+    expect(Object.hasOwn(read, '__proto__')).toBe(true)
+    expect(Object.getPrototypeOf(read)).toBe(Object.prototype)
+    expect(JSON.stringify(read)).toBe('{"__proto__":"Meals","kopi":"Meals"}')
+  })
 })
 
 describe('parseBackupExpense', () => {
@@ -91,6 +99,7 @@ describe('parseBackup', () => {
       expenses: [valid],
       categories: ['Food & Drink', 7, null],
       categoryMappings: { coffee: 'Food & Drink', tea: 1 },
+      mappingUpdatedAt: { coffee: '2026-05-08T12:00:00.000Z', tea: 9 },
       budgets: { 'Food & Drink': 200, Travel: '300' },
       budgetUpdatedAt: { 'Food & Drink': '2026-05-08T12:00:00', Travel: 5 },
       budgetDeletedAt: 'nope',
@@ -103,6 +112,7 @@ describe('parseBackup', () => {
       expenses: [valid],
       categories: ['Food & Drink'],
       categoryMappings: { coffee: 'Food & Drink' },
+      mappingUpdatedAt: { coffee: '2026-05-08T12:00:00.000Z' },
       budgets: { 'Food & Drink': 200 },
       budgetUpdatedAt: { 'Food & Drink': '2026-05-08T12:00:00' },
       budgetDeletedAt: {},
@@ -116,6 +126,7 @@ describe('parseBackup', () => {
     const data = parseBackup({ expenses: [] })
     expect(data.categories).toEqual([])
     expect(data.categoryMappings).toEqual({})
+    expect(data.mappingUpdatedAt).toEqual({})
     expect(data.budgets).toEqual({})
     expect(data.deletedIds).toEqual([])
     expect(data.version).toBe('4.0')

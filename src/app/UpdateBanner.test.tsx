@@ -19,6 +19,7 @@ function fakeController(initial: UpdateState) {
     cancelConfirm: vi.fn(),
     dismiss: vi.fn(),
     reloadToLatest: vi.fn(),
+    checkNow: vi.fn(),
   }
   const controller: UpdateController = {
     start: vi.fn(),

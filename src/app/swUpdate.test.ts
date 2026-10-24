@@ -748,4 +748,40 @@ describe('update checks', () => {
     doc.show()
     expect(registration.updateCalls).toBe(1)
   })
+
+  // Sync found the relay moved to a newer version: a new build is out, so look for it now
+  // rather than within the hour, and let it wait for the Reload that runs it.
+  it('checkNow checks at once, past the hourly schedule, and the build it finds waits', async () => {
+    const { controller, registration, doc } = await registeredPage()
+    controller.checkNow()
+    expect(registration.updateCalls).toBe(1)
+    const worker = registration.findUpdate()
+    registration.finishInstall(worker)
+    expect(controller.getSnapshot()).toBe('ready')
+    // The hourly schedule restarts from that check.
+    doc.hide()
+    vi.setSystemTime(Date.now() + 30 * 60 * 1000)
+    doc.show()
+    expect(registration.updateCalls).toBe(1)
+  })
+
+  it('checkNow does nothing offline, before registration, or without service workers', async () => {
+    const page = setup()
+    page.controller.checkNow() // not started: the page load itself has just checked
+    expect(page.registration.updateCalls).toBe(0)
+    const { controller, registration, setOnline } = await registeredPage()
+    setOnline(false)
+    controller.checkNow()
+    expect(registration.updateCalls).toBe(0)
+    expect(() => setup({ container: null }).controller.checkNow()).not.toThrow()
+  })
+
+  it('checkNow swallows a failed check', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { controller, registration } = await registeredPage()
+    registration.updateResult = () => Promise.reject(new TypeError('offline'))
+    controller.checkNow()
+    await flush()
+    expect(error).not.toHaveBeenCalled()
+  })
 })

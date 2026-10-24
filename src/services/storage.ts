@@ -4,18 +4,37 @@ import type {
   CategoryColors,
   CategoryBudgets,
   CategoryBudgetTimestamps,
+  CategoryMappingTimestamps,
 } from '../types'
-import { isNumber, isString, listOf, recordOf } from '../lib/backup'
+import { isNumber, isRecord, isString, listOf, recordOf } from '../lib/backup'
 
 const KEY_EXPENSES = 'expenses'
 const KEY_CATEGORIES = 'categories'
 const KEY_MAPPINGS = 'categoryMappings'
+const KEY_MAPPING_UPDATED_AT = 'categoryMappingUpdatedAt'
 const KEY_COLORS = 'categoryColors'
 const KEY_BUDGETS = 'categoryBudgets'
 const KEY_BUDGET_UPDATED_AT = 'categoryBudgetUpdatedAt'
 const KEY_BUDGET_DELETED_AT = 'categoryBudgetDeletedAt'
 const KEY_DELETED_IDS = 'deletedExpenseIds'
 const KEY_SYNC_ID = 'syncId'
+const KEY_APP = 'spendtrack:app'
+const KEY_DEVICE = 'spendtrack:dev'
+
+/**
+ * Protocol version of this writer, not the display version: it marks local data written by
+ * this build (`spendtrack:app`) and every push (`wr.app`), so later engines know the writer.
+ */
+export const WRITER_VERSION = '0.8.5'
+
+const DEVICE_ID_PATTERN = /^[0-9a-z]{6}$/
+// Kept for the session when storage refuses the write, so pushes keep one device id.
+let sessionDeviceId: string | null = null
+
+function newDeviceId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(6))
+  return Array.from(bytes, (b) => (b % 36).toString(36)).join('')
+}
 
 /**
  * Quota-aware setItem — every persistence write goes through this.
@@ -57,19 +76,23 @@ function safeSet(key: string, value: string): void {
 }
 
 export const storage = {
+  /**
+   * The stored rows. An entry that is not an object (a `null` after corruption) carries no
+   * data and is dropped, so no reader dereferences it; object rows are kept as they are.
+   */
   getExpenses(): Expense[] {
     try {
       const raw = localStorage.getItem(KEY_EXPENSES)
       if (!raw) return []
       const parsed = JSON.parse(raw) as unknown
-      if (Array.isArray(parsed)) return parsed as Expense[]
+      if (Array.isArray(parsed)) return listOf(parsed, isRecord) as unknown as Expense[]
     } catch {
       try {
         const raw = localStorage.getItem(KEY_EXPENSES)
         if (raw) {
           const repaired = raw.replace(/,(\s*[}\]])/g, '$1')
           const parsed = JSON.parse(repaired) as unknown
-          if (Array.isArray(parsed)) return parsed as Expense[]
+          if (Array.isArray(parsed)) return listOf(parsed, isRecord) as unknown as Expense[]
         }
       } catch {
         localStorage.removeItem(KEY_EXPENSES)
@@ -110,6 +133,20 @@ export const storage = {
 
   saveCategoryMappings(data: CategoryMappings): void {
     safeSet(KEY_MAPPINGS, JSON.stringify(data))
+  },
+
+  getMappingUpdatedAt(): CategoryMappingTimestamps {
+    try {
+      const raw = localStorage.getItem(KEY_MAPPING_UPDATED_AT)
+      if (raw) return recordOf(JSON.parse(raw), isString)
+    } catch {
+      localStorage.removeItem(KEY_MAPPING_UPDATED_AT)
+    }
+    return {}
+  },
+
+  saveMappingUpdatedAt(data: CategoryMappingTimestamps): void {
+    safeSet(KEY_MAPPING_UPDATED_AT, JSON.stringify(data))
   },
 
   getCategoryColors(): CategoryColors {
@@ -192,14 +229,38 @@ export const storage = {
     budgetUpdatedAt?: CategoryBudgetTimestamps,
     budgetDeletedAt?: CategoryBudgetTimestamps,
     deletedIds?: string[],
+    mappingUpdatedAt?: CategoryMappingTimestamps,
   ): void {
     this.saveExpenses(expenses)
     this.saveCategories(categories)
     this.saveCategoryMappings(mappings)
+    if (mappingUpdatedAt !== undefined) this.saveMappingUpdatedAt(mappingUpdatedAt)
     if (budgets !== undefined) this.saveBudgets(budgets)
     if (budgetUpdatedAt !== undefined) this.saveBudgetUpdatedAt(budgetUpdatedAt)
     if (budgetDeletedAt !== undefined) this.saveBudgetDeletedAt(budgetDeletedAt)
     if (deletedIds !== undefined) this.saveDeletedIds(deletedIds)
+    try {
+      safeSet(KEY_APP, WRITER_VERSION)
+    } catch {
+      // The marker is best-effort; the data keys above are what matter.
+    }
+  },
+
+  /** This device's id for writer stamps: 6 base36 chars, created once (`spendtrack:dev`). */
+  getDeviceId(): string {
+    try {
+      const stored = localStorage.getItem(KEY_DEVICE)
+      if (stored !== null && DEVICE_ID_PATTERN.test(stored)) return stored
+    } catch {
+      // Storage unavailable: fall through to the session id.
+    }
+    sessionDeviceId ??= newDeviceId()
+    try {
+      safeSet(KEY_DEVICE, sessionDeviceId)
+    } catch {
+      // Not persisted; the id still holds for this session.
+    }
+    return sessionDeviceId
   },
 
   getSyncId(): string | null {

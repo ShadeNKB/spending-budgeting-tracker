@@ -1,0 +1,703 @@
+// F-016 honest results, F-005 lenient pulls with fences, and the writer stamp on the wire
+// (AC-17 to AC-22, AC-28). Every failure resolves a SyncResult; nothing throws.
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Expense } from '../../types'
+import { isRecord } from '../../lib/backup'
+import {
+  SYNC_CODE,
+  advance,
+  bootDevice,
+  connect,
+  expense,
+  failNext,
+  payloadOf,
+  relay,
+  relayRows,
+  resetRelay,
+  retireDevices,
+  rowPayload,
+  seedRow,
+  settle,
+  stubRelayEnv,
+  writeAsOther,
+  type Device,
+  type Failure,
+} from '../../__tests__/fakeRelay'
+
+vi.mock(
+  '@supabase/supabase-js',
+  async () => (await import('../../__tests__/fakeRelay')).supabaseModule,
+)
+
+vi.setConfig({ testTimeout: 30_000 })
+
+const NOW = Date.UTC(2026, 9, 19, 8, 0, 0)
+const MINUTE = 60_000
+
+beforeEach(() => {
+  vi.useFakeTimers()
+  vi.setSystemTime(NOW)
+  localStorage.clear()
+  stubRelayEnv()
+  resetRelay()
+})
+
+afterEach(() => {
+  retireDevices()
+  vi.clearAllTimers()
+  vi.useRealTimers()
+  vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+  Object.defineProperty(navigator, 'onLine', { value: true, configurable: true })
+})
+
+async function connected(expenses: Expense[] = [expense('e1')]): Promise<Device> {
+  const phone = await bootDevice({ expenses })
+  await connect(phone)
+  return phone
+}
+
+const trigger = (device: Device, ms = 100) =>
+  settle(device.sync.useSyncStore.getState().triggerSync(), ms)
+
+const toastsOf = (device: Device) => device.ui.useUIStore.getState().toasts
+
+describe('every injected failure resolves an honest result (T-016-1)', () => {
+  const transport: [string, 'pull' | 'push', Failure, string][] = [
+    ['a network failure (status 0) on the pull', 'pull', { status: 0 }, 'network'],
+    ['a network failure (status 0) on the push', 'push', { status: 0 }, 'network'],
+    ['a 503 on the pull', 'pull', { status: 503, message: 'Service Unavailable' }, 'server'],
+    ['a 401 on the push', 'push', { status: 401, message: 'Unauthorized' }, 'permission'],
+    [
+      'code 42501 on the pull',
+      'pull',
+      { status: 400, code: '42501', message: 'permission denied' },
+      'permission',
+    ],
+  ]
+
+  it.each(transport)('%s', async (_label, op, failure, kind) => {
+    const phone = await connected()
+    phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
+    failNext(op, failure)
+    const result = await trigger(phone)
+    expect(result).toMatchObject({ ok: false, error: kind })
+    const sync = phone.sync.useSyncStore.getState()
+    expect(sync.cloudStatus).toBe('error')
+    expect(sync.lastError?.kind).toBe(kind)
+    expect(sync.pendingLocal).toBe(true)
+  })
+
+  it('a request that never settles fails as network after 15 s, and the next cycle runs normally', async () => {
+    const phone = await connected()
+    failNext('pull', { hang: true })
+    const pending = phone.sync.useSyncStore.getState().triggerSync()
+    await advance(14_999)
+    expect(phone.sync.useSyncStore.getState().cloudStatus).toBe('syncing')
+    const result = await settle(pending, 1)
+    expect(result).toMatchObject({ ok: false, error: 'network' })
+    expect(await trigger(phone)).toMatchObject({ ok: true })
+    expect(phone.sync.useSyncStore.getState().cloudStatus).toBe('synced')
+  })
+
+  it('an SDK download that never finishes fails as network after 15 s, and the retry syncs', async () => {
+    const phone = await bootDevice({ expenses: [expense('e1')] })
+    relay().importStalls = 1 // the first visit, before the service worker holds the SDK chunk
+    const pending = phone.sync.useSyncStore.getState().setupSync(SYNC_CODE)
+    await advance(14_999)
+    expect(phone.sync.useSyncStore.getState().cloudStatus).toBe('syncing')
+    expect(await settle(pending, 1)).toMatchObject({ ok: false, error: 'network' })
+    await advance(2000) // the first backoff retry loads the SDK again
+    expect(phone.sync.useSyncStore.getState()).toMatchObject({
+      cloudStatus: 'synced',
+      pendingLocal: false,
+    })
+    expect(relayRows()).toHaveLength(1)
+  })
+
+  it.each([
+    ['a non-object', 'garbage'],
+    ['a top-level array', [expense('e1')]],
+    ['expenses: null', { expenses: null, categories: [] }],
+  ])('an unreadable relay copy (%s) is invalid: no merge, no push', async (_label, raw) => {
+    const phone = await connected()
+    const before = phone.expense.useExpenseStore.getState().expenses
+    seedRow(SYNC_CODE, raw)
+    const upserts = relay().upserts
+    const result = await trigger(phone)
+    expect(result).toMatchObject({ ok: false, error: 'invalid' })
+    expect(phone.sync.useSyncStore.getState().cloudStatus).toBe('error')
+    expect(phone.expense.useExpenseStore.getState().expenses).toBe(before)
+    expect(relay().upserts).toBe(upserts)
+  })
+
+  it('setupSync resolves the same honest result', async () => {
+    const phone = await bootDevice()
+    failNext('pull', { status: 503 })
+    const result = await settle(phone.sync.useSyncStore.getState().setupSync(SYNC_CODE))
+    expect(result).toMatchObject({ ok: false, error: 'server' })
+  })
+})
+
+describe('too large: paused, one toast, merging continues (AC-18)', () => {
+  const big = (n: number): Expense[] =>
+    Array.from({ length: n }, (_, i) =>
+      expense(`b${String(i)}`, { itemName: `Expense ${String(i)}`, notes: 'x'.repeat(200) }),
+    )
+
+  it('pauses with one toast per session and no retry, keeps merging, keeps local data', async () => {
+    // A background cycle (the saved code at start-up) hits the pause: the store toasts.
+    const phone = await bootDevice({ expenses: big(4000), savedCode: SYNC_CODE })
+    await advance(5000)
+    const local = phone.expense.useExpenseStore.getState().expenses
+    expect(phone.sync.useSyncStore.getState().cloudStatus).toBe('paused')
+    expect(phone.sync.useSyncStore.getState().lastError?.kind).toBe('too-large')
+    expect(toastsOf(phone).filter((t) => t.message.includes('too large'))).toHaveLength(1)
+    const result = await trigger(phone)
+    expect(result).toMatchObject({ ok: false, error: 'too-large' })
+    expect(toastsOf(phone).filter((t) => t.message.includes('too large'))).toHaveLength(1)
+
+    const pulls = relay().pulls
+    await advance(5 * MINUTE)
+    expect(relay().pulls).toBe(pulls) // no retry storm
+    expect(relay().upserts).toBe(0)
+
+    // Another device writes a small change: it is still merged here.
+    writeAsOther(SYNC_CODE, payloadOf([expense('laptop1', { itemName: 'From the laptop' })]))
+    await advance(5000)
+    const ids = phone.expense.useExpenseStore.getState().expenses.map((e) => e.id)
+    expect(ids).toContain('laptop1')
+    expect(ids.filter((id) => id.startsWith('b'))).toHaveLength(local.length)
+    expect(toastsOf(phone).filter((t) => t.message.includes('too large'))).toHaveLength(1)
+  })
+
+  it('leaves the once-per-session toast to the panel when the owner asked for the cycle', async () => {
+    // Connect runs the first cycle for the owner: SyncPanel toasts its result, so the store
+    // does not stack an identical toast on it, and later background cycles stay quiet too.
+    const phone = await connected(big(4000))
+    expect(phone.sync.useSyncStore.getState().lastError?.kind).toBe('too-large')
+    expect(toastsOf(phone)).toEqual([])
+    phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
+    await advance(10_000)
+    expect(phone.sync.useSyncStore.getState().lastError?.kind).toBe('too-large')
+    expect(toastsOf(phone)).toEqual([])
+  })
+})
+
+describe('going offline never ends a pause, nor promises a sync it will not run', () => {
+  const setOnline = (online: boolean) => {
+    Object.defineProperty(navigator, 'onLine', { value: online, configurable: true })
+    window.dispatchEvent(new Event(online ? 'online' : 'offline'))
+  }
+  afterEach(() => {
+    Object.defineProperty(navigator, 'onLine', { value: true, configurable: true })
+  })
+  const big = Array.from({ length: 4000 }, (_, i) =>
+    expense(`b${String(i)}`, { itemName: `Expense ${String(i)}`, notes: 'x'.repeat(200) }),
+  )
+  const willSync = (device: Device) => toastsOf(device).filter((t) => /will sync/.test(t.message))
+
+  it.each([
+    ['too large', 'too-large', () => connected(big)],
+    [
+      'moved',
+      'moved',
+      async () => {
+        const phone = await connected()
+        seedRow(SYNC_CODE, { version: '4.0', expenses: 'moved', categories: [] })
+        await trigger(phone)
+        return phone
+      },
+    ],
+  ] as const)(
+    '%s: offline keeps the pause, its words and its result',
+    async (_label, kind, open) => {
+      const phone = await open()
+      const paused = phone.sync.useSyncStore.getState()
+      expect(paused).toMatchObject({ cloudStatus: 'paused', lastError: { kind } })
+
+      setOnline(false)
+      expect(phone.sync.useSyncStore.getState()).toMatchObject({
+        cloudStatus: 'paused',
+        lastError: paused.lastError,
+      })
+      // Sync now while offline: the pause, never "will sync when you're back".
+      const result = await trigger(phone)
+      expect(result).toEqual({ ok: false, error: kind, message: paused.lastError?.message })
+      expect(phone.sync.useSyncStore.getState().lastError).toEqual(paused.lastError)
+      expect(willSync(phone)).toEqual([])
+
+      setOnline(true)
+      await advance(5000)
+      expect(phone.sync.useSyncStore.getState()).toMatchObject({
+        cloudStatus: 'paused',
+        lastError: { kind },
+      })
+      expect(willSync(phone)).toEqual([])
+    },
+  )
+
+  // Offline keeps refused access and a long streak, and nothing retries while offline: no
+  // failure's words may promise a retry (the server's said "Retrying automatically").
+  it.each([
+    'offline',
+    'network',
+    'server',
+    'permission',
+    'invalid',
+    'too-large',
+    'moved',
+    'update-required',
+    'reload',
+  ] as const)('the words for %s promise no retry', async (kind) => {
+    const { syncMessage } = await import('../useSyncStore')
+    expect(syncMessage(kind)).not.toMatch(/retr/i)
+  })
+
+  it('offline keeps refused access, its words and its result, and promises nothing', async () => {
+    const phone = await connected()
+    failNext('pull', ...Array.from({ length: 10 }, (): Failure => ({ status: 401 })))
+    expect(await trigger(phone)).toMatchObject({ ok: false, error: 'permission' })
+    const refused = phone.sync.useSyncStore.getState().lastError
+
+    setOnline(false)
+    expect(phone.sync.useSyncStore.getState()).toMatchObject({
+      cloudStatus: 'error',
+      lastError: refused,
+    })
+    expect(phone.sync.syncsWhenOnline(phone.sync.useSyncStore.getState())).toBe(false)
+    expect(await trigger(phone)).toEqual({
+      ok: false,
+      error: 'permission',
+      message: refused?.message,
+    })
+    expect(willSync(phone)).toEqual([])
+
+    setOnline(true)
+    await advance(5000)
+    expect(phone.sync.useSyncStore.getState().lastError?.kind).toBe('permission')
+  })
+
+  it('a retried failure is replaced by offline (no retry runs while offline)', async () => {
+    const phone = await connected()
+    failNext('pull', { status: 503 }, { status: 503 }, { status: 503 }, { status: 503 })
+    expect(await trigger(phone, 20_000)).toMatchObject({ ok: false, error: 'server' })
+    setOnline(false)
+    expect(phone.sync.useSyncStore.getState()).toMatchObject({
+      cloudStatus: 'offline',
+      lastError: { kind: 'offline' },
+    })
+  })
+})
+
+describe('a long failure streak (AC-19)', () => {
+  it('keeps the start of the streak and shows one toast after 10 minutes', async () => {
+    const phone = await connected()
+    const failures: Failure[] = Array.from({ length: 40 }, () => ({ status: 503 }))
+    failNext('pull', ...failures)
+    const result = await trigger(phone)
+    expect(result).toMatchObject({ ok: false, error: 'server' })
+    const since = phone.sync.useSyncStore.getState().lastError?.since
+    expect(since).toBe(Date.now() - 100)
+
+    await advance(9 * MINUTE)
+    expect(phone.sync.useSyncStore.getState().lastError?.since).toBe(since)
+    expect(toastsOf(phone).filter((t) => t.message.startsWith('Sync has been failing'))).toEqual([])
+
+    await advance(2 * MINUTE)
+    const streak = toastsOf(phone).filter((t) => t.message.startsWith('Sync has been failing'))
+    expect(streak).toHaveLength(1)
+    expect(streak[0]?.message).toBe(
+      `Sync has been failing since ${phone.sync.clockTime(since ?? 0)}. Your changes are saved on this device.`,
+    )
+    await advance(10 * MINUTE)
+    expect(
+      toastsOf(phone).filter((t) => t.message.startsWith('Sync has been failing')),
+    ).toHaveLength(1)
+  })
+
+  it('keeps the start of the streak across an offline blip, and toasts it once', async () => {
+    const phone = await connected()
+    const started = Date.now()
+    failNext('pull', ...Array.from({ length: 80 }, (): Failure => ({ status: 503 })))
+    await trigger(phone)
+    await advance(10.5 * MINUTE)
+    expect(phone.sync.useSyncStore.getState().lastError).toMatchObject({
+      kind: 'server',
+      since: started,
+    })
+    const streakToasts = () =>
+      toastsOf(phone).filter((t) => t.message.startsWith('Sync has been failing'))
+    expect(streakToasts()).toHaveLength(1)
+
+    // The phone drops signal for a second: no attempt is made, so nothing is learnt, and the red
+    // "failing since" stays true offline: it is kept, not replaced by a promise to sync.
+    Object.defineProperty(navigator, 'onLine', { value: false, configurable: true })
+    window.dispatchEvent(new Event('offline'))
+    await advance(1000)
+    expect(phone.sync.useSyncStore.getState()).toMatchObject({
+      cloudStatus: 'error',
+      lastError: { kind: 'server', since: started },
+    })
+    expect(phone.sync.syncsWhenOnline(phone.sync.useSyncStore.getState())).toBe(false)
+    Object.defineProperty(navigator, 'onLine', { value: true, configurable: true })
+    window.dispatchEvent(new Event('online'))
+    await advance(2 * MINUTE)
+
+    // Still failing since the first failure (not "retrying" from the blip), and not toasted again.
+    expect(phone.sync.useSyncStore.getState().lastError).toMatchObject({
+      kind: 'server',
+      since: started,
+    })
+    expect(phone.sync.isFailing({ kind: 'server', since: started })).toBe(true)
+    expect(streakToasts()).toHaveLength(1)
+  })
+
+  it('ends the streak at the next cycle that reaches the relay', async () => {
+    const phone = await connected()
+    failNext('pull', { status: 503 })
+    await trigger(phone)
+    const first = phone.sync.useSyncStore.getState().lastError?.since
+    await advance(5000) // the 2 s retry succeeds
+    expect(phone.sync.useSyncStore.getState().lastError).toBeNull()
+    await advance(MINUTE)
+    failNext('pull', { status: 503 })
+    await trigger(phone)
+    expect(phone.sync.useSyncStore.getState().lastError?.since).toBeGreaterThan(first ?? 0)
+  })
+
+  it("leaves the streak toast to the panel when the owner's own Sync now fails", async () => {
+    const phone = await connected()
+    failNext('pull', ...Array.from({ length: 40 }, (): Failure => ({ status: 503 })))
+    await trigger(phone)
+    const streakToasts = () =>
+      toastsOf(phone).filter((t) => t.message.startsWith('Sync has been failing'))
+    // Background retries run at 2, 6, 14, 30, 62, 122 … 542 and 602 s: tap Sync now just
+    // after 10 minutes, before the 602 s retry. The panel reports that result itself.
+    await advance(10 * MINUTE - 100 + 50)
+    expect(await trigger(phone)).toMatchObject({ ok: false, error: 'server' })
+    expect(streakToasts()).toEqual([])
+    await advance(2 * MINUTE) // the next background failure shows it
+    expect(streakToasts()).toHaveLength(1)
+  })
+
+  it.each([
+    ['the Sync panel is open', 'panel'],
+    ['the pill is on screen (1280 px and up)', 'pill'],
+  ] as const)('shows no streak toast where %s: that says it already', async (_label, where) => {
+    const phone = await connected()
+    if (where === 'panel') {
+      phone.ui.useUIStore.setState({ settingsOpen: true, settingsTab: 'sync' })
+    } else {
+      vi.stubGlobal('matchMedia', (query: string) => ({
+        matches: query === phone.sync.SYNC_PILL_MEDIA,
+        media: query,
+      }))
+    }
+    failNext('pull', ...Array.from({ length: 40 }, (): Failure => ({ status: 503 })))
+    await trigger(phone)
+    await advance(12 * MINUTE)
+    expect(phone.sync.useSyncStore.getState().lastError?.kind).toBe('server')
+    expect(toastsOf(phone).filter((t) => t.message.startsWith('Sync has been failing'))).toEqual([])
+  })
+})
+
+// The pill is desktop-only: on a phone a toast is the only thing on a main screen that says
+// sync has stopped. Where the pill or the open Sync panel says it, a toast would say it twice.
+describe('a phone hears what needs the owner (no pill below 1280 px)', () => {
+  const where = [
+    ['the Sync panel is open', 'panel'],
+    ['the pill is on screen (1280 px and up)', 'pill'],
+  ] as const
+  const show = (phone: Device, surface: 'panel' | 'pill') => {
+    if (surface === 'panel') {
+      phone.ui.useUIStore.setState({ settingsOpen: true, settingsTab: 'sync' })
+    } else {
+      vi.stubGlobal('matchMedia', (query: string) => ({
+        matches: query === phone.sync.SYNC_PILL_MEDIA,
+        media: query,
+      }))
+    }
+  }
+  const refusedToasts = (phone: Device) =>
+    toastsOf(phone).filter((t) => t.message === phone.sync.syncMessage('permission'))
+  /** A background cycle: a local change pushes 3 s later, with no owner waiting on it. */
+  const addInBackground = async (phone: Device) => {
+    phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
+    await advance(4000)
+  }
+
+  it('refused access is toasted at once, in red, once per session', async () => {
+    const phone = await connected()
+    failNext('pull', ...Array.from({ length: 40 }, (): Failure => ({ status: 401 })))
+    await addInBackground(phone)
+    expect(phone.sync.useSyncStore.getState().lastError?.kind).toBe('permission')
+    expect(refusedToasts(phone)).toEqual([expect.objectContaining({ kind: 'error' })])
+    phone.ui.useUIStore.setState({ toasts: [] }) // it timed out
+    await advance(5 * MINUTE) // the retries are refused too
+    expect(refusedToasts(phone)).toEqual([])
+  })
+
+  it.each(where)('refused access is not toasted where %s', async (_label, surface) => {
+    const phone = await connected()
+    show(phone, surface)
+    failNext('pull', ...Array.from({ length: 40 }, (): Failure => ({ status: 401 })))
+    await addInBackground(phone)
+    expect(phone.sync.useSyncStore.getState().lastError?.kind).toBe('permission')
+    expect(refusedToasts(phone)).toEqual([])
+  })
+
+  it("leaves refused access to the panel's own result when the owner asked", async () => {
+    const phone = await connected()
+    failNext('pull', ...Array.from({ length: 40 }, (): Failure => ({ status: 401 })))
+    expect(await trigger(phone)).toMatchObject({ ok: false, error: 'permission' })
+    expect(refusedToasts(phone)).toEqual([])
+  })
+
+  it('a move to a newer version is toasted once, with a Reload that runs the new build, which it looks for at once', async () => {
+    const phone = await connected()
+    const { getUpdateController } = await import('../../app/swUpdate')
+    const controller = getUpdateController()
+    const checkNow = vi.spyOn(controller, 'checkNow')
+    const reloadToLatest = vi.spyOn(controller, 'reloadToLatest').mockImplementation(() => {})
+    const moved = { version: '4.0', expenses: 'moved', categories: [] }
+    writeAsOther(SYNC_CODE, moved) // a background cycle reads the fence
+    await advance(5000)
+    expect(phone.sync.useSyncStore.getState()).toMatchObject({
+      cloudStatus: 'paused',
+      lastError: { kind: 'moved' },
+    })
+    expect(checkNow).toHaveBeenCalledTimes(1)
+    const toasts = toastsOf(phone)
+    expect(toasts).toEqual([
+      expect.objectContaining({
+        kind: 'warning',
+        message: phone.sync.syncMessage('moved'),
+        action: expect.objectContaining({ label: 'Reload' }) as unknown,
+      }),
+    ])
+    toasts[0]?.action?.onClick()
+    expect(reloadToLatest).toHaveBeenCalledTimes(1)
+
+    // More cycles in the same pause: no second look, no second toast.
+    phone.ui.useUIStore.setState({ toasts: [] })
+    writeAsOther(SYNC_CODE, { ...moved, categories: ['Other'] })
+    await advance(5000)
+    expect(checkNow).toHaveBeenCalledTimes(1)
+    expect(toastsOf(phone)).toEqual([])
+  })
+
+  it('leaves a pause to the open Sync panel (its banner says it), and still toasts it only once', async () => {
+    const phone = await connected()
+    show(phone, 'panel')
+    writeAsOther(SYNC_CODE, { version: '4.0', expenses: 'moved', categories: [] })
+    await advance(5000)
+    expect(phone.sync.useSyncStore.getState().lastError?.kind).toBe('moved')
+    expect(toastsOf(phone)).toEqual([])
+    phone.ui.useUIStore.setState({ settingsOpen: false })
+    writeAsOther(SYNC_CODE, { version: '4.0', expenses: 'moved', categories: ['Other'] })
+    await advance(5000)
+    expect(toastsOf(phone)).toEqual([])
+  })
+})
+
+describe('fences fail closed and resume (AC-20)', () => {
+  it.each([
+    [
+      'the moved marker',
+      { version: '4.0', expenses: 'moved', categories: [], x5: { min: 99 } },
+      'moved',
+    ],
+    [
+      'x5.min above 4',
+      { ...payloadOf([expense('e1')]), x5: { schema: 5, min: 5 } },
+      'update-required',
+    ],
+  ])(
+    '%s: no push, local data untouched, then sync resumes once the fence is gone',
+    async (_label, fence, kind) => {
+      const phone = await connected()
+      phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
+      const local = phone.expense.useExpenseStore.getState().expenses
+      seedRow(SYNC_CODE, fence)
+      const upserts = relay().upserts
+
+      const result = await trigger(phone)
+      expect(result).toMatchObject({ ok: false, error: kind })
+      expect(phone.sync.useSyncStore.getState().cloudStatus).toBe('paused')
+      expect(relay().upserts).toBe(upserts)
+      expect(rowPayload(SYNC_CODE)).toEqual(fence)
+      expect(phone.expense.useExpenseStore.getState().expenses).toBe(local)
+      await advance(5 * MINUTE)
+      expect(relay().upserts).toBe(upserts)
+
+      seedRow(SYNC_CODE, payloadOf([expense('e1')]))
+      expect(await trigger(phone)).toMatchObject({ ok: true, pushed: true })
+      expect(relayRows()).toHaveLength(2)
+    },
+  )
+
+  it('a trigger that arrives while a paused cycle is on the wire gets a cycle of its own', async () => {
+    // A pause schedules no retry, so resolving the later trigger with the paused result would
+    // leave nothing to sync until yet another trigger.
+    const phone = await connected()
+    seedRow(SYNC_CODE, { version: '4.0', expenses: 'moved', categories: [] })
+    relay().latency = { pull: 1000, push: 50, realtime: 20 }
+    const first = phone.sync.useSyncStore.getState().triggerSync()
+    await advance(400) // the pull is on the wire and will read the fence
+    const second = phone.sync.useSyncStore.getState().triggerSync()
+
+    expect(await settle(first, 700)).toMatchObject({ ok: false, error: 'moved' })
+    seedRow(SYNC_CODE, payloadOf([expense('e1')])) // the fence is gone
+    expect(await settle(second, 2000)).toMatchObject({ ok: true })
+    expect(phone.sync.useSyncStore.getState()).toMatchObject({
+      cloudStatus: 'synced',
+      lastError: null,
+    })
+  })
+
+  it('a trigger during a failing cycle that retries resolves with that failure (no hammering)', async () => {
+    const phone = await connected()
+    relay().latency = { pull: 1000, push: 50, realtime: 20 }
+    failNext('pull', { status: 503 })
+    const first = phone.sync.useSyncStore.getState().triggerSync()
+    await advance(400)
+    const second = phone.sync.useSyncStore.getState().triggerSync()
+    const pulls = relay().pulls
+    expect(await settle(first, 700)).toMatchObject({ ok: false, error: 'server' })
+    expect(await settle(second, 10)).toMatchObject({ ok: false, error: 'server' })
+    expect(relay().pulls).toBe(pulls) // the 2 s backoff retry runs the next one
+  })
+})
+
+describe('lenient pulls: unreadable rows are never merged and never deleted (AC-21, AC-22)', () => {
+  const unreadable: unknown[] = [
+    { ...expense('b1'), date: 'last tuesday' },
+    { ...expense('b2'), date: '18/10/2026' },
+    { ...expense('b3'), amount: 'abc' },
+    { ...expense('b4'), amount: null },
+    { ...expense('b5'), notes: { x: 1 } },
+    { ...expense('b6'), category: {} },
+    { ...expense('b7'), amount: 0 },
+    { ...expense('b8'), amount: -5 },
+    { itemName: 'no id', amount: 1, category: 'Other', date: '2026-10-01' },
+    null,
+  ]
+
+  it('merges the readable rows only and puts every unreadable row back on the relay', async () => {
+    seedRow(SYNC_CODE, payloadOf([...unreadable, expense('g1')], { categories: 5 }))
+    const phone = await bootDevice({ expenses: [expense('e1')] })
+    const result = await connect(phone)
+    expect(result).toMatchObject({ ok: true, pushed: true })
+
+    const local = phone.expense.useExpenseStore.getState().expenses
+    expect(local.map((e) => e.id).sort()).toEqual(['e1', 'g1'])
+    const rows = relayRows()
+    for (const row of unreadable) expect(rows).toContainEqual(row)
+    expect(rows).toHaveLength(unreadable.length + 2)
+    expect(rowPayload(SYNC_CODE)).toMatchObject({ categories: ['Other', 'Meals'] })
+  })
+
+  // It used to overflow the content key's recursion: every device failed the read ('invalid')
+  // and retried forever, so sync stopped for all of them until someone rewrote the row.
+  it('a hostile row nested 3,000 levels deep rides along, and sync goes on', async () => {
+    let deep: unknown = 1
+    for (let i = 0; i < 3000; i++) deep = { a: deep }
+    const hostile = { ...expense('h1'), x: deep }
+    seedRow(SYNC_CODE, payloadOf([hostile, expense('g1')]))
+    const phone = await bootDevice({ expenses: [expense('e1')] })
+    expect(await connect(phone)).toMatchObject({ ok: true, pushed: true })
+    phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
+    await advance(MINUTE)
+
+    const state = phone.sync.useSyncStore.getState()
+    expect(state).toMatchObject({ cloudStatus: 'synced', lastError: null, pendingLocal: false })
+    const ids = phone.expense.useExpenseStore.getState().expenses.map((e) => e.id)
+    expect(ids).toHaveLength(3)
+    expect(ids).not.toContain('h1')
+    expect(relayRows()).toHaveLength(4)
+    expect(relayRows()).toContainEqual(hostile)
+    const upserts = relay().upserts
+    await advance(10 * MINUTE)
+    expect(relay().upserts).toBe(upserts)
+  })
+
+  it('keeps a local unreadable row in the store and in storage, and never sends it', async () => {
+    const bad = { ...expense('bad'), date: 'last tuesday' }
+    // Hydrate no longer runs the category migration, so a corrupt row reaches the store.
+    const phone = await bootDevice({ persist: true, storedRows: [expense('e1'), bad, null] })
+    await connect(phone)
+    phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
+    await advance(5000)
+
+    const stored: readonly unknown[] = phone.expense.useExpenseStore.getState().expenses
+    // The null carried no data: storage drops it on load, so no reader dereferences it.
+    expect(stored).toHaveLength(3)
+    expect(stored).toContainEqual(bad)
+    expect(stored).not.toContain(null)
+    expect(localStorage.getItem('expenses')).toContain('last tuesday')
+    const relayIds = relayRows().map((r) =>
+      typeof r === 'object' && r !== null && 'id' in r ? r.id : r,
+    )
+    expect(relayIds).not.toContain('bad')
+    expect(relayIds).not.toContain(null)
+    expect(relayIds).toContain('e1')
+  })
+
+  it('keeps a local row with no positive amount here and never sends it', async () => {
+    const zero = { ...expense('zero'), amount: 0 }
+    const phone = await bootDevice({ persist: true, storedRows: [expense('e1'), zero] })
+    await connect(phone)
+    phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
+    await advance(5000)
+
+    const stored: readonly unknown[] = phone.expense.useExpenseStore.getState().expenses
+    expect(stored).toContainEqual(zero)
+    const relayIds = relayRows().map((r) => (isRecord(r) ? r.id : r))
+    expect(relayIds).toContain('e1')
+    expect(relayIds).not.toContain('zero')
+  })
+
+  it('drops a local unreadable row once the relay has deleted its id', async () => {
+    const bad = { ...expense('bad'), date: 'last tuesday' }
+    seedRow(SYNC_CODE, payloadOf([expense('e1')], { deletedIds: ['bad'] }))
+    const phone = await bootDevice({ persist: true, storedRows: [expense('e1'), bad] })
+    await connect(phone)
+
+    const stored: readonly unknown[] = phone.expense.useExpenseStore.getState().expenses
+    expect(stored).not.toContainEqual(bad)
+    expect(stored).toHaveLength(1)
+    expect(rowPayload(SYNC_CODE)).toMatchObject({ deletedIds: ['bad'] })
+  })
+})
+
+describe('the writer stamp and local markers (AC-28)', () => {
+  it('stamps every push with wr and keeps version 4.0 and no x5', async () => {
+    const phone = await connected()
+    phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
+    await advance(5000)
+    const pushes = relay().pushes
+    expect(pushes.length).toBeGreaterThanOrEqual(2)
+    const dev = localStorage.getItem('spendtrack:dev')
+    expect(dev).toMatch(/^[0-9a-z]{6}$/)
+    const revs = new Set<unknown>()
+    for (const push of pushes) {
+      expect(push.payload).toMatchObject({ version: '4.0', wr: { app: '0.8.5', dev } })
+      expect(push.payload).not.toHaveProperty('x5')
+      const wr = isRecord(push.payload) && isRecord(push.payload.wr) ? push.payload.wr : {}
+      expect(wr.rev).toMatch(/^[A-Za-z0-9_-]{22}$/)
+      expect(new Date(String(wr.at)).toISOString()).toBe(wr.at)
+      expect(Object.keys(wr).sort()).toEqual(['app', 'at', 'dev', 'rev'])
+      revs.add(wr.rev)
+    }
+    expect(revs.size).toBe(pushes.length)
+  })
+
+  it('marks every save with spendtrack:app', async () => {
+    const phone = await bootDevice({ persist: true })
+    phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
+    await advance(1000)
+    expect(localStorage.getItem('spendtrack:app')).toBe('0.8.5')
+  })
+})

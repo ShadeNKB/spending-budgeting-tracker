@@ -132,3 +132,35 @@ describe('useUIStore persisted preferences', { timeout: 15_000 }, () => {
     expect((await loadStore()).currency).toBe('JPY')
   })
 })
+
+describe('toasts', { timeout: 15_000 }, () => {
+  beforeAll(async () => {
+    await import('./useUIStore')
+  }, IMPORT_TIMEOUT_MS)
+
+  it('show one toast for the same kind and message while it is on screen', async () => {
+    const store = await loadStore()
+    const first = store.pushToast({ kind: 'error', message: 'Sync failed' })
+    const second = store.pushToast({ kind: 'error', message: 'Sync failed' })
+    const { useUIStore } = await import('./useUIStore')
+    expect(second).toBe(first)
+    expect(useUIStore.getState().toasts).toHaveLength(1)
+
+    store.pushToast({ kind: 'warning', message: 'Sync failed' })
+    store.pushToast({ kind: 'error', message: 'Something else' })
+    expect(useUIStore.getState().toasts).toHaveLength(3)
+
+    useUIStore.getState().dismissToast(first)
+    store.pushToast({ kind: 'error', message: 'Sync failed' })
+    expect(useUIStore.getState().toasts).toHaveLength(3)
+  })
+
+  it('never merges toasts that carry an action (each Undo undoes its own change)', async () => {
+    const store = await loadStore()
+    const undo = { label: 'Undo', onClick: () => undefined }
+    store.pushToast({ kind: 'success', message: 'Deleted "Lunch"', action: undo })
+    store.pushToast({ kind: 'success', message: 'Deleted "Lunch"', action: { ...undo } })
+    const { useUIStore } = await import('./useUIStore')
+    expect(useUIStore.getState().toasts).toHaveLength(2)
+  })
+})

@@ -1,6 +1,47 @@
-import { beforeEach, describe, expect, it } from 'vitest'
-import { storage } from './storage'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { WRITER_VERSION, storage } from './storage'
 import type { Expense } from '../types'
+
+// Each case gets a fresh module: the device id is remembered for the session.
+async function freshStorage() {
+  vi.resetModules()
+  return (await import('./storage')).storage
+}
+
+describe('storage.getDeviceId', () => {
+  beforeEach(() => localStorage.clear())
+  afterEach(() => vi.restoreAllMocks())
+
+  it('creates a 6-char base36 id once and keeps it in spendtrack:dev', async () => {
+    const s = await freshStorage()
+    const id = s.getDeviceId()
+    expect(id).toMatch(/^[0-9a-z]{6}$/)
+    expect(localStorage.getItem('spendtrack:dev')).toBe(id)
+    expect(s.getDeviceId()).toBe(id)
+  })
+
+  it('is stable across reloads', async () => {
+    const id = (await freshStorage()).getDeviceId()
+    expect((await freshStorage()).getDeviceId()).toBe(id)
+  })
+
+  it('replaces a malformed stored id', async () => {
+    localStorage.setItem('spendtrack:dev', 'not an id')
+    const id = (await freshStorage()).getDeviceId()
+    expect(id).toMatch(/^[0-9a-z]{6}$/)
+    expect(localStorage.getItem('spendtrack:dev')).toBe(id)
+  })
+
+  it('still returns one id for the session when storage refuses the write', async () => {
+    const s = await freshStorage()
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('full', 'QuotaExceededError')
+    })
+    const id = s.getDeviceId()
+    expect(id).toMatch(/^[0-9a-z]{6}$/)
+    expect(s.getDeviceId()).toBe(id)
+  })
+})
 
 const sample: Expense = {
   id: 'abc',
@@ -23,6 +64,7 @@ describe('storage', () => {
       { 'Food & Drink': '2026-05-08T12:00:00.000Z' },
       { Travel: '2026-05-08T13:00:00.000Z' },
       ['deleted-expense-id'],
+      { coffee: '2026-05-08T11:00:00.000Z' },
     )
 
     expect(storage.getExpenses()).toEqual([sample])
@@ -32,6 +74,7 @@ describe('storage', () => {
     expect(storage.getBudgetUpdatedAt()).toEqual({ 'Food & Drink': '2026-05-08T12:00:00.000Z' })
     expect(storage.getBudgetDeletedAt()).toEqual({ Travel: '2026-05-08T13:00:00.000Z' })
     expect(storage.getDeletedIds()).toEqual(['deleted-expense-id'])
+    expect(storage.getMappingUpdatedAt()).toEqual({ coffee: '2026-05-08T11:00:00.000Z' })
   })
 
   it('returns empty defaults when no data is stored', () => {
@@ -42,6 +85,7 @@ describe('storage', () => {
     expect(storage.getBudgetUpdatedAt()).toEqual({})
     expect(storage.getBudgetDeletedAt()).toEqual({})
     expect(storage.getDeletedIds()).toEqual([])
+    expect(storage.getMappingUpdatedAt()).toEqual({})
   })
 
   it('recovers from a trailing-comma-corrupted expenses payload', () => {
@@ -71,12 +115,30 @@ describe('storage', () => {
     localStorage.setItem('categoryBudgets', '[200]')
     localStorage.setItem('categoryBudgetUpdatedAt', '"2026-05-08"')
     localStorage.setItem('categoryBudgetDeletedAt', '42')
+    localStorage.setItem('categoryMappingUpdatedAt', '["2026-05-08"]')
 
     expect(storage.getCategories()).toBeNull()
     expect(storage.getCategoryMappings()).toEqual({})
     expect(storage.getBudgets()).toEqual({})
     expect(storage.getBudgetUpdatedAt()).toEqual({})
     expect(storage.getBudgetDeletedAt()).toEqual({})
+    expect(storage.getMappingUpdatedAt()).toEqual({})
+  })
+
+  it('clears unreadable mapping stamps instead of throwing', () => {
+    localStorage.setItem('categoryMappingUpdatedAt', '{oops')
+    expect(storage.getMappingUpdatedAt()).toEqual({})
+    expect(localStorage.getItem('categoryMappingUpdatedAt')).toBeNull()
+  })
+
+  it('writes the app marker after the data keys on every save', () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    storage.saveAll([sample], ['Food & Drink'], {}, {}, {}, {}, [])
+    expect(localStorage.getItem('spendtrack:app')).toBe(WRITER_VERSION)
+    expect(WRITER_VERSION).toBe('0.8.5')
+    expect(setItem.mock.calls.at(-1)?.[0]).toBe('spendtrack:app')
+    expect(setItem.mock.calls.map((c) => c[0])).toContain('deletedExpenseIds')
+    setItem.mockRestore()
   })
 
   it('drops individual entries of the wrong type and keeps the rest', () => {
@@ -87,5 +149,26 @@ describe('storage', () => {
     expect(storage.getCategories()).toEqual(['Food & Drink'])
     expect(storage.getCategoryMappings()).toEqual({ coffee: 'Food & Drink' })
     expect(storage.getBudgets()).toEqual({ 'Food & Drink': 200 })
+  })
+
+  it('keeps a "__proto__" item mapping and budget through a save and a reload', () => {
+    const mappings = { ['__proto__']: 'Meals', kopi: 'Meals' }
+    const budgets = { ['__proto__']: 100 }
+    storage.saveAll([], ['Other', '__proto__'], mappings, budgets, {
+      ['__proto__']: '2026-10-19T08:00:00.000Z',
+    })
+    for (const read of [storage.getCategoryMappings(), storage.getBudgets()]) {
+      expect(Object.hasOwn(read, '__proto__')).toBe(true)
+      expect(Object.getPrototypeOf(read)).toBe(Object.prototype)
+    }
+    expect(storage.getCategoryMappings()).toEqual(mappings)
+    expect(storage.getBudgets()).toEqual(budgets)
+    expect(storage.getBudgetUpdatedAt()).toEqual({ ['__proto__']: '2026-10-19T08:00:00.000Z' })
+  })
+
+  it('drops expense entries that are not objects (they carry no data) and keeps every object', () => {
+    const odd = { id: 'odd', amount: 'lots' }
+    localStorage.setItem('expenses', JSON.stringify([null, 3, 'x', [1], odd, { id: 'e1' }]))
+    expect(storage.getExpenses()).toEqual([odd, { id: 'e1' }])
   })
 })
