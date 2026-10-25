@@ -139,8 +139,12 @@ async function seedExpenses(page: Page, seed: readonly object[]) {
 
 async function openBackupPanel(page: Page) {
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  await page.getByRole('button', { name: 'Backup', exact: true }).click()
+  await page.getByRole('tab', { name: 'Backup', exact: true }).click()
 }
+
+/** A toast on screen (screen readers hear it from a live region of their own). */
+const toastText = (page: Page, text: string) =>
+  page.getByRole('region', { name: 'Notifications' }).getByText(text)
 
 test.describe('CSV export', () => {
   test.beforeEach(async ({ page }) => {
@@ -155,7 +159,7 @@ test.describe('CSV export', () => {
     // The toast lasts 4 s, so watch for it alongside the click, not after the file is saved.
     const [download] = await Promise.all([
       page.waitForEvent('download'),
-      expect(page.getByText(`Exported ${String(SEED.length)} entries`)).toBeVisible(LAZY_CHUNK),
+      expect(toastText(page, `Exported ${String(SEED.length)} entries`)).toBeVisible(LAZY_CHUNK),
       exportButton.click(),
     ])
     expect(download.suggestedFilename()).toMatch(/^spendtrack-\d{4}-\d{2}-\d{2}\.csv$/)
@@ -170,7 +174,7 @@ test.describe('CSV export', () => {
 
     const [download] = await Promise.all([
       page.waitForEvent('download'),
-      expect(page.getByText('CSV exported')).toBeVisible(LAZY_CHUNK),
+      expect(toastText(page, 'CSV exported')).toBeVisible(LAZY_CHUNK),
       exportButton.click(),
     ])
     expect(download.suggestedFilename()).toMatch(/^spendtrack-\d{4}-\d{2}-\d{2}\.csv$/)

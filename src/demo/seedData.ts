@@ -1,7 +1,10 @@
 import { format, subDays } from 'date-fns'
 import type { Expense, CategoryBudgets, CategoryMappings } from '../types'
 
-const today = new Date()
+// Demo builds only (VITE_DEMO_MODE): the store reads these behind a build-time flag. Marked pure,
+// so every other build, Shade's included, drops the whole module instead of computing 60 rows
+// nothing reads.
+const today = /*#__PURE__*/ new Date()
 const d = (daysAgo: number): string => format(subDays(today, daysAgo), 'yyyy-MM-dd')
 const ts = (daysAgo: number): string => `${d(daysAgo)}T12:00:00`
 
@@ -92,7 +95,7 @@ const RAW: { name: string; amount: number; cat: string; daysAgo: number }[] = [
   { name: 'Water bill', amount: 21.4, cat: 'Bills', daysAgo: 75 },
 ]
 
-export const DEMO_EXPENSES: Expense[] = RAW.map((r, i) => ({
+export const DEMO_EXPENSES: Expense[] = /*#__PURE__*/ RAW.map((r, i) => ({
   id: `demo-${i + 1}`,
   itemName: r.name,
   amount: r.amount,

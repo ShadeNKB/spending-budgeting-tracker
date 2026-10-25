@@ -1,11 +1,26 @@
 import { Suspense, lazy, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { describe, expect, it } from 'vitest'
-import { fireEvent, render, screen } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AddExpenseSheet } from './AddExpenseSheet'
+import { useUIStore } from '../../stores/useUIStore'
+import { addDays, shortDateYear, todayKey } from '../../lib/dates'
 
 const WHAT = /coffee, grab, spotify/i
+
+// jsdom does not lay out, so it has no scrollIntoView; record the calls instead.
+const scrollIntoView = vi.fn()
+beforeEach(() => {
+  Object.defineProperty(Element.prototype, 'scrollIntoView', {
+    value: scrollIntoView,
+    configurable: true,
+  })
+})
+afterEach(() => {
+  Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
+  scrollIntoView.mockClear()
+})
 
 describe('AddExpenseSheet form refill', () => {
   it('mounted already open, starts from the prefill', () => {
@@ -128,12 +143,133 @@ describe('AddExpenseSheet "More..." category chip', () => {
     const more = screen.getByRole('combobox', { name: 'More categories' })
     const chip = more.parentElement
     const label = () => chip?.querySelector('span[aria-hidden="true"]')
-    expect(label()).toHaveTextContent('More...')
-    expect(chip).toHaveClass('text-[12px]', 'h-[30px]')
-    expect(more).toHaveClass('opacity-0', 'absolute', 'inset-0')
+    expect(label()).toHaveTextContent('More…')
+    expect(chip).toHaveClass('text-[12px]', 'h-9')
+    expect(more).toHaveClass('opacity-0', 'absolute')
 
     await user.selectOptions(more, 'Investment')
     expect(more).toHaveValue('Investment')
     expect(label()).toHaveTextContent('Investment')
+  })
+})
+
+describe('AddExpenseSheet invalid submit', () => {
+  beforeEach(() => {
+    useUIStore.setState({ toasts: [] })
+  })
+
+  it('focuses What, marked invalid and described by its error', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(<AddExpenseSheet open onClose={onClose} />)
+    await user.type(screen.getByPlaceholderText('0.00'), '4.50')
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+
+    const what = screen.getByPlaceholderText(WHAT)
+    expect(what).toHaveFocus()
+    expect(what).toHaveAttribute('aria-invalid', 'true')
+    expect(what).toHaveAccessibleDescription('Required')
+    expect(onClose).not.toHaveBeenCalled()
+    expect(useUIStore.getState().toasts).toEqual([])
+  })
+
+  it('focuses Amount when What is filled in, and keeps what was typed', async () => {
+    const user = userEvent.setup()
+    render(<AddExpenseSheet open onClose={() => {}} />)
+    const what = screen.getByPlaceholderText(WHAT)
+    await user.type(what, 'Coffee')
+    await user.keyboard('{Enter}')
+
+    const amount = screen.getByPlaceholderText('0.00')
+    expect(amount).toHaveFocus()
+    expect(amount).toHaveAttribute('aria-invalid', 'true')
+    expect(amount).toHaveAccessibleDescription('Enter a valid amount')
+    expect(what).not.toHaveAttribute('aria-invalid')
+    expect(what).toHaveValue('Coffee')
+  })
+})
+
+describe('AddExpenseSheet selected states', () => {
+  it('exposes the chosen category as pressed, and toggles it off again', async () => {
+    const user = userEvent.setup()
+    render(<AddExpenseSheet open onClose={() => {}} />)
+    const chip = screen.getByRole('button', { name: 'Gaming' })
+    expect(chip).toHaveAttribute('aria-pressed', 'false')
+    await user.click(chip)
+    expect(chip).toHaveAttribute('aria-pressed', 'true')
+    await user.click(chip)
+    expect(chip).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('groups the day presets under "Date", with today pressed', async () => {
+    const user = userEvent.setup()
+    render(<AddExpenseSheet open onClose={() => {}} />)
+    const date = screen.getByRole('group', { name: 'Date' })
+    const today = within(date).getByRole('button', { name: 'Today' })
+    const yesterday = within(date).getByRole('button', { name: 'Yesterday' })
+    expect(today).toHaveAttribute('aria-pressed', 'true')
+    expect(yesterday).toHaveAttribute('aria-pressed', 'false')
+    await user.click(yesterday)
+    expect(yesterday).toHaveAttribute('aria-pressed', 'true')
+    expect(today).toHaveAttribute('aria-pressed', 'false')
+    for (const name of ['2d ago', '3d ago']) {
+      expect(within(date).getByRole('button', { name })).toHaveAttribute('aria-pressed', 'false')
+    }
+  })
+
+  // "2d ago" pressed: "Pick date" opens the calendar on that day, marked as chosen, so the
+  // arrows step from the entry's own day (← ← Enter is four days ago, never two).
+  it('opens the calendar on the day a preset chose, marked as chosen', async () => {
+    const user = userEvent.setup()
+    render(<AddExpenseSheet open onClose={() => {}} />)
+    const date = screen.getByRole('group', { name: 'Date' })
+    await user.click(within(date).getByRole('button', { name: '2d ago' }))
+    await user.click(within(date).getByRole('button', { name: 'Pick date' }))
+    const day = addDays(todayKey(), -2)
+    expect(document.activeElement).toHaveAttribute('data-day', day)
+    const chosen = screen
+      .getAllByRole('gridcell')
+      .filter((cell) => cell.getAttribute('aria-selected') === 'true')
+    expect(
+      chosen.map((cell) => cell.querySelector('[data-day]')?.getAttribute('data-day')),
+    ).toEqual([day])
+    await user.keyboard('{ArrowLeft}{ArrowLeft}{Enter}')
+    const picked = shortDateYear(addDays(todayKey(), -4))
+    expect(
+      within(date).getByRole('button', { name: `Change date, selected ${picked}` }),
+    ).toBeInTheDocument()
+  })
+
+  // The sheet scrolls when it is taller than the screen (landscape, a narrow phone, many
+  // categories). WebKit reveals only the caret line of a text field that Tab lands on: focus
+  // brings the whole field, ring included, into view.
+  it('brings a text field that takes focus fully into view inside the sheet', async () => {
+    const user = userEvent.setup()
+    render(<AddExpenseSheet open onClose={() => {}} />)
+    expect(screen.getByPlaceholderText(WHAT)).toHaveFocus()
+    scrollIntoView.mockClear()
+    await user.tab()
+    const amount = screen.getByPlaceholderText('0.00')
+    expect(amount).toHaveFocus()
+    expect(scrollIntoView.mock.contexts).toContain(amount)
+    expect(scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest', inline: 'nearest' })
+  })
+
+  // The presets wrap on a narrow phone, as in the Edit sheet: every one stays in sight. A row
+  // that scrolled sideways (with no scrollbar) cut "Pick date" in half at 375 px and hid it at
+  // 320 px. Tab onto a preset still brings it, ring included, into view inside the sheet.
+  it('wraps the date presets instead of scrolling them sideways', async () => {
+    const user = userEvent.setup()
+    render(<AddExpenseSheet open onClose={() => {}} />)
+    const date = screen.getByRole('group', { name: 'Date' })
+    expect(date).toHaveClass('flex', 'flex-wrap', 'gap-2')
+    expect(date).not.toHaveClass('overflow-x-auto')
+    within(date).getByRole('button', { name: '3d ago' }).focus()
+    scrollIntoView.mockClear()
+    await user.tab()
+    const pickDate = within(date).getByRole('button', { name: 'Pick date' })
+    expect(pickDate).toHaveFocus()
+    expect(scrollIntoView.mock.contexts[0]).toBe(pickDate)
+    expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' })
   })
 })

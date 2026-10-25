@@ -27,27 +27,35 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
           {label}
         </label>
       )}
+      {/* The frame draws the focus ring (.field-focus). It has no padding of its own: the input
+          carries the side padding and the full height, so a tap or click anywhere inside the
+          frame, bar a prefix or suffix, lands in the input. */}
       <div
         className={clsx(
-          'flex h-11 items-center gap-2 rounded-[10px] border bg-surface-2 px-3 transition-all',
-          'focus-within:border-accent/60 focus-within:shadow-[0_0_0_3px_rgba(34,211,238,0.18)]',
+          'field-focus flex h-11 items-center rounded-[10px] border bg-surface-2 transition-colors',
           error ? 'border-negative/50' : 'border-white/[0.06] hover:border-white/[0.1]',
         )}
       >
-        {prefix && <span className="shrink-0 text-sm text-[var(--text-tertiary)]">{prefix}</span>}
+        {prefix && (
+          <span className="shrink-0 pl-3 text-sm text-[var(--text-tertiary)]">{prefix}</span>
+        )}
         <input
           ref={ref}
           id={inputId}
           aria-invalid={error ? true : undefined}
           aria-describedby={messageId}
           className={clsx(
-            'flex-1 bg-transparent text-white outline-none placeholder:text-[var(--text-tertiary)]',
+            'field-control h-full min-w-0 flex-1 bg-transparent text-white placeholder:text-[var(--text-tertiary)]',
+            prefix ? 'pl-2' : 'pl-3',
+            suffix ? 'pr-2' : 'pr-3',
             mono && 'font-mono tabular-nums',
             className,
           )}
           {...p}
         />
-        {suffix && <span className="shrink-0 text-sm text-[var(--text-tertiary)]">{suffix}</span>}
+        {suffix && (
+          <span className="shrink-0 pr-3 text-sm text-[var(--text-tertiary)]">{suffix}</span>
+        )}
       </div>
       {(error || hint) && (
         <span

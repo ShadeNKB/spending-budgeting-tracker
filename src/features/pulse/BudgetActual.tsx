@@ -39,30 +39,44 @@ export function BudgetActual({
             : isFinal
               ? `${fmt(it.left)} under`
               : `${String(Math.round(it.used * 100))}% used · ${fmt(it.left)} left`
+        // Colour, icon and note show the state on screen; this word says it to a screen reader.
+        const status = over
+          ? 'Over budget'
+          : ahead
+            ? 'On pace to go over budget'
+            : isFinal
+              ? 'Under budget'
+              : 'On track'
 
         return (
           <li key={it.category}>
             <button
               type="button"
               onClick={() => navigate(`/ledger?category=${encodeURIComponent(it.category)}`)}
-              className="group w-full rounded-lg px-1.5 py-1 text-left transition hover:bg-white/[0.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
-              aria-label={`${it.category}: ${fmt(it.total)} of ${fmt(it.budget)} budget. ${note}`}
+              // Named by its visible text plus the status word: "Shopping, Over budget,
+              // S$300.00 of S$200.00 Over by S$100.00".
+              className="group w-full rounded-lg px-1.5 py-1 text-left transition hover:bg-white/[0.03]"
             >
               <div className="mb-1 flex items-center justify-between gap-2">
                 <div className="flex min-w-0 items-center gap-1.5">
                   <span
                     className="h-1.5 w-1.5 shrink-0 rounded-full"
                     style={{ background: barColor }}
+                    aria-hidden="true"
                   />
                   <span className="truncate text-[13px] text-white">{it.category}</span>
+                  <span className="sr-only">, {status},</span>
                   {over && <AlertTriangle size={11} className="shrink-0 text-negative" />}
                   {ahead && <TrendingUp size={11} className="shrink-0 text-warning" />}
-                </div>
+                </div>{' '}
                 <div className="flex shrink-0 items-center gap-2 font-mono text-[12px] tabular-nums">
                   <span className={over ? 'text-negative' : ahead ? 'text-warning' : 'text-white'}>
                     {fmt(it.total)}
+                  </span>{' '}
+                  <span className="text-[var(--text-tertiary)]">
+                    <span aria-hidden="true">/</span> <span className="sr-only">of</span>{' '}
+                    {fmt(it.budget)}
                   </span>
-                  <span className="text-[var(--text-tertiary)]">/ {fmt(it.budget)}</span>
                 </div>
               </div>
 

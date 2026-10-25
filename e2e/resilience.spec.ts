@@ -115,7 +115,7 @@ test.describe('stale chunk after a deploy', () => {
 
     // The shell survives: header and navigation still work.
     await expect(page.locator('header')).toBeVisible()
-    await expect(page.getByRole('button', { name: /command palette/i })).toBeVisible()
+    await expect(page.getByRole('button', { name: 'Search', exact: true })).toBeVisible()
     await expect(
       page.getByRole('link', { name: 'Insights', exact: true }).filter({ visible: true }),
     ).toHaveCount(1)
@@ -266,7 +266,7 @@ test.describe('first paint', () => {
     await page.waitForTimeout(3000)
     expect(await overlayChunksRequested(page)).toEqual([])
 
-    await page.getByRole('button', { name: 'Open command palette' }).click()
+    await page.getByRole('button', { name: 'Search', exact: true }).click()
     await expect(page.getByRole('dialog', { name: /command palette/i })).toBeVisible()
     expect(await overlayChunksRequested(page)).toEqual(
       expect.arrayContaining(['CommandPalette', 'vendor-motion']),
@@ -329,7 +329,7 @@ test.describe('a failed add-sheet chunk', () => {
 
       const errorCopy = /something went wrong|just updated|couldn't open|ran into a problem/i
       await expect(page.getByText(errorCopy)).toHaveCount(0)
-      await expect(page.getByRole('button', { name: 'Open command palette' })).toBeVisible()
+      await expect(page.getByRole('button', { name: 'Search', exact: true })).toBeVisible()
       await expect(
         page.getByRole('link', { name: 'Insights', exact: true }).filter({ visible: true }),
       ).toHaveCount(1)
@@ -339,7 +339,8 @@ test.describe('a failed add-sheet chunk', () => {
       await expect(quickAdd).toHaveCount(1)
 
       await page.getByRole('button', { name: 'Full entry form' }).filter({ visible: true }).click()
-      const card = page.getByRole('alert')
+      // The app's own live regions are alerts too, empty until something is announced.
+      const card = page.getByRole('alert').filter({ hasText: /./ })
       await expect(card).toHaveText(
         "This panel couldn't open because a new version was just released.",
       )
@@ -371,7 +372,7 @@ test.describe('overlays opened before the idle mount', () => {
         return box && { x: Math.round(box.x), bottom: Math.round(box.y + box.height) }
       })
       .toEqual({ x: 0, bottom: 844 })
-    await page.getByRole('button', { name: 'Backup', exact: true }).click()
+    await page.getByRole('tab', { name: 'Backup', exact: true }).click()
     await expect(page.getByRole('button', { name: 'Export to CSV' })).toBeVisible()
   })
 })
@@ -412,7 +413,7 @@ test.describe('iOS safe area (Chromium CDP inset override)', () => {
     const header = page.locator('header')
     const targets = [
       header.getByRole('link', { name: 'SpendTrack' }),
-      header.getByRole('button', { name: /command palette/i }),
+      header.getByRole('button', { name: 'Search', exact: true }),
       header.getByRole('button', { name: 'Settings' }),
     ]
     for (const target of targets) {

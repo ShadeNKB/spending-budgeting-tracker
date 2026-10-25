@@ -1,4 +1,5 @@
-import { useId, useState, type KeyboardEvent } from 'react'
+import { useId, useRef, useState, type KeyboardEvent } from 'react'
+import { flushSync } from 'react-dom'
 import { CalendarDays, ChevronDown } from 'lucide-react'
 import { Sheet } from '../../ui/Sheet'
 import { Input } from '../../ui/Input'
@@ -8,10 +9,15 @@ import { useToast } from '../../hooks/useToast'
 import { useHaptic } from '../../hooks/useHaptic'
 import { useCurrencySymbol, useFormatMoney } from '../../hooks/useFormatMoney'
 import { useToday } from '../../hooks/useToday'
-import { colorFromString } from '../../lib/analytics'
 import { addDays, formatKey, keyYear, shortDate, shortDateYear, type DayKey } from '../../lib/dates'
-import { MAX_AMOUNT, isAmountTooLarge } from '../../utils/amountGuard'
 import { DatePicker } from '../../ui/DatePicker'
+import {
+  chosenChipFill,
+  firstInvalidField,
+  validateExpenseForm,
+  type ExpenseFormErrors,
+  type ExpenseFormField,
+} from './expenseForm'
 
 interface Props {
   open: boolean
@@ -38,6 +44,10 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
   const fmt = useFormatMoney()
   const symbol = useCurrencySymbol()
   const categoryLabelId = useId()
+  const fields: Record<ExpenseFormField, React.RefObject<HTMLInputElement | null>> = {
+    itemName: useRef<HTMLInputElement>(null),
+    amount: useRef<HTMLInputElement>(null),
+  }
 
   const today = useToday()
   // "Oct 17", or "Dec 31, 2025" for another year — read from the key, never through `new Date(key)`
@@ -46,7 +56,7 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
     keyYear(day) === keyYear(today) ? shortDate(day) : shortDateYear(day)
 
   const [form, setForm] = useState(() => formFrom(prefill, today))
-  const [errors, setErrors] = useState<Partial<typeof form>>({})
+  const [errors, setErrors] = useState<ExpenseFormErrors>({})
 
   // Refill the form each time the sheet opens (SmartInput passes what was typed as a prefill),
   // and only then: refilling on later prefill or date changes would wipe what the user typed.
@@ -64,22 +74,18 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
 
   const set = (k: keyof typeof form, v: string) => {
     setForm((f) => ({ ...f, [k]: v }))
-    setErrors((e) => ({ ...e, [k]: undefined }))
-  }
-
-  const validate = () => {
-    const e: Partial<typeof form> = {}
-    if (!form.itemName.trim()) e.itemName = 'Required'
-    const a = parseFloat(form.amount)
-    if (!Number.isFinite(a) || a <= 0) e.amount = 'Enter a valid amount'
-    else if (isAmountTooLarge(a)) e.amount = `Amount too large — the limit is ${fmt(MAX_AMOUNT)}`
-    return e
+    if (k === 'itemName' || k === 'amount') setErrors((e) => ({ ...e, [k]: undefined }))
   }
 
   const submit = () => {
-    const errs = validate()
-    if (Object.keys(errs).length) {
-      setErrors(errs)
+    const errs = validateExpenseForm(form, fmt)
+    const invalid = firstInvalidField(errs)
+    if (invalid) {
+      // Mark the fields first, so the focused one is announced with its error.
+      flushSync(() => {
+        setErrors(errs)
+      })
+      fields[invalid].current?.focus()
       return
     }
     const created = addExpense({
@@ -127,16 +133,26 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
   const isCustomActive = !isPreset
 
   return (
-    <Sheet open={open} onClose={onClose} title="Add expense" side="bottom" initialFocus="content">
-      <div className="flex flex-col gap-3 px-4 pb-6 pt-2">
-        {/* Date selector */}
-        <div className="no-scrollbar flex gap-2 overflow-x-auto pb-0.5">
+    <Sheet open={open} onClose={onClose} title="Add expense" side="bottom">
+      {/* WebKit reveals only the caret line of a text field when the sheet itself scrolls:
+          focus brings the whole control, ring included (its scroll-margin), into view. */}
+      <div
+        onFocus={(e) => {
+          e.target.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+        }}
+        className="flex flex-col gap-3 px-4 pb-6 pt-2"
+      >
+        {/* Date selector. The presets wrap rather than scroll, as in the Edit sheet: every one
+            stays in sight on a narrow phone ("Pick date" drops to a second row). 36 px pills
+            8 px apart, so their 44 px touch areas meet without overlapping, row to row too. */}
+        <div role="group" aria-label="Date" className="flex flex-wrap items-center gap-2">
           {presets.map((p) => (
             <button
               type="button"
               key={p.id}
+              aria-pressed={form.date === p.val}
               onClick={() => set('date', p.val)}
-              className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-medium transition ${
+              className={`tap-target inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[12px] font-medium transition ${
                 form.date === p.val
                   ? 'border-accent/40 bg-accent/10 text-accent'
                   : 'border-white/[0.08] text-[var(--text-secondary)] hover:border-white/20 hover:text-white'
@@ -145,9 +161,10 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
               {p.label}
             </button>
           ))}
+          {/* The calendar opens on the entry's day, a preset's too ("Pick date" then). */}
           <DatePicker
             variant="pill"
-            value={isCustomActive ? form.date : ''}
+            value={form.date}
             onChange={(v) => {
               set('date', v || today)
             }}
@@ -169,6 +186,7 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
         )}
 
         <Input
+          ref={fields.itemName}
           label="What"
           placeholder="e.g. Coffee, Grab, Spotify"
           value={form.itemName}
@@ -179,6 +197,7 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
         />
 
         <Input
+          ref={fields.amount}
           label="Amount"
           type="number"
           inputMode="decimal"
@@ -198,38 +217,41 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
           >
             Category
           </span>
-          <div role="group" aria-labelledby={categoryLabelId} className="flex flex-wrap gap-1.5">
+          {/* 36 px chips 8 px apart: each gets a 44 px hit area on touch, none overlapping. */}
+          <div role="group" aria-labelledby={categoryLabelId} className="flex flex-wrap gap-2">
             {categories.slice(0, 8).map((c) => (
               <button
                 type="button"
                 key={c}
+                aria-pressed={form.category === c}
                 onClick={() => set('category', form.category === c ? '' : c)}
-                className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium transition ${
+                className={`tap-target inline-flex h-9 items-center gap-1 rounded-full border px-3 text-[12px] font-medium transition ${
                   form.category === c
                     ? 'border-transparent text-surface-0'
                     : 'border-white/[0.08] text-[var(--text-secondary)] hover:text-white'
                 }`}
-                style={form.category === c ? { background: colorFromString(c) } : undefined}
+                style={form.category === c ? { background: chosenChipFill(c) } : undefined}
               >
                 {c}
               </button>
             ))}
             {categories.length > 8 && (
               // A chip like its neighbours: the 12 px label is drawn here, and the native select
-              // sits invisibly on top to take the tap. Touch screens floor the select's own text
-              // at 16 px (index.css, against iOS focus zoom), which would make this chip bigger
-              // than the rest.
-              <div className="relative inline-flex h-[30px] max-w-full items-center rounded-full border border-white/[0.08] bg-surface-2 pl-2.5 pr-6 text-[12px] text-[var(--text-secondary)] focus-within:border-accent/60 focus-within:shadow-[0_0_0_3px_rgba(34,211,238,0.18)]">
+              // sits invisibly on top to take the tap (8 px taller on touch: a 44 px target).
+              // Touch screens floor the select's own text at 16 px (index.css, against iOS focus
+              // zoom), which would make this chip bigger than the rest. The chip draws the
+              // select's focus ring.
+              <div className="field-focus relative inline-flex h-9 max-w-full items-center rounded-full border border-white/[0.08] bg-surface-2 pl-3 pr-6 text-[12px] text-[var(--text-secondary)]">
                 <span aria-hidden className="min-w-0 truncate">
-                  {categories.slice(8).includes(form.category) ? form.category : 'More...'}
+                  {categories.slice(8).includes(form.category) ? form.category : 'More…'}
                 </span>
                 <select
                   aria-label="More categories"
                   value={form.category}
                   onChange={(e) => set('category', e.target.value)}
-                  className="absolute inset-0 h-full w-full cursor-pointer appearance-none rounded-full opacity-0"
+                  className="field-control absolute inset-0 h-full w-full cursor-pointer appearance-none rounded-full opacity-0 [@media(pointer:coarse)]:-inset-y-1 [@media(pointer:coarse)]:h-auto"
                 >
-                  <option value="">More...</option>
+                  <option value="">More…</option>
                   {categories.slice(8).map((c) => (
                     <option key={c} value={c}>
                       {c}

@@ -38,7 +38,9 @@ export default {
           dim: 'rgba(34, 211, 238, 0.12)',
         },
         positive: '#22C55E',
-        negative: '#EF4444',
+        // `solid` is the fill behind white text (dangerSolid confirm buttons): 4.83:1 in both
+        // themes, where the brighter DEFAULT under white reaches only 3.76:1.
+        negative: { DEFAULT: '#EF4444', solid: '#DC2626' },
         warning: '#F59E0B',
         muted: '#5A6478',
         // Semantic aliases

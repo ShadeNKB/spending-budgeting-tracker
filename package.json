@@ -2,7 +2,7 @@
   "name": "spendtrack",
   "private": true,
   "description": "A fast, local-first spending tracker with smart categorisation, real-time budgets, and optional cross-device sync.",
-  "version": "0.9.2",
+  "version": "0.9.3",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -28,8 +28,6 @@
   },
   "overrides": {
     "serialize-javascript": "^7.0.5",
-    "ws": "^8.21.0",
-    "tmp": "^0.2.6",
     "fast-uri": "^3.1.2",
     "@babel/plugin-transform-modules-systemjs": "^7.29.7"
   },
@@ -48,7 +46,7 @@
     "size:relay": "node scripts/check-relay-weight.mjs",
     "check:backups": "node scripts/check-no-backups.mjs",
     "hooks:install": "node -e \"require('node:fs').chmodSync('.githooks/pre-commit', 0o755)\" && git config core.hooksPath .githooks",
-    "a11y": "axe http://localhost:4173 --exit",
+    "a11y": "playwright test e2e/a11y.spec.ts e2e/keyboard.spec.ts",
     "e2e": "playwright test",
     "e2e:ui": "playwright test --ui",
     "verify": "npm run check:backups && npm run typecheck && npm run lint && npm run format:check && npm run test:run && npm run build && npm run size && npm run size:relay && npm run smoke"
@@ -68,7 +66,6 @@
     "zustand": "^5.0.12"
   },
   "devDependencies": {
-    "@axe-core/cli": "^4.13.0",
     "@eslint/js": "^9.39.1",
     "@playwright/test": "^1.60.0",
     "@testing-library/jest-dom": "^6.9.1",
@@ -80,6 +77,7 @@
     "@vitejs/plugin-react": "^5.1.0",
     "@vitest/coverage-v8": "^4.1.11",
     "autoprefixer": "^10.4.22",
+    "axe-core": "4.13.0",
     "eslint": "^9.39.1",
     "eslint-plugin-jsx-a11y": "^6.10.2",
     "eslint-plugin-react-hooks": "^5.2.0",

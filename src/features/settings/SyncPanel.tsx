@@ -17,7 +17,9 @@ import {
   type LucideIcon,
 } from 'lucide-react'
 import { Button } from '../../ui/Button'
+import { InlineConfirm } from '../../ui/InlineConfirm'
 import { Input } from '../../ui/Input'
+import { shieldGesture } from '../../ui/pressShield'
 import {
   FAILING_AFTER_MS,
   OLD_DEVICE_WAITING,
@@ -229,7 +231,7 @@ function setupFailure(
 }
 
 /** Controls that take focus after a view swap (see `focusNext`). */
-type FocusTarget = 'sync-now' | 'generate' | 'cancel' | 'disconnect'
+type FocusTarget = 'sync-now' | 'generate' | 'disconnect'
 
 const BANNER_TONE: Record<BannerTone, string> = {
   error: 'border-negative/20 bg-negative/10 text-negative',
@@ -649,7 +651,7 @@ function SyncContent() {
           {/* min-w-0 lets the field shrink, so Connect stays on screen at 320 px. */}
           <div className="min-w-0 flex-1">
             <Input
-              label=""
+              label="Sync code"
               placeholder="Paste sync code from another device"
               value={codeInput}
               onChange={(e) => setCodeInput(e.target.value)}
@@ -681,6 +683,7 @@ function SyncContent() {
             data. Don&apos;t share it in chats or screenshots.
           </span>
         </div>
+        <AppVersion />
       </div>
     )
   }
@@ -789,39 +792,28 @@ function SyncContent() {
       )}
 
       <div className="border-t border-white/[0.06] pt-3">
+        {/* The shared confirmation: Cancel takes focus, Escape takes back the question (not
+            Settings), and neither a double tap on "Disconnect sync" nor a held Enter can answer
+            it. Cancel hands focus back to "Disconnect sync". */}
         {confirmDisconnect ? (
-          <div className="flex flex-col gap-2 rounded-lg border border-warning/30 bg-warning/[0.07] p-3">
-            <p className="text-[12px] text-[var(--text-tertiary)]">
-              This device stops syncing. Your data stays on this device, on your other devices and
-              in the relay.
-            </p>
-            <div className="flex gap-2">
-              {/* No fill: on the amber-tinted card one drops amber text under AA in light. */}
-              <Button
-                onClick={handleDisconnect}
-                variant="primary"
-                className="flex-1 border border-warning/30 !bg-transparent !text-warning hover:!bg-warning/5"
-              >
-                Disconnect
-              </Button>
-              <Button
-                ref={focusWhenShown('cancel')}
-                onClick={() => {
-                  focusNext.current = 'disconnect'
-                  setConfirmDisconnect(false)
-                }}
-                variant="ghost"
-                className="flex-1"
-              >
-                Cancel
-              </Button>
-            </div>
-          </div>
+          <InlineConfirm
+            tone="warning"
+            question="Disconnect sync on this device?"
+            detail="This device stops syncing. Your data stays on this device, on your other devices and in the relay."
+            confirmLabel="Disconnect"
+            onConfirm={handleDisconnect}
+            onCancel={() => {
+              focusNext.current = 'disconnect'
+              setConfirmDisconnect(false)
+            }}
+          />
         ) : (
           <Button
             ref={focusWhenShown('disconnect')}
             onClick={() => {
-              focusNext.current = 'cancel'
+              // The question takes this button's place: a double tap's second tap must not
+              // answer it.
+              shieldGesture()
               setConfirmDisconnect(true)
             }}
             variant="ghost"
@@ -831,6 +823,16 @@ function SyncContent() {
           </Button>
         )}
       </div>
+      <AppVersion />
     </div>
+  )
+}
+
+/** Which SpendTrack this device runs: after an update, both devices should show the same. */
+function AppVersion() {
+  return (
+    <p className="text-center text-[11px] text-[var(--text-tertiary)]">
+      This device runs SpendTrack {__APP_VERSION__}
+    </p>
   )
 }

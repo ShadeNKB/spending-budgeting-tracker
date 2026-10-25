@@ -25,7 +25,9 @@ export function EmptyState({
         <Icon size={18} />
       </div>
       <div>
-        <h3 className="text-[15px] font-semibold text-white">{title}</h3>
+        {/* A styled paragraph, not a heading: an h3 here broke the heading order on empty
+            screens (h1 straight to h3). */}
+        <p className="text-[15px] font-semibold text-white">{title}</p>
         {description && (
           <p className="mx-auto mt-1 max-w-full text-[13px] text-[var(--text-tertiary)] sm:max-w-[320px]">
             {description}

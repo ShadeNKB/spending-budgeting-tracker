@@ -54,11 +54,14 @@ Gates to run before merging or releasing. Copy the relevant list into your PR bo
 - [ ] Smoke test passes on production URL after Vercel deploy
 - [ ] Service worker cache version handled — installed clients update cleanly
 
-## Accessibility spot-check (every UI release)
+## Accessibility (every UI release)
 
-- [ ] `npm run preview` then `npm run a11y` (axe against `:4173`) — 0 violations
-- [ ] Tap targets ≥ 44×44 px on mobile
-- [ ] WCAG AA contrast on every text+bg pairing
+- [ ] `npm run build` then `npm run a11y` (Playwright + axe-core 4.13, `e2e/a11y.spec.ts` + `e2e/keyboard.spec.ts`; the same specs run in the CI e2e job; set `E2E_PORT` when port 4173 is taken) — 0 violations:
+  - axe (WCAG 2.0–2.2 A/AA + best practices) on every route and open state — Pulse month/year/empty, Ledger grouped/virtual/no results/custom range with the picker, Insights and empty, Add sheet (a chosen chip, invalid, picker), Edit sheet (a chosen chip) and its delete question, each Settings tab and its confirmations, palette results and the large-amount question, a toast, the shortcuts sheet, both error cards — in both themes, Chromium 1280 px and WebKit 375 px
+  - phone: every control has a 44 × 44 px hit area no neighbour overlaps, text fields fill their boxes, nothing scrolls sideways at 320 px (the page, open dialogs, and any scroller inside them or the screen; rows built to scroll are marked `data-scroll-x`)
+  - keyboard spec green: focus ring solid, ≥ 3:1 and uncut on every stop (both themes, forced colours), focus never under the header or tab bar, the modal layer stack (trap, Escape, focus return), date picker grid, palette combobox, ledger rows, confirmations, live regions, heatmap and charts, reduced motion
+- [ ] `src/__tests__/a11y-guards.test.ts` green (part of `npm run test:run`): no ad-hoc focus styles, reduced motion honoured by every framer-motion module, nothing focusable under `aria-hidden`
+- [ ] `e2e/double-press.spec.ts` green (part of `npm run e2e`): the second press of a double click or double tap on Save, Add, Cancel, Close, a backdrop, a palette option or a calendar day lands nowhere (no row deleted, no tab or chip pressed, no Undo)
 - [ ] No hover-only affordances
 
 ## Production readiness (before promoting a new feature)

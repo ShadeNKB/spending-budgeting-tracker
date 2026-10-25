@@ -87,6 +87,17 @@ const centreY = async (locator: Locator) => {
   return box.y + box.height / 2
 }
 
+/** The heatmap's days (`yyyy-MM-dd`), oldest first. */
+const heatmapDays = (page: Page) =>
+  page
+    .getByRole('grid', { name: /^Daily spending, / })
+    .locator('[data-day]')
+    .evaluateAll((els) => els.map((el) => el.getAttribute('data-day') ?? '').sort())
+
+/** One heatmap day: a cell, holding the button that opens it when the day has spending. */
+const heatmapDay = (page: Page, day: string) =>
+  page.getByRole('grid', { name: /^Daily spending, / }).locator(`[data-day="${day}"]`)
+
 test.use({
   timezoneId: 'Asia/Singapore',
   locale: 'en-US',
@@ -293,11 +304,16 @@ test.describe('Pace ring', () => {
     const ring = page.getByRole('img', { name: /^Budget/ })
     await expect(ring.getByText('Ahead of pace', { exact: true })).toBeVisible()
     await expect(ring).toContainText('projected S$123.86')
-    await expect(page.getByRole('button', { name: /^Subscriptions: / })).toHaveAccessibleName(
-      'Subscriptions: S$25.97 of S$30.00 budget. 87% used · S$4.03 left',
+    // Each budget row is named by what it shows plus its state in words.
+    await expect(
+      page.getByRole('button', { name: /^Subscriptions\W+On track\W/ }),
+    ).toHaveAccessibleName(
+      /^Subscriptions\s*, On track, S\$25\.97 of S\$30\.00 87% used · S\$4\.03 left$/,
     )
-    await expect(page.getByRole('button', { name: /^Transportation: / })).toHaveAccessibleName(
-      'Transportation: S$60.00 of S$80.00 budget. Projected S$97.89',
+    await expect(
+      page.getByRole('button', { name: /^Transportation\W+On pace to go over budget\W/ }),
+    ).toHaveAccessibleName(
+      /^Transportation\s*, On pace to go over budget, S\$60\.00 of S\$80\.00 Projected S\$97\.89$/,
     )
   })
 })
@@ -337,13 +353,16 @@ test.describe('Past periods', () => {
     expect(await main.innerText()).not.toMatch(/days left|last day/i)
 
     // Heatmap ends on the month's last day.
-    const cells = page.getByRole('button', { name: /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat), / })
-    await expect(cells.last()).toHaveAccessibleName('Wed, September 30: S$30.00')
+    expect((await heatmapDays(page)).at(-1)).toBe('2026-09-30')
+    await expect(heatmapDay(page, '2026-09-30').getByRole('button')).toHaveAccessibleName(
+      'Wed, September 30: S$30.00',
+    )
 
     // The sparkline has a point for every day of September and adds up to the hero.
-    const spark = page.getByRole('img', { name: /^Trend chart/ }).first()
-    await expect(spark).toHaveAccessibleName(/^Trend chart\. Total S\$60\.00\./)
-    await expect(spark.locator('rect')).toHaveCount(30)
+    const spark = page.getByRole('slider', { name: 'Daily spending, September' })
+    await expect(spark).toHaveAccessibleDescription(/^Total S\$60\.00\./)
+    await expect(spark).toHaveAttribute('aria-valuemin', '0')
+    await expect(spark).toHaveAttribute('aria-valuemax', '29')
   })
 
   test('AC-7: past year — no current or future month, twelve points', async ({ page }) => {
@@ -352,29 +371,26 @@ test.describe('Past periods', () => {
     await waitForApp(page)
     await page.getByRole('radio', { name: 'Year' }).click()
 
-    const bars = page.getByRole('button', {
-      name: /^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec): /,
-    })
-    await expect(bars).toHaveCount(12)
-    await expect(bars.locator('div.bg-accent')).toHaveCount(1) // October, this year
-    await expect(
-      page
-        .getByRole('img', { name: /^Trend chart/ })
-        .first()
-        .locator('rect'),
-    ).toHaveCount(10)
+    // Twelve bars read as one slider (twelve points), October the current month.
+    const bars = page.getByRole('slider', { name: 'Monthly totals, 2026' })
+    await expect(bars).toHaveAttribute('aria-valuemax', '11')
+    await expect(bars.locator('[data-state="current"]')).toHaveCount(1) // October, this year
+    await expect(page.getByRole('slider', { name: 'Monthly spending, 2026' })).toHaveAttribute(
+      'aria-valuemax',
+      '9',
+    )
 
     await page.getByRole('button', { name: 'View previous year' }).click()
     await expect(heroTotal(page)).toHaveText('S$130.00')
-    await expect(bars.locator('div.bg-accent')).toHaveCount(0)
-    await expect(
-      page
-        .getByRole('img', { name: /^Trend chart/ })
-        .first()
-        .locator('rect'),
-    ).toHaveCount(12)
-    const cells = page.getByRole('button', { name: /^(Sun|Mon|Tue|Wed|Thu|Fri|Sat), / })
-    await expect(cells.last()).toHaveAccessibleName(/^Wed, December 31: /)
+    const lastYear = page.getByRole('slider', { name: 'Monthly totals, 2025' })
+    await expect(lastYear).toHaveAttribute('aria-valuemax', '11')
+    await expect(lastYear.locator('[data-state="current"]')).toHaveCount(0)
+    await expect(page.getByRole('slider', { name: 'Monthly spending, 2025' })).toHaveAttribute(
+      'aria-valuemax',
+      '11',
+    )
+    expect((await heatmapDays(page)).at(-1)).toBe('2025-12-31')
+    await expect(heatmapDay(page, '2025-12-31')).toHaveAccessibleName(/^Wed, December 31: /)
   })
 })
 
@@ -391,9 +407,14 @@ test.describe('Heatmap layout', () => {
       await seed(page, { expenses, now: SGT('2026-10-18T10:00:00') })
       await page.goto('/pulse')
       await waitForApp(page)
-      for (const day of ['Mon', 'Wed', 'Fri']) {
+      for (const [day, key] of [
+        ['Mon', '2026-10-12'],
+        ['Wed', '2026-10-14'],
+        ['Fri', '2026-10-16'],
+      ] as const) {
         const label = page.getByText(day, { exact: true }).first()
-        const cell = page.getByRole('button', { name: new RegExp(`^${day}, `) }).last()
+        const cell = heatmapDay(page, key)
+        await expect(cell).toHaveAttribute('role', 'gridcell')
         expect(Math.abs((await centreY(label)) - (await centreY(cell)))).toBeLessThanOrEqual(1)
       }
     })
@@ -414,7 +435,9 @@ test.describe('Heatmap layout', () => {
 
     // The heatmap scrolls inside its card and opens on the latest week: today's cell is
     // inside the scroller's visible box without any horizontal scrolling by the test.
-    const today = page.getByRole('button', { name: /^Sun, October 18: / })
+    const today = heatmapDay(page, '2026-10-18').getByRole('button', {
+      name: /^Sun, October 18: /,
+    })
     const box = await today.boundingBox()
     const scroller = await today
       .locator('xpath=ancestor::div[contains(@class,"overflow-x-auto")]')
@@ -559,8 +582,11 @@ test.describe('Ledger state', () => {
 
     const sheet = page.getByRole('dialog', { name: 'Edit expense' })
     await expect(sheet).toContainText("This entry's date can't be read")
-    // No day is chosen for it: no preset and no picked date lights up.
-    await expect(sheet.getByRole('group', { name: 'Date' }).locator('.text-accent')).toHaveCount(0)
+    // No day is chosen for it: no preset is pressed and no date is picked.
+    const dates = sheet.getByRole('group', { name: 'Date' })
+    await expect(dates.locator('[aria-pressed]')).toHaveCount(4)
+    await expect(dates.locator('[aria-pressed="true"]')).toHaveCount(0)
+    await expect(dates.getByRole('button', { name: 'Pick date', exact: true })).toBeVisible()
     await sheet.getByLabel('Item', { exact: true }).fill('mystery kopi o')
     await sheet.getByRole('button', { name: 'Save changes' }).click()
     await expect(sheet).toHaveCount(0)
@@ -580,10 +606,10 @@ test.describe('Ledger state', () => {
     await seed(page, { expenses, now: SGT('2026-10-18T10:00:00') })
     await page.goto('/ledger')
     await waitForApp(page)
-    await page.getByRole('button', { name: 'Open command palette' }).click()
+    await page.getByRole('button', { name: 'Search', exact: true }).click()
     const palette = page.getByRole('dialog', { name: 'Command palette' })
-    await palette.getByRole('textbox').fill('grab')
-    await palette.getByRole('button', { name: /grab/ }).last().click()
+    await palette.getByRole('combobox').fill('grab')
+    await palette.getByRole('option', { name: /grab/ }).last().click()
     await expect(page).toHaveURL(/date=2026-10-16/)
     await expect(page.getByRole('textbox', { name: 'Search expenses' })).toHaveValue('grab')
     expect(await ledgerItemNames(page)).toEqual(['grab'])
@@ -606,6 +632,9 @@ test.describe('Ledger state', () => {
 
     const target = page.getByRole('button', { name: /^Edit row / }).nth(2)
     const name = ((await target.getAttribute('aria-label')) ?? '').split(',')[0]?.slice(5) ?? ''
+    const id = await target.evaluate(
+      (el) => el.closest('[data-ledger-row]')?.getAttribute('data-ledger-row') ?? '',
+    )
     const box = await target.boundingBox()
     if (!box) throw new Error('row has no box')
     // Swipe the row left until its Delete action is armed (the row slides ~96 px).
@@ -617,7 +646,11 @@ test.describe('Ledger state', () => {
     }
     await page.mouse.up()
     await expect.poll(async () => (await target.boundingBox())?.x ?? 0).toBeLessThan(box.x - 60)
-    const armed = page.getByRole('button', { name: `Delete ${name}`, exact: true })
+    // The swipe action is for touch only: hidden from assistive tech and out of the tab order
+    // (the row's own "Delete …" button is their way in).
+    const armed = page.locator(`[data-ledger-row="${id}"] [data-swipe-delete]`)
+    await expect(armed).toHaveAttribute('aria-hidden', 'true')
+    await expect(armed).toHaveAttribute('tabindex', '-1')
     const spot = await armed.boundingBox()
     if (!spot) throw new Error('delete has no box')
     const x = spot.x + spot.width / 2

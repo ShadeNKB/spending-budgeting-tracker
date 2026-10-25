@@ -13,7 +13,7 @@ export function TodayStrip({ entries, total }: { entries: readonly Expense[]; to
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <Sun size={14} className="text-accent/80" />
-          <h3 className="text-[13px] font-semibold text-white">Today</h3>
+          <h2 className="text-[13px] font-semibold text-white">Today</h2>
           <span className="text-[11px] text-[var(--text-tertiary)]">
             {entries.length} {entries.length === 1 ? 'entry' : 'entries'}
           </span>
@@ -23,8 +23,10 @@ export function TodayStrip({ entries, total }: { entries: readonly Expense[]; to
             {fmt(total)}
           </span>
           <button
+            type="button"
             onClick={() => navigate('/ledger?range=today')}
-            className="inline-flex items-center gap-1 text-[12px] text-[var(--text-secondary)] transition hover:text-white"
+            aria-label="View today's entries"
+            className="tap-target inline-flex items-center gap-1 text-[12px] text-[var(--text-secondary)] transition hover:text-white"
           >
             View <ArrowRight size={12} />
           </button>
@@ -63,8 +65,9 @@ export function TodayStrip({ entries, total }: { entries: readonly Expense[]; to
           {entries.length > 5 && (
             <li className="pt-2 text-center">
               <button
+                type="button"
                 onClick={() => navigate('/ledger?range=today')}
-                className="text-[11px] text-accent transition hover:text-accent-hover"
+                className="tap-target text-[11px] text-accent transition hover:text-accent-hover"
               >
                 +{entries.length - 5} more
               </button>

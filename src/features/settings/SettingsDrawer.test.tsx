@@ -26,6 +26,8 @@ beforeEach(() => {
     addEventListener: () => undefined,
     removeEventListener: () => undefined,
   }))
+  // jsdom does not lay out: the Settings panel scrolls a focused control into view.
+  Element.prototype.scrollIntoView = vi.fn()
 })
 
 afterEach(() => {
@@ -66,7 +68,7 @@ describe('SettingsDrawer focus', () => {
 
   it('opening Backup any other way does not move focus to Download', () => {
     openOn('sync')
-    const backupTab = screen.getByRole('button', { name: 'Backup' })
+    const backupTab = screen.getByRole('tab', { name: 'Backup' })
     backupTab.focus()
     fireEvent.click(backupTab)
     act(() => {
@@ -125,7 +127,7 @@ describe('Budgets', () => {
     openOn('categories')
     const row = (name: string) =>
       screen.getByRole('textbox', { name: `Rename category ${name}` }).closest('li')
-    expect(row('__proto__')).toHaveTextContent(/^1$/)
-    expect(row('constructor')).toHaveTextContent(/^0$/)
+    expect(row('__proto__')).toHaveTextContent(/^1 expense$/)
+    expect(row('constructor')).toHaveTextContent(/^0 expenses$/)
   })
 })

@@ -118,7 +118,8 @@
     --accent-hover: #67e8f9;
     --accent-dim: rgba(34, 211, 238, 0.12);
     --accent-border: rgba(34, 211, 238, 0.28);
-    --accent-ring: rgba(34, 211, 238, 0.25);
+    /* Keyboard focus outline: solid, so it reaches 3:1 on every surface (7.5:1 or more here). */
+    --focus-ring: #22d3ee;
 
     /* Trust blue - financial data callouts */
     --trust-blue: #3b82f6;
@@ -226,7 +227,8 @@
     /* Accent — keep cyan, bump opacity slightly for lighter backgrounds */
     --accent-dim: rgba(34, 211, 238, 0.15);
     --accent-border: rgba(34, 211, 238, 0.4);
-    --accent-ring: rgba(34, 211, 238, 0.3);
+    /* Bright cyan is 1.8:1 on white; cyan-700 keeps the ring at 3.47:1 or more on every surface. */
+    --focus-ring: #0e7490;
 
     /* Glows — more visible on light surfaces */
     --glow-cyan: rgba(34, 211, 238, 0.35);
@@ -253,6 +255,24 @@
     scroll-behavior: smooth;
     -webkit-text-size-adjust: 100%;
     -webkit-tap-highlight-color: transparent;
+  }
+  /* Tabbing scrolls a focused control in the screen clear of the sticky header, whose rendered
+     height the TopBar publishes as --app-header-h (it grows with the safe area and the update
+     banner; the fallback is the phone header), plus 24 px for the ring and for WebKit, which
+     reveals a text field by its caret line (AppShell brings the whole field into view). On the
+     controls in main, not as the page's scroll-padding: that also applied to the header's own
+     controls, so tabbing through the header, focus going back to Search, and typing in the
+     header's quick add each scrolled the page under it (and WebKit moves the page whenever the
+     page's scroll-padding changes). */
+  main :where(a[href], button, input, select, textarea, summary, [tabindex]) {
+    scroll-margin-top: calc(var(--app-header-h, 72px) + 24px);
+  }
+  /* ...and clear of the fixed TabBar on phones (61 px above the home indicator; hidden from
+     768 px), with room for a text field's caret line and ring. */
+  @media (max-width: 767px) {
+    html {
+      scroll-padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 88px);
+    }
   }
 
   body {
@@ -292,24 +312,24 @@
     }
   }
 
-  /* Focus-visible - accessible ring */
-  *:focus {
-    outline: none;
-  }
-  *:focus-visible {
-    outline: 2px solid var(--accent);
+  /* Focus: one indicator for every control (WCAG 2.4.7, 2.4.13, 1.4.11). A solid 2 px outline
+     in --focus-ring, 2 px out from the control, so it never touches or resembles a selected
+     fill, and it survives forced colours (box-shadow rings do not). Pointer focus draws none.
+     Variants for text fields and clipped rows are at the end of this file. */
+  :focus-visible {
+    outline: 2px solid var(--focus-ring);
     outline-offset: 2px;
-    border-radius: 4px;
   }
-  button:focus-visible,
-  a:focus-visible,
-  input:focus-visible,
-  select:focus-visible,
-  textarea:focus-visible {
+  :focus:not(:focus-visible) {
     outline: none;
-    box-shadow:
-      0 0 0 2px var(--surface-0),
-      0 0 0 4px var(--accent-ring);
+  }
+  /* Programmatic-focus containers (a dialog panel, a screen heading, the skip-link target) take
+     focus so the next Tab starts inside them; they are not controls and draw no ring. */
+  [role='dialog']:focus-visible,
+  [role='alertdialog']:focus-visible,
+  h1[tabindex='-1']:focus-visible,
+  main[tabindex='-1']:focus-visible {
+    outline: none;
   }
 
   /* Scrollbar */
@@ -595,57 +615,6 @@
     color: var(--negative);
   }
 
-  /* -- Inputs ----------------------------------------------------- */
-  .input-base {
-    display: block;
-    width: 100%;
-    padding: 12px 14px;
-    min-height: 44px;
-    background: var(--surface-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-md);
-    color: var(--text-primary);
-    font-family: inherit;
-    line-height: 1.4;
-    transition:
-      border-color 150ms ease,
-      background-color 150ms ease,
-      box-shadow 150ms ease;
-    outline: none;
-    -webkit-appearance: none;
-    appearance: none;
-  }
-  .input-base::placeholder {
-    color: var(--text-tertiary);
-  }
-  .input-base:hover {
-    border-color: var(--border-strong);
-  }
-  .input-base:focus {
-    border-color: var(--accent-border);
-    background: var(--surface-2);
-    box-shadow: 0 0 0 3px var(--accent-ring);
-  }
-
-  /* select arrow */
-  select.input-base {
-    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%238A94A6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
-    background-repeat: no-repeat;
-    background-position: right 14px center;
-    padding-right: 40px;
-  }
-
-  .input-neon {
-    @apply input-base;
-  }
-
-  .input-error {
-    border-color: rgba(239, 68, 68, 0.5) !important;
-  }
-  .input-error:focus {
-    box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15) !important;
-  }
-
   /* -- Typography ------------------------------------------------- */
   .text-label {
     font-size: 0.6875rem;
@@ -864,12 +833,6 @@
   }
   .list-row:hover {
     background: rgba(255, 255, 255, 0.02);
-  }
-
-  /* -- Touch target utility --------------------------------------- */
-  .tap-target {
-    min-width: 44px;
-    min-height: 44px;
   }
 
   /* -- Category color dot ----------------------------------------- */
@@ -1423,6 +1386,11 @@
   [data-theme='light'] .text-surface-0 {
     color: #0a0e14;
   }
+  /* The solid danger fill (Button dangerSolid) keeps its white label in light mode too: 4.83:1
+     on negative.solid, where the remapped dark text would reach only 4.06:1. */
+  [data-theme='light'] .bg-negative-solid.text-white {
+    color: #fff;
+  }
   /* Dark mode: the saturated negative red (#ef4444) as small text only reaches
      ~4.06:1 on the dark cards — under AA. Brighten the text usage to red-400
      (bars/fills keep the saturated token). */
@@ -1539,5 +1507,97 @@
   select,
   textarea {
     font-size: 16px !important;
+  }
+}
+
+/* --- Focus variants, touch targets, forced colours ------------------------------------------
+   Unlayered and after the floor above, for the same reason: these must beat component and
+   utility classes. The base :focus-visible ring is in @layer base.
+
+   Text fields: the field's frame (.field-focus) draws the ring while its control
+   (.field-control) has keyboard focus, so a field shows exactly one indicator and a button
+   inside the frame keeps its own. Browsers without :has() keep the control's own outline. */
+@supports selector(:has(*)) {
+  .field-control:focus-visible {
+    outline: none;
+  }
+  .field-focus:has(.field-control:focus-visible) {
+    outline: 2px solid var(--focus-ring);
+    outline-offset: 2px;
+  }
+  .field-focus.focus-inset:has(.field-control:focus-visible) {
+    outline-offset: -2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .field-focus:has(.field-control:focus-visible) {
+      transition-duration: 0s !important;
+    }
+  }
+}
+
+/* A control flush against a clipping (overflow) edge draws its ring just inside itself. */
+.focus-inset:focus-visible {
+  outline-offset: -2px;
+}
+
+/* The reduced-motion block gives every element a 0.01 ms transition on every property, the
+   outline included, so the first frame after Tab would paint the outline's unfocused values
+   (currentColor, 3 px, no offset). A focused control takes no transition: its ring is whole on
+   the first frame. Nothing else changes, as 0.01 ms was already instant. */
+@media (prefers-reduced-motion: reduce) {
+  :focus-visible {
+    transition-duration: 0s !important;
+  }
+}
+
+/* Focus scrolling (Tab onto a part-hidden control, in the page or in any scroller: a sheet, a
+   chip row) stops 8 px short of the edge, so the whole ring (2 px offset + 2 px) shows. */
+:where(a[href], button, input, select, textarea, summary, [tabindex]) {
+  scroll-margin: 8px;
+}
+
+/* Touch targets: on a touch screen, a hit area of at least 44 x 44 px centred on the control,
+   without changing how it looks or lays out. Space neighbours so their hit areas never overlap.
+   <input>, <select> and <textarea> have no pseudo-elements: give those a real 44 px box.
+   :where() keeps position: relative at zero specificity, so a positioned utility (absolute,
+   fixed, sticky) wins; each of those already anchors the hit area. */
+@media (pointer: coarse) {
+  :where(.tap-target) {
+    position: relative;
+  }
+  .tap-target::after {
+    content: '';
+    position: absolute;
+    top: min(0px, calc(50% - 22px));
+    right: min(0px, calc(50% - 22px));
+    bottom: min(0px, calc(50% - 22px));
+    left: min(0px, calc(50% - 22px));
+  }
+}
+
+/* Forced colours (Windows contrast themes) replace author colours, which leaves a selected
+   chip, radio, tab or day looking like its neighbours. Chosen states (pressed, checked,
+   selected, the current page) are painted as the system selection instead, and everything
+   inside them takes the same paint, so a day button in a selected gridcell is the selection
+   too. Today is a date marker, not a choice: it is ringed in the selection colour (its border),
+   never filled, so it cannot pass for the chosen day. The focus outline survives forced
+   colours; it takes a system colour that differs from the selection. */
+@media (forced-colors: active) {
+  :focus-visible {
+    outline-color: CanvasText;
+  }
+  :is([aria-pressed='true'], [aria-checked='true'], [aria-selected='true'], [aria-current='page']) {
+    forced-color-adjust: none;
+    background: Highlight !important;
+    color: HighlightText !important;
+  }
+  :is([aria-pressed='true'], [aria-checked='true'], [aria-selected='true'], [aria-current='page'])
+    * {
+    color: inherit !important;
+    background-color: inherit !important;
+    background-image: none !important;
+  }
+  [aria-current='date'] {
+    border-color: Highlight !important;
   }
 }

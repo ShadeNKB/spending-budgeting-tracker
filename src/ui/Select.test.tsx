@@ -66,6 +66,14 @@ describe('Select', () => {
     expect(select).toHaveClass('text-white')
   })
 
+  it('shows focus with the shared outline, never its own ring or a removed outline', () => {
+    render(<CategoryFilter />)
+    const select = screen.getByRole('combobox', { name: 'Filter by category' })
+    expect(select.className).not.toMatch(/outline-none|focus:(shadow|ring|border|outline)/)
+    // 44 px tall on every pointer: already a full touch target.
+    expect(select).toHaveClass('h-11')
+  })
+
   it('matches an option without a value attribute by its text', () => {
     render(
       <Select label="Mode" value="Weekly" onChange={() => undefined}>

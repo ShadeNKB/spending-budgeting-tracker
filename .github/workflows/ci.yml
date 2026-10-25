@@ -98,11 +98,19 @@ jobs:
       - name: Simulation and property suites at full size (Singapore)
         run: TZ=Asia/Singapore ST5_SIM_SEEDS=150 npx vitest run src/data
 
-  e2e:
-    name: E2E (Chromium desktop + WebKit iPhone)
+  # The accessibility gate (e2e/a11y.spec.ts + e2e/keyboard.spec.ts) is two thirds of the suite:
+  # about 2,600 test-seconds, 10+ minutes per browser on two workers. Three shards (each runs a
+  # third of every spec, both browsers) keep each job near the earlier suite's length; set their
+  # timeout from the first real runs.
+  e2e-shard:
+    name: E2E shard ${{ matrix.shard }}/3
     runs-on: ubuntu-latest
     needs: validate
-    timeout-minutes: 20
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
 
     steps:
       - name: Checkout
@@ -127,12 +135,26 @@ jobs:
         run: npx playwright install --with-deps chromium webkit
 
       - name: E2E
-        run: npm run e2e
+        run: npm run e2e -- --shard=${{ matrix.shard }}/3
 
       - name: Upload report on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.shard }}
           path: playwright-report
           retention-days: 7
+
+  # The one check that branch protection and the PR page know by name: green only when every
+  # shard is.
+  e2e:
+    name: E2E (Chromium desktop + WebKit iPhone)
+    runs-on: ubuntu-latest
+    needs: e2e-shard
+    # Also when a shard failed or was skipped (it reports red then); not for a cancelled run.
+    if: ${{ !cancelled() }}
+    timeout-minutes: 5
+
+    steps:
+      - name: All shards passed
+        run: test "${{ needs.e2e-shard.result }}" = "success"

@@ -766,13 +766,46 @@ describe('Disconnect', () => {
     ).toBeInTheDocument()
   })
 
-  it('puts no fill under the amber confirm text (AA in the light theme, axe-checked)', () => {
-    // The confirm card is already amber-tinted; a fill on top dropped amber-700 text to 4.38:1.
+  it('asks with the shared confirmation: a group named by its question, Cancel focused', () => {
     connectedPanel()
     fireEvent.click(screen.getByRole('button', { name: /Disconnect sync/ }))
-    const confirm = screen.getByRole('button', { name: 'Disconnect' })
-    expect(confirm).toHaveClass('!bg-transparent', '!text-warning', 'hover:!bg-warning/5')
+    const question = screen.getByRole('group', { name: 'Disconnect sync on this device?' })
+    expect(within(question).getByRole('button', { name: 'Disconnect' })).toBeInTheDocument()
+    expect(within(question).getByRole('button', { name: 'Cancel' })).toHaveFocus()
   })
+
+  it('Escape takes back the question, not Settings, and focus returns to Disconnect sync', () => {
+    const disconnectSync = vi.fn()
+    connectedPanel({ disconnectSync })
+    fireEvent.click(screen.getByRole('button', { name: /Disconnect sync/ }))
+    // A handled Escape (default prevented) is one the layer stack leaves: Settings stays open.
+    const notHandled = fireEvent.keyDown(screen.getByRole('button', { name: 'Cancel' }), {
+      key: 'Escape',
+    })
+    expect(notHandled).toBe(false)
+    expect(screen.queryByRole('group', { name: /Disconnect sync on this device/ })).toBeNull()
+    expect(screen.getByRole('button', { name: /Disconnect sync/ })).toHaveFocus()
+    expect(disconnectSync).not.toHaveBeenCalled()
+  })
+})
+
+describe('the panel names its parts', () => {
+  it('labels the sync code field (the placeholder disappears as you paste)', () => {
+    render(<SyncPanel />)
+    expect(screen.getByLabelText('Sync code')).toBe(
+      screen.getByPlaceholderText('Paste sync code from another device'),
+    )
+  })
+
+  it.each(['without', 'with'] as const)(
+    'shows which SpendTrack this device runs, %s a sync code',
+    (linked) => {
+      if (linked === 'with') connectedPanel()
+      else render(<SyncPanel />)
+      expect(__APP_VERSION__).toMatch(/^\d+\.\d+\.\d+$/)
+      expect(screen.getByText(`This device runs SpendTrack ${__APP_VERSION__}`)).toBeInTheDocument()
+    },
+  )
 })
 
 describe('focus stays in the panel when its view changes', () => {

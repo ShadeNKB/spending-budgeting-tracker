@@ -24,10 +24,13 @@ import { Segmented } from '../../ui/Segmented'
 import { Button } from '../../ui/Button'
 import { Input } from '../../ui/Input'
 import { Pill } from '../../ui/Pill'
+import { InlineConfirm } from '../../ui/InlineConfirm'
+import { useInlineConfirm } from '../../hooks/useInlineConfirm'
 import { useUIStore, type Theme } from '../../stores/useUIStore'
 import { CURRENCIES, isSupportedCurrency } from '../../lib/format'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { SyncPanel } from './SyncPanel'
+import { syncEnabled } from '../../services/syncConfig'
 import { useToast } from '../../hooks/useToast'
 import { useCurrencySymbol, useFormatMoney } from '../../hooks/useFormatMoney'
 import { downloadJSON, downloadCSV } from '../../lib/download'
@@ -35,6 +38,30 @@ import { expensesToCsv } from '../../lib/csv'
 import { colorFromString } from '../../lib/analytics'
 import { BackupTooLargeError, parseBackup } from '../../lib/backup'
 import type { BackupData } from '../../types'
+
+const SECTIONS = [
+  ['categories', Tags, 'Categories'],
+  ['budgets', Wallet, 'Budgets'],
+  ['backup', Database, 'Backup'],
+  ['sync', Cloud, 'Sync'],
+] as const
+
+type Section = (typeof SECTIONS)[number][0]
+
+// One Settings drawer exists at a time, so fixed ids are unique.
+const tabId = (section: Section) => `settings-tab-${section}`
+const panelId = (section: Section) => `settings-panel-${section}`
+const ADD_CATEGORY_ID = 'settings-add-category'
+
+/** Arrow keys move along the tabs (wrapping), Home and End jump to the ends. */
+function sectionAfterKey(key: string, index: number): number | null {
+  const count = SECTIONS.length
+  if (key === 'ArrowRight') return (index + 1) % count
+  if (key === 'ArrowLeft') return (index - 1 + count) % count
+  if (key === 'Home') return 0
+  if (key === 'End') return count - 1
+  return null
+}
 
 export function SettingsDrawer() {
   const open = useUIStore((s) => s.settingsOpen)
@@ -58,6 +85,22 @@ export function SettingsDrawer() {
     return () => query.removeEventListener('change', update)
   }, [])
 
+  // Tab from the tabs lands in the chosen section: on its first control, or on the panel itself
+  // when the section is text only (Sync without a relay, Budgets without categories).
+  const noCategories = useExpenseStore((s) => s.categories.length === 0)
+  const panelIsText = (tab === 'sync' && !syncEnabled) || (tab === 'budgets' && noCategories)
+
+  // Tabs with automatic activation: the arrow keys switch the section as they move focus. With a
+  // modifier the key is the browser's or the system's (Alt+Left is Back).
+  const onTabKeyDown = (e: React.KeyboardEvent<HTMLButtonElement>, index: number) => {
+    if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
+    const next = SECTIONS[sectionAfterKey(e.key, index) ?? -1]
+    if (!next) return
+    e.preventDefault()
+    setTab(next[0])
+    document.getElementById(tabId(next[0]))?.focus()
+  }
+
   return (
     <Sheet
       open={open}
@@ -74,6 +117,7 @@ export function SettingsDrawer() {
           <Segmented<Theme>
             value={theme}
             onChange={setTheme}
+            label="Theme"
             fullWidth
             options={[
               {
@@ -119,7 +163,7 @@ export function SettingsDrawer() {
                 const next = e.target.value
                 if (isSupportedCurrency(next)) setCurrency(next)
               }}
-              className="h-10 w-full appearance-none rounded-lg border border-white/[0.08] bg-surface-2 pl-3 pr-9 text-[13px] font-medium text-[var(--text-primary)] outline-none transition [color-scheme:dark] hover:border-white/[0.14] focus:border-accent/60 focus:shadow-[0_0_0_3px_rgba(34,211,238,0.15)]"
+              className="h-10 w-full appearance-none rounded-lg border border-white/[0.08] bg-surface-2 pl-3 pr-9 text-[13px] font-medium text-[var(--text-primary)] transition [color-scheme:dark] hover:border-white/[0.14] [@media(pointer:coarse)]:h-11"
             >
               {CURRENCIES.map((c) => (
                 <option key={c.code} value={c.code}>
@@ -136,36 +180,54 @@ export function SettingsDrawer() {
             Changes the symbol only — amounts aren't converted.
           </p>
         </div>
-        <div className="flex w-full items-center gap-1 rounded-full border border-white/[0.06] bg-surface-1 p-1">
-          {(
-            [
-              ['categories', Tags, 'Categories'],
-              ['budgets', Wallet, 'Budgets'],
-              ['backup', Database, 'Backup'],
-              ['sync', Cloud, 'Sync'],
-            ] as const
-          ).map(([key, Icon, label]) => (
+        {/* Icons only on a phone, so each tab is named by aria-label. 36 px tall inside the 4 px
+            track: a 44 px touch area that stays within it. */}
+        <div
+          role="tablist"
+          aria-label="Settings sections"
+          className="flex w-full items-center gap-1 rounded-full border border-white/[0.06] bg-surface-1 p-1"
+        >
+          {SECTIONS.map(([key, Icon, label], index) => (
             <button
               type="button"
+              role="tab"
               key={key}
+              id={tabId(key)}
+              aria-selected={tab === key}
+              aria-controls={panelId(key)}
+              tabIndex={tab === key ? 0 : -1}
               onClick={() => setTab(key)}
+              onKeyDown={(e) => onTabKeyDown(e, index)}
               aria-label={label}
               title={label}
               className={
-                'inline-flex flex-1 items-center justify-center gap-1.5 rounded-full px-2 py-2 text-[12px] font-medium transition sm:px-3 sm:py-1.5 ' +
+                'tap-target inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full px-2 text-[12px] font-medium transition sm:px-3 ' +
                 (tab === key
                   ? 'bg-accent/12 text-accent shadow-[inset_0_0_0_1px_rgba(34,211,238,0.18)]'
                   : 'text-[var(--text-secondary)] hover:text-white')
               }
             >
-              <Icon size={13} />
+              <Icon size={13} aria-hidden />
               <span className="hidden sm:inline">{label}</span>
             </button>
           ))}
         </div>
       </div>
 
-      <div className="p-5">
+      {/* As a tab stop (text only) its ring is drawn inside it, where the sheet's scroller
+          cannot cut it. WebKit reveals only the caret line of a text field that Tab lands on,
+          leaving the field's bottom and ring under the sheet's edge: focus brings the whole
+          control, ring included (its scroll-margin), into view. */}
+      <div
+        role="tabpanel"
+        id={panelId(tab)}
+        aria-labelledby={tabId(tab)}
+        tabIndex={panelIsText ? 0 : undefined}
+        onFocus={(e) => {
+          e.target.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+        }}
+        className="focus-inset p-5"
+      >
         {tab === 'categories' && <CategoriesPanel />}
         {tab === 'budgets' && <BudgetsPanel />}
         {tab === 'backup' && <BackupPanel />}
@@ -181,9 +243,10 @@ function CategoriesPanel() {
   const add = useExpenseStore((s) => s.addCategory)
   const rename = useExpenseStore((s) => s.renameCategory)
   const remove = useExpenseStore((s) => s.removeCategory)
+  const budgets = useExpenseStore((s) => s.budgets)
   const toast = useToast()
   const [newCat, setNewCat] = useState('')
-  const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
+  const confirm = useInlineConfirm<string>()
 
   // A Map: a category may be named "__proto__" or "constructor".
   const counts = new Map(
@@ -192,9 +255,12 @@ function CategoriesPanel() {
 
   return (
     <div className="flex flex-col gap-3">
+      {/* The field gives way on a narrow screen (a field's own minimum width would push "Add"
+          out of the sheet at 320 px); the button keeps its size. */}
       <div className="flex items-end gap-2">
-        <div className="flex-1">
+        <div className="min-w-0 flex-1">
           <Input
+            id={ADD_CATEGORY_ID}
             label="Add category"
             placeholder="e.g. Gifts"
             value={newCat}
@@ -209,6 +275,7 @@ function CategoriesPanel() {
           />
         </div>
         <Button
+          className="shrink-0"
           onClick={() => {
             if (newCat.trim()) {
               add(newCat.trim())
@@ -222,63 +289,79 @@ function CategoriesPanel() {
       </div>
 
       <ul className="flex flex-col gap-1.5">
-        {categories.map((c) => (
-          <li
-            key={c}
-            className="flex items-center gap-3 rounded-lg border border-white/[0.06] bg-surface-1 px-3 py-2.5"
-          >
-            <span
-              className="h-2 w-2 shrink-0 rounded-full"
-              style={{ background: colorFromString(c) }}
-            />
-            <input
-              aria-label={`Rename category ${c}`}
-              defaultValue={c}
-              onBlur={(e) => {
-                const v = e.target.value.trim()
-                if (v && v !== c) {
-                  rename(c, v)
-                  toast.success('Renamed')
-                }
-              }}
-              className="min-w-0 flex-1 bg-transparent text-[13px] text-white outline-none"
-            />
-            <Pill tone="default">{counts.get(c) ?? 0}</Pill>
-            {confirmDelete === c ? (
-              <div className="flex shrink-0 items-center gap-1">
-                <button
-                  type="button"
-                  onClick={() => {
+        {categories.map((c, index) => {
+          const count = counts.get(c) ?? 0
+          const one = count === 1
+          const noun = one ? 'expense' : 'expenses'
+          return (
+            <li
+              key={c}
+              className="flex items-center gap-3 rounded-lg border border-white/[0.06] bg-surface-1 px-3 py-1.5"
+            >
+              <span
+                aria-hidden
+                className="h-2 w-2 shrink-0 rounded-full"
+                style={{ background: colorFromString(c) }}
+              />
+              {confirm.pending === c ? (
+                <InlineConfirm
+                  layout="row"
+                  question={`Delete ${c}?`}
+                  detail={
+                    // Its expenses are refiled to Other (deleting Other itself leaves them be).
+                    (count === 0
+                      ? 'No expenses use it'
+                      : c === 'Other'
+                        ? `${count} ${noun} ${one ? 'stays' : 'stay'} in Other`
+                        : `${count} ${noun} ${one ? 'moves' : 'move'} to Other`) +
+                    (Object.hasOwn(budgets, c) ? ' · its budget goes too' : '')
+                  }
+                  confirmLabel={<Check size={14} aria-hidden />}
+                  confirmName={`Delete category ${c}`}
+                  cancelLabel={<X size={14} aria-hidden />}
+                  cancelName={`Keep ${c}`}
+                  onConfirm={() => {
+                    // Focus moves on to the row that takes this one's place.
+                    const next = categories[index + 1] ?? categories[index - 1]
                     remove(c)
-                    setConfirmDelete(null)
                     toast.info('Category deleted')
+                    confirm.close(next === undefined ? ADD_CATEGORY_ID : confirm.triggerId(next))
                   }}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-negative/10 text-negative transition hover:bg-negative/20"
-                  title="Confirm delete"
-                >
-                  <Check size={13} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setConfirmDelete(null)}
-                  className="inline-flex h-7 w-7 items-center justify-center rounded-md text-[var(--text-tertiary)] transition hover:bg-surface-2"
-                  title="Cancel"
-                >
-                  <X size={13} />
-                </button>
-              </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setConfirmDelete(c)}
-                className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-[var(--text-tertiary)] transition hover:bg-negative/10 hover:text-negative"
-                title="Delete category"
-              >
-                <Trash2 size={13} />
-              </button>
-            )}
-          </li>
-        ))}
+                  onCancel={() => confirm.close()}
+                />
+              ) : (
+                <>
+                  <input
+                    aria-label={`Rename category ${c}`}
+                    defaultValue={c}
+                    onBlur={(e) => {
+                      const v = e.target.value.trim()
+                      if (v && v !== c) {
+                        rename(c, v)
+                        toast.success('Renamed')
+                      }
+                    }}
+                    className="-mx-1 h-9 min-w-0 flex-1 rounded-md bg-transparent px-1 text-[13px] text-white [@media(pointer:coarse)]:h-11"
+                  />
+                  <Pill tone="default">
+                    {count}
+                    <span className="sr-only"> {noun}</span>
+                  </Pill>
+                  <button
+                    type="button"
+                    id={confirm.triggerId(c)}
+                    onClick={() => confirm.ask(c, c)}
+                    aria-label={`Delete category ${c}`}
+                    title={`Delete category ${c}`}
+                    className="tap-target inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[var(--text-tertiary)] transition hover:bg-negative/10 hover:text-negative"
+                  >
+                    <Trash2 size={13} aria-hidden />
+                  </button>
+                </>
+              )}
+            </li>
+          )
+        })}
       </ul>
     </div>
   )
@@ -305,9 +388,13 @@ function BudgetsPanel() {
           return (
             <li
               key={c}
-              className="flex items-center gap-3 rounded-lg border border-white/[0.06] bg-surface-1 px-3 py-2"
+              className="flex items-center gap-3 rounded-lg border border-white/[0.06] bg-surface-1 px-3 py-2 [@media(pointer:coarse)]:py-1"
             >
-              <span className="h-2 w-2 rounded-full" style={{ background: colorFromString(c) }} />
+              <span
+                aria-hidden
+                className="h-2 w-2 rounded-full"
+                style={{ background: colorFromString(c) }}
+              />
               <span className="flex-1 text-[13px] text-white">{c}</span>
               <div className="flex items-center gap-1">
                 <span className="text-[11px] text-[var(--text-tertiary)]">{symbol}</span>
@@ -318,9 +405,9 @@ function BudgetsPanel() {
                   defaultValue={current ?? ''}
                   aria-label={`Monthly budget for ${c}`}
                   placeholder="—"
-                  // Wider on touch screens, where the text is floored at 16 px (index.css,
-                  // against iOS focus zoom): 9 characters (123456.78) still fit.
-                  className="h-8 w-24 rounded-md border border-white/[0.06] bg-surface-2 px-2 text-right font-mono text-[13px] tabular-nums text-white outline-none [color-scheme:dark] focus:border-accent/60 [@media(pointer:coarse)]:w-28"
+                  // Wider and 44 px tall on touch screens, where the text is floored at 16 px
+                  // (index.css, against iOS focus zoom): 9 characters (123456.78) still fit.
+                  className="h-8 w-24 rounded-md border border-white/[0.06] bg-surface-2 px-2 text-right font-mono text-[13px] tabular-nums text-white [color-scheme:dark] [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-28"
                   onBlur={(e) => {
                     const v = parseFloat(e.target.value)
                     // Leaving the field unchanged is no edit (and no toast).
@@ -360,7 +447,9 @@ function BackupPanel() {
   const [pendingImport, setPendingImport] = useState<{ data: BackupData; count: number } | null>(
     null,
   )
-  const [confirmClear, setConfirmClear] = useState(false)
+  const clearConfirm = useInlineConfirm<true>()
+  /** Focus for the import question; the backup itself waits in `pendingImport`. */
+  const importConfirm = useInlineConfirm<true>()
 
   const exportJson = () => {
     downloadJSON(`spendtrack-backup-${format(new Date(), 'yyyy-MM-dd')}.json`, exportBackup())
@@ -385,6 +474,7 @@ function BackupPanel() {
         if (typeof reader.result !== 'string') throw new Error('unreadable file')
         const data = parseBackup(JSON.parse(reader.result))
         setPendingImport({ data, count: data.expenses.length })
+        importConfirm.ask(true)
       } catch (err) {
         if (err instanceof BackupTooLargeError) {
           toast.error(err.message)
@@ -401,8 +491,9 @@ function BackupPanel() {
   const confirmImport = () => {
     if (!pendingImport) return
     importBackup(pendingImport.data)
-    toast.success(`Imported ${pendingImport.count} expenses`)
+    toast.success(`Imported ${expenseCount(pendingImport.count)}`)
     setPendingImport(null)
+    importConfirm.close()
   }
 
   return (
@@ -441,24 +532,17 @@ function BackupPanel() {
       </div>
 
       {pendingImport && (
-        <div className="flex flex-col gap-3 rounded-lg border border-warning/30 bg-warning/[0.07] p-4">
-          <div>
-            <div className="text-[13px] font-semibold text-white">
-              Import {pendingImport.count} expenses?
-            </div>
-            <div className="mt-0.5 text-[12px] text-[var(--text-tertiary)]">
-              This will replace all current data. This cannot be undone.
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Button onClick={confirmImport} variant="primary" className="flex-1">
-              Confirm import
-            </Button>
-            <Button onClick={() => setPendingImport(null)} variant="ghost" className="flex-1">
-              Cancel
-            </Button>
-          </div>
-        </div>
+        <InlineConfirm
+          tone="warning"
+          question={`Import ${expenseCount(pendingImport.count)}?`}
+          detail="This will replace all current data. This cannot be undone."
+          confirmLabel="Confirm import"
+          onConfirm={confirmImport}
+          onCancel={() => {
+            setPendingImport(null)
+            importConfirm.close()
+          }}
+        />
       )}
 
       <Button ref={takeFocus} onClick={exportJson} variant="primary">
@@ -478,46 +562,38 @@ function BackupPanel() {
           e.target.value = ''
         }}
       />
-      <Button onClick={() => fileRef.current?.click()} variant="ghost">
+      <Button
+        id={importConfirm.triggerId()}
+        onClick={() => fileRef.current?.click()}
+        variant="ghost"
+      >
         <Upload size={14} /> Import JSON backup
       </Button>
 
       <div className="mt-1 border-t border-white/[0.06] pt-3">
-        {confirmClear ? (
-          <div className="flex flex-col gap-3 rounded-lg border border-negative/30 bg-negative/[0.07] p-4">
-            <div className="flex items-start gap-2">
-              <AlertTriangle size={14} className="mt-0.5 shrink-0 text-negative" />
-              <div>
-                <div className="text-[13px] font-semibold text-white">
-                  Delete all {expenses.length} expenses?
-                </div>
-                <div className="mt-0.5 text-[12px] leading-relaxed text-[var(--text-tertiary)]">
-                  This permanently removes all locally stored expense data. Your categories,
-                  budgets, and settings are kept.{' '}
-                  <strong className="text-white/60">This cannot be undone.</strong>
-                </div>
-              </div>
-            </div>
-            <div className="flex gap-2">
-              <Button
-                onClick={() => {
-                  clearAllExpenses()
-                  setConfirmClear(false)
-                  toast.info('All expenses cleared')
-                }}
-                variant="primary"
-                className="flex-1 border-transparent !bg-negative/80 hover:!bg-negative"
-              >
-                Yes, delete all
-              </Button>
-              <Button onClick={() => setConfirmClear(false)} variant="ghost" className="flex-1">
-                Cancel
-              </Button>
-            </div>
-          </div>
+        {clearConfirm.pending ? (
+          <InlineConfirm
+            icon={<AlertTriangle size={14} aria-hidden className="mt-0.5 shrink-0 text-negative" />}
+            question={`Delete all ${expenseCount(expenses.length)}?`}
+            detail={
+              <>
+                This permanently removes all locally stored expense data. Your categories, budgets,
+                and settings are kept.{' '}
+                <strong className="text-white/60">This cannot be undone.</strong>
+              </>
+            }
+            confirmLabel="Yes, delete all"
+            onConfirm={() => {
+              clearAllExpenses()
+              toast.info('All expenses cleared')
+              clearConfirm.close()
+            }}
+            onCancel={() => clearConfirm.close()}
+          />
         ) : (
           <Button
-            onClick={() => setConfirmClear(true)}
+            id={clearConfirm.triggerId()}
+            onClick={() => clearConfirm.ask(true)}
             variant="ghost"
             className="w-full text-negative/70 hover:!border-negative/30 hover:!bg-negative/10 hover:text-negative"
           >
@@ -527,4 +603,9 @@ function BackupPanel() {
       </div>
     </div>
   )
+}
+
+/** "1 expense", "12 expenses". */
+function expenseCount(n: number): string {
+  return `${n} ${n === 1 ? 'expense' : 'expenses'}`
 }

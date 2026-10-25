@@ -21,6 +21,7 @@ import { VirtualLedgerList } from './VirtualLedgerList'
 import { filterLedgerRows, groupLedgerRows } from './ledgerFlatten'
 import { EditExpenseSheet } from './EditExpenseSheet'
 import { useToast } from '../../hooks/useToast'
+import { changingNow, shieldGesture, type Change } from '../../ui/pressShield'
 import { isRange, isValidYmd, type Range } from './ledgerParams'
 import type { Expense } from '../../types'
 
@@ -30,10 +31,48 @@ const VIRTUALIZE_THRESHOLD = 150
 /** Typing settles into `?q=` after this pause (and at once on blur). */
 const SEARCH_SYNC_MS = 400
 /**
- * After a delete, further deletes are ignored this long: a reflex second tap lands on the
- * row that just slid into place, and must never delete it.
+ * After a delete, further deletes are ignored until it has been on screen this long: a reflex
+ * second tap lands on the row that just slid into place, and must never delete it. Judged by
+ * when the press was made, so a busy phone that handles that tap late still ignores it.
  */
 const DELETE_GUARD_MS = 450
+
+const ROW = '[data-ledger-row]'
+
+/** The ledger rows on screen, in list order (the virtual list mounts only those near view). */
+function mountedRows(): HTMLElement[] {
+  return Array.from(document.querySelectorAll<HTMLElement>(ROW))
+}
+
+/** The ids of the rows after and before `id`: where focus goes if that row disappears. */
+function neighboursOf(id: string): string[] {
+  const ids = mountedRows().map((row) => row.dataset.ledgerRow)
+  const at = ids.indexOf(id)
+  if (at < 0) return []
+  return [ids[at + 1], ids[at - 1]].filter((n): n is string => n !== undefined)
+}
+
+/**
+ * Focus without the browser's own jump. A keyboard user's focus (the ring shows) is then
+ * scrolled only as far as needed: `nearest` honours the row's scroll margin and the page's
+ * scroll padding, which keep it clear of the header and the tab bar. After a tap or click
+ * nothing is shown, so nothing is measured or scrolled (a phone's delete stays light).
+ */
+function focusInView(el: HTMLElement): void {
+  el.focus({ preventScroll: true })
+  if (el.matches(':focus-visible')) el.scrollIntoView({ block: 'nearest' })
+}
+
+/** The row button of the first of `ids` that is still on screen. */
+function firstRowButton(ids: readonly string[]): HTMLElement | null {
+  const rows = mountedRows()
+  for (const id of ids) {
+    const row = rows.find((r) => r.dataset.ledgerRow === id)
+    const button = row?.querySelector<HTMLElement>('[data-row-main]')
+    if (button) return button
+  }
+  return null
+}
 
 export function LedgerScreen() {
   const expenses = useExpenseStore((s) => s.expenses)
@@ -47,6 +86,25 @@ export function LedgerScreen() {
 
   const [params, setParams] = useSearchParams()
   const [editing, setEditing] = useState<Expense | null>(null)
+  const headingRef = useRef<HTMLHeadingElement>(null)
+  /** The edited row and its neighbours, for when the editor deletes or moves that row. */
+  const editedRows = useRef<string[]>([])
+  /** Set when the focused row is deleted: the rows to move focus to, in order. */
+  const refocusAfterDelete = useRef<string[] | null>(null)
+
+  const openEditor = useCallback((e: Expense) => {
+    editedRows.current = [e.id, ...neighboursOf(e.id)]
+    setEditing(e)
+  }, [])
+  const closeEditor = useCallback(() => {
+    setEditing(null)
+  }, [])
+  // Only asked when the row that opened the editor is gone (deleted, filtered out, or moved to
+  // another day, where it is a new element): the row itself, else the one that took its place.
+  const editorReturnFocus = useCallback(
+    () => firstRowButton(editedRows.current) ?? headingRef.current,
+    [],
+  )
 
   const rawRange = params.get('range')
   const range: Range = isRange(rawRange) ? rawRange : 'month'
@@ -172,14 +230,20 @@ export function LedgerScreen() {
     return cents / 100
   }, [index, rows])
 
-  const lastDeleteAt = useRef(Number.NEGATIVE_INFINITY)
+  const lastDelete = useRef<Change | null>(null)
   const handleDelete = useCallback(
-    (id: string) => {
-      const now = performance.now()
-      if (now - lastDeleteAt.current < DELETE_GUARD_MS) return
+    (id: string, at: number) => {
+      if (lastDelete.current?.includes({ timeStamp: at }) === true) return
       const expense = useExpenseStore.getState().expenses.find((e) => e.id === id)
       if (!expense) return
-      lastDeleteAt.current = now
+      lastDelete.current = changingNow(DELETE_GUARD_MS)
+      // The next row slides up under the pointer: the rest of a double tap presses nothing.
+      shieldGesture()
+      // Focus inside the row (its button after the Delete key, its trash after a click) would
+      // fall to <body> with it: carry it to the row that takes its place.
+      const focused = document.activeElement
+      const focusedRow = focused instanceof HTMLElement ? focused.closest<HTMLElement>(ROW) : null
+      if (focusedRow?.dataset.ledgerRow === id) refocusAfterDelete.current = neighboursOf(id)
       deleteExpense(id)
       toast.info(`Deleted "${expense.itemName}"`, {
         action: {
@@ -195,6 +259,15 @@ export function LedgerScreen() {
     },
     [deleteExpense, consumeUndo, toast],
   )
+
+  // After the commit that removed the row: the next row, else the previous, else the heading.
+  useEffect(() => {
+    const candidates = refocusAfterDelete.current
+    if (!candidates) return
+    refocusAfterDelete.current = null
+    const target = firstRowButton(candidates) ?? headingRef.current
+    if (target) focusInView(target)
+  })
 
   const handleExportCsv = () => {
     if (filtered.length === 0) return
@@ -224,7 +297,13 @@ export function LedgerScreen() {
 
       <div className="flex flex-col gap-3">
         <div className="flex items-center justify-between">
-          <h1 className="text-[22px] font-semibold tracking-tight text-white">Ledger</h1>
+          <h1
+            ref={headingRef}
+            tabIndex={-1}
+            className="text-[22px] font-semibold tracking-tight text-white"
+          >
+            Ledger
+          </h1>
           <div className="flex items-center gap-2">
             {filtered.length > 0 && (
               <button
@@ -232,7 +311,7 @@ export function LedgerScreen() {
                 onClick={handleExportCsv}
                 title={`Export ${filtered.length} ${filtered.length === 1 ? 'entry' : 'entries'} to CSV`}
                 aria-label="Export filtered entries to CSV"
-                className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-tertiary)] transition hover:bg-surface-2 hover:text-white"
+                className="tap-target inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-tertiary)] transition hover:bg-surface-2 hover:text-white"
               >
                 <FileDown size={14} />
               </button>
@@ -250,7 +329,22 @@ export function LedgerScreen() {
 
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-2">
-            <div className="no-scrollbar flex-1 overflow-x-auto">
+            {/* On a narrow phone the six ranges can be wider than the column: the row scrolls
+                sideways out to the screen edge (through the page gutter), so the control is never
+                cut off in mid-gutter. Under 390 px the options take 2 px less padding a side, so
+                it shows whole from 360 px; under 360 px it still scrolls, and its right edge fades
+                (over the end padding, so the last option shows whole once scrolled to). The
+                arrow keys move focus by script, which browsers do not scroll into a part-hidden
+                spot: focus brings the whole option, ring included (its scroll-margin), into
+                view, and under 360 px the scroll padding keeps it, ring and all, clear of the
+                fade: the last option scrolls all the way to the end. */}
+            <div
+              onFocus={(e) => {
+                e.target.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+              }}
+              data-scroll-x=""
+              className="no-scrollbar flex-1 overflow-x-auto max-md:-mx-4 max-md:px-4 max-[359px]:scroll-pr-5 max-[359px]:[-webkit-mask-image:linear-gradient(to_right,#000_calc(100%-16px),transparent)] max-[359px]:[mask-image:linear-gradient(to_right,#000_calc(100%-16px),transparent)] max-[389px]:[&_[role=radio]]:px-2.5"
+            >
               <Segmented<Range>
                 value={tappedRange ?? range}
                 onChange={(v) => {
@@ -258,6 +352,7 @@ export function LedgerScreen() {
                   setRange(v)
                 }}
                 size="sm"
+                label="Date range"
                 options={[
                   { value: 'today', label: 'Today' },
                   { value: 'week', label: 'Week' },
@@ -284,6 +379,7 @@ export function LedgerScreen() {
                 </span>
                 <DatePicker
                   variant="input"
+                  label="From"
                   value={customStart}
                   onChange={setCustomStart}
                   max={customEnd || today}
@@ -297,6 +393,7 @@ export function LedgerScreen() {
                 </span>
                 <DatePicker
                   variant="input"
+                  label="To"
                   value={customEnd}
                   onChange={setCustomEnd}
                   min={customStart}
@@ -327,7 +424,8 @@ export function LedgerScreen() {
                       onClick={() => {
                         setSearch('')
                       }}
-                      className="text-[var(--text-tertiary)] hover:text-white"
+                      // 44 px square, flush with the field's right edge: no hit area over the text.
+                      className="-mr-3 inline-flex h-11 w-11 items-center justify-center text-[var(--text-tertiary)] hover:text-white"
                       aria-label="Clear search"
                     >
                       <X size={13} />
@@ -360,7 +458,11 @@ export function LedgerScreen() {
         {(specificDate || hasFilters) && (
           <div className="flex flex-wrap items-center gap-2">
             {specificDate && (
-              <Pill tone="accent" onClick={clearDate}>
+              <Pill
+                tone="accent"
+                onClick={clearDate}
+                aria-label={`Remove date filter ${shortDateYear(specificDate)}`}
+              >
                 <Filter size={10} /> {shortDateYear(specificDate)}
                 <X size={10} />
               </Pill>
@@ -369,7 +471,7 @@ export function LedgerScreen() {
               <button
                 type="button"
                 onClick={clearAll}
-                className="text-[11px] text-[var(--text-tertiary)] transition hover:text-white"
+                className="tap-target text-[11px] text-[var(--text-tertiary)] transition hover:text-white"
               >
                 Clear all filters
               </button>
@@ -391,15 +493,15 @@ export function LedgerScreen() {
           className="mt-4"
         />
       ) : filtered.length > VIRTUALIZE_THRESHOLD ? (
-        <VirtualLedgerList groups={groups} onEdit={setEditing} onDelete={handleDelete} />
+        <VirtualLedgerList groups={groups} onEdit={openEditor} onDelete={handleDelete} />
       ) : (
         <div className="elevated overflow-hidden rounded-2xl border border-white/[0.06] bg-surface-1">
           {groups.map((g) => (
             <section key={g.key ?? 'unknown'}>
               <header className="sticky top-0 z-[1] flex items-center justify-between gap-2 border-b border-white/[0.05] bg-surface-2/85 px-4 py-2.5 backdrop-blur">
-                <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+                <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
                   {g.label}
-                </span>
+                </h2>
                 <span className="font-mono text-[11px] tabular-nums text-[var(--text-secondary)]">
                   {fmt(g.total)}
                 </span>
@@ -410,7 +512,7 @@ export function LedgerScreen() {
                     <LedgerRow
                       expense={e}
                       dateLabel={g.rowDateLabel}
-                      onEdit={setEditing}
+                      onEdit={openEditor}
                       onDelete={handleDelete}
                     />
                   </li>
@@ -421,7 +523,7 @@ export function LedgerScreen() {
         </div>
       )}
 
-      <EditExpenseSheet expense={editing} onClose={() => setEditing(null)} />
+      <EditExpenseSheet expense={editing} onClose={closeEditor} returnFocus={editorReturnFocus} />
     </div>
   )
 }
