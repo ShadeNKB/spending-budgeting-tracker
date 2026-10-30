@@ -65,8 +65,23 @@ async function press(target: Locator, testInfo: TestInfo) {
 
 const SIXTY = manyRows(60)
 
-async function load(page: Page, path: string, expenses: readonly SeedExpense[]) {
+/**
+ * Both motion settings. Under Reduce Motion (the shared seed's) a closed sheet or palette leaves
+ * the page at once; with motion, as most people have it, it stays for its exit (up to 400 ms),
+ * inert, and a press passes through it to the page: the second press must still land nowhere.
+ */
+const MOTIONS = ['reduce', 'no-preference'] as const
+type Motion = (typeof MOTIONS)[number]
+const motionName = (motion: Motion) => (motion === 'reduce' ? 'Reduce Motion' : 'with motion')
+
+async function load(
+  page: Page,
+  path: string,
+  expenses: readonly SeedExpense[],
+  motion: Motion = 'reduce',
+) {
   await seed(page, { expenses })
+  await page.emulateMedia({ reducedMotion: motion })
   await page.goto(path)
   await waitForApp(page)
 }
@@ -136,181 +151,192 @@ async function busyOnNextClick(
   return () => page.evaluate(() => Reflect.get(window, '__e2eReached') as string[])
 }
 
-test.describe('The second press of a double press lands nowhere', () => {
-  for (const [control, find] of [
-    ['Save changes', (s: Locator) => s.getByRole('button', { name: 'Save changes' })],
-    ['Cancel', (s: Locator) => s.getByRole('button', { name: 'Cancel', exact: true })],
-    ['Close', (s: Locator) => s.getByRole('button', { name: 'Close', exact: true })],
-  ] as const) {
-    test(`Edit sheet ${control}: no row under it is deleted or opened`, async ({
+for (const motion of MOTIONS) {
+  test.describe(`The second press of a double press lands nowhere (${motionName(motion)})`, () => {
+    for (const [control, find] of [
+      ['Save changes', (s: Locator) => s.getByRole('button', { name: 'Save changes' })],
+      ['Cancel', (s: Locator) => s.getByRole('button', { name: 'Cancel', exact: true })],
+      ['Close', (s: Locator) => s.getByRole('button', { name: 'Close', exact: true })],
+    ] as const) {
+      test(`Edit sheet ${control}: no row under it is deleted or opened`, async ({
+        page,
+      }, testInfo) => {
+        await load(page, '/ledger', SIXTY, motion)
+        for (const how of pressesFor(testInfo)) {
+          const sheet = await openEdit(page, testInfo)
+          await doublePress(page, find(sheet), how)
+          await expectUntouched(page, '/ledger', SIXTY.length, `${control}, ${how}`)
+        }
+      })
+    }
+
+    // The second press is handled 700 ms after the first, past the gesture's time by the page's
+    // clock, yet made 120 ms after it: judged by when it was made, it still lands nowhere. Busy in
+    // the click's own task, the sheet closes 700 ms after the click was handled: still the
+    // click's doing.
+    for (const when of ['in its task', 'after it'] as const) {
+      test(`Edit sheet Save on a page busy ${when}: the second press lands nowhere`, async ({
+        page,
+      }, testInfo) => {
+        await load(page, '/ledger', SIXTY, motion)
+        const sheet = await openEdit(page, testInfo)
+        const reached = await busyOnNextClick(page, 700, when)
+        const how = isPhone(testInfo) ? 'two taps 120 ms apart' : 'two clicks 120 ms apart'
+        await doublePress(page, sheet.getByRole('button', { name: 'Save changes' }), how)
+        await expectUntouched(page, '/ledger', SIXTY.length, `Save, busy ${when}, ${how}`)
+        // Wherever it fell (a row, its trash, the space between), the second press reached nothing.
+        expect(await reached(), 'clicks that reached the page').toEqual(['Save changes'])
+      })
+    }
+
+    test('Edit sheet backdrop: the header or row under it is not pressed', async ({
       page,
     }, testInfo) => {
-      await load(page, '/ledger', SIXTY)
+      await load(page, '/ledger', SIXTY, motion)
       for (const how of pressesFor(testInfo)) {
         const sheet = await openEdit(page, testInfo)
-        await doublePress(page, find(sheet), how)
-        await expectUntouched(page, '/ledger', SIXTY.length, `${control}, ${how}`)
-      }
-    })
-  }
-
-  // The second press is handled 700 ms after the first, past the gesture's time by the page's
-  // clock, yet made 120 ms after it: judged by when it was made, it still lands nowhere. Busy in
-  // the click's own task, the sheet closes 700 ms after the click was handled: still the
-  // click's doing.
-  for (const when of ['in its task', 'after it'] as const) {
-    test(`Edit sheet Save on a page busy ${when}: the second press lands nowhere`, async ({
-      page,
-    }, testInfo) => {
-      await load(page, '/ledger', SIXTY)
-      const sheet = await openEdit(page, testInfo)
-      const reached = await busyOnNextClick(page, 700, when)
-      const how = isPhone(testInfo) ? 'two taps 120 ms apart' : 'two clicks 120 ms apart'
-      await doublePress(page, sheet.getByRole('button', { name: 'Save changes' }), how)
-      await expectUntouched(page, '/ledger', SIXTY.length, `Save, busy ${when}, ${how}`)
-      // Wherever it fell (a row, its trash, the space between), the second press reached nothing.
-      expect(await reached(), 'clicks that reached the page').toEqual(['Save changes'])
-    })
-  }
-
-  test('Edit sheet backdrop: the header or row under it is not pressed', async ({
-    page,
-  }, testInfo) => {
-    await load(page, '/ledger', SIXTY)
-    for (const how of pressesFor(testInfo)) {
-      const sheet = await openEdit(page, testInfo)
-      const box = await sheet.boundingBox()
-      const viewport = page.viewportSize()
-      if (!box || !viewport) throw new Error('no sheet box')
-      // Beside a side sheet (over the rows), or above a bottom sheet (over the header's Settings).
-      const spot = box.y > 40 ? { x: viewport.width - 24, y: box.y / 2 } : { x: 200, y: 400 }
-      const backdrop = await page.evaluate(
-        ({ x, y }) => document.elementFromPoint(x, y)?.hasAttribute('data-sheet-backdrop') ?? false,
-        spot,
-      )
-      expect(backdrop, `${how}: the spot is on the backdrop`).toBe(true)
-      await doublePressAt(page, spot.x, spot.y, how)
-      await expectUntouched(page, '/ledger', SIXTY.length, `backdrop, ${how}`)
-    }
-  })
-
-  // One page load per test: after a reload in the same page, Playwright's fixed clock leaves
-  // framer's exit animations scheduled in the future, and a closed sheet stays for seconds.
-  for (const path of ['/ledger', '/pulse']) {
-    test(`Add sheet Add on ${path}: the entry is added once and stays (the toast’s Undo is not pressed)`, async ({
-      page,
-    }, testInfo) => {
-      await load(page, path, SIXTY)
-      let count = SIXTY.length
-      for (const how of pressesFor(testInfo)) {
-        // The last add's toast sits over the sheet's Add on a laptop (toast placement is T7's):
-        // a press on it there is the toast's, so each add starts with none on screen.
-        await expect(page.locator('[data-toast]')).toHaveCount(0, { timeout: 10_000 })
-        if (isPhone(testInfo))
-          await page.getByRole('button', { name: 'Add expense', exact: true }).tap()
-        else await page.keyboard.press('Control+n')
-        const sheet = dialog(page, 'Add expense')
-        await expect(sheet).toBeVisible()
-        await sheet.getByRole('textbox', { name: 'What' }).fill(`coffee ${how}`)
-        await sheet.getByRole('spinbutton', { name: 'Amount' }).fill('4.50')
-        await page.waitForTimeout(600)
-        await doublePress(page, sheet.getByRole('button', { name: 'Add', exact: true }), how)
-        count += 1
-        await expectUntouched(page, path, count, `Add, ${how}`)
-        expect((await storedExpenses(page))[0]?.itemName, how).toBe(`coffee ${how}`)
-      }
-    })
-  }
-
-  test('a palette option: it runs once, and nothing on the next screen is pressed', async ({
-    page,
-  }, testInfo) => {
-    await load(page, '/ledger', SIXTY)
-    for (const how of pressesFor(testInfo)) {
-      if (new URL(page.url()).pathname !== '/ledger') {
-        // In the app, not by a reload (see the Add test).
-        await press(
-          page.getByRole('link', { name: 'Ledger', exact: true }).filter({ visible: true }).first(),
-          testInfo,
+        const box = await sheet.boundingBox()
+        const viewport = page.viewportSize()
+        if (!box || !viewport) throw new Error('no sheet box')
+        // Beside a side sheet (over the rows), or above a bottom sheet (over the header's Settings).
+        const spot = box.y > 40 ? { x: viewport.width - 24, y: box.y / 2 } : { x: 200, y: 400 }
+        const backdrop = await page.evaluate(
+          ({ x, y }) =>
+            document.elementFromPoint(x, y)?.hasAttribute('data-sheet-backdrop') ?? false,
+          spot,
         )
-        await expect(page.getByRole('heading', { level: 1, name: 'Ledger' })).toBeVisible()
+        expect(backdrop, `${how}: the spot is on the backdrop`).toBe(true)
+        await doublePressAt(page, spot.x, spot.y, how)
+        await expectUntouched(page, '/ledger', SIXTY.length, `backdrop, ${how}`)
       }
-      const palette = await openPalette(page)
-      await page.waitForTimeout(600)
-      await doublePress(page, palette.getByRole('option', { name: /^Go to Pulse/ }), how)
-      await expectUntouched(page, '/pulse', SIXTY.length, `Go to Pulse, ${how}`)
-      expect(new URL(page.url()).search, `Go to Pulse, ${how}: no filter opened`).toBe('')
-    }
-  })
+    })
 
-  test('a palette option that opens a sheet: the sheet stays open and untouched', async ({
-    page,
-  }, testInfo) => {
-    await load(page, '/ledger', SIXTY)
-    for (const how of pressesFor(testInfo)) {
-      const palette = await openPalette(page)
-      await page.waitForTimeout(600)
-      await doublePress(page, palette.getByRole('option', { name: /^Add expense/ }), how)
-      const sheet = dialog(page, 'Add expense')
-      await expect(sheet, how).toBeVisible()
-      await expect(sheet.getByRole('textbox', { name: 'What' }), how).toHaveValue('')
-      await expect(sheet.locator('[aria-pressed="true"]'), how).toHaveText(['Today'])
-      await page.keyboard.press('Escape')
-      await expectGone(sheet)
+    // One page load per test: each starts from a fresh page. (With framer-motion, a reload in the
+    // same page under Playwright's fixed clock left exits scheduled in the future, and a closed
+    // sheet stayed for seconds; the CSS exits since have a cap, but a fresh page stays the rule.)
+    for (const path of ['/ledger', '/pulse']) {
+      test(`Add sheet Add on ${path}: the entry is added once and stays (the toast’s Undo is not pressed)`, async ({
+        page,
+      }, testInfo) => {
+        await load(page, path, SIXTY, motion)
+        let count = SIXTY.length
+        for (const how of pressesFor(testInfo)) {
+          // The last add's toast sits over the sheet's Add on a laptop (toast placement is T7's):
+          // a press on it there is the toast's, so each add starts with none on screen.
+          await expect(page.locator('[data-toast]')).toHaveCount(0, { timeout: 10_000 })
+          if (isPhone(testInfo))
+            await page.getByRole('button', { name: 'Add expense', exact: true }).tap()
+          else await page.keyboard.press('Control+n')
+          const sheet = dialog(page, 'Add expense')
+          await expect(sheet).toBeVisible()
+          await sheet.getByRole('textbox', { name: 'What' }).fill(`coffee ${how}`)
+          await sheet.getByRole('spinbutton', { name: 'Amount' }).fill('4.50')
+          await page.waitForTimeout(600)
+          await doublePress(page, sheet.getByRole('button', { name: 'Add', exact: true }), how)
+          count += 1
+          await expectUntouched(page, path, count, `Add, ${how}`)
+          expect((await storedExpenses(page))[0]?.itemName, how).toBe(`coffee ${how}`)
+        }
+      })
     }
+
+    test('a palette option: it runs once, and nothing on the next screen is pressed', async ({
+      page,
+    }, testInfo) => {
+      await load(page, '/ledger', SIXTY, motion)
+      for (const how of pressesFor(testInfo)) {
+        if (new URL(page.url()).pathname !== '/ledger') {
+          // In the app, not by a reload (see the Add test).
+          await press(
+            page
+              .getByRole('link', { name: 'Ledger', exact: true })
+              .filter({ visible: true })
+              .first(),
+            testInfo,
+          )
+          await expect(page.getByRole('heading', { level: 1, name: 'Ledger' })).toBeVisible()
+        }
+        const palette = await openPalette(page)
+        await page.waitForTimeout(600)
+        await doublePress(page, palette.getByRole('option', { name: /^Go to Pulse/ }), how)
+        await expectUntouched(page, '/pulse', SIXTY.length, `Go to Pulse, ${how}`)
+        expect(new URL(page.url()).search, `Go to Pulse, ${how}: no filter opened`).toBe('')
+      }
+    })
+
+    test('a palette option that opens a sheet: the sheet stays open and untouched', async ({
+      page,
+    }, testInfo) => {
+      await load(page, '/ledger', SIXTY, motion)
+      for (const how of pressesFor(testInfo)) {
+        const palette = await openPalette(page)
+        await page.waitForTimeout(600)
+        await doublePress(page, palette.getByRole('option', { name: /^Add expense/ }), how)
+        const sheet = dialog(page, 'Add expense')
+        await expect(sheet, how).toBeVisible()
+        await expect(sheet.getByRole('textbox', { name: 'What' }), how).toHaveValue('')
+        await expect(sheet.locator('[aria-pressed="true"]'), how).toHaveText(['Today'])
+        await page.keyboard.press('Escape')
+        await expectGone(sheet)
+      }
+    })
   })
-})
+}
 
 // A slow double click (the second press past the gesture's time, inside the system's
 // double-click time) whose second press lands on the row that the closed sheet uncovered. Its
 // mousedown and click are swallowed by their click count, but its pointerdown got through and
 // started the row's drag: the pointerup must reach the row too, or the row follows the mouse
 // with no button held and the next click leaves its swipe Delete out.
-test.describe('A slow double click on Save over the ledger', () => {
-  test('leaves the row under its second press where it was, Delete hidden', async ({
-    page,
-  }, testInfo) => {
-    test.skip(isPhone(testInfo), 'a mouse double click')
-    await load(page, '/ledger', SIXTY)
-    const sheet = await openEdit(page, testInfo)
-    const box = await sheet.getByRole('button', { name: 'Save changes' }).boundingBox()
-    if (!box) throw new Error('no Save')
-    const x = box.x + box.width / 2
-    const y = box.y + box.height / 2
-    await page.mouse.move(x, y)
-    await page.mouse.down({ clickCount: 1 })
-    await page.mouse.up({ clickCount: 1 })
-    await page.waitForTimeout(450)
-    const under = await page.evaluate(
-      ([px, py]) =>
-        document.elementFromPoint(px ?? 0, py ?? 0)?.closest('[data-ledger-row]') !== null,
-      [x, y],
-    )
-    expect(under, 'a ledger row is under the second press').toBe(true)
-    await page.mouse.down({ clickCount: 2 })
-    await page.mouse.up({ clickCount: 2 })
-    for (let step = 1; step <= 15; step++) await page.mouse.move(x - step * 12, y)
-    await page.waitForTimeout(200)
-    const heading = await page.getByRole('heading', { level: 1, name: 'Ledger' }).boundingBox()
-    if (!heading) throw new Error('no heading')
-    await page.mouse.click(heading.x + 5, heading.y + 5)
-    await page.waitForTimeout(500)
-    const moved = await page.evaluate(() =>
-      [...document.querySelectorAll('[data-ledger-row] *')]
-        .filter((el) => !/^(none|matrix\(1, 0, 0, 1, 0, 0\))$/.test(getComputedStyle(el).transform))
-        .map((el) => el.closest('[data-ledger-row]')?.getAttribute('data-ledger-row')),
-    )
-    expect(moved, 'rows moved off their place').toEqual([])
-    const shown = await page.evaluate(
-      () =>
-        [...document.querySelectorAll('[data-swipe-delete]')].filter(
-          (el) => Number(getComputedStyle(el).opacity) > 0,
-        ).length,
-    )
-    expect(shown, 'swipe Delete actions showing').toBe(0)
-    await expectUntouched(page, '/ledger', SIXTY.length, 'slow double click on Save')
+for (const motion of MOTIONS) {
+  test.describe(`A slow double click on Save over the ledger (${motionName(motion)})`, () => {
+    test('leaves the row under its second press where it was, Delete hidden', async ({
+      page,
+    }, testInfo) => {
+      test.skip(isPhone(testInfo), 'a mouse double click')
+      await load(page, '/ledger', SIXTY, motion)
+      const sheet = await openEdit(page, testInfo)
+      const box = await sheet.getByRole('button', { name: 'Save changes' }).boundingBox()
+      if (!box) throw new Error('no Save')
+      const x = box.x + box.width / 2
+      const y = box.y + box.height / 2
+      await page.mouse.move(x, y)
+      await page.mouse.down({ clickCount: 1 })
+      await page.mouse.up({ clickCount: 1 })
+      await page.waitForTimeout(450)
+      const under = await page.evaluate(
+        ([px, py]) =>
+          document.elementFromPoint(px ?? 0, py ?? 0)?.closest('[data-ledger-row]') !== null,
+        [x, y],
+      )
+      expect(under, 'a ledger row is under the second press').toBe(true)
+      await page.mouse.down({ clickCount: 2 })
+      await page.mouse.up({ clickCount: 2 })
+      for (let step = 1; step <= 15; step++) await page.mouse.move(x - step * 12, y)
+      await page.waitForTimeout(200)
+      const heading = await page.getByRole('heading', { level: 1, name: 'Ledger' }).boundingBox()
+      if (!heading) throw new Error('no heading')
+      await page.mouse.click(heading.x + 5, heading.y + 5)
+      await page.waitForTimeout(500)
+      const moved = await page.evaluate(() =>
+        [...document.querySelectorAll('[data-ledger-row] *')]
+          .filter(
+            (el) => !/^(none|matrix\(1, 0, 0, 1, 0, 0\))$/.test(getComputedStyle(el).transform),
+          )
+          .map((el) => el.closest('[data-ledger-row]')?.getAttribute('data-ledger-row')),
+      )
+      expect(moved, 'rows moved off their place').toEqual([])
+      const shown = await page.evaluate(
+        () =>
+          [...document.querySelectorAll('[data-swipe-delete]')].filter(
+            (el) => Number(getComputedStyle(el).opacity) > 0,
+          ).length,
+      )
+      expect(shown, 'swipe Delete actions showing').toBe(0)
+      await expectUntouched(page, '/ledger', SIXTY.length, 'slow double click on Save')
+    })
   })
-})
+}
 
 test.describe('A double press on a calendar day picks the day and nothing else', () => {
   /** October 2026, a day from each week row (later days are past today, the 18th). */

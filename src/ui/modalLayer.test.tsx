@@ -1,7 +1,7 @@
 import { StrictMode, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { pressedWhileOnTop, useModalLayer } from './modalLayer'
+import { holdScrollLock, pressedWhileOnTop, useModalLayer } from './modalLayer'
 
 interface LayerProps {
   open: boolean
@@ -13,13 +13,18 @@ interface LayerProps {
   returnFocus?: () => HTMLElement | null
 }
 
-/** The smallest layer: a dialog that registers itself while open. */
-function Layer({ open, onClose, label, children, ...options }: LayerProps) {
+/**
+ * The smallest layer: a dialog that registers itself while open, in a box that locks page scroll
+ * while it is in the page when asked (as a sheet's layer box does).
+ */
+function Layer({ open, onClose, label, children, lockScroll = false, ...options }: LayerProps) {
   const ref = useRef<HTMLDivElement>(null)
   useModalLayer(open, { ref, onEscape: onClose, ...options })
   return open ? (
-    <div ref={ref} role="dialog" aria-label={label} tabIndex={-1}>
-      {children}
+    <div ref={lockScroll ? holdScrollLock : undefined}>
+      <div ref={ref} role="dialog" aria-label={label} tabIndex={-1}>
+        {children}
+      </div>
     </div>
   ) : null
 }
@@ -950,8 +955,8 @@ describe('useModalLayer: the press that opens or closes a layer', () => {
   })
 })
 
-describe('useModalLayer: scroll lock', () => {
-  it('restores the page overflow only when the last locking layer closes, in either order', async () => {
+describe('holdScrollLock', () => {
+  it('restores the page overflow only when the last locking box leaves, in either order', async () => {
     function Locks({ a, b }: { a: boolean; b: boolean }) {
       return (
         <>
@@ -975,6 +980,40 @@ describe('useModalLayer: scroll lock', () => {
     view.rerender(<Locks a={false} b={false} />)
     await settle()
     expect(document.body.style.overflow).toBe('clip')
+  })
+
+  // A closed sheet stays in the page while it slides away (usePresence), and WebKit puts a
+  // running CSS transition at its end when the body's overflow changes: the lock outlives the
+  // layer and ends with its box, never at the close.
+  it('holds the lock while a closed layer’s box is still in the page, and lets go as it leaves', async () => {
+    function Leaving({ open, shown }: { open: boolean; shown: boolean }) {
+      const ref = useRef<HTMLDivElement>(null)
+      useModalLayer(open, { ref, onEscape: () => {} })
+      return shown ? (
+        <div ref={holdScrollLock}>
+          <div ref={ref} role="dialog" aria-label="Sheet" tabIndex={-1} />
+        </div>
+      ) : null
+    }
+    const view = render(<Leaving open shown />)
+    expect(document.body.style.overflow).toBe('hidden')
+    view.rerender(<Leaving open={false} shown />)
+    await settle()
+    expect(screen.getByRole('dialog', { hidden: true })).toHaveAttribute('inert')
+    expect(document.body.style.overflow).toBe('hidden')
+    view.rerender(<Leaving open={false} shown={false} />)
+    expect(document.body.style.overflow).toBe('')
+  })
+
+  it('locks once per box under StrictMode, and lets go when it leaves', () => {
+    const view = render(
+      <StrictMode>
+        <div ref={holdScrollLock} />
+      </StrictMode>,
+    )
+    expect(document.body.style.overflow).toBe('hidden')
+    view.rerender(<StrictMode>{null}</StrictMode>)
+    expect(document.body.style.overflow).toBe('')
   })
 })
 

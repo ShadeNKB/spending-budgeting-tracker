@@ -4,7 +4,10 @@
 - React 19 + TypeScript 6 (strict) + Vite 7
 - React Router v7 — routes for Pulse (`/`), `/ledger`, `/insights`
 - Zustand 5 — `useExpenseStore` + `useUIStore` (auto-persist via localStorage, undo stack)
-- Tailwind 3, framer-motion 12, lucide-react icons, date-fns 4, fuse.js 7
+- Tailwind 3, lucide-react icons, date-fns 4, fuse.js 7
+- Motion: no animation library (framer-motion removed in 0.9.4). Overlays move with CSS
+  transitions keyed on `data-state` (`src/ui/usePresence.ts`, tokens in `index.css`); the ledger
+  swipe and the toast slide use the Web Animations API (`src/ui/spring.ts`, `motion.ts`)
 - Supabase JS 2 — optional sync (lazy-loaded; app fully works offline without it)
 - PWA: vite-plugin-pwa 1, service worker, web manifest
 

@@ -213,8 +213,9 @@ test.describe('Add expense shortcut', () => {
   })
 })
 
+// usePresence: the overlays' shared runtime (presence, motion helpers, press shield).
 const OVERLAY_CHUNKS = [
-  'vendor-motion',
+  'usePresence',
   'SettingsDrawer',
   'CommandPalette',
   'AddExpenseSheet',
@@ -223,9 +224,9 @@ const OVERLAY_CHUNKS = [
 ]
 
 const OVERLAY_CHUNK =
-  /\/assets\/(vendor-motion|SettingsDrawer|CommandPalette|AddExpenseSheet|ToastHost|HotkeyHints|Sheet|DatePicker)-[\w-]+\.js$/
+  /\/assets\/(usePresence|SettingsDrawer|CommandPalette|AddExpenseSheet|ToastHost|HotkeyHints|Sheet|DatePicker)-[\w-]+\.js$/
 
-/** Overlay and framer-motion chunks requested so far, by name (hash stripped). */
+/** Overlay chunks requested so far, by name (hash stripped). */
 async function overlayChunksRequested(page: Page): Promise<string[]> {
   const names = await page.evaluate(() =>
     performance.getEntriesByType('resource').map((entry) => entry.name),
@@ -252,9 +253,7 @@ test('boot and every screen raise no page errors with service workers blocked', 
 })
 
 test.describe('first paint', () => {
-  test('cold /pulse loads no overlay or framer-motion code until idle or a tap', async ({
-    page,
-  }) => {
+  test('cold /pulse loads no overlay or motion code until idle or a tap', async ({ page }) => {
     // The app never goes idle here, so anything that loads was pulled in by boot itself (a
     // lazy component rendered at mount), or by the taps below.
     await page.addInitScript(() => {
@@ -269,7 +268,7 @@ test.describe('first paint', () => {
     await page.getByRole('button', { name: 'Search', exact: true }).click()
     await expect(page.getByRole('dialog', { name: /command palette/i })).toBeVisible()
     expect(await overlayChunksRequested(page)).toEqual(
-      expect.arrayContaining(['CommandPalette', 'vendor-motion']),
+      expect.arrayContaining(['CommandPalette', 'usePresence']),
     )
     expect(await overlayChunksRequested(page)).not.toContain('AddExpenseSheet')
     await page.keyboard.press('Escape')

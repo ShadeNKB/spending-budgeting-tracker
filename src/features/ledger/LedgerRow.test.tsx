@@ -1,11 +1,19 @@
+import { Profiler } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { RouterProvider, createMemoryRouter } from 'react-router-dom'
 import { LedgerRow } from './LedgerRow'
 import { LedgerScreen } from './LedgerScreen'
+import { CLICK_GUARD_MS, SNAP_HZ, SNAP_SPRING, actionOpacity, tintOpacity } from './swipe'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { GESTURE_MS, noteToastLeft } from '../../ui/pressShield'
+import { springSamples } from '../../ui/spring'
+import {
+  installFakeAnimations,
+  setReducedMotion,
+  type FakeAnimations,
+} from '../../__tests__/fakeAnimations'
 import type { Expense } from '../../types'
 
 // Invented data.
@@ -56,7 +64,7 @@ const painted = () =>
   )
 
 // Under a full parallel run on a loaded machine, the first test to render a row and drive it
-// with user-event took the warm-up of framer-motion, React and user-event on itself, ran past
+// with user-event took the warm-up of React and user-event on itself, ran past
 // the 5 s default and, timed out, left its key presses to land in the next test. The warm-up
 // runs here instead, and the tests that drive rows and the screen have room to finish.
 const ROOMY = { timeout: 30_000 }
@@ -247,6 +255,428 @@ describe('LedgerRow swipe', ROOMY, () => {
     await swipeFrom(mainButton('Kopi O'))
     expect(onEdit).not.toHaveBeenCalled()
     expect(onDelete).not.toHaveBeenCalled()
+  })
+})
+
+// The swipe, step by step: framer's drag maths (src/features/ledger/swipe.ts) on pointer events.
+// Event times come from Date.now() in jsdom, so the tests move that clock between events.
+describe('LedgerRow swipe, step by step', ROOMY, () => {
+  let clock = 0
+  let fake: FakeAnimations | null = null
+  beforeEach(() => {
+    clock = 100_000
+    vi.spyOn(Date, 'now').mockImplementation(() => clock)
+  })
+  afterEach(() => {
+    fake?.restore()
+    fake = null
+    Reflect.deleteProperty(Element.prototype, 'setPointerCapture')
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
+  function animate(): FakeAnimations {
+    fake = installFakeAnimations()
+    return fake
+  }
+
+  const MOUSE = { pointerId: 1, pointerType: 'mouse', isPrimary: true, button: 0, buttons: 1 }
+  type PointerInit = Partial<typeof MOUSE> & { clientY?: number }
+  const init = (x: number, extra: PointerInit = {}) => ({
+    ...MOUSE,
+    clientX: x,
+    clientY: 20,
+    ...extra,
+  })
+  /** Pointer events `ms` after the one before. */
+  function press(el: Element, x: number, extra?: PointerInit, ms = 16) {
+    clock += ms
+    fireEvent.pointerDown(el, init(x, extra))
+  }
+  function move(el: Element, x: number, extra?: PointerInit, ms = 16) {
+    clock += ms
+    fireEvent.pointerMove(el, init(x, extra))
+  }
+  function release(el: Element, x: number, extra?: PointerInit, ms = 16) {
+    clock += ms
+    fireEvent.pointerUp(el, init(x, { buttons: 0, ...extra }))
+  }
+  /** A slow drag: from `from` to each x in turn, 100 ms apart (no flick in it). */
+  function slowDrag(el: Element, from: number, xs: readonly number[]) {
+    press(el, from)
+    for (const x of xs) move(el, x, {}, 100)
+  }
+  /** The click the browser sends with a release, as a person's press (detail 1). */
+  const clickOn = (el: Element) => fireEvent.click(el, { detail: 1 })
+  const later = (ms: number) => act(() => new Promise((resolve) => setTimeout(resolve, ms)))
+
+  const rowOf = (item: string) => {
+    const row = mainButton(item).closest<HTMLElement>('[data-ledger-row]')
+    if (!row) throw new Error(`no row for ${item}`)
+    return row
+  }
+  const contentOf = (item: string) => {
+    const content = mainButton(item).parentElement
+    if (!content) throw new Error(`no content for ${item}`)
+    return content
+  }
+  const tintOf = (item: string) => rowOf(item).querySelector<HTMLElement>('[data-swipe-tint]')
+  const actionOf = (item: string) => rowOf(item).querySelector<HTMLElement>('[data-swipe-delete]')
+
+  it('starts after 3 px and then follows the pointer from where it was pressed', () => {
+    renderRows()
+    const main = mainButton('Kopi O')
+    const content = contentOf('Kopi O')
+    press(main, 300)
+    move(main, 298)
+    expect(content.style.transform).toBe('')
+    move(main, 296)
+    expect(content.style.transform).toBe('translateX(-4px)')
+    move(main, 250)
+    expect(content.style.transform).toBe('translateX(-50px)')
+    // The tint and the swipe Delete follow x as framer mapped them.
+    expect(Number(tintOf('Kopi O')?.style.opacity)).toBeCloseTo(0.0525, 9)
+    expect(Number(actionOf('Kopi O')?.style.opacity)).toBeCloseTo(0.72, 9)
+  })
+
+  it('moves on x only, within -120..0: elastic 0.12 past -120, none past 0', () => {
+    renderRows()
+    const main = mainButton('Kopi O')
+    press(main, 300)
+    move(main, 100, { clientY: 60 })
+    expect(contentOf('Kopi O').style.transform).toBe('translateX(-129.6px)')
+    move(main, 350, { clientY: 0 })
+    expect(contentOf('Kopi O').style.transform).toBe('translateX(0px)')
+  })
+
+  it('reveals the swipe Delete past 76 px, and snaps back short of it', () => {
+    renderRows()
+    const main = mainButton('Kopi O')
+    slowDrag(main, 300, [260, 223])
+    release(main, 223, {}, 100)
+    expect(contentOf('Kopi O').style.transform).toBe('translateX(-96px)')
+    expect(Number(actionOf('Kopi O')?.style.opacity)).toBeCloseTo(0.904, 9)
+
+    const other = mainButton('Grab to camp')
+    slowDrag(other, 300, [270, 225])
+    release(other, 225, {}, 100)
+    expect(contentOf('Grab to camp').style.transform).toBe('')
+    expect(tintOf('Grab to camp')?.style.opacity).toBe('')
+    expect(actionOf('Grab to camp')?.style.opacity).toBe('')
+  })
+
+  it('reveals on a flick to the left, however short', () => {
+    renderRows()
+    const main = mainButton('Kopi O')
+    press(main, 300)
+    move(main, 290, {}, 8)
+    move(main, 275, {}, 8)
+    release(main, 270, {}, 8)
+    expect(contentOf('Kopi O').style.transform).toBe('translateX(-96px)')
+  })
+
+  it('judges a revealed row by the same rule: a short slow drag closes it', () => {
+    renderRows()
+    const main = mainButton('Kopi O')
+    slowDrag(main, 300, [250, 210])
+    release(main, 210, {}, 100)
+    expect(contentOf('Kopi O').style.transform).toBe('translateX(-96px)')
+    slowDrag(main, 210, [204, 200])
+    release(main, 200, {}, 100)
+    expect(contentOf('Kopi O').style.transform).toBe('')
+  })
+
+  it('takes the click after a drag as nothing for 50 ms, then as a tap again', async () => {
+    const { onEdit, onDelete } = renderRows()
+    const main = mainButton('Kopi O')
+    slowDrag(main, 300, [280, 260])
+    release(main, 260, {}, 100)
+    clickOn(main)
+    clickOn(trashOf('Kopi O'))
+    expect(onEdit).not.toHaveBeenCalled()
+    expect(onDelete).not.toHaveBeenCalled()
+    await later(60)
+    clickOn(main)
+    expect(onEdit).toHaveBeenCalledWith(KOPI)
+  })
+
+  // The guard's length is the only protection where a phone sends the click after the release
+  // and pointer capture does not move it (iOS Safari): a short drag that starts on the trash
+  // must not delete the row. Clicks in the release's own tick pass with any length, even 0.
+  it('holds the guard exactly 50 ms: a click at 49 ms edits and deletes nothing, at 50 ms it is a tap', () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    const { onEdit, onDelete } = renderRows()
+    const main = mainButton('Kopi O')
+    // A short slow drag: the row springs back to rest, so a tap afterwards edits.
+    slowDrag(main, 300, [290, 285])
+    release(main, 285, {}, 100)
+    act(() => {
+      vi.advanceTimersByTime(CLICK_GUARD_MS - 1)
+    })
+    clickOn(main)
+    clickOn(trashOf('Kopi O'))
+    expect(onEdit).not.toHaveBeenCalled()
+    expect(onDelete).not.toHaveBeenCalled()
+
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    clickOn(main)
+    expect(onEdit).toHaveBeenCalledWith(KOPI)
+    clickOn(trashOf('Kopi O'))
+    expect(onDelete).toHaveBeenCalledWith('e-1', expect.any(Number))
+  })
+
+  it('closes a revealed row on a tap, without opening the editor', async () => {
+    const { onEdit } = renderRows()
+    const main = mainButton('Kopi O')
+    slowDrag(main, 300, [250, 200])
+    release(main, 200, {}, 100)
+    await later(60)
+    press(main, 200, {}, 400)
+    release(main, 200)
+    clickOn(main)
+    expect(onEdit).not.toHaveBeenCalled()
+    expect(contentOf('Kopi O').style.transform).toBe('')
+  })
+
+  it('ends a cancelled drag like a release, at the last point it reached', () => {
+    renderRows()
+    const main = mainButton('Kopi O')
+    slowDrag(main, 300, [250, 210])
+    clock += 100
+    fireEvent.pointerCancel(main, init(300))
+    expect(contentOf('Kopi O').style.transform).toBe('translateX(-96px)')
+  })
+
+  // The browser took the gesture (a scroll): no click of that drag follows, so the guard ends
+  // at once, and Enter on the row right after it opens the editor.
+  it('ends the click guard at once when the browser cancels a drag', () => {
+    const { onEdit } = renderRows()
+    const main = mainButton('Kopi O')
+    slowDrag(main, 300, [290, 285])
+    clock += 100
+    fireEvent.pointerCancel(main, init(285))
+    expect(contentOf('Kopi O').style.transform).toBe('')
+    fireEvent.click(main, { detail: 0 })
+    expect(onEdit).toHaveBeenCalledWith(KOPI)
+  })
+
+  // Virtual scrolling unmounts rows at any time, a just-released one included.
+  it('leaves no timer behind when it goes within 50 ms of a release', () => {
+    const view = renderRows()
+    const main = mainButton('Kopi O')
+    const timers = vi.spyOn(globalThis, 'setTimeout')
+    const cleared = vi.spyOn(globalThis, 'clearTimeout')
+    slowDrag(main, 300, [290, 285])
+    release(main, 285, {}, 100)
+    const guards = timers.mock.calls.flatMap(([, ms], i) => {
+      const id: unknown = timers.mock.results[i]?.value
+      return ms === CLICK_GUARD_MS ? [id] : []
+    })
+    expect(guards).toHaveLength(1)
+    expect(cleared).not.toHaveBeenCalledWith(guards[0])
+    view.unmount()
+    expect(cleared).toHaveBeenCalledWith(guards[0])
+  })
+
+  it('ends the drag when the row loses the pointer’s capture', () => {
+    renderRows()
+    const main = mainButton('Kopi O')
+    slowDrag(main, 300, [250, 210])
+    clock += 100
+    fireEvent.lostPointerCapture(contentOf('Kopi O'), init(210))
+    expect(contentOf('Kopi O').style.transform).toBe('translateX(-96px)')
+    move(main, 150)
+    expect(contentOf('Kopi O').style.transform).toBe('translateX(-96px)')
+  })
+
+  it('keeps dragging when a touch hands its implicit capture over to the row', () => {
+    renderRows()
+    const main = mainButton('Kopi O')
+    const touch = { pointerType: 'touch', pointerId: 5 }
+    press(main, 300, touch)
+    move(main, 280, touch, 100)
+    // A touch is captured by what it went down on; taking it for the row makes that element
+    // (the row button) lose it, and its lostpointercapture bubbles through the row.
+    fireEvent.lostPointerCapture(main, init(280, touch))
+    move(main, 210, touch, 100)
+    expect(contentOf('Kopi O').style.transform).toBe('translateX(-90px)')
+    release(main, 210, touch, 100)
+    expect(contentOf('Kopi O').style.transform).toBe('translateX(-96px)')
+  })
+
+  it('ends a mouse drag whose button was let go outside the window (no pointerup came)', () => {
+    renderRows()
+    const main = mainButton('Kopi O')
+    slowDrag(main, 300, [250, 210])
+    move(main, 205, { buttons: 0 }, 100)
+    expect(contentOf('Kopi O').style.transform).toBe('translateX(-96px)')
+    move(main, 100)
+    expect(contentOf('Kopi O').style.transform).toBe('translateX(-96px)')
+  })
+
+  it('drags with the primary pointer or the left mouse button only', () => {
+    renderRows()
+    const main = mainButton('Kopi O')
+    press(main, 300, { button: 2, buttons: 2 })
+    move(main, 250, { buttons: 2 })
+    expect(contentOf('Kopi O').style.transform).toBe('')
+    release(main, 250, { button: 2 })
+
+    const touch = { pointerType: 'touch', pointerId: 7 }
+    press(main, 300, { ...touch, isPrimary: false })
+    move(main, 250, { ...touch, isPrimary: false })
+    expect(contentOf('Kopi O').style.transform).toBe('')
+
+    press(main, 300, touch)
+    move(main, 280, { pointerType: 'touch', pointerId: 8 })
+    expect(contentOf('Kopi O').style.transform).toBe('')
+    move(main, 280, touch)
+    expect(contentOf('Kopi O').style.transform).toBe('translateX(-20px)')
+  })
+
+  it('takes the pointer’s capture as the drag starts, never on the press', () => {
+    const capture = vi.fn()
+    Object.defineProperty(Element.prototype, 'setPointerCapture', {
+      configurable: true,
+      value: capture,
+    })
+    renderRows()
+    const main = mainButton('Kopi O')
+    press(main, 300)
+    move(main, 299)
+    expect(capture).not.toHaveBeenCalled()
+    move(main, 290)
+    expect(capture).toHaveBeenCalledTimes(1)
+    expect(capture.mock.contexts[0]).toBe(contentOf('Kopi O'))
+    expect(capture).toHaveBeenCalledWith(1)
+  })
+
+  it('under reduced motion it still follows the finger, and snaps at once', () => {
+    const animations = animate()
+    setReducedMotion(true)
+    renderRows()
+    const main = mainButton('Kopi O')
+    slowDrag(main, 300, [280, 250])
+    expect(contentOf('Kopi O').style.transform).toBe('translateX(-50px)')
+    release(main, 250, {}, 100)
+    expect(contentOf('Kopi O').style.transform).toBe('')
+    expect(animations.animated).toEqual([])
+  })
+
+  it('snaps on framer’s spring from where it was let go, the target written first', () => {
+    const animations = animate()
+    renderRows()
+    const main = mainButton('Kopi O')
+    slowDrag(main, 300, [280, 250])
+    release(main, 250, {}, 100)
+    const content = contentOf('Kopi O')
+    // Where it ends, under the animation: seamless once it is over.
+    expect(content.style.transform).toBe('')
+    expect(tintOf('Kopi O')?.style.opacity).toBe('')
+
+    // Still for 100 ms before the release: no velocity left.
+    const snap = springSamples({ from: -50, to: 0, velocity: 0, ...SNAP_SPRING }, SNAP_HZ)
+    const [moving, tint, action] = animations.animated
+    expect(animations.animated).toHaveLength(3)
+    expect(moving?.element).toBe(content)
+    expect(moving?.keyframes).toEqual(
+      snap.values.map((x) => ({ transform: `translateX(${String(x)}px)` })),
+    )
+    expect(moving?.options).toEqual({ duration: snap.duration, easing: 'linear' })
+    expect(tint?.element).toBe(tintOf('Kopi O'))
+    expect(tint?.keyframes).toEqual(snap.values.map((x) => ({ opacity: tintOpacity(x) })))
+    expect(action?.element).toBe(actionOf('Kopi O'))
+    expect(action?.keyframes).toEqual(snap.values.map((x) => ({ opacity: actionOpacity(x) })))
+  })
+
+  it('carries the row’s own velocity into the snap', () => {
+    const animations = animate()
+    renderRows()
+    const main = mainButton('Kopi O')
+    press(main, 300)
+    move(main, 260, {}, 100)
+    move(main, 250, {}, 16)
+    release(main, 248, {}, 4)
+    // The row moved 10 px in the 16 ms before its last move, 4 ms before the release.
+    const snap = springSamples({ from: -50, to: 0, velocity: -625, ...SNAP_SPRING }, SNAP_HZ)
+    expect(animations.animated[0]?.keyframes).toEqual(
+      snap.values.map((x) => ({ transform: `translateX(${String(x)}px)` })),
+    )
+  })
+
+  it('a drag that starts on a settling row takes over from where it is, without a jump', () => {
+    const animations = animate()
+    renderRows()
+    const main = mainButton('Kopi O')
+    slowDrag(main, 300, [280, 250])
+    release(main, 250, {}, 100)
+    const snap = springSamples({ from: -50, to: 0, velocity: 0, ...SNAP_SPRING }, SNAP_HZ)
+    const running = [...animations.animated]
+    for (const a of running) a.currentTime = snap.step * 3
+    const here = snap.values[3] ?? NaN
+
+    press(main, 250, {}, 50)
+    move(main, 246)
+    expect(running.every((a) => a.playState === 'idle')).toBe(true)
+    expect(contentOf('Kopi O').style.transform).toBe(`translateX(${String(here - 4)}px)`)
+  })
+
+  it('a tap on a settling row lets it settle', () => {
+    const animations = animate()
+    renderRows()
+    const main = mainButton('Kopi O')
+    slowDrag(main, 300, [280, 250])
+    release(main, 250, {}, 100)
+    const running = [...animations.animated]
+    expect(running).toHaveLength(3)
+    press(main, 250, {}, 50)
+    release(main, 250, {}, 60)
+    expect(running.every((a) => a.playState === 'running')).toBe(true)
+  })
+
+  it('keeps the moving content on a layer of its own while it moves, and lets it go after', () => {
+    const animations = animate()
+    renderRows()
+    const main = mainButton('Kopi O')
+    const content = contentOf('Kopi O')
+    expect(content.style.willChange).toBe('')
+    slowDrag(main, 300, [260, 200])
+    expect(content.style.willChange).toBe('transform')
+    release(main, 200, {}, 100)
+    expect(content.style.willChange).toBe('transform')
+    act(() => {
+      animations.finishAll()
+    })
+    expect(content.style.willChange).toBe('')
+    expect(content.style.transform).toBe('translateX(-96px)')
+  })
+
+  it('re-renders nothing while it is dragged and let go', () => {
+    const renders = vi.fn()
+    render(
+      <Profiler id="row" onRender={renders}>
+        <LedgerRow expense={KOPI} dateLabel="Oct 19" onEdit={vi.fn()} onDelete={vi.fn()} />
+      </Profiler>,
+    )
+    renders.mockClear()
+    const main = mainButton('Kopi O')
+    slowDrag(main, 300, [290, 280, 260, 240, 220, 200])
+    release(main, 200, {}, 100)
+    expect(contentOf('Kopi O').style.transform).toBe('translateX(-96px)')
+    expect(renders).not.toHaveBeenCalled()
+  })
+
+  it('lets the page scroll vertically from a row, and keeps text and callouts out of a drag', () => {
+    renderRows()
+    const content = contentOf('Kopi O')
+    expect(rowOf('Kopi O')).toHaveClass('touch-pan-y')
+    expect(content).toHaveClass('touch-pan-y', 'select-none', '[-webkit-touch-callout:none]')
+    expect(content).toHaveAttribute('draggable', 'false')
+    expect(tintOf('Kopi O')).toHaveAttribute('aria-hidden', 'true')
+    expect(tintOf('Kopi O')).toHaveClass('pointer-events-none', 'bg-negative', 'opacity-0')
+    expect(actionOf('Kopi O')).toHaveClass('opacity-0')
   })
 })
 

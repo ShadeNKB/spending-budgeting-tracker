@@ -1482,6 +1482,254 @@
     animation: route-fade-in 180ms cubic-bezier(0.2, 0, 0, 1);
     will-change: opacity, transform;
   }
+
+  /* -- Overlay motion ----------------------------------------------
+     Sheets, the command palette and toasts move with CSS transitions keyed on the data-state
+     their layer box (or the toast) carries: starting (the closed look, for one commit),
+     open, closed (the exit look, held until the exit ends: src/ui/usePresence.ts). The
+     easings are framer-motion's springs, sampled into linear() from the same physics
+     (src/ui/spring.ts; checked in src/__tests__/motion-css.test.ts): sheet k380 c40,
+     palette k420 c36, toast k420 c32, each normalised over its duration. Transform and
+     opacity only, so the compositor runs them. A sheet panel is placed by transform from
+     these classes alone, so a drag can move it with an inline transform and let go into
+     the same transitions. */
+  :root {
+    --motion-sheet-ms: 400ms;
+    --motion-sheet-ease: linear(
+      0,
+      0.0166,
+      0.0585,
+      0.116,
+      0.1821,
+      0.2519,
+      0.3221,
+      0.3903,
+      0.4551,
+      0.5155,
+      0.5711,
+      0.6218,
+      0.6676,
+      0.7086,
+      0.7453,
+      0.7778,
+      0.8065,
+      0.8318,
+      0.854,
+      0.8734,
+      0.8904,
+      0.9052,
+      0.9181,
+      0.9293,
+      0.939,
+      0.9474,
+      0.9547,
+      0.961,
+      0.9664,
+      0.9711,
+      0.9752,
+      0.9787,
+      0.9817,
+      0.9843,
+      0.9865,
+      0.9884,
+      0.99,
+      0.9915,
+      0.9927,
+      0.9937,
+      1
+    );
+    --motion-sheet-fade-ms: 150ms;
+    --motion-palette-ms: 250ms;
+    --motion-palette-ease: linear(
+      0,
+      0.0076,
+      0.0282,
+      0.059,
+      0.0973,
+      0.1412,
+      0.1888,
+      0.2388,
+      0.2898,
+      0.341,
+      0.3915,
+      0.4408,
+      0.4883,
+      0.5338,
+      0.577,
+      0.6176,
+      0.6557,
+      0.6912,
+      0.724,
+      0.7543,
+      0.7821,
+      0.8075,
+      0.8306,
+      0.8515,
+      0.8704,
+      0.8874,
+      0.9026,
+      0.9162,
+      0.9282,
+      0.9389,
+      0.9484,
+      0.9567,
+      0.9639,
+      0.9702,
+      0.9757,
+      0.9805,
+      0.9845,
+      0.988,
+      0.991,
+      0.9934,
+      1
+    );
+    --motion-palette-fade-ms: 120ms;
+    --motion-toast-ms: 350ms;
+    --motion-toast-ease: linear(
+      0,
+      0.0146,
+      0.0533,
+      0.1089,
+      0.1759,
+      0.2496,
+      0.3263,
+      0.4031,
+      0.4779,
+      0.5489,
+      0.6153,
+      0.6762,
+      0.7313,
+      0.7804,
+      0.8237,
+      0.8614,
+      0.8937,
+      0.9211,
+      0.944,
+      0.9629,
+      0.9782,
+      0.9904,
+      0.9999,
+      1.0071,
+      1.0123,
+      1.0159,
+      1.0182,
+      1.0194,
+      1.0197,
+      1.0195,
+      1.0187,
+      1.0176,
+      1.0163,
+      1.0149,
+      1.0134,
+      1.0118,
+      1.0104,
+      1.009,
+      1.0076,
+      1.0064,
+      1
+    );
+  }
+  /* Safari before 17.2, Chrome before 113: the closest cubic-bezier to each spring. */
+  @supports not (transition-timing-function: linear(0, 1)) {
+    :root {
+      --motion-sheet-ease: cubic-bezier(0.3, 0.4, 0.1, 1);
+      --motion-palette-ease: cubic-bezier(0.35, 0.29, 0.3, 1);
+      --motion-toast-ease: cubic-bezier(0.45, 0.78, 0.04, 1);
+    }
+  }
+
+  .sheet-backdrop {
+    opacity: 0;
+    transition: opacity var(--motion-sheet-fade-ms) ease-out;
+  }
+  .sheet-panel {
+    transition: transform var(--motion-sheet-ms) var(--motion-sheet-ease);
+  }
+  .sheet-panel--bottom {
+    transform: translateY(100%);
+  }
+  .sheet-panel--right {
+    transform: translateX(100%);
+  }
+  [data-state='open'] > .sheet-backdrop {
+    opacity: 1;
+  }
+  [data-state='open'] > .sheet-panel {
+    transform: none;
+  }
+
+  .palette-backdrop {
+    opacity: 0;
+    transition: opacity var(--motion-palette-fade-ms) ease-out;
+  }
+  .palette-panel {
+    opacity: 0;
+    transform: translateY(-16px) scale(0.97);
+    transition:
+      transform var(--motion-palette-ms) var(--motion-palette-ease),
+      opacity var(--motion-palette-ms) var(--motion-palette-ease);
+  }
+  [data-state='open'] > .palette-backdrop {
+    opacity: 1;
+  }
+  [data-state='open'] > .palette-panel {
+    opacity: 1;
+    transform: none;
+  }
+  [data-state='closed'] > .palette-panel {
+    transform: translateY(-8px) scale(0.97);
+  }
+
+  /* A leaving toast keeps its place (and takes presses) while it fades; the toasts above it
+     then slide into place on the individual translate property (ToastHost's FLIP), which
+     composes with this transform instead of fighting its transition. */
+  .toast-box {
+    opacity: 0;
+    transform: translateY(16px) scale(0.96);
+    transition:
+      transform var(--motion-toast-ms) var(--motion-toast-ease),
+      opacity var(--motion-toast-ms) var(--motion-toast-ease);
+  }
+  .toast-box[data-state='open'] {
+    opacity: 1;
+    transform: none;
+  }
+  .toast-box[data-state='closed'] {
+    transform: translateY(8px) scale(0.96);
+  }
+  /* The time a toast has left; its length is the toast's (inline animation-duration). */
+  .toast-countdown {
+    transform-origin: left;
+    animation: toast-countdown linear forwards;
+  }
+  @keyframes toast-countdown {
+    from {
+      transform: scaleX(1);
+    }
+    to {
+      transform: scaleX(0);
+    }
+  }
+
+  /* Reduce Motion, also when switched on while an overlay shows: nothing moves, and nothing
+     fades (usePresence opens and closes at once). transition-property: none cancels a
+     transition already running when the setting turns on: transform: none alone matches the
+     end of an opening slide, which would then run on to its end (a transition outranks
+     !important). */
+  @media (prefers-reduced-motion: reduce) {
+    .sheet-backdrop,
+    .sheet-panel,
+    .palette-backdrop,
+    .palette-panel,
+    .toast-box {
+      transform: none !important;
+      translate: none !important;
+      transition-property: none !important;
+    }
+    .toast-countdown {
+      display: none;
+    }
+  }
 }
 
 /* --- iOS focus-zoom floor -------------------------------------------

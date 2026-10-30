@@ -1,5 +1,88 @@
 # Changelog
 
+## 0.9.4 — 2026-10-31
+
+Track 5b of the overhaul: motion without an animation library. Sheets, the command palette, toasts and the ledger's swipe move as they did before, on the same springs, distances and thresholds. They now use the browser's own CSS transitions and Web Animations instead of framer-motion. The app ships 118 KB (17 %) less JavaScript, so the budget has room again for the tracks to come. There is nothing to do on your devices: the update installs as usual.
+
+### Fixed
+
+- **Undo stays on the toast, whatever the name.** An entry named with one long word (no spaces) pushed the toast's Undo and Dismiss out of its box on a 320 px phone. There they could not be seen or tapped. The name now wraps inside the toast.
+- **Reduce Motion works, also when you switch it on while the app is open.** Sheets, the palette and toasts now appear and leave at once; they used to fade for 120–150 ms. An overlay that is moving when the setting changes stops at once, and later ones do not move at all. A ledger row still follows your finger and snaps back at once. (F-090)
+- **A tap on a ledger row that is still sliding back lets it finish.** framer-motion stopped the slide on any press, which could leave the row part-way with its Delete half showing. A drag on a sliding row still picks it up exactly where it is.
+
+### Changed
+
+- **The motion itself is the same.**
+  - Sheets slide up (in from the right on a laptop) on the same spring in 400 ms, over a backdrop that fades in over 150 ms.
+  - The palette drops in from 16 px up at 97 % size in 250 ms, and leaves 8 px up.
+  - Toasts rise 16 px in 350 ms and leave where they are; the toasts above then slide into place. The countdown bar runs out evenly over the toast's time.
+  - A ledger row reveals Delete past 76 px or on a quick flick, and snaps on the same spring.
+  - A closing sheet or palette keeps showing what it showed until it has gone: after Add, your entry, not a cleared form; after a quick add, the palette's list.
+- **The page stays still until a closing sheet or the palette has gone** (about 0.4 s), not only until you close it. The page no longer scrolls under a sheet that is still on screen.
+
+### Known limits
+
+- **Bottom sheets still cannot be swiped down to close** (T7, F-113). Their position now comes from CSS alone, ready for it.
+- **Toasts of different widths, stacked on a laptop:** the toasts above a leaving one slide into place but take their new width at once. framer-motion also animated the width.
+- **Browsers without CSS `linear()`** (Safari before 17.2, Chrome before 113) get the closest cubic-bezier curve to each spring instead of the spring itself.
+
+### Changed (engineering)
+
+- **framer-motion is gone** (B-001), with motion-dom and motion-utils. Nothing was added, runtime or dev, which leaves 11 runtime dependencies (12 on 0.9.3).
+  - Sheets, the palette and toasts are CSS transitions keyed on `data-state`.
+  - The Web Animations API is used only where script has to compute the motion: the swipe's snap and the toast slide.
+  - `vite.config.js` drops the `vendor-motion` chunk.
+- **Presence.** `src/ui/usePresence.ts` keeps a closing overlay mounted until the finite animations of its declared parts end.
+  - It reads `getAnimations()` without subtree, so a spinner, a countdown or a hover inside never holds the overlay open.
+  - The wait is capped at the longest animation left + 250 ms. WebKit never settles the `finished` promise of a transition that a reversing one replaced, and a browser may hold an animation.
+  - It is generation-guarded and StrictMode-safe. A reopen keeps the same node, and CSS reverses from where it is.
+  - It is instant under Reduce Motion or without the Web Animations API.
+  - `useHeldWhileClosing` freezes what a closing overlay shows.
+
+  The modal layer stack's rules for a closing layer are unchanged: inert, presses pass through, the press shield, live regions handed back, focus return.
+
+- **Springs.** `src/ui/spring.ts` is motion-dom 12.40's spring: its under-, critically and over-damped closed forms and its rest rules.
+  - It is checked against framer's own outputs, captured before the removal: 24 springs every 20 ms, with their rest times and velocities.
+  - `index.css` holds `linear()` tokens sampled from it: `--motion-sheet-*` k 380 c 40 in 400 ms, `--motion-palette-*` k 420 c 36 in 250 ms, `--motion-toast-*` k 420 c 32 in 350 ms. Cubic-bezier fallbacks sit under `@supports not`.
+  - Parts animate `transform` and `opacity` only.
+  - The sheet panel moves only through a CSS-class transform and a CSS transition, never an inline transform or a Web Animation. That leaves room for T7's swipe-down.
+- **Toasts.**
+  - A leaving toast stays in place and pressable. Toasts already there when the host mounts do not animate.
+  - The toasts above a leaving one slide with a Web Animation on the individual `translate` property (FLIP), which starts from a running slide's own progress.
+  - The countdown is a linear CSS animation.
+  - Undo, Dismiss, the press guards and the moment `noteToastLeft` fires are unchanged.
+- **Ledger swipe** (`swipe.ts`, `useSwipeReveal.ts`). It runs on pointer events, with pointer capture from the drag's start.
+  - It uses framer's maths, all checked against framer's goldens: limits −120..0, a 0.12 elastic on the left only, the 3 px start, the 100 ms velocity with its hold-then-flick rule, and the motion value's own velocity.
+  - The snap is sampled at 120 Hz from the k 420 c 40 spring, with the release velocity.
+  - The red is painted as an opacity-only layer.
+  - `touch-action: pan-y` keeps vertical scrolling. A cancelled pointer, lost capture or a mouse move with no button pressed ends the drag. The click after a drag is ignored for 50 ms.
+  - Nothing re-renders a row while it moves.
+- **Scroll lock.** The overlay's layer box now holds the page scroll lock (`holdScrollLock` in `modalLayer.ts`, a ref callback), from the moment it mounts until it leaves the page, after its exit. `useModalLayer`'s `lockScroll` option is gone. WebKit puts a running CSS transition at its end when the body's overflow changes, so unlocking at the close skipped a sheet's or the palette's slide out on iPhone.
+- **Reduced motion and guards.**
+  - The reduced-motion block in `index.css` holds every overlay part still (`transform: none`, `translate: none`) and takes the parts out of their transitions (`transition-property: none`). A running transition outranks `!important`, so without that an overlay caught mid-slide ran on to its end.
+  - Script asks `prefersReducedMotion()` (live `matchMedia`) at each decision.
+  - `a11y-guards.test.ts` rule 2 now holds every module that animates to Reduce Motion: it must call `prefersReducedMotion()` or carry the `motion-reduce:!transform-none` guard. A new rule fails any import of an animation library.
+  - `motion-css.test.ts` pins the tokens to the springs (0.01 per stop), transitions to transform and opacity, the countdown keyframes and the reduced-motion block.
+- **Tests.** 2,665 unit tests (2,420 on 0.9.3), green in Singapore, Honolulu and Kiritimati time. In e2e, 500 tests run on Chromium and iPhone WebKit: 457 pass and 43 skip by project.
+  - `motion.spec.ts` (30 tests) was written against 0.9.3 first and is green on both builds. It reads every painted frame of the sheets, the palette, the toasts and the swipe. On WebKit it checks that a closing sheet and palette are still seen on their way out.
+  - Its pages fix only `Date`. Playwright's clock would run `requestAnimationFrame` off its timers and make CSS motion look like stalls and jumps.
+  - `double-press.spec.ts` runs its sheet, palette and slow-double-click cases under Reduce Motion and with motion.
+  - The chunk-graph test asserts that no animation library ships and that the entry preloads only `vendor-react` and `vendor-utils`.
+- **Bundle.** JS is 591,801 B, 577.9 KB of the 700 KB budget (712,989 B, 696.3 KB on 0.9.3: −121,188 B).
+  - `vendor-motion` (128,173 B) is gone.
+  - The entry chunk is 127,702 B (−50), and `index.html` still preloads only `vendor-react` and `vendor-utils`.
+  - The overlays' shared runtime (presence, motion helpers and the press shield) is one 4,557 B lazy chunk, `usePresence`. It replaces the 2,408 B `pressShield` chunk.
+  - The swipe and the spring add 4,433 B to the lazy Ledger chunk.
+  - Other chunks: ToastHost +1,024 B, CommandPalette −236 B, Sheet −173 B, LayerAnnouncer −54 B, and SettingsDrawer, AddExpenseSheet and HotkeyHints −36 B each.
+  - CSS is 61,249 B (+2,878 B).
+  - The PWA precache drops to 32 entries, 819.4 KiB (33 entries, 934.9 KiB on 0.9.3).
+- **Performance** (T5b harness: Chromium, 4× CPU, 390 px, or 1280 px for the Edit sheet over 5,000 rows, normal motion, medians of 3 runs).
+  - Interactions answer sooner. INP proxy: Add sheet 176 → 128 ms, palette 176 → 96 ms, toast burst 128 → 80 ms, swipe over 5,000 rows 48 → 40 ms, Edit sheet 216 → 152 ms.
+  - In the four overlay scenarios the longest frame drops (147 → 118, 138 → 86, 102 → 64 and 146 → 122 ms), and so does blocking time (102 → 65, 76 → 29, 36 → 0 and 123 → 77 ms).
+  - No long animation frame comes from motion code any more. framer-motion's frame loop caused one in each overlay scenario. Now none has more than 5 ms of script from the chunks that hold the motion (`usePresence`, `Sheet`, `CommandPalette`, `ToastHost`, `LedgerScreen`). A long frame is credited to the script that ran it, so motion code that React calls from its own handlers would count under `vendor-react`. The long frames left are React's click and key handlers and the layer announcer's keydown.
+  - Frame intervals at p95 are where they were: 33 ms for the Add sheet, palette and toasts, 17 ms for the swipe, 67 ms for the Edit sheet. The 20 ms target is met only by the swipe; in the overlay scenarios neither build meets it on this runner.
+  - The Edit sheet over 5,000 rows has a few more frames past 50 ms (26 → 31), but each is shorter.
+
 ## 0.9.3 — 2026-10-25
 
 Track 6 of the overhaul: accessibility. SpendTrack now works fully by keyboard and with a screen reader, on a phone and on a laptop, in both themes, to WCAG 2.2 AA on every screen and every open sheet. A gate checks each of them on every change. Focus is always visible, never lost and never hidden, every control is big enough for a thumb, and a double tap or a double click can no longer press what a closing sheet uncovers.

@@ -385,7 +385,7 @@ This was a real bug fixed in v0.5.0 (PR #9). If you see it on the deployed site,
 | State     | Zustand + `subscribeWithSelector`                                            |
 | Routing   | React Router v7                                                              |
 | Lists     | @tanstack/react-virtual (ledger windowing past 150 rows)                     |
-| Animation | framer-motion (sparingly — CSS keyframes for route transitions)              |
+| Animation | CSS transitions + Web Animations API (no library; springs as `linear()`)     |
 | Search    | Fuse.js (smart-entry parser)                                                 |
 | Dates     | date-fns                                                                     |
 | Sync      | Supabase Postgres + Realtime (lazy-loaded, opt-in)                           |

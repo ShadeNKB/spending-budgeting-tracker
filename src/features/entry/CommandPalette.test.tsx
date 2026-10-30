@@ -6,6 +6,7 @@ import { useUIStore } from '../../stores/useUIStore'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { CONFIRM_DELAY_MS } from '../../utils/amountGuard'
 import { Sheet } from '../../ui/Sheet'
+import { installFakeAnimations, type FakeAnimations } from '../../__tests__/fakeAnimations'
 import type { Expense } from '../../types'
 
 function Where() {
@@ -64,7 +65,23 @@ beforeEach(() => {
   })
   useExpenseStore.setState({ expenses: [] })
 })
+// jsdom has no Web Animations API, so the palette leaves at once here. Tests of its exit
+// install fake animations: the exit then lasts until they finish.
+let fake: FakeAnimations | null = null
+function holdExits(): FakeAnimations {
+  fake = installFakeAnimations()
+  return fake
+}
+const finishExits = (animations: FakeAnimations) =>
+  act(async () => {
+    animations.finishAll()
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+
 afterEach(() => {
+  fake?.restore()
+  fake = null
   vi.useRealTimers()
 })
 
@@ -271,7 +288,32 @@ describe('CommandPalette results that shrink by themselves', () => {
 })
 
 describe('CommandPalette motion', () => {
-  it('never moves under Reduce Motion turned on while the app is open (framer reads it once)', () => {
+  // The motion itself is CSS (index.css, src/__tests__/motion-css.test.ts) keyed on the layer
+  // box's data-state; e2e/motion.spec.ts watches it in a browser.
+  it('drops in over a fading backdrop, and stays, inert, while it leaves', async () => {
+    const animations = holdExits()
+    render(<App />)
+    openPalette()
+    const dialog = screen.getByRole('dialog', { name: 'Command palette' })
+    const box = dialog.parentElement
+    expect(dialog).toHaveClass('palette-panel')
+    expect(box).toHaveAttribute('data-state', 'open')
+    expect(box?.querySelector(':scope > .palette-backdrop')).not.toBeNull()
+
+    fireEvent.keyDown(input(), { key: 'Escape' })
+    await settle()
+    expect(dialog).toBeInTheDocument()
+    expect(box).toHaveAttribute('data-state', 'closed')
+    expect(dialog).toHaveAttribute('inert')
+    // The page stays locked while it leaves: WebKit ends a running transition at once when the
+    // body's overflow changes.
+    expect(document.body.style.overflow).toBe('hidden')
+    await finishExits(animations)
+    expect(dialog).not.toBeInTheDocument()
+    expect(document.body.style.overflow).toBe('')
+  })
+
+  it('never moves under Reduce Motion turned on while it shows', () => {
     render(<App />)
     openPalette()
     // In the page's CSS: no transform at all while the system asks for reduced motion.
@@ -309,7 +351,9 @@ describe('CommandPalette over a sheet', () => {
 })
 
 describe('CommandPalette quick add', () => {
-  it('adds the typed expense on Enter, once', () => {
+  it('adds the typed expense on Enter, once', async () => {
+    // The second Enter reaches the palette while it is still leaving.
+    const animations = holdExits()
     render(<App />)
     openPalette()
     type('kopi 2.40')
@@ -320,6 +364,25 @@ describe('CommandPalette quick add', () => {
     expect(added).toHaveLength(1)
     expect(added[0]?.itemName).toBe('kopi')
     expect(useUIStore.getState().paletteOpen).toBe(false)
+    await finishExits(animations)
+  })
+
+  it('keeps showing the entry and its option while it leaves after a quick add', async () => {
+    const animations = holdExits()
+    render(<App />)
+    openPalette()
+    type('kopi 2.40')
+    fireEvent.keyDown(input(), { key: 'Enter' })
+    expect(useExpenseStore.getState().expenses).toHaveLength(1)
+    // Closed, the query cleared and the row added: the leaving palette still shows them as
+    // they were, not an empty search over the action list.
+    expect(input()).toHaveValue('kopi 2.40')
+    expect(screen.getByRole('option', { name: /Add "kopi" · S\$2\.40/ })).toBeInTheDocument()
+    await finishExits(animations)
+    expect(screen.queryByRole('dialog', { name: 'Command palette' })).toBeNull()
+
+    openPalette()
+    expect(input()).toHaveValue('')
   })
 
   it('asks again for a large amount, and ignores the tail of a double Enter', () => {

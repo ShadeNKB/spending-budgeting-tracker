@@ -20,9 +20,9 @@ import { importWithReload } from '../../lib/chunkReload'
 import { OverlaySlot } from '../../app/OverlaySlot'
 
 // SmartInput is on screen at boot (in the header and on Pulse), so its full-entry sheet only
-// mounts on the first tap: a lazy component rendered at boot would fetch the sheet and
-// framer-motion before first paint. A stale chunk reloads once; a failure shows the panel
-// recovery card, never a crash of the screen around it.
+// mounts on the first tap: a lazy component rendered at boot would fetch the sheet and the
+// overlays' motion runtime before first paint. A stale chunk reloads once; a failure shows the
+// panel recovery card, never a crash of the screen around it.
 const AddExpenseSheet = lazy(() =>
   importWithReload(() => import('./AddExpenseSheet')).then((m) => ({
     default: m.AddExpenseSheet,

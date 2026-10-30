@@ -19,10 +19,10 @@ import { useToast } from '../hooks/useToast'
 import { useIdle } from '../hooks/useIdle'
 import { importWithReload } from '../lib/chunkReload'
 
-// Overlays hidden on first paint. lazy() alone does not keep them (or framer-motion, which
-// they all use) off the critical path: a lazy component that is rendered at boot is fetched
-// at boot. So each overlay mounts through an OverlaySlot, on its first open or once the app
-// goes idle after load, whichever comes first. A stale chunk reloads once.
+// Overlays hidden on first paint. lazy() alone does not keep them (or the motion runtime
+// they share) off the critical path: a lazy component that is rendered at boot is fetched at
+// boot. So each overlay mounts through an OverlaySlot, on its first open or once the app goes
+// idle after load, whichever comes first. A stale chunk reloads once.
 const SettingsDrawer = lazy(() =>
   importWithReload(() => import('../features/settings/SettingsDrawer')).then((m) => ({
     default: m.SettingsDrawer,
@@ -186,12 +186,11 @@ export function AppShell() {
               </span>
             </div>
           ) : (
-            // No AnimatePresence around routes — rapid navigation could leave
-            // motion.divs stranded with `initial: opacity 0` when framer-motion's
-            // exit/enter lifecycle overlapped, blanking Pulse + Insights.
-            // Routes now render synchronously; subtle CSS fade-in is applied
-            // via the `route-fade-in` keyframe so transitions still feel polished
-            // without any React-state animation that can fail.
+            // No exit animation around routes: an animated route wrapper (framer-motion's
+            // AnimatePresence, removed since) once left content stranded at opacity 0 when
+            // rapid navigation overlapped its exit and enter, blanking Pulse + Insights.
+            // Routes render synchronously; the `route-fade-in` CSS keyframe gives the
+            // subtle fade without any React-state animation that can fail.
             <div key="route-content" className="route-fade-in">
               <Outlet />
             </div>

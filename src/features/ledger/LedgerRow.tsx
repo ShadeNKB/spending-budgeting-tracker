@@ -1,25 +1,15 @@
-import {
-  motion,
-  useMotionValue,
-  useReducedMotion,
-  useTransform,
-  animateSingleValue,
-  PanInfo,
-} from 'framer-motion'
-import { memo, useRef, useState, type KeyboardEvent, type MouseEvent } from 'react'
+import { memo, type KeyboardEvent, type MouseEvent } from 'react'
 import { Trash2 } from 'lucide-react'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { colorFromString } from '../../lib/analytics'
 import { toastJustLeft } from '../../ui/pressShield'
+import { useSwipeReveal } from './useSwipeReveal'
 import type { Expense } from '../../types'
-
-const SNAP = { type: 'spring', stiffness: 420, damping: 40 } as const
-const INSTANT = { duration: 0 } as const
 
 /**
  * One ledger row: tap (or Enter) to edit; swipe left, the trash button or the Delete key to
  * delete. Memoised — with stable `onEdit` / `onDelete` from the screen, typing in the search box
- * or deleting another row does not re-render it.
+ * or deleting another row does not re-render it, and neither does a swipe (useSwipeReveal).
  *
  * Keyboard and screen readers get one tab stop per row (the row button) and one named
  * "Delete {item}, {amount}, {day}" button beside it (out of the tab order: the Delete key does
@@ -41,38 +31,13 @@ export const LedgerRow = memo(function LedgerRow({
   onDelete: (id: string, at: number) => void
 }) {
   const fmt = useFormatMoney()
-  const reduceMotion = useReducedMotion() === true
-  const x = useMotionValue(0)
-  const bg = useTransform(
-    x,
-    [-120, -40, 0],
-    ['rgba(239,68,68,0.14)', 'rgba(239,68,68,0.04)', 'rgba(255,255,255,0)'],
-  )
-  const swipeOpacity = useTransform(x, [-120, -20, 0], [1, 0.6, 0])
-  const [revealed, setRevealed] = useState(false)
-  const dragStarted = useRef(false)
+  const swipe = useSwipeReveal()
 
-  // What `animate(x, …)` runs for a single motion value, imported directly: `animate` also
-  // brings framer's sequence and DOM-target machinery (about 6.5 KB) that nothing here uses.
-  const snapTo = (target: number) => {
-    void animateSingleValue(x, target, reduceMotion ? INSTANT : SNAP)
-  }
-
-  const onDragEnd = (_: unknown, info: PanInfo) => {
-    dragStarted.current = true
-    const reveal = info.offset.x < -76 || info.velocity.x < -650
-    setRevealed(reveal)
-    snapTo(reveal ? -96 : 0)
-    setTimeout(() => {
-      dragStarted.current = false
-    }, 50)
-  }
-
+  // The click that ends a drag is no tap; a tap on a revealed row closes it.
   const handleRowClick = () => {
-    if (dragStarted.current) return
-    if (revealed) {
-      setRevealed(false)
-      snapTo(0)
+    if (swipe.dragged()) return
+    if (swipe.revealed()) {
+      swipe.close()
       return
     }
     onEdit(expense)
@@ -83,7 +48,7 @@ export const LedgerRow = memo(function LedgerRow({
   // A press where a toast has just gone (its × over this trash on a phone) was meant for the
   // toast, not for deleting this row.
   const handleTrashClick = (e: MouseEvent<HTMLButtonElement>) => {
-    if (dragStarted.current || (e.detail > 0 && toastJustLeft(e.nativeEvent))) return
+    if (swipe.dragged() || (e.detail > 0 && toastJustLeft(e.nativeEvent))) return
     onDelete(expense.id, e.nativeEvent.timeStamp)
   }
 
@@ -102,18 +67,21 @@ export const LedgerRow = memo(function LedgerRow({
   const deleteName = `Delete ${expense.itemName}, ${amount}, ${dateLabel}`
 
   return (
-    <motion.div
+    <div
       data-ledger-row={expense.id}
-      style={{ background: bg }}
       className="group relative touch-pan-y"
-      onPointerDown={() => {
-        dragStarted.current = false
-      }}
-      onPointerCancel={() => {
-        dragStarted.current = false
-      }}
+      onPointerDown={swipe.clearGuard}
+      onPointerCancel={swipe.clearGuard}
     >
-      <motion.button
+      {/* The red behind the row as it slides: opacity only, mapped from x by the swipe. */}
+      <span
+        ref={swipe.tintRef}
+        aria-hidden="true"
+        data-swipe-tint=""
+        className="pointer-events-none absolute inset-0 bg-negative opacity-0"
+      />
+      <button
+        ref={swipe.actionRef}
         type="button"
         data-swipe-delete
         aria-hidden="true"
@@ -122,22 +90,21 @@ export const LedgerRow = memo(function LedgerRow({
           if (e.detail > 0 && toastJustLeft(e.nativeEvent)) return
           onDelete(expense.id, e.nativeEvent.timeStamp)
         }}
-        className="absolute inset-y-0 right-0 flex w-24 items-center justify-center gap-1.5 text-negative transition hover:bg-negative/10"
-        style={{ opacity: swipeOpacity }}
+        className="absolute inset-y-0 right-0 flex w-24 items-center justify-center gap-1.5 text-negative opacity-0 transition-colors hover:bg-negative/10"
       >
         <Trash2 size={13} />
         <span className="text-[11px] font-semibold uppercase tracking-wider">Delete</span>
-      </motion.button>
-      <motion.div
-        drag="x"
-        dragConstraints={{ left: -120, right: 0 }}
-        dragElastic={{ left: 0.12, right: 0 }}
-        onDragStart={() => {
-          dragStarted.current = true
-        }}
-        onDragEnd={onDragEnd}
-        style={{ x }}
-        className="relative flex items-center bg-surface-1 transition-colors md:hover:bg-surface-2"
+      </button>
+      {/* Dragged on x only; the page still scrolls vertically from it (touch-action: pan-y). */}
+      <div
+        ref={swipe.contentRef}
+        draggable={false}
+        onPointerDown={swipe.onPointerDown}
+        onPointerMove={swipe.onPointerMove}
+        onPointerUp={swipe.onPointerUp}
+        onPointerCancel={swipe.onPointerCancel}
+        onLostPointerCapture={swipe.onLostPointerCapture}
+        className="relative flex touch-pan-y select-none items-center bg-surface-1 transition-colors [-webkit-touch-callout:none] md:hover:bg-surface-2"
       >
         <button
           type="button"
@@ -193,7 +160,7 @@ export const LedgerRow = memo(function LedgerRow({
         >
           <Trash2 size={15} aria-hidden />
         </button>
-      </motion.div>
-    </motion.div>
+      </div>
+    </div>
   )
 })

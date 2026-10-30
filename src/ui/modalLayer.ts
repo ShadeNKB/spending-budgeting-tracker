@@ -19,7 +19,8 @@ import { shieldGesture } from './pressShield'
  *   scrolling to it (the page stays where the reader left it).
  *   A layer opened from another layer that closes in the same commit (the palette's "Add
  *   expense") inherits that layer's opener.
- * - Page scroll stays locked while any locking layer is open, whatever order they close in.
+ * - Page scroll stays locked while any locking overlay is in the page, whatever order they leave
+ *   in: from the moment its box mounts until the box leaves, after its exit (holdScrollLock).
  * - A closed layer is inert while it animates out, and presses pass through it to the page (its
  *   content and live regions, see announce.ts, leave the accessibility tree at once).
  * - A press that opens or closes a layer ends its gesture (pressShield.ts): the second press of
@@ -42,15 +43,12 @@ export interface ModalLayerOptions {
   readonly initialFocus?: () => HTMLElement | null
   /** Asked on close only when the element that opened the layer is gone. */
   readonly returnFocus?: () => HTMLElement | null
-  /** Lock page scroll while open (sheets and the palette, not the date picker). */
-  readonly lockScroll?: boolean
 }
 
 interface Layer {
   readonly seq: number
   readonly element: HTMLElement
   readonly returnTarget: HTMLElement | null
-  readonly locksScroll: boolean
   readonly options: RefObject<ModalLayerOptions>
   lastFocused: HTMLElement | null
 }
@@ -284,17 +282,29 @@ document.addEventListener('focusin', onFocusIn, true)
 document.addEventListener('compositionstart', onCompositionStart, true)
 document.addEventListener('compositionend', onCompositionEnd, true)
 
-function lockScroll(): void {
+function unlockScroll(): void {
+  scrollLocks -= 1
+  if (scrollLocks === 0) document.body.style.overflow = overflowBeforeLock
+}
+
+/**
+ * The ref of an overlay's outermost box (the one that stays in the page while it animates out:
+ * sheets and the palette, not the date picker). Page scroll stays locked from the moment the box
+ * mounts, before its layer opens and its entrance starts, until the box leaves the page, after
+ * its exit. Never at the close: WebKit (every iPhone browser) puts a running CSS transition at
+ * its end when the body's overflow changes, so a sheet unlocked as it closed skipped its whole
+ * slide away, and the page would scroll under a sheet still on screen. A reopen on its way out
+ * keeps the same box and leaves the body alone. Its cleanup (React 19) lets go; StrictMode's
+ * second attach locks once more after its cleanup.
+ */
+export function holdScrollLock(box: HTMLElement | null): (() => void) | undefined {
+  if (!box) return undefined
   if (scrollLocks === 0) {
     overflowBeforeLock = document.body.style.overflow
     document.body.style.overflow = 'hidden'
   }
   scrollLocks += 1
-}
-
-function unlockScroll(): void {
-  scrollLocks -= 1
-  if (scrollLocks === 0) document.body.style.overflow = overflowBeforeLock
+  return unlockScroll
 }
 
 // ─── the stack ────────────────────────────────────────────────────────────────
@@ -309,12 +319,10 @@ function openLayer(
     seq: ++nextSeq,
     element,
     returnTarget: closedAround ? closedAround.returnTarget : opener,
-    locksScroll: options.current.lockScroll === true,
     options,
     lastFocused: null,
   }
   stack.push(layer)
-  if (layer.locksScroll) lockScroll()
   // A double tap on what opened it: the second tap would land in the new layer.
   shieldGesture()
   // Reopened while it was still animating out.
@@ -346,7 +354,6 @@ function closeLayer(layer: Layer): void {
   if (index === -1) return
   const wasTop = index === stack.length - 1
   stack.splice(index, 1)
-  if (layer.locksScroll) unlockScroll()
   // A double tap on Save, a day or the backdrop: the second tap would land on what is under it.
   shieldGesture()
   justClosed.push(layer)

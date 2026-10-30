@@ -31,9 +31,10 @@ interface Props {
 
 /**
  * One hidden overlay: mounted on its first open or once the app is idle, whichever comes
- * first (lazy() alone would still fetch it, and framer-motion, before first paint), behind its
- * own error boundary. A failure shows a small recovery card while the overlay is wanted and
- * nothing while it is closed: an idle-mounted overlay never surfaces an error nobody asked for.
+ * first (lazy() alone would still fetch it, and the motion runtime, before first paint),
+ * behind its own error boundary. A failure shows a small recovery card while the overlay is
+ * wanted and nothing while it is closed: an idle-mounted overlay never surfaces an error
+ * nobody asked for.
  */
 export function OverlaySlot({
   open,

@@ -14,19 +14,17 @@ function productionSecurityHeaders() {
 }
 
 // Vendor chunks by npm package. The function form assigns every module of a package, including
-// secondary entry points such as react/jsx-runtime, react-dom/client and scheduler. The old
-// object form only pinned each package's main module, so Rollup pulled the JSX runtime into
-// vendor-motion and the entry chunk then imported (and index.html modulepreloaded) all of
-// framer-motion before first paint.
+// secondary entry points such as react/jsx-runtime, react-dom/client and scheduler. (The old
+// object form only pinned each package's main module, so Rollup once pulled the JSX runtime into
+// a lazy vendor chunk and the entry chunk then imported, and index.html modulepreloaded, all of
+// it before first paint.) There is no animation library: overlays and the ledger swipe move with
+// CSS transitions and the Web Animations API (src/ui/motion.ts, usePresence.ts, spring.ts).
 const VENDOR_CHUNKS = {
   react: 'vendor-react',
   'react-dom': 'vendor-react',
   scheduler: 'vendor-react',
   'react-router': 'vendor-react',
   'react-router-dom': 'vendor-react',
-  'framer-motion': 'vendor-motion',
-  'motion-dom': 'vendor-motion',
-  'motion-utils': 'vendor-motion',
   'date-fns': 'vendor-utils',
   'fuse.js': 'vendor-utils',
   zustand: 'vendor-utils',
