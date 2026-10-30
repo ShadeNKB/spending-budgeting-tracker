@@ -104,7 +104,9 @@ jobs:
   # timeout from the first real runs.
   e2e-shard:
     name: E2E shard ${{ matrix.shard }}/3
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04 in Oct 2026, where Playwright 1.60 cannot install its
+    # browsers. Move to ubuntu-latest again with the Playwright upgrade that supports it.
+    runs-on: ubuntu-24.04
     needs: validate
     timeout-minutes: 25
     strategy:
