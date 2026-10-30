@@ -138,6 +138,7 @@ Track 6 of the overhaul: accessibility. SpendTrack now works fully by keyboard a
 - One modal layer stack (`src/ui/modalLayer.ts`) for sheets, the palette and the calendar: Escape for the top layer only (once per press), the Tab trap, the focus guard, the return target captured before an autofocused field takes focus, and scroll lock. `src/ui/pressShield.ts` judges presses by their own `timeStamp`, keeps a gesture open until its change has been painted, and delivers pointer presses whole. `src/ui/announce.ts` keeps live regions that never re-mount, `InlineConfirm` and `useInlineConfirm` hold questions, `useChartScrub` makes every chart one slider, and `useRouteFocus` waits for a lazy screen's heading for up to 10 s, until anything else takes focus.
 - Static guards (`src/__tests__/a11y-guards.test.ts`, `focus-css.test.ts`): no ad-hoc focus styles, every framer-motion user honours Reduce Motion, nothing both `aria-hidden` and focusable, and the focus CSS contract in both themes.
 - Builds without `VITE_DEMO_MODE` no longer carry the demo seed (−4.1 KB of first-load JS). MonthlyBars loads once the app is idle. `--accent-ring` and the unused `.input-*` classes are gone.
+- CI: the e2e shards run on `ubuntu-24.04`. GitHub's `ubuntu-latest` moved to 26.04, where Playwright 1.60 cannot install its browsers.
 - Dev dependencies: +`axe-core` 4.13.0, −`@axe-core/cli` (and the `ws`/`tmp` overrides that served it). No new runtime dependencies.
 - Bundle: JS 696.3 KB of the 700 KB budget (684.7 KB on 0.9.2: +11.6 KB), the entry chunk +2.0 KB, CSS 57.3 KB.
 

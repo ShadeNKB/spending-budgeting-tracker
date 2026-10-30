@@ -34,10 +34,44 @@ type Press = 'a double click' | 'two clicks 120 ms apart' | 'two taps 120 ms apa
 const pressesFor = (testInfo: TestInfo): readonly Press[] =>
   isPhone(testInfo) ? ['two taps 120 ms apart'] : ['a double click', 'two clicks 120 ms apart']
 
+/**
+ * Where `target` is once it is in view and has stopped moving. The raw presses below do not
+ * scroll, unlike a locator's tap: a control half below the screen's edge (the Edit sheet is
+ * taller than the phone's screen with Linux fonts) took its first press as focus, scrolled into
+ * view under the finger and missed the click, so the press never reached what it was aimed at.
+ * A person scrolls a control into view, and waits for a sheet to settle, before pressing it.
+ */
+async function settledBox(page: Page, target: Locator) {
+  await target.scrollIntoViewIfNeeded()
+  let last = await target.boundingBox()
+  for (let i = 0; i < 30; i++) {
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          requestAnimationFrame(() => {
+            resolve()
+          })
+        }),
+    )
+    const box = await target.boundingBox()
+    if (
+      box &&
+      last &&
+      box.x === last.x &&
+      box.y === last.y &&
+      box.width === last.width &&
+      box.height === last.height
+    )
+      return box
+    last = box
+  }
+  if (!last) throw new Error('nothing to press')
+  return last
+}
+
 /** Both presses of the gesture at the middle of `target`, the way the device sends them. */
 async function doublePress(page: Page, target: Locator, how: Press) {
-  const box = await target.boundingBox()
-  if (!box) throw new Error('nothing to press')
+  const box = await settledBox(page, target)
   await doublePressAt(page, box.x + box.width / 2, box.y + box.height / 2, how)
 }
 
