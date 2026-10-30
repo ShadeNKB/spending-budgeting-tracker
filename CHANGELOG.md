@@ -83,7 +83,7 @@ Track 5b of the overhaul: motion without an animation library. Sheets, the comma
   - Frame intervals at p95 are where they were: 33 ms for the Add sheet, palette and toasts, 17 ms for the swipe, 67 ms for the Edit sheet. The 20 ms target is met only by the swipe; in the overlay scenarios neither build meets it on this runner.
   - The Edit sheet over 5,000 rows has a few more frames past 50 ms (26 → 31), but each is shorter.
 
-## 0.9.3 — 2026-10-25
+## 0.9.3 — 2026-10-30
 
 Track 6 of the overhaul: accessibility. SpendTrack now works fully by keyboard and with a screen reader, on a phone and on a laptop, in both themes, to WCAG 2.2 AA on every screen and every open sheet. A gate checks each of them on every change. Focus is always visible, never lost and never hidden, every control is big enough for a thumb, and a double tap or a double click can no longer press what a closing sheet uncovers.
 
