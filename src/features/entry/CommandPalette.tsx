@@ -1,5 +1,6 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { AnimatePresence, motion } from 'framer-motion'
+import { useDeferredValue, useEffect, useId, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
+import { AnimatePresence, MotionConfig, motion, useReducedMotion } from 'framer-motion'
 import { useNavigate } from 'react-router-dom'
 import {
   Search,
@@ -33,6 +34,9 @@ import { useToast } from '../../hooks/useToast'
 import { useHaptic } from '../../hooks/useHaptic'
 import { useToday } from '../../hooks/useToday'
 import { keyToLocalNoon } from '../../lib/dates'
+import { useModalLayer } from '../../ui/modalLayer'
+import { LayerAnnouncer } from '../../ui/LayerAnnouncer'
+import { announce, retract } from '../../ui/announce'
 import type { Expense } from '../../types'
 
 type Action = {
@@ -48,6 +52,14 @@ type Action = {
 }
 
 const EXPENSE_HITS = 6
+
+/**
+ * Every option: 44 px tall. The active one (`aria-selected`: what Enter runs) carries a bar in
+ * the focus colour down its left edge, 3:1 and more against the option and the list in both
+ * themes, whatever the option's own tone (the amber large-amount one too). Its tint is extra.
+ */
+const OPTION =
+  'relative flex min-h-11 w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-left text-sm transition before:absolute before:inset-y-1.5 before:left-0 before:hidden before:w-[3px] before:rounded-r-full before:bg-[var(--focus-ring)] aria-selected:before:block'
 
 interface ExpenseIndex {
   readonly fuse: Fuse<Expense>
@@ -138,30 +150,41 @@ export function CommandPalette() {
   const [activeIdx, setActiveIdx] = useState(0)
   // Set when a large amount is flagged; running the quick add again on the same query adds it.
   const [flagged, setFlagged] = useState<AmountConfirmation | null>(null)
+  const dialogRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  const listRef = useRef<HTMLDivElement>(null)
   // Set by a quick add, cleared by typing or reopening: a second Enter adds nothing.
   const addedRef = useRef(false)
   const deferredQuery = useDeferredValue(query)
   const today = useToday()
+  const listboxId = useId()
+  // Reduced motion: the palette fades in place (motion-reduce:!transform-none holds it still
+  // too when the setting changes while the app is open: framer reads it once).
+  const still = useReducedMotion() === true
 
-  useEffect(() => {
-    if (!open) return
-    const previousFocus =
-      document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = 'hidden'
-    setQuery('')
-    setActiveIdx(0)
-    setFlagged(null)
-    addedRef.current = false
-    const timer = window.setTimeout(() => inputRef.current?.focus(), 10)
-
-    return () => {
-      window.clearTimeout(timer)
-      document.body.style.overflow = previousOverflow
-      previousFocus?.focus({ preventScroll: true })
+  // Each open starts empty. Reset while rendering, so the last query never shows for a frame.
+  const [openSeen, setOpenSeen] = useState(open)
+  if (open !== openSeen) {
+    setOpenSeen(open)
+    if (open) {
+      setQuery('')
+      setActiveIdx(0)
+      setFlagged(null)
     }
+  }
+  useEffect(() => {
+    if (open) addedRef.current = false
   }, [open])
+
+  const close = () => {
+    setOpen(false)
+  }
+  useModalLayer(open, {
+    ref: dialogRef,
+    onEscape: close,
+    initialFocus: () => inputRef.current,
+    lockScroll: true,
+  })
 
   const parsedQuery = useMemo(
     () => parseExpense(query, categoryMappings, { categories, now: keyToLocalNoon(today) }),
@@ -292,6 +315,49 @@ export function CommandPalette() {
   }, [actions, query, quickAddAction])
 
   const totalItems = filteredActions.length + expenseHits.length
+  // The expense search runs a render behind the typing (deferred). Until it has caught up, an
+  // empty list only means "not searched yet": never say "No matches" for it.
+  const searched = deferredQuery === query
+  // Never stale: the option the input points at is always one that is on screen.
+  const activeIndex = totalItems === 0 ? -1 : Math.max(0, Math.min(activeIdx, totalItems - 1))
+  const optionId = (idx: number): string => {
+    const action = filteredActions[idx]
+    if (action) return `${listboxId}-action-${action.id}`
+    const expense = expenseHits[idx - filteredActions.length]
+    return `${listboxId}-expense-${expense?.id ?? String(idx)}`
+  }
+  const activeId = activeIndex === -1 ? undefined : optionId(activeIndex)
+
+  // Keep the active option in view inside the list (it scrolls on its own; the page is locked).
+  useEffect(() => {
+    const list = listRef.current
+    const option = activeId === undefined ? null : document.getElementById(activeId)
+    if (!list || !option) return
+    const box = list.getBoundingClientRect()
+    const rect = option.getBoundingClientRect()
+    if (rect.top < box.top) list.scrollTop -= box.top - rect.top
+    else if (rect.bottom > box.bottom) list.scrollTop += rect.bottom - box.bottom
+  }, [activeId])
+
+  const tooLargeText = tooLarge
+    ? `Amount too large: ${fmt(quickAddAmount)} is over the ${fmt(MAX_AMOUNT)} limit`
+    : ''
+  const status = confirming
+    ? `Large amount, ${fmt(quickAddAmount ?? 0)}. Choose it again to add it.`
+    : tooLarge
+      ? tooLargeText
+      : totalItems === 0 && searched
+        ? 'No matches'
+        : ''
+  // Spoken through the palette's own live region (LayerAnnouncer), the one inside the dialog,
+  // and taken back from it as soon as it no longer holds (results arrived, the query changed).
+  useEffect(() => {
+    if (!open || !status) return
+    announce(status)
+    return () => {
+      retract(status)
+    }
+  }, [open, status])
 
   const runAt = (idx: number, at: number) => {
     const action = filteredActions[idx]
@@ -309,190 +375,250 @@ export function CommandPalette() {
     setOpen(false)
   }
 
-  const onKey = (e: React.KeyboardEvent) => {
+  // Enter runs the option the input announces, and only from the input: Tab to Clear then
+  // Enter clears instead of running whatever was highlighted.
+  const onInputKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      setActiveIdx((i) => Math.min(totalItems - 1, i + 1))
+      setActiveIdx(Math.min(totalItems - 1, activeIndex + 1))
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
-      setActiveIdx((i) => Math.max(0, i - 1))
+      setActiveIdx(Math.max(0, activeIndex - 1))
     } else if (e.key === 'Enter') {
       e.preventDefault()
       if (e.repeat || e.nativeEvent.isComposing) return
-      if (totalItems > 0) runAt(activeIdx, e.timeStamp)
-    } else if (e.key === 'Escape') {
-      setOpen(false)
+      if (activeIndex !== -1) runAt(activeIndex, e.timeStamp)
     }
   }
 
-  return (
-    <AnimatePresence>
-      {open && (
-        <>
-          <motion.div
-            className="fixed inset-0 z-[90] bg-black/60 backdrop-blur-sm"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.12 }}
-            onClick={() => setOpen(false)}
-          />
-          <motion.div
-            role="dialog"
-            aria-modal="true"
-            aria-label="Command palette"
-            initial={{ opacity: 0, y: -16, scale: 0.97 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: -8, scale: 0.97 }}
-            transition={{ type: 'spring', stiffness: 420, damping: 36 }}
-            className="fixed inset-x-0 bottom-0 z-[91] mx-auto max-h-[88dvh] overflow-hidden rounded-t-2xl border border-white/[0.08] bg-surface-1 shadow-[var(--shadow-overlay)] md:inset-x-4 md:bottom-auto md:top-[12vh] md:max-w-[560px] md:rounded-2xl"
-            onKeyDown={onKey}
-          >
-            <div className="flex items-center gap-2 border-b border-white/[0.06] px-4 py-2.5">
-              <Search size={14} className="text-[var(--text-tertiary)]" />
-              <input
-                ref={inputRef}
-                value={query}
-                onChange={(e) => {
-                  addedRef.current = false
-                  setFlagged(null)
-                  setQuery(e.target.value)
-                  setActiveIdx(0)
-                }}
-                placeholder="Search actions, expenses, or quick-add..."
-                className="flex-1 bg-transparent text-sm text-white outline-none placeholder:text-[var(--text-tertiary)]"
-              />
-              {query && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setQuery('')
-                    setFlagged(null)
-                    inputRef.current?.focus()
-                  }}
-                  className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-tertiary)] transition hover:bg-surface-2 hover:text-white"
-                  aria-label="Clear command search"
-                >
-                  <X size={14} />
-                </button>
-              )}
-              <kbd className="rounded border border-white/[0.06] bg-surface-2 px-1.5 py-0.5 text-[10px] text-[var(--text-tertiary)]">
-                ESC
-              </kbd>
-            </div>
+  const optionProps = (idx: number) => ({
+    id: optionId(idx),
+    role: 'option' as const,
+    'aria-selected': idx === activeIndex ? true : undefined,
+    tabIndex: -1,
+    // The input keeps focus (and the keyboard stays up on a phone) while an option is pressed.
+    onMouseDown: (e: React.MouseEvent) => {
+      e.preventDefault()
+    },
+    onMouseMove: () => {
+      if (idx !== activeIndex) setActiveIdx(idx)
+    },
+    onClick: (e: React.MouseEvent) => {
+      runAt(idx, e.timeStamp)
+    },
+    // Reached by a screen reader's own cursor only (options are never tab stops).
+    onKeyDown: (e: React.KeyboardEvent) => {
+      if ((e.key === 'Enter' || e.key === ' ') && !e.repeat) {
+        e.preventDefault()
+        runAt(idx, e.timeStamp)
+      }
+    },
+  })
 
-            <div className="max-h-[58dvh] overflow-y-auto py-1 md:max-h-[50vh]">
+  const actionsLabelId = `${listboxId}-actions`
+  const expensesLabelId = `${listboxId}-expenses`
+
+  // Drawn like a sheet (Sheet.tsx): one box at the level all layers share, portaled to the end
+  // of <body> as it opens, so whichever opened last covers the rest (Ctrl+K over the Add sheet,
+  // Ctrl+N over the palette), and closing, it lets a new tap through while it animates out (the
+  // rest of the press that ran an option is swallowed: pressShield.ts).
+  return createPortal(
+    <MotionConfig reducedMotion="user">
+      <AnimatePresence>
+        {open && (
+          <div key="layer" className="fixed inset-0 z-[96] [&:has(>[inert])]:pointer-events-none">
+            <motion.div
+              className="fixed inset-0 bg-black/60 backdrop-blur-sm"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              transition={{ duration: 0.12 }}
+              onClick={close}
+            />
+            <motion.div
+              ref={dialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-label="Command palette"
+              tabIndex={-1}
+              initial={still ? { opacity: 0 } : { opacity: 0, y: -16, scale: 0.97 }}
+              animate={still ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
+              exit={still ? { opacity: 0 } : { opacity: 0, y: -8, scale: 0.97 }}
+              transition={
+                still ? { duration: 0.12 } : { type: 'spring', stiffness: 420, damping: 36 }
+              }
+              className="fixed inset-x-0 bottom-0 mx-auto max-h-[88dvh] overflow-hidden rounded-t-2xl border border-white/[0.08] bg-surface-1 shadow-[var(--shadow-overlay)] motion-reduce:!transform-none md:inset-x-4 md:bottom-auto md:top-[12vh] md:max-w-[560px] md:rounded-2xl"
+            >
+              <div className="field-focus focus-inset flex items-center gap-2 border-b border-white/[0.06] px-4">
+                <Search size={14} className="shrink-0 text-[var(--text-tertiary)]" aria-hidden />
+                <input
+                  ref={inputRef}
+                  role="combobox"
+                  aria-label="Search actions and expenses, or quick add"
+                  aria-expanded={totalItems > 0}
+                  aria-controls={totalItems > 0 ? listboxId : undefined}
+                  aria-activedescendant={activeId}
+                  aria-autocomplete="list"
+                  autoComplete="off"
+                  value={query}
+                  onChange={(e) => {
+                    addedRef.current = false
+                    setFlagged(null)
+                    setQuery(e.target.value)
+                    setActiveIdx(0)
+                  }}
+                  onKeyDown={onInputKeyDown}
+                  placeholder="Search actions, expenses, or quick-add..."
+                  className="field-control h-11 min-w-0 flex-1 bg-transparent text-sm text-white placeholder:text-[var(--text-tertiary)]"
+                />
+                {query && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setQuery('')
+                      setFlagged(null)
+                      setActiveIdx(0)
+                      inputRef.current?.focus()
+                    }}
+                    className="tap-target inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--text-tertiary)] transition hover:bg-surface-2 hover:text-white"
+                    aria-label="Clear command search"
+                  >
+                    <X size={14} aria-hidden />
+                  </button>
+                )}
+                <kbd
+                  aria-hidden
+                  className="shrink-0 rounded border border-white/[0.06] bg-surface-2 px-1.5 py-0.5 text-[10px] text-[var(--text-tertiary)]"
+                >
+                  ESC
+                </kbd>
+              </div>
+
               {tooLarge && (
                 <div className="flex items-center gap-3 px-4 py-2.5 text-sm text-warning">
-                  <AlertTriangle size={15} />
-                  <span className="flex-1">
-                    Amount too large: {fmt(quickAddAmount)} is over the {fmt(MAX_AMOUNT)} limit
-                  </span>
+                  <AlertTriangle size={15} aria-hidden />
+                  <span className="flex-1">{tooLargeText}</span>
                 </div>
               )}
 
-              {filteredActions.length > 0 && (
-                <div>
-                  <div className="px-4 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--text-tertiary)]">
-                    Actions
-                  </div>
-                  {filteredActions.map((a, i) => {
-                    const Icon = a.icon
-                    const active = i === activeIdx
-                    return (
-                      <button
-                        type="button"
-                        key={a.id}
-                        onMouseEnter={() => setActiveIdx(i)}
-                        onClick={(e) => runAt(i, e.timeStamp)}
-                        className={clsx(
-                          'flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition',
-                          a.warning
-                            ? 'bg-warning/10 text-warning'
-                            : active
-                              ? 'bg-surface-2 text-white'
-                              : 'text-[var(--text-secondary)]',
-                        )}
+              {totalItems > 0 && (
+                <div
+                  ref={listRef}
+                  id={listboxId}
+                  role="listbox"
+                  aria-label="Results"
+                  className="max-h-[58dvh] overflow-y-auto py-1 md:max-h-[50vh]"
+                >
+                  {filteredActions.length > 0 && (
+                    <div role="group" aria-labelledby={actionsLabelId}>
+                      <div
+                        id={actionsLabelId}
+                        aria-hidden
+                        className="px-4 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--text-tertiary)]"
                       >
-                        <Icon
-                          size={15}
-                          className={a.warning ? 'text-warning' : active ? 'text-accent' : ''}
-                        />
-                        <span className="flex-1">{a.label}</span>
-                        {a.hint && (
-                          <kbd className="rounded border border-white/[0.06] bg-surface-3 px-1.5 py-0.5 text-[10px] text-[var(--text-tertiary)]">
-                            {a.hint}
-                          </kbd>
-                        )}
-                      </button>
-                    )
-                  })}
-                </div>
-              )}
-
-              {expenseHits.length > 0 && (
-                <div className="mt-1">
-                  <div className="px-4 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--text-tertiary)]">
-                    Expenses
-                  </div>
-                  {expenseHits.map((e, i) => {
-                    const idx = filteredActions.length + i
-                    const active = idx === activeIdx
-                    return (
-                      <button
-                        type="button"
-                        key={e.id}
-                        onMouseEnter={() => setActiveIdx(idx)}
-                        onClick={(ev) => runAt(idx, ev.timeStamp)}
-                        className={clsx(
-                          'flex w-full items-center gap-3 px-4 py-2.5 text-left text-sm transition',
-                          active ? 'bg-surface-2' : '',
-                        )}
-                      >
-                        <Sparkles size={14} className="text-[var(--text-tertiary)]" />
-                        <div className="min-w-0 flex-1">
-                          <div className="truncate text-white">{e.itemName}</div>
-                          <div className="text-[11px] text-[var(--text-tertiary)]">
-                            {e.category} / {formatStoredDate(e.date, 'MMM d') ?? 'Unknown date'}
+                        Actions
+                      </div>
+                      {filteredActions.map((a, i) => {
+                        const Icon = a.icon
+                        const active = i === activeIndex
+                        return (
+                          <div
+                            key={a.id}
+                            {...optionProps(i)}
+                            className={clsx(
+                              OPTION,
+                              a.warning
+                                ? 'bg-warning/10 text-warning'
+                                : active
+                                  ? 'bg-surface-2 text-white'
+                                  : 'text-[var(--text-secondary)]',
+                            )}
+                          >
+                            <Icon
+                              size={15}
+                              className={a.warning ? 'text-warning' : active ? 'text-accent' : ''}
+                            />
+                            <span className="flex-1">{a.label}</span>
+                            {a.hint && (
+                              <kbd className="rounded border border-white/[0.06] bg-surface-3 px-1.5 py-0.5 text-[10px] text-[var(--text-tertiary)]">
+                                {a.hint}
+                              </kbd>
+                            )}
                           </div>
-                        </div>
-                        <span className="font-mono text-[13px] tabular-nums text-white">
-                          {fmt(e.amount)}
-                        </span>
-                      </button>
-                    )
-                  })}
+                        )
+                      })}
+                    </div>
+                  )}
+
+                  {expenseHits.length > 0 && (
+                    <div role="group" aria-labelledby={expensesLabelId} className="mt-1">
+                      <div
+                        id={expensesLabelId}
+                        aria-hidden
+                        className="px-4 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--text-tertiary)]"
+                      >
+                        Expenses
+                      </div>
+                      {expenseHits.map((e, i) => {
+                        const idx = filteredActions.length + i
+                        return (
+                          <div
+                            key={e.id}
+                            {...optionProps(idx)}
+                            className={clsx(OPTION, idx === activeIndex && 'bg-surface-2')}
+                          >
+                            <Sparkles size={14} className="text-[var(--text-tertiary)]" />
+                            <div className="min-w-0 flex-1">
+                              <div className="truncate text-white">{e.itemName}</div>
+                              <div className="text-[11px] text-[var(--text-tertiary)]">
+                                {e.category} / {formatStoredDate(e.date, 'MMM d') ?? 'Unknown date'}
+                              </div>
+                            </div>
+                            <span className="font-mono text-[13px] tabular-nums text-white">
+                              {fmt(e.amount)}
+                            </span>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
               )}
 
+              {/* Held in place but hidden while the search catches up: no flash of "No matches",
+                  and no jump in the palette's height. */}
               {totalItems === 0 && !tooLarge && (
-                <div className="px-4 py-8 text-center text-sm text-[var(--text-tertiary)]">
+                <div
+                  className={clsx(
+                    'px-4 py-8 text-center text-sm text-[var(--text-tertiary)]',
+                    !searched && 'invisible',
+                  )}
+                >
                   No matches - try an action or expense like{' '}
                   <span className="text-white">coffee 4.50</span>
                 </div>
               )}
-            </div>
 
-            <span role="status" className="sr-only">
-              {confirming && quickAddAmount !== null
-                ? `Large amount, ${fmt(quickAddAmount)}. Choose it again to add it.`
-                : ''}
-            </span>
-
-            <div className="flex items-center justify-between border-t border-white/[0.06] px-4 py-2 text-[11px] text-[var(--text-tertiary)]">
-              <span className="inline-flex items-center gap-1.5">
-                <Plus size={11} /> Type to add fast
-              </span>
-              <span className="inline-flex items-center gap-2">
-                <kbd className="rounded border border-white/[0.06] bg-surface-2 px-1.5 py-0.5 text-[10px]">
-                  Enter
-                </kbd>
-                run
-              </span>
-            </div>
-          </motion.div>
-        </>
-      )}
-    </AnimatePresence>
+              <div
+                aria-hidden
+                className="flex items-center justify-between border-t border-white/[0.06] px-4 py-2 text-[11px] text-[var(--text-tertiary)]"
+              >
+                <span className="inline-flex items-center gap-1.5">
+                  <Plus size={11} /> Type to add fast
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <kbd className="rounded border border-white/[0.06] bg-surface-2 px-1.5 py-0.5 text-[10px]">
+                    Enter
+                  </kbd>
+                  run
+                </span>
+              </div>
+              <LayerAnnouncer />
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </MotionConfig>,
+    document.body,
   )
 }

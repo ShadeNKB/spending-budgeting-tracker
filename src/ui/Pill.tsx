@@ -11,32 +11,45 @@ const tones: Record<Tone, string> = {
   info: 'bg-blue-500/10 text-blue-400 border-blue-500/25',
 }
 
+const base =
+  'inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium leading-[1.3]'
+
+/**
+ * A small status label. Given `onClick` it becomes a button with a 44 px touch hit area; its
+ * `aria-label` (e.g. "Remove date filter Oct 3") names the action. A plain pill takes no
+ * `aria-label`: naming a generic span is prohibited ARIA, so its text is what is read.
+ */
 export function Pill({
   children,
   tone = 'default',
   className,
   onClick,
   title,
+  'aria-label': ariaLabel,
 }: {
   children: React.ReactNode
   tone?: Tone
   className?: string
   onClick?: () => void
   title?: string
+  'aria-label'?: string
 }) {
-  const Tag = onClick ? 'button' : ('span' as const)
+  if (onClick) {
+    return (
+      <button
+        type="button"
+        title={title}
+        aria-label={ariaLabel}
+        onClick={onClick}
+        className={clsx(base, 'tap-target transition hover:brightness-125', tones[tone], className)}
+      >
+        {children}
+      </button>
+    )
+  }
   return (
-    <Tag
-      title={title}
-      onClick={onClick}
-      className={clsx(
-        'inline-flex items-center gap-1 whitespace-nowrap rounded-full border px-2 py-0.5 text-[11px] font-medium leading-[1.3]',
-        onClick && 'transition hover:brightness-125',
-        tones[tone],
-        className,
-      )}
-    >
+    <span title={title} className={clsx(base, tones[tone], className)}>
       {children}
-    </Tag>
+    </span>
   )
 }

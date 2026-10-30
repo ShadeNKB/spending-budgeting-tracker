@@ -21,7 +21,7 @@ export function VirtualLedgerList({
 }: {
   groups: readonly LedgerGroup[]
   onEdit: (e: Expense) => void
-  onDelete: (id: string) => void
+  onDelete: (id: string, at: number) => void
 }) {
   const fmt = useFormatMoney()
   const parentRef = useRef<HTMLDivElement>(null)
@@ -65,9 +65,9 @@ export function VirtualLedgerList({
             >
               {item.kind === 'header' ? (
                 <div className="flex items-center justify-between gap-2 border-b border-white/[0.05] bg-surface-2/85 px-4 py-2.5">
-                  <span className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
+                  <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
                     {item.label}
-                  </span>
+                  </h2>
                   <span className="font-mono text-[11px] tabular-nums text-[var(--text-secondary)]">
                     {fmt(item.total)}
                   </span>

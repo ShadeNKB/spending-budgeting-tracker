@@ -71,11 +71,15 @@ async function newestRows(page: Page, total: number, count: number): Promise<Sto
 /** How the app stores a calendar day: local noon in Singapore, as an ISO instant. */
 const singaporeNoon = (day: string) => new Date(`${day}T12:00:00+08:00`).toISOString()
 
+/** A toast on screen (screen readers hear it from a live region of their own). */
+const toastText = (page: Page, text: string) =>
+  page.getByRole('region', { name: 'Notifications' }).getByText(text, { exact: true })
+
 async function typeAndAdd(page: Page, phrase: string, toast: string) {
   await quickAdd(page).fill(phrase)
   await quickAdd(page).press('Enter')
   await expect(quickAdd(page)).toHaveValue('')
-  await expect(page.getByText(toast, { exact: true })).toBeVisible()
+  await expect(toastText(page, toast)).toBeVisible()
 }
 
 interface Case {
@@ -156,9 +160,7 @@ test.describe('Quick add on a Singapore phone and laptop', () => {
     await quickAdd(page).fill('nye dinner 31 dec 85')
     await expect(quickAddFrame(page).getByText('Dec 31, 2026', { exact: true })).toBeVisible()
     await quickAdd(page).press('Enter')
-    await expect(
-      page.getByText('Added "nye dinner" · S$85.00 · Dec 31, 2026', { exact: true }),
-    ).toBeVisible()
+    await expect(toastText(page, 'Added "nye dinner" · S$85.00 · Dec 31, 2026')).toBeVisible()
 
     const [row] = await newestRows(page, HIGH_BAR.length + 1, 1)
     expect(row).toMatchObject({
@@ -207,7 +209,7 @@ test.describe('Quick add on a Singapore phone and laptop', () => {
 
     await input.fill('groceries 45')
     await input.press('Enter')
-    await expect(page.getByText('Added "groceries" · S$45.00', { exact: true })).toBeVisible()
+    await expect(toastText(page, 'Added "groceries" · S$45.00')).toBeVisible()
 
     // A quick double Enter: the second press is the tail of the first, not a decision.
     await input.fill('coffee 4500')
@@ -235,7 +237,7 @@ test.describe('Quick add on a Singapore phone and laptop', () => {
 
     // A separate press confirms.
     await input.press('Enter')
-    await expect(page.getByText('Added "coffee" · S$4,500.00', { exact: true })).toBeVisible()
+    await expect(toastText(page, 'Added "coffee" · S$4,500.00')).toBeVisible()
 
     await input.fill('coffee 99999999')
     await expect(frame.getByText('Amount too large', { exact: true })).toBeVisible()
@@ -256,7 +258,7 @@ test.describe('Command palette quick add', () => {
   test.use({ timezoneId: 'Asia/Singapore', locale: 'en-US' })
 
   async function openPalette(page: Page): Promise<Locator> {
-    await page.getByRole('button', { name: 'Open command palette' }).click()
+    await page.getByRole('button', { name: 'Search', exact: true }).click()
     const palette = page.getByRole('dialog', { name: 'Command palette' })
     await expect(palette).toBeVisible()
     return palette
@@ -268,9 +270,9 @@ test.describe('Command palette quick add', () => {
     const palette = await openPalette(page)
 
     await palette.getByPlaceholder('Search actions, expenses, or quick-add...').fill('kopi 2.40')
-    await expect(palette.getByRole('button', { name: /^Add "kopi" · S\$2\.40/ })).toBeVisible()
+    await expect(palette.getByRole('option', { name: /^Add "kopi" · S\$2\.40/ })).toBeVisible()
     await page.keyboard.press('Enter')
-    await expect(page.getByText('Added "kopi" · S$2.40', { exact: true })).toBeVisible()
+    await expect(toastText(page, 'Added "kopi" · S$2.40')).toBeVisible()
     await expect(palette).toBeHidden()
 
     const [row] = await newestRows(page, MEDIAN_5_P95_20.length + 1, 1)
@@ -285,7 +287,7 @@ test.describe('Command palette quick add', () => {
 
     await search.fill('tv 4500 yesterday')
     await page.keyboard.press('Enter')
-    const confirm = palette.getByRole('button', {
+    const confirm = palette.getByRole('option', {
       name: /^Confirm large amount: add "tv" · S\$4,500\.00 · Oct 17/,
     })
     await expect(confirm).toBeVisible()
@@ -293,7 +295,7 @@ test.describe('Command palette quick add', () => {
     await expect(palette).toBeVisible()
     await page.waitForTimeout(CONFIRM_WAIT_MS)
     await page.keyboard.press('Enter')
-    await expect(page.getByText('Added "tv" · S$4,500.00 · Oct 17', { exact: true })).toBeVisible()
+    await expect(toastText(page, 'Added "tv" · S$4,500.00 · Oct 17')).toBeVisible()
     await expect(palette).toBeHidden()
 
     const [row] = await newestRows(page, MEDIAN_5_P95_20.length + 1, 1)

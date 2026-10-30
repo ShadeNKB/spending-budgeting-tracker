@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useId } from 'react'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
+import { seriesSummary, useChartScrub } from '../../hooks/useChartScrub'
 
 const VB_W = 400
 const AXIS_LABEL = 'text-[10px] text-[var(--text-tertiary)]'
@@ -32,23 +33,39 @@ export function SparklineAxis({
   )
 }
 
+/**
+ * A trend line as one slider (`useChartScrub`): hover, press and drag, or focus and use the
+ * arrows to read a point. `label` names it ("Daily spending, last 30 days"); its description
+ * gives the total and the peak, so a screen reader hears each once.
+ */
 export function Sparkline({
   data,
   labels,
+  label,
   height = 36,
   stroke = 'var(--accent)',
   fill = 'rgba(34,211,238,0.14)',
   className,
+  peakAs,
 }: {
   data: readonly number[]
-  labels?: readonly string[]
+  /** One per point ("Oct 3"): what the slider reads and the tooltip shows. */
+  labels: readonly string[]
+  /** The chart's accessible name. */
+  label: string
   height?: number
   stroke?: string
   fill?: string
   className?: string
+  /**
+   * How the description names the peak when `labels` are too short for a sentence: the year
+   * view's months, "Peak S$512.86 in August" (as the monthly bars say it), not "on Aug".
+   */
+  peakAs?: { readonly labels: readonly string[]; readonly preposition: 'on' | 'in' }
 }) {
-  const [tooltip, setTooltip] = useState<{ i: number; x: number; y: number } | null>(null)
   const fmt = useFormatMoney()
+  const { active, value, props } = useChartScrub({ count: data.length, scale: 'point' })
+  const summaryId = useId()
 
   if (!data.length) return null
   const max = Math.max(...data, 1)
@@ -64,96 +81,80 @@ export function Sparkline({
   const area = `${path} L${VB_W},${height} L0,${height} Z`
 
   const lastPoint = points[points.length - 1]
-  const hoveredPoint = tooltip !== null ? points[tooltip.i] : undefined
-  const hoveredVal = tooltip !== null ? data[tooltip.i] : undefined
-  const hoveredLabel = tooltip !== null && labels ? labels[tooltip.i] : null
-  const total = data.reduce((sum, value) => sum + value, 0)
-  // The drawing scales to at least 1; the words use the data itself, so an empty period never
-  // reads as having a peak.
-  const peak = Math.max(...data)
-  const peakLabel = labels?.[data.indexOf(peak)]
-  const chartLabel =
-    peak > 0
-      ? `Trend chart. Total ${fmt(total)}. Peak ${fmt(peak)}${peakLabel ? ` on ${peakLabel}` : ''}.`
-      : 'Trend chart. No spending in this period.'
+  const activePoint = active !== null ? points[active] : undefined
+  const activeValue = active !== null ? data[active] : undefined
+  const activeLabel = active !== null ? labels[active] : undefined
+  // Left edge on the first point, right edge on the last, centred between: never off the card.
+  const tipPct = activePoint ? (activePoint[0] / VB_W) * 100 : 0
 
   return (
-    <div className={`relative w-full ${className ?? ''}`} style={{ height }}>
-      <svg
-        role="img"
-        aria-label={chartLabel}
-        viewBox={`0 0 ${VB_W} ${height}`}
-        preserveAspectRatio="none"
-        className="absolute inset-0 w-full overflow-visible"
+    <>
+      <div
+        {...props}
+        aria-label={label}
+        aria-describedby={summaryId}
+        aria-valuetext={`${labels[value] ?? ''} · ${fmt(data[value] ?? 0)}`}
+        data-chart="trend"
+        className={`relative w-full cursor-crosshair touch-pan-y select-none rounded-md ${className ?? ''}`}
         style={{ height }}
       >
-        <path d={area} fill={fill} />
-        <path
-          d={path}
-          fill="none"
-          stroke={stroke}
-          strokeWidth={1.8}
-          strokeLinejoin="round"
-          strokeLinecap="round"
-        />
-        {lastPoint && <circle cx={lastPoint[0]} cy={lastPoint[1]} r={3} fill={stroke} />}
-        {/* Hover indicator */}
-        {hoveredPoint && (
-          <>
-            <line
-              x1={hoveredPoint[0]}
-              y1={0}
-              x2={hoveredPoint[0]}
-              y2={height}
-              stroke="var(--chart-axis)"
-              strokeWidth={1}
-              strokeDasharray="3 3"
-            />
-            <circle
-              cx={hoveredPoint[0]}
-              cy={hoveredPoint[1]}
-              r={4}
-              fill={stroke}
-              stroke="var(--chart-axis-strong)"
-              strokeWidth={1.5}
-            />
-          </>
-        )}
-        {/* Invisible hover targets for each data point */}
-        {points.map(([x, y], i) => {
-          const hitW = step
-          const hitX = Math.max(0, x - hitW / 2)
-          return (
-            <rect
-              key={i}
-              x={hitX}
-              y={0}
-              width={hitW}
-              height={height}
-              fill="transparent"
-              onMouseEnter={() => setTooltip({ i, x, y })}
-              onMouseLeave={() => setTooltip(null)}
-              onClick={() => setTooltip((current) => (current?.i === i ? null : { i, x, y }))}
-              style={{ cursor: 'crosshair' }}
-            />
-          )
-        })}
-      </svg>
-      <span className="sr-only">{chartLabel}</span>
-      {/* Tooltip bubble */}
-      {tooltip !== null && hoveredVal !== undefined && (
-        <div
-          className="pointer-events-none absolute bottom-full mb-1 -translate-x-1/2 whitespace-nowrap rounded-md border border-white/10 bg-surface-3 px-2 py-1 shadow-lg"
-          style={{ left: `${(tooltip.x / VB_W) * 100}%` }}
+        <svg
+          aria-hidden="true"
+          viewBox={`0 0 ${VB_W} ${height}`}
+          preserveAspectRatio="none"
+          className="pointer-events-none absolute inset-0 w-full overflow-visible"
+          style={{ height }}
         >
-          {hoveredLabel && (
-            <div className="text-[10px] text-[var(--text-tertiary)]">{hoveredLabel}</div>
+          <path d={area} fill={fill} />
+          <path
+            d={path}
+            fill="none"
+            stroke={stroke}
+            strokeWidth={1.8}
+            strokeLinejoin="round"
+            strokeLinecap="round"
+          />
+          {lastPoint && <circle cx={lastPoint[0]} cy={lastPoint[1]} r={3} fill={stroke} />}
+          {activePoint && (
+            <>
+              <line
+                x1={activePoint[0]}
+                y1={0}
+                x2={activePoint[0]}
+                y2={height}
+                stroke="var(--chart-axis)"
+                strokeWidth={1}
+                strokeDasharray="3 3"
+              />
+              <circle
+                cx={activePoint[0]}
+                cy={activePoint[1]}
+                r={4}
+                fill={stroke}
+                stroke="var(--chart-axis-strong)"
+                strokeWidth={1.5}
+              />
+            </>
           )}
-          <div className="font-mono text-[11px] font-semibold tabular-nums text-white">
-            {fmt(hoveredVal)}
+        </svg>
+        {activePoint && activeValue !== undefined && (
+          <div
+            aria-hidden="true"
+            className="pointer-events-none absolute bottom-full mb-1 whitespace-nowrap rounded-md border border-white/10 bg-surface-3 px-2 py-1 shadow-lg"
+            style={{ left: `${String(tipPct)}%`, transform: `translateX(-${String(tipPct)}%)` }}
+          >
+            {activeLabel && (
+              <div className="text-[10px] text-[var(--text-tertiary)]">{activeLabel}</div>
+            )}
+            <div className="font-mono text-[11px] font-semibold tabular-nums text-white">
+              {fmt(activeValue)}
+            </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+      <p id={summaryId} className="sr-only">
+        {seriesSummary(data, (i) => (peakAs?.labels ?? labels)[i] ?? '', fmt, peakAs?.preposition)}
+      </p>
+    </>
   )
 }

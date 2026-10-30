@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useId, useMemo } from 'react'
 import {
   TrendingUp,
   TrendingDown,
@@ -22,6 +22,7 @@ import { EmptyState } from '../../ui/EmptyState'
 import { Sparkline, SparklineAxis } from '../pulse/Sparkline'
 import { ForecastChart } from './ForecastChart'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
+import { seriesSummary, useChartScrub } from '../../hooks/useChartScrub'
 import { useToday } from '../../hooks/useToday'
 import { colorFromString } from '../../lib/analytics'
 import { useUIStore } from '../../stores/useUIStore'
@@ -70,14 +71,22 @@ export function InsightsScreen() {
   }, [index, today])
   const forecastTotal = forecast.reduce((s, v) => s + v, 0)
   const weekMax = Math.max(...week.dailyThisWeek.map((x) => x.total), 1)
-  const [hoveredDay, setHoveredDay] = useState<number | null>(null)
+  const weekDays = week.dailyThisWeek
+  const weekScrub = useChartScrub({ count: weekDays.length })
+  const weekSummaryId = useId()
+  const readDay = (i: number) => {
+    const d = weekDays[i]
+    return d ? `${d.label}, ${shortDate(d.date)}` : ''
+  }
   const hasEnoughSignal = expenses.length >= 3
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-end justify-between">
         <div>
-          <h1 className="text-[22px] font-semibold tracking-tight text-white">Insights</h1>
+          <h1 tabIndex={-1} className="text-[22px] font-semibold tracking-tight text-white">
+            Insights
+          </h1>
           <p className="text-[13px] text-[var(--text-tertiary)]">
             Patterns, forecasts & spending trends.
           </p>
@@ -145,45 +154,39 @@ export function InsightsScreen() {
               {/* Same rule as the Pulse pill: within ±0.5% it reads "≈ same as …" */}
               <ChangePill change={week.changePct} against="previous 7 days" digits={0} />
             </div>
-            {/* The top padding holds a tall bar's amount, so it never covers the heading. */}
-            <div className="mb-3 flex items-end gap-1.5 pt-6">
-              {week.dailyThisWeek.map((d, i) => {
+            {/* One slider for the seven days. The top padding holds a tall bar's amount, so it
+                never covers the heading. */}
+            <div
+              {...weekScrub.props}
+              aria-label="Last 7 days by day"
+              aria-describedby={weekSummaryId}
+              aria-valuetext={`${readDay(weekScrub.value)} · ${fmt(weekDays[weekScrub.value]?.total ?? 0)}`}
+              data-chart="week"
+              className="mb-3 flex cursor-default touch-pan-y select-none items-end gap-1.5 rounded-md pt-6"
+            >
+              {weekDays.map((d, i) => {
                 const barPx = Math.round(
                   d.total > 0 ? Math.max(3, (d.total / weekMax) * WEEK_BAR_H) : 0,
                 )
                 const isToday = d.date === today
-                const isHovered = hoveredDay === i
+                const isActive = weekScrub.active === i
                 return (
-                  <div
-                    key={d.date}
-                    className="flex flex-1 cursor-default flex-col items-center gap-1"
-                    // Hover reads a day with a mouse; a tap toggles it. A finger also fires
-                    // pointerenter, which would open the amount and let the tap close it again.
-                    onPointerEnter={(e) => {
-                      if (e.pointerType === 'mouse') setHoveredDay(i)
-                    }}
-                    onPointerLeave={(e) => {
-                      if (e.pointerType === 'mouse') setHoveredDay(null)
-                    }}
-                    onClick={() => {
-                      setHoveredDay((h) => (h === i ? null : i))
-                    }}
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`${d.label}, ${shortDate(d.date)}: ${fmt(d.total)}`}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter' || e.key === ' ') {
-                        e.preventDefault()
-                        setHoveredDay((h) => (h === i ? null : i))
-                      }
-                    }}
-                  >
+                  <div key={d.date} className="flex flex-1 flex-col items-center gap-1">
                     <div
                       className="relative flex w-full flex-col justify-end"
                       style={{ height: WEEK_BAR_H }}
                     >
-                      {isHovered && (
-                        <span className="pointer-events-none absolute -top-6 left-1/2 z-10 -translate-x-1/2 whitespace-nowrap rounded border border-white/10 bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-white shadow">
+                      {isActive && (
+                        <span
+                          aria-hidden="true"
+                          className={`pointer-events-none absolute -top-6 z-10 whitespace-nowrap rounded border border-white/10 bg-surface-3 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-white shadow ${
+                            i === 0
+                              ? 'left-0'
+                              : i === weekDays.length - 1
+                                ? 'right-0'
+                                : 'left-1/2 -translate-x-1/2'
+                          }`}
+                        >
                           {fmt(d.total)}
                         </span>
                       )}
@@ -191,7 +194,7 @@ export function InsightsScreen() {
                         className={`w-full rounded-t transition-all duration-300 ${
                           isToday
                             ? 'bg-accent shadow-[0_0_8px_-2px_rgba(34,211,238,0.5)]'
-                            : isHovered
+                            : isActive
                               ? 'bg-[var(--chart-bar-strong)]'
                               : 'bg-[var(--chart-bar)]'
                         }`}
@@ -199,6 +202,7 @@ export function InsightsScreen() {
                       />
                     </div>
                     <span
+                      aria-hidden="true"
                       className={`text-[9px] leading-none ${isToday ? 'font-semibold text-accent' : 'text-[var(--text-tertiary)]'}`}
                     >
                       {d.label}
@@ -207,6 +211,13 @@ export function InsightsScreen() {
                 )
               })}
             </div>
+            <p id={weekSummaryId} className="sr-only">
+              {seriesSummary(
+                weekDays.map((d) => d.total),
+                readDay,
+                fmt,
+              )}
+            </p>
             <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1 text-[12px]">
               <div>
                 <span className="text-[var(--text-tertiary)]">Last 7 days </span>
@@ -263,7 +274,12 @@ export function InsightsScreen() {
               </div>
               <span className="text-[11px] text-[var(--text-tertiary)]">Last 30 days</span>
             </div>
-            <Sparkline data={trendValues} labels={trendLabels} height={72} />
+            <Sparkline
+              data={trendValues}
+              labels={trendLabels}
+              label="Daily spending, last 30 days"
+              height={72}
+            />
             <SparklineAxis labels={trendLabels} lastLabel="Today" highlightLast />
           </Card>
 
@@ -310,7 +326,13 @@ export function InsightsScreen() {
                         <div className="font-mono text-[13px] tabular-nums text-white">
                           {fmt(r.avgAmount)}
                         </div>
-                        <div className="ml-auto mt-0.5 h-1 w-16 overflow-hidden rounded-full bg-surface-2">
+                        <span className="sr-only">
+                          Confidence {String(Math.round(r.confidence * 100))}%
+                        </span>
+                        <div
+                          aria-hidden="true"
+                          className="ml-auto mt-0.5 h-1 w-16 overflow-hidden rounded-full bg-surface-2"
+                        >
                           <div
                             className="h-full rounded-full bg-accent transition-[width] duration-500"
                             style={{ width: `${String(Math.round(r.confidence * 100))}%` }}

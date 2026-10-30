@@ -15,8 +15,9 @@ const shouldIgnore = (target: EventTarget | null, modPressed: boolean, key: stri
 /**
  * Global hotkey hook.
  *
- * Keys are lowercased. Use "mod+" prefix for Meta (macOS) or Ctrl (Win/Linux).
- * Examples: { "mod+k": fn, "n": fn, "escape": fn }
+ * Keys are lowercased. Use "mod+" prefix for Meta (macOS) or Ctrl (Win/Linux), and "alt+"
+ * after it for Alt. Ctrl+Alt (AltGr on Windows, which types characters) is "mod+alt+".
+ * Examples: { "mod+k": fn, "alt+n": fn, "n": fn, "escape": fn }
  *
  * The listener is bound once per `enabled` and always calls the handlers from the latest
  * render, so callers can pass a fresh object literal every render.
@@ -32,11 +33,12 @@ export function useHotkeys(binds: Bind, enabled: boolean = true): void {
     const handler = (e: KeyboardEvent) => {
       const mod = e.metaKey || e.ctrlKey
       const key = e.key.toLowerCase()
-      const id = `${mod ? 'mod+' : ''}${key}`
+      const id = `${mod ? 'mod+' : ''}${e.altKey ? 'alt+' : ''}${key}`
       const current = bindsRef.current
       const fn = Object.hasOwn(current, id) ? current[id] : undefined
       if (!fn) return
-      if (shouldIgnore(e.target, mod, key)) return
+      // Alt types nothing on Windows or Linux: like Ctrl, it may act from a text field.
+      if (shouldIgnore(e.target, mod || e.altKey, key)) return
       e.preventDefault()
       fn(e)
     }

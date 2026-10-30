@@ -1,5 +1,64 @@
 # Changelog
 
+## 0.9.3 — 2026-10-25
+
+Track 6 of the overhaul: accessibility. SpendTrack now works fully by keyboard and with a screen reader, on a phone and on a laptop, in both themes, to WCAG 2.2 AA on every screen and every open sheet. A gate checks each of them on every change. Focus is always visible, never lost and never hidden, every control is big enough for a thumb, and a double tap or a double click can no longer press what a closing sheet uncovers.
+
+### Fixed
+
+- **Typing into a sheet starts at once.** Ctrl+N (Alt+N in a browser tab) opens Add expense with the cursor in What. Every key lands, and Enter adds the entry. Sheets used to put focus on Close as they opened, so the first keys were lost and Enter closed the form. Any re-render of the app (going offline, the undo window ending, a sync) did it again while you typed. (F-007, F-030)
+- **Focus comes back to where you were.** Closing a sheet, the palette or the calendar (Escape, Close, Cancel, Save, a tap on the backdrop) puts focus back on the control that opened it: the + button, Settings, Search, the ledger row. When that control is gone (its row was deleted, or moved to another day), focus goes to the row that took its place, else to the screen's heading. It used to fall to the top of the page. (F-007, F-038)
+- **Escape closes only what is on top.** With the calendar open in the Add sheet, Escape closes the calendar and keeps what you typed, and a second Escape closes the sheet. Escape in a "Delete …?" question takes back the question, not the Edit sheet it sits in, and keeps your changes. A held Escape closes one thing. Tab and Shift+Tab stay inside the open sheet, palette or calendar. (F-008, F-035)
+- **The calendar works by keyboard and with a screen reader.** It opens with focus on the entry's day, also when Today, Yesterday, 2d ago or 3d ago chose it. Arrow keys move by day and week, Home and End go to the ends of the week, Page Up and Page Down by a month, Shift+Page Up and Shift+Page Down by a year, and Enter or Space picks. Every day is named in full ("Saturday, October 3, 2026"), and today and the chosen day are marked. Days are 44 px (40 px on a 320 px screen), and the calendar never runs off the screen. Every step is a calendar day, so time zones and daylight saving never skip or repeat one. (F-008, F-032)
+- **You can always see where focus is.** A solid 2 px ring in the focus colour, at 3:1 or more on every surface in both themes, and kept in Windows contrast themes. It never looks like a chosen chip or day, and it is never hidden under the header or the tab bar. (F-009, F-037)
+- **Every control is big enough for a thumb.** On a touch screen every button, chip, preset, tab and switch has a 44 × 44 px target without changing its look, and neighbouring targets never overlap. A text field takes a tap anywhere in its box. (F-032)
+- **Ledger rows: one stop, one Delete.** Each row is one Tab stop and opens its editor on Enter. The Delete key deletes the focused row (the toast's Undo and Ctrl+Z bring it back); Backspace never does, on any keyboard, because it is the key a reflex corrects typing with. Each row has one Delete button, named with the item, amount and day ("Delete kopi, S$1.80, Oct 17"), so a daily kopi is no longer several identical buttons. The invisible swipe Delete is no longer a hidden tab stop that a second Enter could fire on the next row. (F-033, G-002)
+- **The activity heatmap is one stop.** It was 92 Tab stops. Arrow keys move between days and weeks, Enter opens a day with spending in the ledger, and a summary tells a screen reader how many days had spending and which was the busiest. Days without spending are no longer buttons that do nothing, and every day is a 24 px target. (F-034)
+- **The command palette is a real search box.** A screen reader hears the highlighted option as you arrow through the list, and Enter runs exactly that option. The highlighted option has a bar in the focus colour down its edge, clear in both themes; it was a tint you could barely see, and the amber large-amount option looked highlighted when it was not. Focus can no longer slip behind the palette. (F-035)
+- **Forms say what is wrong.** An invalid Add or Edit puts focus on the field to fix, marked and described by its error ("Enter a valid amount"). The Edit sheet no longer shows it as a toast. Every field and select in both sheets has a name. (F-036)
+- **Questions keep focus.** "Delete expense", "Delete all expenses", a category's delete and the import question put focus on Cancel as they appear, are read out with their question, and give focus back when answered. Delete runs once, however fast you tap. (F-038)
+- **Nothing is said by colour alone.** Chosen chips, presets, ranges and tabs say so to a screen reader and stay visible in contrast themes. Budget rows say "Over budget", "On pace to go over budget", "Under budget" or "On track". (F-039)
+- **Toasts are announced**, once each, also while a sheet is open ("Added "kopi" · S$4.50. Undo available."). Errors are announced at once. (F-040)
+- **Charts can be read by keyboard.** Each chart is one stop. Arrow keys step through its days or months and read each value ("Oct 3 · S$12.40"), and its description gives the total and the peak. A clicked month or week bar no longer stays selected. (F-041)
+- **Reduce Motion is honoured everywhere.** Sheets, the palette, toasts and the ledger's swipe no longer slide when the system asks for less motion: they fade, or snap. (F-090)
+- **The header no longer grows while you type in its quick add** on a laptop: the preview opens over the page. (F-089)
+- **Readable everywhere.** Future months in the year view, the confirm buttons and the chosen Shopping chip meet contrast in both themes. Switches are named and work with the arrow keys, and "Skip to content" takes the keyboard past the header. (F-091, F-092)
+- **A double tap or a double click never presses what a change uncovers.** The second press on Save, Add, Cancel, Close, a backdrop, a palette option, a calendar day, a ledger row's trash or a button that asks a question is ignored. It used to delete the row whose trash sat under Save, open Settings or Insights through the tab bar, file an expense under the category chip under a picked day, or undo the entry just added through the toast's Undo. A press counts by when you made it, not by when a busy phone got round to it, and a press made before the screen caught up is ignored too. A slow double click no longer leaves the row under it following the mouse.
+- **A toast that times out under your finger no longer turns the tap into a delete.** For a moment after a toast leaves, a row's trash, its swipe Delete and a question's Delete ignore a press where the toast was. Undo ignores a press in a toast's first moment on screen.
+- **The palette no longer says "No matches" next to its results**, and the large-amount question stops being announced once the query changes.
+- **The page stays where you were reading.** Ctrl+N, Ctrl+K or Ctrl+, then Escape on a scrolled page leave it in place. Tabbing through the header, focus going back to Search, and typing in the header's quick add never scroll the page.
+- **A screen opened from Pulse puts focus on its heading** (a heatmap day, a top category, a budget row), also when it takes seconds to load on a slow network.
+- **Small screens.** Settings › Categories fits a 320 px screen (its Add button was cut to "+ Ad"). The Add sheet's date presets wrap to a second row instead of hiding "Pick date". The Ledger's range switch shows whole from 360 px, and under that its last option and focus ring scroll clear of the edge fade.
+- **Windows contrast themes:** the filled buttons (Add, Save changes, Confirm import, Download JSON backup, Yes, delete all) keep an outline, and the tab bar's focus ring shows whole.
+- **Settings › Sync uses the shared patterns.** The sync-code field is labelled, and the Disconnect question is the shared one: Cancel takes focus, Escape takes back the question instead of closing Settings, and a double tap on "Disconnect sync" can no longer answer it.
+- **The year view's arrows page by year** as soon as you choose Year, also while the screen is still switching. The trend description reads "Peak … in August", like the monthly bars.
+
+### Changed
+
+- **Alt+N adds an expense too.** In a browser tab on Windows or Linux, Ctrl+N opens a new window instead (only the installed app gets it). The Keyboard shortcuts sheet lists both, and says that Delete is fn + delete on a Mac keyboard.
+- **The sync status is spoken below 1280 px too**, where the pill is not shown.
+- **Copy:** "Import 1 expense?", "Delete all 1 expense?", "More…", the category-delete detail "N expenses move to Other · its budget goes too", and "Esc — Close the top panel or picker" with "Delete — Delete the focused ledger entry" in Keyboard shortcuts.
+- **Button colours** change with the press scale (one transition).
+
+### Added
+
+- **Settings › Sync shows which SpendTrack this device runs** ("This device runs SpendTrack 0.9.3"), so you can check that every device has updated.
+
+### Known limits
+
+- **Toasts close after 4 s,** and their Undo with them (WCAG 2.2.1), and a toast can briefly cover a focused control near the bottom of a phone screen. Both wait for the toast and undo redesign (T7).
+- **The iPhone keyboard can cover a field low in a bottom sheet;** keyboard-aware sheets are T7's.
+
+### Changed (engineering)
+
+- **The accessibility gate.** `npm run a11y` is now `playwright test e2e/a11y.spec.ts e2e/keyboard.spec.ts`. axe-core 4.13 scans every route and every open state (Add and Edit sheets, invalid submits, delete questions, every Settings tab, the palette and its large-amount question, the calendar, a toast, the shortcuts sheet, the route and overlay error cards) in both themes, on Chromium at 1280 px and iPhone WebKit at 375 px, with zero violations allowed, and checks for sideways overflow at 320 px. The keyboard spec covers every acceptance criterion axe cannot see: the layer stack, the calendar, the combobox, ledger rows, questions, live regions, charts, focus rings at 3:1, 44 px targets and obscured focus. `e2e/double-press.spec.ts` presses twice on everything that changes the screen, also on a page kept busy for 700 ms. Both run in the e2e CI job, now three shards behind one required check.
+- One modal layer stack (`src/ui/modalLayer.ts`) for sheets, the palette and the calendar: Escape for the top layer only (once per press), the Tab trap, the focus guard, the return target captured before an autofocused field takes focus, and scroll lock. `src/ui/pressShield.ts` judges presses by their own `timeStamp`, keeps a gesture open until its change has been painted, and delivers pointer presses whole. `src/ui/announce.ts` keeps live regions that never re-mount, `InlineConfirm` and `useInlineConfirm` hold questions, `useChartScrub` makes every chart one slider, and `useRouteFocus` waits for a lazy screen's heading for up to 10 s, until anything else takes focus.
+- Static guards (`src/__tests__/a11y-guards.test.ts`, `focus-css.test.ts`): no ad-hoc focus styles, every framer-motion user honours Reduce Motion, nothing both `aria-hidden` and focusable, and the focus CSS contract in both themes.
+- Builds without `VITE_DEMO_MODE` no longer carry the demo seed (−4.1 KB of first-load JS). MonthlyBars loads once the app is idle. `--accent-ring` and the unused `.input-*` classes are gone.
+- CI: the e2e shards run on `ubuntu-24.04`. GitHub's `ubuntu-latest` moved to 26.04, where Playwright 1.60 cannot install its browsers.
+- Dev dependencies: +`axe-core` 4.13.0, −`@axe-core/cli` (and the `ws`/`tmp` overrides that served it). No new runtime dependencies.
+- Bundle: JS 696.3 KB of the 700 KB budget (684.7 KB on 0.9.2: +11.6 KB), the entry chunk +2.0 KB, CSS 57.3 KB.
+
 ## 0.9.2 — 2026-10-24
 
 PR-0 of the data-engine overhaul: stop the bleeding. Sync no longer loses entries you make while it runs, and it no longer reverts an undo, a category rename or an item's category. It says plainly when it fails, and it catches up when the app is hidden, reopened or back online. The sync format stays 4.0, so 0.8.4 devices can still read it. **Update the device you use least first:** a device left on 0.8.4 keeps losing its own changes, and Settings › Sync points it out. Until it updates, an edit made on the old device also sends its keyword re-filing of that entry with a fresh timestamp, so that entry's category changes on every device.

@@ -12,7 +12,7 @@ export function TabBar() {
       key={to}
       className={({ isActive }) =>
         clsx(
-          'flex flex-1 flex-col items-center justify-center gap-0.5 py-1.5 transition',
+          'focus-inset flex flex-1 flex-col items-center justify-center gap-0.5 py-1.5 transition',
           isActive ? 'text-white' : 'text-[var(--text-tertiary)]',
         )
       }
@@ -28,16 +28,23 @@ export function TabBar() {
     </NavLink>
   )
 
+  // The tabs sit flush with the bottom of the screen where there is no home indicator (an
+  // Android phone, an iPhone SE): their focus ring is drawn inside them (.focus-inset), or its
+  // bottom side would be off the screen.
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-40 border-t border-white/[0.06] bg-surface-0/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden">
+    <nav
+      aria-label="Primary"
+      className="fixed inset-x-0 bottom-0 z-40 border-t border-white/[0.06] bg-surface-0/90 pb-[env(safe-area-inset-bottom)] backdrop-blur-xl md:hidden"
+    >
       <div className="relative flex items-end px-2 pt-1">
         {tab('/pulse', Activity, 'Pulse')}
         {tab('/ledger', ListOrdered, 'Ledger')}
 
+        {/* .tap-target squares the round button's hit area, so a tap near its corners lands. */}
         <button
           type="button"
           onClick={() => setAddSheetOpen(true)}
-          className="mx-2 -mt-5 flex h-12 w-12 items-center justify-center rounded-full bg-accent text-surface-0 shadow-[0_8px_24px_-6px_rgba(34,211,238,0.55),0_0_48px_-12px_rgba(34,211,238,0.35)] transition hover:bg-accent-hover active:scale-95"
+          className="tap-target mx-2 -mt-5 flex h-12 w-12 items-center justify-center rounded-full bg-accent text-surface-0 shadow-[0_8px_24px_-6px_rgba(34,211,238,0.55),0_0_48px_-12px_rgba(34,211,238,0.35)] transition hover:bg-accent-hover active:scale-95"
           aria-label="Add expense"
         >
           <Plus size={22} strokeWidth={2.5} />
@@ -47,7 +54,7 @@ export function TabBar() {
         <button
           type="button"
           onClick={() => useUIStore.getState().setSettingsOpen(true)}
-          className="flex flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[var(--text-tertiary)] transition hover:text-white"
+          className="focus-inset flex flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[var(--text-tertiary)] transition hover:text-white"
           aria-label="Open settings"
         >
           <div className="rounded-full px-3 py-1">

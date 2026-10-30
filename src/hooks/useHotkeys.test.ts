@@ -74,6 +74,23 @@ describe('useHotkeys', () => {
     expect(palette).toHaveBeenCalledTimes(2)
   })
 
+  // A browser tab keeps Ctrl+N for a new window, and Alt+N is the way to the same action there.
+  // Alt types no character on Windows or Linux, so it works from a text field as Ctrl does.
+  // AltGr (Ctrl+Alt on Windows) types characters: it is neither.
+  it('maps Alt to alt+, in a text field too, and keeps Ctrl+Alt (AltGr) apart from both', () => {
+    const add = vi.fn()
+    const addAlt = vi.fn()
+    renderHook(() => {
+      useHotkeys({ 'mod+n': add, 'alt+n': addAlt })
+    })
+    expect(press('n', { altKey: true }).defaultPrevented).toBe(true)
+    expect(press('N', { altKey: true }, input).defaultPrevented).toBe(true)
+    expect(addAlt).toHaveBeenCalledTimes(2)
+    expect(press('n', { ctrlKey: true, altKey: true }).defaultPrevented).toBe(false)
+    expect(add).not.toHaveBeenCalled()
+    expect(addAlt).toHaveBeenCalledTimes(2)
+  })
+
   it('keeps the editable-target rules: plain keys and mod+z stay with the field', () => {
     const n = vi.fn()
     const undo = vi.fn()

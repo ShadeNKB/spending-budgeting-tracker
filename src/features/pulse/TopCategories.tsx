@@ -26,20 +26,22 @@ export function TopCategories({ items }: { items: readonly CategoryStat[] }) {
         return (
           <li key={it.category}>
             <button
+              type="button"
               onClick={() => navigate(`/ledger?category=${encodeURIComponent(it.category)}`)}
-              className="group flex w-full flex-col gap-1.5 rounded-lg px-2 py-1.5 text-left transition hover:bg-surface-2"
+              className="group flex min-h-11 w-full flex-col justify-center gap-1.5 rounded-lg px-2 py-1.5 text-left transition hover:bg-surface-2"
             >
               <div className="flex items-center justify-between gap-3">
                 <div className="flex min-w-0 items-center gap-2">
                   <span
                     className="h-2 w-2 shrink-0 rounded-full"
                     style={{ background: color, boxShadow: `0 0 10px ${color}55` }}
+                    aria-hidden="true"
                   />
-                  <span className="truncate text-[13px] font-medium text-white">{it.category}</span>
+                  <span className="truncate text-[13px] font-medium text-white">{it.category}</span>{' '}
                   <span className="text-[11px] text-[var(--text-tertiary)]">
                     {Math.round(it.share * 100)}%
                   </span>
-                </div>
+                </div>{' '}
                 <div className="flex items-center gap-1 font-mono text-[13px] tabular-nums text-white">
                   {fmt(it.total)}
                   <ArrowRight size={12} className="opacity-0 transition group-hover:opacity-60" />

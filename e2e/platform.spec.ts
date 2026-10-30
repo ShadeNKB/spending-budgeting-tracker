@@ -171,8 +171,8 @@ test.describe('Content Security Policy', () => {
     await page.goto('/pulse')
     await ready(page)
 
-    await page.getByRole('button', { name: 'Open command palette' }).click()
-    await page.getByRole('dialog').getByRole('textbox').fill('coffee')
+    await page.getByRole('button', { name: 'Search', exact: true }).click()
+    await page.getByRole('dialog').getByRole('combobox').fill('coffee')
     await closeOverlay(page)
     if (testInfo.project.name === 'chromium') {
       await page.keyboard.press('Control+k')
@@ -194,7 +194,7 @@ test.describe('Content Security Policy', () => {
 
     await page.getByRole('button', { name: 'Settings' }).first().click()
     for (const tab of ['Categories', 'Budgets', 'Sync', 'Backup']) {
-      await page.getByRole('button', { name: tab, exact: true }).click()
+      await page.getByRole('tab', { name: tab, exact: true }).click()
     }
     const download = page.waitForEvent('download')
     await page.getByRole('button', { name: /download json backup/i }).click()
@@ -487,7 +487,7 @@ test.describe('Text controls and iOS focus zoom', () => {
     await ready(page)
     await sweep('pulse')
 
-    await page.getByRole('button', { name: 'Open command palette' }).click()
+    await page.getByRole('button', { name: 'Search', exact: true }).click()
     await expect(page.getByRole('dialog')).toBeVisible()
     await sweep('palette')
     await closeOverlay(page)
@@ -500,7 +500,7 @@ test.describe('Text controls and iOS focus zoom', () => {
     await page.getByRole('button', { name: 'Open settings' }).click()
     await expect(page.getByRole('dialog')).toBeVisible()
     await sweep('settings categories')
-    await page.getByRole('button', { name: 'Budgets', exact: true }).click()
+    await page.getByRole('tab', { name: 'Budgets', exact: true }).click()
     await sweep('settings budgets')
     await closeOverlay(page)
 
@@ -522,7 +522,7 @@ test.describe('Text controls and iOS focus zoom', () => {
     await ready(page)
     await page.getByRole('button', { name: 'Open settings' }).click()
     await expect(page.getByRole('dialog')).toBeVisible()
-    await page.getByRole('button', { name: 'Budgets', exact: true }).click()
+    await page.getByRole('tab', { name: 'Budgets', exact: true }).click()
 
     const budget = page.getByRole('spinbutton', { name: /^Monthly budget for / }).first()
     await budget.fill('123456.78')
@@ -555,12 +555,19 @@ test.describe('Text controls and iOS focus zoom', () => {
       const box = el.parentElement?.getBoundingClientRect()
       const label = el.parentElement?.querySelector('span[aria-hidden="true"]')
       return {
-        height: box?.height,
+        height: Math.round(box?.height ?? 0),
         labelPx: label ? parseFloat(getComputedStyle(label).fontSize) : 0,
         selectPx: parseFloat(getComputedStyle(el).fontSize),
       }
     })
-    expect(chip).toEqual({ height: 30, labelPx: 12, selectPx: 16 })
+    // The 36 px chip of the category chips beside it (T6: 36 px drawn, 44 px to the finger).
+    expect(chip).toEqual({ height: 36, labelPx: 12, selectPx: 16 })
+    const chips = await sheet
+      .getByRole('group', { name: 'Category' })
+      .getByRole('button')
+      .evaluateAll((els) => els.map((el) => Math.round(el.getBoundingClientRect().height)))
+    expect(chips.length).toBeGreaterThan(0)
+    expect(new Set(chips)).toEqual(new Set([36]))
   })
 
   test('desktop: quick add keeps its 14 px / 15 px design sizes', async ({ page }, testInfo) => {

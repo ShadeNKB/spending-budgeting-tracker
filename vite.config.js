@@ -43,8 +43,17 @@ function vendorChunk(id) {
   return Object.hasOwn(VENDOR_CHUNKS, pkg) ? VENDOR_CHUNKS[pkg] : undefined
 }
 
+// The release the app was built from, shown in Settings › Sync so the owner can check that every
+// device runs the same one.
+const APP_VERSION = JSON.parse(
+  readFileSync(new URL('./package.json', import.meta.url), 'utf8'),
+).version
+
 // https://vite.dev/config/
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(APP_VERSION),
+  },
   build: {
     rollupOptions: {
       output: {

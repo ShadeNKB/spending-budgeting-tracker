@@ -129,15 +129,18 @@ export function SmartInput({
 
   return (
     <>
+      {/* One focus indicator: the frame rings (.field-focus) while the input has focus, and each
+          button keeps its own. The input spans the bar's full height and runs to its left edge,
+          under the sparkle (drawn over the input's padding, pointer-transparent), so a tap
+          anywhere on the bar outside the buttons lands in it. */}
       <div
         className={clsx(
-          'relative flex flex-col gap-2 rounded-2xl border border-white/[0.07] bg-surface-1/85 px-3 py-2.5 backdrop-blur-md transition',
-          'focus-within:border-accent/40 focus-within:shadow-[0_0_0_4px_rgba(34,211,238,0.1)]',
+          'field-focus group relative flex flex-col rounded-2xl border border-white/[0.07] bg-surface-1/85 pr-3 backdrop-blur-md',
           className,
         )}
       >
-        <div className="flex items-center gap-2">
-          <Sparkles size={15} className="shrink-0 text-accent/80" />
+        <div className="relative flex min-h-[52px] items-center gap-2">
+          <Sparkles size={15} className="pointer-events-none absolute left-3 text-accent/80" />
           <input
             ref={inputRef}
             value={value}
@@ -154,17 +157,19 @@ export function SmartInput({
             }}
             placeholder={placeholder}
             className={clsx(
-              'min-w-0 flex-1 bg-transparent text-white outline-none placeholder:text-[var(--text-tertiary)]',
+              'field-control min-w-0 flex-1 self-stretch bg-transparent pl-9 text-white placeholder:text-[var(--text-tertiary)]',
               dense ? 'text-[14px]' : 'text-[15px]',
             )}
             aria-label="Quick add expense"
           />
 
+          {/* 32 px buttons with 44 px touch hit areas (.tap-target): 12 px between clear and
+              full entry keeps those hit areas from overlapping. */}
           {value && (
             <button
               type="button"
               onClick={() => edit('')}
-              className="shrink-0 text-[var(--text-tertiary)] transition hover:text-white"
+              className="tap-target inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--text-tertiary)] transition hover:bg-surface-2 hover:text-white"
               aria-label="Clear quick entry"
             >
               <X size={14} />
@@ -174,7 +179,7 @@ export function SmartInput({
           <button
             type="button"
             onClick={() => setSheetOpen(true)}
-            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--text-secondary)] transition hover:bg-surface-2 hover:text-white"
+            className="tap-target ml-1 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-[var(--text-secondary)] transition hover:bg-surface-2 hover:text-white"
             aria-label="Full entry form"
             title="Full entry (with date picker)"
           >
@@ -186,7 +191,7 @@ export function SmartInput({
             onClick={(e) => commit(e.timeStamp)}
             disabled={!canCommit}
             className={clsx(
-              'inline-flex shrink-0 items-center gap-1 rounded-lg px-3 py-1.5 text-[12px] font-semibold transition',
+              'tap-target inline-flex h-8 shrink-0 items-center gap-1 rounded-lg px-3 text-[12px] font-semibold transition',
               !canCommit
                 ? 'cursor-not-allowed bg-surface-2 text-[var(--text-tertiary)]'
                 : confirming
@@ -198,8 +203,19 @@ export function SmartInput({
           </button>
         </div>
 
+        {/* The parse preview. In the header (dense) it floats under the bar while the bar has
+            focus, so typing never changes the header's height; on a screen it sits under the
+            input. */}
         {value && (
-          <div className="flex flex-wrap items-center gap-1.5 pl-6">
+          <div
+            data-quick-add-preview
+            className={clsx(
+              'flex-wrap items-center gap-1.5',
+              dense
+                ? 'elevated absolute inset-x-0 top-full z-10 mt-1.5 hidden rounded-xl border border-white/[0.07] bg-surface-1 py-2 pl-9 pr-3 group-focus-within:flex'
+                : '-mt-0.5 flex pb-2.5 pl-9',
+            )}
+          >
             {parsed.itemName && (
               <Pill tone="default">
                 <span className="max-w-[140px] truncate">{parsed.itemName}</span>

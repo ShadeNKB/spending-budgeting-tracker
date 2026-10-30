@@ -1,27 +1,61 @@
-import { useEffect, useId, useState, type KeyboardEvent } from 'react'
+import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
+import { flushSync } from 'react-dom'
 import { Trash2 } from 'lucide-react'
 import { Sheet } from '../../ui/Sheet'
 import { Input } from '../../ui/Input'
 import { Button } from '../../ui/Button'
+import { InlineConfirm } from '../../ui/InlineConfirm'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useToast } from '../../hooks/useToast'
+import { useInlineConfirm } from '../../hooks/useInlineConfirm'
 import { useCurrencySymbol, useFormatMoney } from '../../hooks/useFormatMoney'
 import { useToday } from '../../hooks/useToday'
-import { colorFromString } from '../../lib/analytics'
 import { addDays, dayKeyOfStored } from '../../lib/dates'
-import { MAX_AMOUNT, isAmountTooLarge } from '../../utils/amountGuard'
 import { DatePicker } from '../../ui/DatePicker'
+import {
+  chosenChipFill,
+  firstInvalidField,
+  validateExpenseForm,
+  type ExpenseFormErrors,
+  type ExpenseFormField,
+} from '../entry/expenseForm'
 import type { Expense } from '../../types'
+
+interface EditForm {
+  itemName: string
+  amount: string
+  category: string
+  /** The day; `''` while the stored date cannot be read and no day has been picked. */
+  date: string
+  notes: string
+}
+
+function formFrom(expense: Expense): EditForm {
+  return {
+    itemName: expense.itemName,
+    amount: expense.amount.toString(),
+    category: expense.category,
+    // The row's own day, as every screen reads it. An unreadable date opens with no day
+    // chosen, so saving another field never silently moves the entry to today.
+    date: dayKeyOfStored(expense.date) ?? '',
+    notes: expense.notes ?? '',
+  }
+}
+
+/** A mouse or trackpad: the sheet can open with the keyboard already in Item. */
+const hasFinePointer = () => window.matchMedia('(pointer: fine)').matches
 
 export function EditExpenseSheet({
   expense,
   onClose,
+  returnFocus,
 }: {
   expense: Expense | null
   onClose: () => void
+  /** Where focus goes on close if the control that opened the sheet is gone (see `Sheet`). */
+  returnFocus?: () => HTMLElement | null
 }) {
   const updateExpense = useExpenseStore((s) => s.updateExpense)
-  const deleteExpense = useExpenseStore((s) => s.deleteExpense)
   const categories = useExpenseStore((s) => s.categories)
   const toast = useToast()
   const fmt = useFormatMoney()
@@ -31,7 +65,10 @@ export function EditExpenseSheet({
   const dateLabelId = useId()
   const dateHintId = useId()
   const notesId = useId()
-  const [confirmDelete, setConfirmDelete] = useState(false)
+  const fields: Record<ExpenseFormField, React.RefObject<HTMLInputElement | null>> = {
+    itemName: useRef<HTMLInputElement>(null),
+    amount: useRef<HTMLInputElement>(null),
+  }
   const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 768)
 
   useEffect(() => {
@@ -41,49 +78,49 @@ export function EditExpenseSheet({
     return () => mq.removeEventListener('change', handler)
   }, [])
 
-  const [form, setForm] = useState<{
-    itemName: string
-    amount: string
-    category: string
-    /** The day; `''` while the stored date cannot be read and no day has been picked. */
-    date: string
-    notes: string
-  }>({
+  const [form, setForm] = useState<EditForm>({
     itemName: '',
     amount: '',
     category: 'Other',
     date: today,
     notes: '',
   })
+  const [errors, setErrors] = useState<ExpenseFormErrors>({})
+  /** One per opening: the delete confirmation below starts closed every time. */
+  const [session, setSession] = useState(0)
 
-  useEffect(() => {
+  // Fill the form each time an expense is opened, while rendering: an effect would show the
+  // previous expense's values for a frame and could land on top of the first keystrokes.
+  const [shown, setShown] = useState<Expense | null>(null)
+  if (expense !== shown) {
+    setShown(expense)
     if (expense) {
-      setForm({
-        itemName: expense.itemName,
-        amount: expense.amount.toString(),
-        category: expense.category,
-        // The row's own day, as every screen reads it. An unreadable date opens with no day
-        // chosen, so saving another field never silently moves the entry to today.
-        date: dayKeyOfStored(expense.date) ?? '',
-        notes: expense.notes ?? '',
-      })
+      setForm(formFrom(expense))
+      setErrors({})
+      setSession((n) => n + 1)
     }
-  }, [expense])
+  }
+
+  const setField = <K extends keyof EditForm>(k: K, v: EditForm[K]) => {
+    setForm((f) => ({ ...f, [k]: v }))
+    if (k === 'itemName' || k === 'amount') setErrors((e) => ({ ...e, [k]: undefined }))
+  }
 
   const save = () => {
     if (!expense) return
-    const amount = parseFloat(form.amount)
-    if (!form.itemName.trim() || !Number.isFinite(amount) || amount <= 0) {
-      toast.error('Item name and a valid amount are required')
-      return
-    }
-    if (isAmountTooLarge(amount)) {
-      toast.error(`Amount too large — the limit is ${fmt(MAX_AMOUNT)}`)
+    const errs = validateExpenseForm(form, fmt)
+    const invalid = firstInvalidField(errs)
+    if (invalid) {
+      // Mark the fields first, so the focused one is announced with its error.
+      flushSync(() => {
+        setErrors(errs)
+      })
+      fields[invalid].current?.focus()
       return
     }
     updateExpense(expense.id, {
       itemName: form.itemName.trim(),
-      amount,
+      amount: parseFloat(form.amount),
       category: form.category,
       // No day picked for an unreadable date: keep what is stored.
       ...(form.date ? { date: new Date(form.date + 'T12:00:00').toISOString() } : {}),
@@ -105,23 +142,37 @@ export function EditExpenseSheet({
       title="Edit expense"
       side={isMobile ? 'bottom' : 'right'}
       width={420}
+      returnFocus={returnFocus}
     >
-      <div className="flex flex-col gap-4 p-5">
+      {/* The sheet scrolls on a phone. WebKit reveals only the caret line of a text field that
+          Tab lands on, leaving its frame and ring under the sheet's edge: focus brings the whole
+          control, ring included (its scroll-margin), into view. */}
+      <div
+        onFocus={(e) => {
+          e.target.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+        }}
+        className="flex flex-col gap-4 p-5"
+      >
         <Input
+          ref={fields.itemName}
           label="Item"
           value={form.itemName}
-          onChange={(e) => setForm({ ...form, itemName: e.target.value })}
-          autoFocus
+          onChange={(e) => setField('itemName', e.target.value)}
+          error={errors.itemName}
+          // Read as Item mounts, once per opening (the sheet mounts its content as it opens).
+          autoFocus={hasFinePointer()}
           onKeyDown={saveOnEnter}
         />
         <Input
+          ref={fields.amount}
           label="Amount"
           type="number"
           inputMode="decimal"
           prefix={symbol}
           mono
           value={form.amount}
-          onChange={(e) => setForm({ ...form, amount: e.target.value })}
+          onChange={(e) => setField('amount', e.target.value)}
+          error={errors.amount}
           onKeyDown={saveOnEnter}
         />
 
@@ -132,27 +183,33 @@ export function EditExpenseSheet({
           >
             Category
           </span>
-          <div role="group" aria-labelledby={categoryLabelId} className="flex flex-wrap gap-1.5">
-            {categories.slice(0, 8).map((c) => (
-              <button
-                key={c}
-                type="button"
-                onClick={() => setForm({ ...form, category: form.category === c ? 'Other' : c })}
-                className={`inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-[12px] font-medium transition ${
-                  form.category === c
-                    ? 'border-transparent text-surface-0'
-                    : 'border-white/[0.08] text-[var(--text-secondary)] hover:text-white'
-                }`}
-                style={form.category === c ? { background: colorFromString(c) } : undefined}
-              >
-                {c}
-              </button>
-            ))}
+          {/* 36 px chips 8 px apart: each gets a 44 px hit area on touch, none overlapping. */}
+          <div role="group" aria-labelledby={categoryLabelId} className="flex flex-wrap gap-2">
+            {categories.slice(0, 8).map((c) => {
+              const selected = form.category === c
+              return (
+                <button
+                  key={c}
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => setField('category', selected ? 'Other' : c)}
+                  className={`tap-target inline-flex h-9 items-center gap-1 rounded-full border px-3 text-[12px] font-medium transition ${
+                    selected
+                      ? 'border-transparent text-surface-0'
+                      : 'border-white/[0.08] text-[var(--text-secondary)] hover:text-white'
+                  }`}
+                  style={selected ? { background: chosenChipFill(c) } : undefined}
+                >
+                  {c}
+                </button>
+              )
+            })}
             {categories.length > 8 && (
               // A chip like its neighbours (as in AddExpenseSheet): the 12 px label is drawn
-              // here, and the native select sits invisibly on top to take the tap. Touch screens
-              // floor the select's own text at 16 px (index.css, against iOS focus zoom).
-              <div className="relative inline-flex h-[30px] max-w-full items-center rounded-full border border-white/[0.08] bg-surface-2 pl-2.5 pr-6 text-[12px] text-[var(--text-secondary)] focus-within:border-accent/60 focus-within:shadow-[0_0_0_3px_rgba(34,211,238,0.18)]">
+              // here, and the native select sits invisibly on top to take the tap (8 px taller
+              // on touch: a 44 px target). Touch screens floor the select's own text at 16 px
+              // (index.css, against iOS focus zoom). The chip draws the select's focus ring.
+              <div className="field-focus relative inline-flex h-9 max-w-full items-center rounded-full border border-white/[0.08] bg-surface-2 pl-3 pr-6 text-[12px] text-[var(--text-secondary)]">
                 <span aria-hidden className="min-w-0 truncate">
                   {categories.slice(8).includes(form.category) ? form.category : 'More…'}
                 </span>
@@ -160,9 +217,9 @@ export function EditExpenseSheet({
                   aria-label="More categories"
                   value={categories.slice(8).includes(form.category) ? form.category : ''}
                   onChange={(e) => {
-                    if (e.target.value) setForm({ ...form, category: e.target.value })
+                    if (e.target.value) setField('category', e.target.value)
                   }}
-                  className="absolute inset-0 h-full w-full cursor-pointer appearance-none rounded-full opacity-0"
+                  className="field-control absolute inset-0 h-full w-full cursor-pointer appearance-none rounded-full opacity-0 [@media(pointer:coarse)]:-inset-y-1 [@media(pointer:coarse)]:h-auto"
                 >
                   <option value="">More…</option>
                   {categories.slice(8).map((c) => (
@@ -205,8 +262,9 @@ export function EditExpenseSheet({
                   <button
                     key={p.label}
                     type="button"
-                    onClick={() => setForm({ ...form, date: p.val })}
-                    className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-[12px] font-medium transition ${
+                    aria-pressed={form.date === p.val}
+                    onClick={() => setField('date', p.val)}
+                    className={`tap-target inline-flex h-9 items-center gap-1.5 rounded-full border px-3 text-[12px] font-medium transition ${
                       form.date === p.val
                         ? 'border-accent/40 bg-accent/10 text-accent'
                         : 'border-white/[0.08] text-[var(--text-secondary)] hover:border-white/20 hover:text-white'
@@ -215,11 +273,12 @@ export function EditExpenseSheet({
                     {p.label}
                   </button>
                 ))}
+                {/* The calendar opens on the entry's day, a preset's too ("Pick date" then). */}
                 <DatePicker
                   variant="pill"
-                  value={editIsPreset ? '' : form.date}
+                  value={form.date}
                   onChange={(v) => {
-                    setForm({ ...form, date: v || today })
+                    setField('date', v || today)
                   }}
                   max={today}
                   placeholder="Pick date"
@@ -246,10 +305,10 @@ export function EditExpenseSheet({
           <textarea
             id={notesId}
             value={form.notes}
-            onChange={(e) => setForm({ ...form, notes: e.target.value })}
+            onChange={(e) => setField('notes', e.target.value)}
             placeholder="Any extra detail"
             rows={2}
-            className="resize-none rounded-[10px] border border-white/[0.06] bg-surface-2 px-3 py-2.5 text-[14px] text-white outline-none [color-scheme:dark] placeholder:text-[var(--text-tertiary)] focus:border-accent/60"
+            className="resize-none rounded-[10px] border border-white/[0.06] bg-surface-2 px-3 py-2.5 text-[14px] text-white [color-scheme:dark] placeholder:text-[var(--text-tertiary)]"
           />
         </div>
 
@@ -262,40 +321,44 @@ export function EditExpenseSheet({
           </Button>
         </div>
 
-        <div className="border-t border-white/[0.06] pt-3">
-          {confirmDelete ? (
-            <div className="flex flex-col gap-2 rounded-lg border border-negative/30 bg-negative/[0.07] p-3">
-              <div className="text-[12px] text-[var(--text-tertiary)]">
-                Delete this expense? This cannot be undone.
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  onClick={() => {
-                    if (!expense) return
-                    deleteExpense(expense.id)
-                    toast.info(`Deleted "${expense.itemName}"`)
-                    onClose()
-                  }}
-                  variant="primary"
-                  className="flex-1 border-transparent !bg-negative/80 hover:!bg-negative"
-                >
-                  Delete
-                </Button>
-                <Button onClick={() => setConfirmDelete(false)} variant="ghost" className="flex-1">
-                  Cancel
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <button
-              onClick={() => setConfirmDelete(true)}
-              className="flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-white/[0.06] py-2.5 text-[12px] text-[var(--text-tertiary)] transition hover:border-negative/30 hover:bg-negative/10 hover:text-negative"
-            >
-              <Trash2 size={13} /> Delete expense
-            </button>
-          )}
-        </div>
+        {expense && <DeleteExpense key={session} expense={expense} onDeleted={onClose} />}
       </div>
     </Sheet>
+  )
+}
+
+/** "Delete expense", then the question in its place. Re-keyed on every opening of the sheet. */
+function DeleteExpense({ expense, onDeleted }: { expense: Expense; onDeleted: () => void }) {
+  const deleteExpense = useExpenseStore((s) => s.deleteExpense)
+  const toast = useToast()
+  const confirm = useInlineConfirm<'delete'>()
+
+  return (
+    <div className="border-t border-white/[0.06] pt-3">
+      {confirm.pending === 'delete' ? (
+        <InlineConfirm
+          question={`Delete "${expense.itemName}"?`}
+          detail="This cannot be undone."
+          confirmLabel="Delete"
+          onConfirm={() => {
+            deleteExpense(expense.id)
+            toast.info(`Deleted "${expense.itemName}"`)
+            // The sheet closes and hands focus back itself (to the next row).
+            confirm.close(null)
+            onDeleted()
+          }}
+          onCancel={() => confirm.close()}
+        />
+      ) : (
+        <button
+          type="button"
+          id={confirm.triggerId()}
+          onClick={() => confirm.ask('delete')}
+          className="tap-target flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-white/[0.06] py-2.5 text-[12px] text-[var(--text-tertiary)] transition hover:border-negative/30 hover:bg-negative/10 hover:text-negative"
+        >
+          <Trash2 size={13} aria-hidden /> Delete expense
+        </button>
+      )}
+    </div>
   )
 }

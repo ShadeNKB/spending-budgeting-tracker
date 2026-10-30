@@ -32,7 +32,8 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
   // On touch screens the select's own text is floored at 16 px (index.css; iOS zooms the page
   // on focus otherwise), which no longer fits a width-capped select. The chosen option is drawn
   // on top at the design size instead, cut with an ellipsis rather than mid-letter, and the
-  // select's own text is hidden. The select keeps its size, focus ring, value and name.
+  // select's own text is hidden. The select keeps its size, value and name, and shows focus
+  // with the shared outline (index.css). At 44 px tall it is a full touch target already.
   const shown = chosenOptionText(children, props.value)
 
   return (
@@ -46,7 +47,7 @@ export const Select = forwardRef<HTMLSelectElement, SelectProps>(function Select
         ref={ref}
         id={selectId}
         className={clsx(
-          'h-11 cursor-pointer appearance-none rounded-[10px] border border-white/[0.06] bg-surface-2 pl-3 pr-8 text-[13px] outline-none transition focus:border-accent/60 focus:shadow-[0_0_0_3px_rgba(34,211,238,0.18)]',
+          'h-11 cursor-pointer appearance-none rounded-[10px] border border-white/[0.06] bg-surface-2 pl-3 pr-8 text-[13px]',
           shown === null ? 'text-white' : 'text-transparent [&>option]:text-[var(--text-primary)]',
           className,
         )}

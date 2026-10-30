@@ -2,11 +2,12 @@ import { test, expect, Page } from '@playwright/test'
 
 // ─── helpers ───────────────────────────────────────────────────────────────
 
+/** Local data hydrated and the lazy screen loaded. (The app keeps permanent polite live
+ *  regions, so waiting for every one of them to leave would only ever time out.) */
 async function waitForApp(page: Page) {
   await page.waitForLoadState('networkidle')
-  await page
-    .waitForSelector('[aria-live="polite"]', { state: 'detached', timeout: 8000 })
-    .catch(() => {})
+  await expect(page.getByText('Loading local spending data')).toHaveCount(0)
+  await expect(page.getByText('Loading screen')).toHaveCount(0)
 }
 
 // ─── app boot ──────────────────────────────────────────────────────────────
@@ -124,7 +125,7 @@ test.describe('Backup and restore', () => {
     // Open settings drawer and navigate to Backup tab
     await page.getByRole('button', { name: 'Settings' }).first().click()
     await page.waitForTimeout(200)
-    await page.getByRole('button', { name: 'Backup' }).click()
+    await page.getByRole('tab', { name: 'Backup' }).click()
     await page.waitForTimeout(100)
   })
 

@@ -8,6 +8,8 @@ import { OverlaySlot } from './OverlaySlot'
 import { dropToasts } from './dropToasts'
 import { useAppliedTheme } from './useAppliedTheme'
 import { useLaunchActions } from './useLaunchActions'
+import { ToastAnnouncer } from './ToastAnnouncer'
+import { useRouteFocus } from './useRouteFocus'
 import { SAFE_GUTTER_X } from './safeArea'
 import { useExpenseStore, installPersistence, IS_DEMO } from '../stores/useExpenseStore'
 import { installSync } from '../stores/useSyncStore'
@@ -43,6 +45,17 @@ const HotkeyHints = lazy(() =>
   importWithReload(() => import('../ui/HotkeyHints')).then((m) => ({ default: m.HotkeyHints })),
 )
 
+/**
+ * WebKit brings a text field that takes focus into view by its caret line and ignores the
+ * field's scroll margin (index.css), so Shift+Tab could leave it under the sticky header: bring
+ * the whole field, ring included, clear of it. A no-op where it already is.
+ */
+function revealTextField(e: React.FocusEvent): void {
+  const field = e.target
+  if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement)
+    field.scrollIntoView({ block: 'nearest' })
+}
+
 // Bootstrap runs once per page load — wired in a top-level useEffect rather than
 // at module scope so React is fully mounted before we touch localStorage.
 let bootstrapped = false
@@ -72,8 +85,7 @@ export function AppShell() {
   const toast = useToast()
 
   const idle = useIdle()
-  // Stable close handlers: Sheet re-runs its focus effect when onClose changes identity, which
-  // pulled focus out of a field whenever the shell re-rendered with a sheet open.
+  // Stable close handlers: the overlays get the same onClose on every shell render.
   const closeAddSheet = useCallback(() => setAddSheetOpen(false), [setAddSheetOpen])
   const closeHotkeys = useCallback(() => setHotkeysOpen(false), [setHotkeysOpen])
 
@@ -81,6 +93,7 @@ export function AppShell() {
 
   useAppliedTheme(theme)
   useLaunchActions()
+  useRouteFocus()
 
   // Surface storage quota errors to the user — without this the app would
   // silently fail to persist, which is the worst possible UX for a finance
@@ -98,6 +111,9 @@ export function AppShell() {
   useHotkeys({
     'mod+k': () => setPaletteOpen(true),
     'mod+n': () => setAddSheetOpen(true),
+    // A browser tab keeps Ctrl+N for a new window (only an installed app gets it): Alt+N works
+    // there too. (On a Mac, Ctrl+N is free in a tab; Option+N types a character.)
+    'alt+n': () => setAddSheetOpen(true),
     'mod+,': () => setSettingsOpen(true),
     '?': () => setHotkeysOpen(true),
     // Read the undo stack on demand: subscribing to it re-rendered the whole shell on every add.
@@ -106,16 +122,25 @@ export function AppShell() {
       const last = undoStack.at(-1)
       if (last) consumeUndo(last.id)
     },
-    escape: () => {
-      setPaletteOpen(false)
-      setSettingsOpen(false)
-      setAddSheetOpen(false)
-      setHotkeysOpen(false)
-    },
+    // No Escape here: each sheet, the palette and the date picker close on it themselves, top
+    // layer first (ui/modalLayer.ts). Closing them all at once lost the entry under a picker.
   })
 
   return (
     <div className="min-h-dvh bg-surface-0 text-[var(--text-primary)]">
+      {/* The first stop for keyboard users: past the header and its controls, into the screen.
+          Focus moves into main without changing the URL. Fixed to the screen even while hidden,
+          so tabbing onto it from a scrolled page never scrolls the page to the top. */}
+      <a
+        href="#main"
+        onClick={(e) => {
+          e.preventDefault()
+          document.getElementById('main')?.focus()
+        }}
+        className="sr-only fixed left-[calc(env(safe-area-inset-left,0px)+12px)] top-[calc(env(safe-area-inset-top,0px)+12px)] z-[110] rounded-xl border border-white/[0.08] bg-surface-1 text-[13px] font-semibold text-white shadow-[var(--shadow-overlay)] focus:not-sr-only focus:fixed focus:px-4 focus:py-3"
+      >
+        Skip to content
+      </a>
       <div
         className="pointer-events-none fixed inset-0"
         style={{ background: 'var(--app-sheen)' }}
@@ -127,21 +152,28 @@ export function AppShell() {
         <TopBar />
 
         {IS_DEMO && (
-          <div className="flex items-center justify-center gap-2 border-b border-accent/20 bg-accent/10 px-4 py-1.5 text-[12px] text-accent">
-            <FlaskConical size={12} />
+          <section
+            aria-label="Demo mode"
+            className="flex items-center justify-center gap-2 border-b border-accent/20 bg-accent/10 px-4 py-1.5 text-[12px] text-accent"
+          >
+            <FlaskConical size={12} aria-hidden />
             <span>
               Demo mode — sample data loaded.{' '}
               <span className="text-accent/70">Data is stored locally on this device only.</span>{' '}
               Clear it in Settings → Backup and use for your own expenses.
             </span>
-          </div>
+          </section>
         )}
         {isOffline && <OfflineBanner />}
 
+        {/* Each screen names itself with its own h1 (tabIndex -1), where focus lands after a
+            navigation that took the focused control away (useRouteFocus). */}
         <main
+          id="main"
+          tabIndex={-1}
+          onFocus={revealTextField}
           className={`mx-auto w-full max-w-[1200px] flex-1 py-5 pb-[calc(env(safe-area-inset-bottom,0px)+96px)] md:py-8 md:pb-10 ${SAFE_GUTTER_X}`}
         >
-          <h1 className="sr-only">SpendTrack — spending tracker</h1>
           {!hydrated ? (
             <div
               role="status"
@@ -168,6 +200,9 @@ export function AppShell() {
 
         <TabBar />
       </div>
+
+      {/* Outside main: the app-wide live regions toasts are spoken from. */}
+      <ToastAnnouncer />
 
       <OverlaySlot open={paletteOpen} idle={idle} setOpen={setPaletteOpen}>
         <CommandPalette />

@@ -112,7 +112,6 @@ function ErrorCard({
         : STALE.body
       : CRASH.body(scope)
   const onPulse = pathname === '/' || pathname === '/pulse'
-  const Heading = scope === 'app' ? 'h1' : 'h2'
   const Icon = offline ? WifiOff : stale ? RotateCw : AlertTriangle
   // Inside the shell the update banner says this; after a shell crash nothing else can.
   const updateWaiting = scope === 'app' && (update === 'ready' || update === 'updated-elsewhere')
@@ -134,13 +133,15 @@ function ErrorCard({
       <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-warning/10 text-warning">
         <Icon size={18} aria-hidden />
       </div>
-      <Heading
+      {/* The page's h1 in both scopes: a screen's error card stands in for that screen and its
+          heading (the shell has none of its own). index.css hides the ring on a focused h1. */}
+      <h1
         ref={headingRef}
         tabIndex={-1}
-        className="mt-4 text-[19px] font-semibold tracking-tight text-white focus:outline-none"
+        className="mt-4 text-[19px] font-semibold tracking-tight text-white"
       >
         {title}
-      </Heading>
+      </h1>
       <p className="mt-1.5 text-[15px] leading-relaxed text-[var(--text-secondary)]">{body}</p>
       {scope === 'app' && (
         <div role="status">

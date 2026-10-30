@@ -92,6 +92,10 @@ async function moneyText(page: Page): Promise<string> {
 /** Amounts written with a bare `$` (S$, A$ and C$ have a letter before the `$`). */
 const bareDollars = (text: string) => text.match(/(?<![A-Za-z])\$\s?\d[\d,.]*/g) ?? []
 
+/** A toast on screen (screen readers hear it from a live region of their own). */
+const toastText = (page: Page, text: string) =>
+  page.getByRole('region', { name: 'Notifications' }).getByText(text, { exact: true })
+
 async function openAddSheet(page: Page) {
   const fab = page.getByRole('button', { name: 'Add expense' })
   if (await fab.isVisible()) await fab.click()
@@ -147,7 +151,7 @@ test.describe('Currency on a Singapore device', () => {
     await sheet.getByLabel('What').fill('teh peng')
     await sheet.getByLabel('Amount').fill('1.6')
     await sheet.getByLabel('Amount').press('Enter')
-    await expect(page.getByText('Added "teh peng" · S$1.60', { exact: true })).toBeVisible()
+    await expect(toastText(page, 'Added "teh peng" · S$1.60')).toBeVisible()
     // Wait for the closing sheet to leave, so the next lookup cannot land on it mid-exit.
     await expect(sheet).toBeHidden()
 
@@ -168,9 +172,7 @@ test.describe('Currency on a Singapore device', () => {
     await sheet.getByLabel('What').fill('grab home')
     await sheet.getByLabel('Amount').fill('12')
     await sheet.getByRole('button', { name: 'Add for Oct 17' }).click()
-    await expect(
-      page.getByText('Added "grab home" · S$12.00 · Oct 17', { exact: true }),
-    ).toBeVisible()
+    await expect(toastText(page, 'Added "grab home" · S$12.00 · Oct 17')).toBeVisible()
   })
 
   test('the Edit sheet and the budget inputs show S$', async ({ page }) => {
@@ -187,7 +189,7 @@ test.describe('Currency on a Singapore device', () => {
     await expect(sheet).toBeHidden()
 
     const drawer = await openSettings(page)
-    await drawer.getByRole('button', { name: 'Budgets' }).click()
+    await drawer.getByRole('tab', { name: 'Budgets' }).click()
     await expect(drawer.getByLabel('Monthly budget for Food & Dining')).toHaveValue('300')
     expect(await drawer.getByText('S$', { exact: true }).count()).toBeGreaterThan(5)
     expect(bareDollars(await drawer.innerText())).toEqual([])
@@ -205,11 +207,11 @@ test.describe('Currency on a Singapore device', () => {
     await quickAdd.fill('kopi 4.5')
     await expect(page.getByText('S$4.50', { exact: true }).filter({ visible: true })).toHaveCount(1)
     await quickAdd.press('Enter')
-    await expect(page.getByText('Added "kopi" · S$4.50', { exact: true })).toBeVisible()
+    await expect(toastText(page, 'Added "kopi" · S$4.50')).toBeVisible()
 
-    await page.getByRole('button', { name: 'Open command palette' }).click()
+    await page.getByRole('button', { name: 'Search', exact: true }).click()
     const palette = page.getByRole('dialog')
-    await palette.getByRole('combobox').or(palette.getByRole('textbox')).first().fill('coffee 4.50')
+    await palette.getByRole('combobox').fill('coffee 4.50')
     await expect(palette.getByText(/S\$4\.50/)).toBeVisible()
     expect(bareDollars(await palette.innerText())).toEqual([])
   })

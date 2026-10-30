@@ -1,4 +1,4 @@
-import { useDeferredValue, useMemo, useState } from 'react'
+import { lazy, Suspense, useDeferredValue, useEffect, useMemo, useState } from 'react'
 import clsx from 'clsx'
 import {
   Wallet,
@@ -12,8 +12,10 @@ import {
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useUIStore } from '../../stores/useUIStore'
 import { computeMonthAnalytics, computeYearAnalytics } from '../../lib/analytics'
-import { monthShortName, shortDate } from '../../lib/dates'
+import { makeKey, monthKeyOf, monthName, monthShortName, shortDate } from '../../lib/dates'
 import { getLedgerIndex } from '../../lib/ledgerIndex'
+import { importWithReload } from '../../lib/chunkReload'
+import { whenIdle } from '../../lib/whenIdle'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { useToday } from '../../hooks/useToday'
 import { AnimatedNumber } from '../../ui/AnimatedNumber'
@@ -27,14 +29,25 @@ import { Heatmap } from './Heatmap'
 import { TodayStrip } from './TodayStrip'
 import { Sparkline, SparklineAxis } from './Sparkline'
 import { BudgetActual } from './BudgetActual'
-import { MonthlyBars } from './MonthlyBars'
 import { SmartInput } from '../entry/SmartInput'
 
 type PeriodView = 'month' | 'year'
 
+// The year's monthly bars are never on Pulse's first paint, so they load on the first switch to
+// Year instead of growing the entry chunk. A stale chunk after a deploy reloads once.
+const MonthlyBars = lazy(() =>
+  importWithReload(() => import('./MonthlyBars')).then((m) => ({ default: m.MonthlyBars })),
+)
+/** The same chunk, fetched once the app is idle: the first switch to Year need not wait for it. */
+const preloadMonthlyBars = () => {
+  importWithReload(() => import('./MonthlyBars')).catch(() => undefined)
+}
+
 const statValue = 'mt-0.5 truncate font-mono text-[15px] tabular-nums text-white'
+// 36 px arrows 8 px apart. On a touch screen of any width they stay 36 px with a 44 px hit area
+// each (.tap-target), so the two hit areas meet but never overlap; a mouse gets 28 px from md.
 const periodArrow =
-  "relative inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text-tertiary)] transition after:absolute after:-inset-1 after:content-[''] hover:bg-surface-2 hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70 md:h-7 md:w-7 md:rounded-md"
+  'tap-target inline-flex h-9 w-9 items-center justify-center rounded-lg text-[var(--text-tertiary)] transition hover:bg-surface-2 hover:text-white md:[@media(pointer:fine)]:h-7 md:[@media(pointer:fine)]:w-7 md:[@media(pointer:fine)]:rounded-md'
 
 export function PulseScreen() {
   // An add or a sync re-renders the figures in a deferred pass, so the quick-add toast and
@@ -47,10 +60,16 @@ export function PulseScreen() {
   const fmt = useFormatMoney()
   const today = useToday()
   const [view, setView] = useState<PeriodView>('month')
+  // The switch shows the new choice at once; the screen follows in a deferred render, so the
+  // first switch to Year keeps the month on screen until the bars' chunk is in (no placeholder).
+  const shown = useDeferredValue(view)
   const [monthOffset, setMonthOffset] = useState(0)
   const [yearOffset, setYearOffset] = useState(0)
+  useEffect(() => whenIdle(preloadMonthlyBars), [])
 
   const index = getLedgerIndex(expenses)
+  // The arrows page the period the switch shows, also while the screen is catching up with it:
+  // ← right after choosing Year goes back a year, never a month out of sight.
   const offset = view === 'month' ? monthOffset : yearOffset
   const isCurrentPeriod = offset === 0
 
@@ -60,8 +79,8 @@ export function PulseScreen() {
   )
   // The year is only computed while it is on screen.
   const yearData = useMemo(
-    () => (view === 'year' ? computeYearAnalytics(index, today, yearOffset) : null),
-    [view, index, today, yearOffset],
+    () => (shown === 'year' ? computeYearAnalytics(index, today, yearOffset) : null),
+    [shown, index, today, yearOffset],
   )
 
   const a = yearData ?? monthData
@@ -74,6 +93,13 @@ export function PulseScreen() {
   const daily = monthData.daily
   const sparkValues = yearData ? yearData.sparkline.values : daily.map((d) => d.total)
   const sparkLabels = yearData ? yearData.sparkline.labels : daily.map((d) => shortDate(d.date))
+  // The year's points are its months from January: the description names them in full.
+  const sparkPeakAs = yearData
+    ? {
+        labels: sparkValues.map((_, i) => monthName(monthKeyOf(makeKey(yearData.year, i + 1, 1)))),
+        preposition: 'in' as const,
+      }
+    : undefined
   // Phones get the short form, so the section title is never cut ("11 days left").
   const budgetMeta =
     monthData.daysLeft === null
@@ -85,8 +111,20 @@ export function PulseScreen() {
             long: `${String(monthData.daysLeft)} days left in ${monthData.monthName}`,
           }
 
+  // The trend chart's name. A past month carries its year: the arrows page across years.
+  const trendLabel = yearData
+    ? `Monthly spending, ${String(yearData.year)}`
+    : monthData.isCurrent
+      ? 'Daily spending, last 30 days'
+      : `Daily spending, ${monthData.label}`
+
   return (
     <div className="flex flex-col gap-4">
+      {/* The screen's heading: focus lands here after a navigation unmounts the focused control. */}
+      <h1 tabIndex={-1} className="sr-only">
+        Pulse
+      </h1>
+
       {/* Mobile quick-add */}
       <div className="lg:hidden">
         <SmartInput />
@@ -98,15 +136,18 @@ export function PulseScreen() {
           <div className="relative flex flex-col items-start justify-between gap-5 md:flex-row">
             <div className="w-full min-w-0 flex-1">
               {/* One row on phones from 360 px: a short month label below sm, and the view
-                  switch travels with the period arrows when the row has to wrap. */}
-              <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-2">
+                  switch travels with the period arrows when the row has to wrap. The switch and
+                  the arrows sit 4 px apart: the arrow's 44 px hit area reaches the switch's edge
+                  without covering it. */}
+              <div className="mb-3 flex flex-wrap items-center gap-x-1.5 gap-y-2">
                 <div className="flex min-w-0 items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-tertiary)]">
                   <Wallet size={12} className="shrink-0" />
                   <span className="sm:hidden">{shortLabel}</span>
                   <span className="hidden sm:inline">{a.label}</span>
                 </div>
-                <div className="flex flex-1 items-center gap-2">
+                <div className="flex flex-1 items-center gap-1">
                   <Segmented<PeriodView>
+                    label="Period"
                     value={view}
                     onChange={(v) => {
                       setView(v)
@@ -118,7 +159,7 @@ export function PulseScreen() {
                     ]}
                   />
                   {/* Period navigation: 36 px arrows, 44 px touch targets */}
-                  <div className="ml-auto flex items-center">
+                  <div className="ml-auto flex items-center gap-2">
                     <button
                       type="button"
                       onClick={() =>
@@ -151,7 +192,7 @@ export function PulseScreen() {
                 </div>
               </div>
 
-              <div key={view}>
+              <div key={shown}>
                 <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1.5">
                   <AnimatedNumber
                     value={a.periodTotal}
@@ -228,6 +269,8 @@ export function PulseScreen() {
                   <Sparkline
                     data={sparkValues}
                     labels={sparkLabels}
+                    label={trendLabel}
+                    peakAs={sparkPeakAs}
                     height={44}
                     className="max-w-sm"
                   />
@@ -285,17 +328,22 @@ export function PulseScreen() {
         </Card>
       </div>
 
-      {/* Year: monthly bars */}
-      {yearData && (
-        <Card>
-          <SectionHeader icon={BarChart3}>Monthly breakdown</SectionHeader>
-          <MonthlyBars
-            data={yearData.monthlyTotals}
-            total={yearData.periodTotal}
-            highest={yearData.highestMonth}
-          />
-        </Card>
-      )}
+      {/* Year: monthly bars. The boundary stays mounted in the month view: a deferred render
+          that suspends under a boundary already on screen keeps the old screen, where one
+          mounting with the bars would flash its fallback. */}
+      <Suspense>
+        {yearData && (
+          <Card>
+            <SectionHeader icon={BarChart3}>Monthly breakdown</SectionHeader>
+            <MonthlyBars
+              year={yearData.year}
+              data={yearData.monthlyTotals}
+              total={yearData.periodTotal}
+              highest={yearData.highestMonth}
+            />
+          </Card>
+        )}
+      </Suspense>
 
       {/* Top categories + heatmap */}
       <div className="grid gap-4 md:grid-cols-2">
@@ -352,7 +400,7 @@ export function PulseScreen() {
                 setSettingsTab('budgets')
                 setSettingsOpen(true)
               }}
-              className="inline-flex h-10 items-center justify-center rounded-[10px] border border-accent/25 bg-accent/10 px-3 text-[12px] font-semibold text-accent transition hover:bg-accent/15 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/70"
+              className="tap-target inline-flex h-10 items-center justify-center rounded-[10px] border border-accent/25 bg-accent/10 px-3 text-[12px] font-semibold text-accent transition hover:bg-accent/15"
             >
               Set budgets
             </button>
