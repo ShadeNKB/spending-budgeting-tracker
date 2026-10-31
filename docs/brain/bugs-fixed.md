@@ -35,12 +35,17 @@ Not a changelog (that's `CHANGELOG.md`). This is the **distilled patterns** — 
 
 - **Eager Supabase SDK import is ~25 KB gzip on the critical path.** Lazy-load via dynamic `import()` inside the sync service. (0.5.0)
 - **Settings drawer doesn't need to be on first paint.** `React.lazy()` it. (0.5.0)
-- **Vendor chunk bloat.** Keep `vendor-react`, `vendor-motion`, `vendor-utils` split in `vite.config.js`. (0.2.0)
+- **Vendor chunk bloat.** Keep `vendor-react` and `vendor-utils` split in `vite.config.js` (0.2.0). `vendor-motion` (framer-motion, 128 KB raw for four components) is gone: CSS transitions and the Web Animations API replaced it. (0.9.4)
+- **`transform: none !important` does not stop a CSS transition that is already running.** A transition outranks `!important`, and one whose end value the new style matches (an opening slide ends at `none`) runs on to its end: Reduce Motion switched on mid-slide left the sheet moving for up to 400 ms. The reduced-motion block also sets `transition-property: none !important` on every overlay part, which cancels the running transition at once (Chromium and WebKit). (0.9.4)
+- **Motion e2e must sample real frames: never install Playwright's clock there.** `page.clock` (even `setFixedTime`) replaces `requestAnimationFrame` with a 16 ms timer, so a recorder reads CSS transitions and Web Animations as stuck for several ticks, then jumping. `seed(page, { date: 'running' })` (what `loadInMotion` uses) fixes only `Date`. (0.9.4)
+- **Never change `body`'s overflow while an overlay's CSS transition runs.** WebKit (every iPhone browser) puts a running transform transition at its end value when the body's overflow changes, while the `CSSTransition` still reports `running`: unlocking page scroll as a sheet or the palette closed skipped its whole exit on iPhone (Chromium and Web Animations are unaffected). The scroll lock is held by the overlay's layer box (`holdScrollLock`, a ref callback): from the moment the box mounts until it leaves the page, after the exit. `motion.spec.ts` checks on WebKit that a closing sheet and palette are still seen on their way out. (0.9.4)
+- **Overlay exits wait only on finite part animations, capped — never on content or infinite animations.** `usePresence` keeps a closing sheet, palette or toast mounted until the finite animations of its declared parts end (`getAnimations()` without subtree), or at the latest the longest one left + 250 ms: WebKit never settles the `finished` promise of a transition that a reversing one replaced, and a spinner or countdown inside must not hold the exit. (0.9.4)
 
 ## Workflow
 
 - **`vitest run --passWithNoTests` hides regressions.** Drop the flag (done 0.6.0).
 - **Bundle creeps silently.** `npm run size` budget catches it; raise budgets deliberately when adding a dep, with a commit note. (0.6.0)
+- **WebKit e2e downloads fail as "Load request cancelled" under a long `--output` path.** On Windows, Playwright's WebKit cannot save a download into an artifacts folder past the path-length limit, so every download test fails (CSV exports, Download my data). The app is not at fault: run with the default `test-results/` or another short output path. (0.9.4)
 
 ## Adding to this file
 

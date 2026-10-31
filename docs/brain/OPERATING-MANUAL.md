@@ -21,7 +21,8 @@ A local-first spending tracker. React 19 + TS strict + Vite 7 + Zustand 5 + Tail
 - **Date storage contract** — all dates stored as `T12:00:00` ISO strings. Anything else hits timezone bugs. See `src/utils/date.ts`.
 - **`safeSet()` for localStorage** — never call `localStorage.setItem` directly; quota errors must surface a toast.
 - **`addExpense` validation** — rejects non-finite / non-positive amounts at the store boundary. Don't bypass.
-- **Route fade is CSS, not framer-motion** — the route-level `AnimatePresence` caused blank renders (see [bugs-fixed.md](bugs-fixed.md)). Use the `.route-fade-in` CSS keyframe.
+- **Route fade is CSS** — a route-level `AnimatePresence` (framer-motion, removed in 0.9.4) caused blank renders (see [bugs-fixed.md](bugs-fixed.md)). Use the `.route-fade-in` CSS keyframe.
+- **Motion system: CSS + Web Animations, no library** — sheets, the palette and toasts animate with CSS transitions keyed on `data-state` from `usePresence` (exits wait only on their parts' finite animations, capped); springs are `linear()` tokens in `index.css` sampled from `src/ui/spring.ts`; the ledger swipe snaps with WAAPI. Every animating module asks `prefersReducedMotion()` or carries `motion-reduce:!transform-none` (guarded by `a11y-guards.test.ts`). Never re-add an animation library: the JS budget has no room.
 - **PWA manifest + service worker** — changes here require a manual cache-bust check on installed clients.
 - **Supabase RLS** — `GRANT` alone is _not_ enough; either enable RLS with policies or explicitly disable it. See [bugs-fixed.md](bugs-fixed.md).
 

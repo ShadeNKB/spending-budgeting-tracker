@@ -170,6 +170,33 @@ test.describe('Quick add on a Singapore phone and laptop', () => {
     })
   })
 
+  // The toast clips what spills out of it: a name of one long word used to push Undo and
+  // Dismiss outside it, leaving no way to undo that entry on the narrowest phones.
+  test('at 320 px a long one-word name wraps in its toast, Undo and Dismiss inside it', async ({
+    page,
+  }) => {
+    const word = 'supercalifragilisticexpialidociouslylongwordwithoutspaces'
+    await page.setViewportSize({ width: 320, height: 640 })
+    await seed(page, SUN_18_OCT_2026, HIGH_BAR)
+    await openPulse(page)
+    await quickAdd(page).fill(`${word} 3`)
+    await quickAdd(page).press('Enter')
+    const toast = page.locator('[data-toast]').filter({ hasText: word })
+    await expect(toast.getByRole('button', { name: 'Undo' })).toBeVisible()
+
+    // Layout positions inside the toast (its entrance transform does not change them).
+    const outside = await toast.evaluate((box) =>
+      [...box.querySelectorAll<HTMLElement>('button, :scope > div')].flatMap((el) =>
+        el.offsetLeft < 0 || el.offsetLeft + el.offsetWidth > box.clientWidth
+          ? [el.getAttribute('aria-label') ?? el.textContent ?? '']
+          : [],
+      ),
+    )
+    expect(outside, 'what lies outside the toast').toEqual([])
+    const box = await toast.boundingBox()
+    expect(box && box.x + box.width, 'the toast is on screen').toBeLessThanOrEqual(320)
+  })
+
   test('double Enter and a held Enter add one row', async ({ page }) => {
     await seed(page, SUN_18_OCT_2026, HIGH_BAR)
     await openPulse(page)

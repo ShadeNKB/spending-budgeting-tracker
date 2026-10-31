@@ -1,33 +1,34 @@
 import { useState } from 'react'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
 import { Sheet } from './Sheet'
 import { DatePicker } from './DatePicker'
+import {
+  installFakeAnimations,
+  setReducedMotion,
+  type FakeAnimations,
+} from '../__tests__/fakeAnimations'
 
-// framer-motion reads prefers-reduced-motion through matchMedia (absent in jsdom): a stub whose
-// answer the reduced-motion test flips, notifying the listener framer registers.
-let reduceMotion = false
-const motionListeners = new Set<() => void>()
-beforeAll(() => {
-  vi.stubGlobal('matchMedia', (query: string) => ({
-    media: query,
-    get matches() {
-      return query.includes('reduced-motion') && reduceMotion
-    },
-    addListener: (listener: () => void) => motionListeners.add(listener),
-    removeListener: (listener: () => void) => motionListeners.delete(listener),
-    addEventListener: (_type: string, listener: () => void) => motionListeners.add(listener),
-    removeEventListener: (_type: string, listener: () => void) => motionListeners.delete(listener),
-  }))
-})
-afterAll(() => {
+// jsdom has no Web Animations API, so a sheet opens and leaves at once here, as under Reduce
+// Motion. Tests of the exit install fake animations: the exit then lasts until they finish.
+let fake: FakeAnimations | null = null
+function holdExits(): FakeAnimations {
+  fake = installFakeAnimations()
+  return fake
+}
+afterEach(() => {
+  fake?.restore()
+  fake = null
   vi.unstubAllGlobals()
 })
 
-function setReducedMotion(on: boolean) {
-  reduceMotion = on
-  for (const listener of motionListeners) listener()
-}
+/** Lets settled `finished` promises run their callbacks. */
+const finishExits = (animations: FakeAnimations) =>
+  act(async () => {
+    animations.finishAll()
+    await Promise.resolve()
+    await Promise.resolve()
+  })
 
 /** Focus is handed back in a task after the one that closed the sheet. */
 const settle = () =>
@@ -308,6 +309,7 @@ describe('Sheet stacking', () => {
   })
 
   it('lets a new tap through while it animates out (its dialog is inert by then)', async () => {
+    const animations = holdExits()
     const view = render(
       <Sheet open onClose={() => {}} title="Add expense" side="bottom">
         <button type="button">Save</button>
@@ -322,7 +324,58 @@ describe('Sheet stacking', () => {
       </Sheet>,
     )
     await settle()
-    if (dialog.isConnected) expect(dialog).toHaveAttribute('inert')
+    expect(dialog).toBeInTheDocument()
+    expect(box).toHaveAttribute('data-state', 'closed')
+    expect(dialog).toHaveAttribute('inert')
+
+    // Gone once its exit has played.
+    await finishExits(animations)
+    expect(dialog).not.toBeInTheDocument()
+    expect(box).not.toBeInTheDocument()
+  })
+
+  it('reopened while it animates out, it is the same dialog again: live, with focus inside', async () => {
+    holdExits()
+    render(<Harness label="a" autoFocusField />)
+    openSheet()
+    const dialog = screen.getByRole('dialog', { name: 'Add expense' })
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+    await settle()
+    expect(dialog).toHaveAttribute('inert')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open' }))
+    expect(screen.getByRole('dialog', { name: 'Add expense' })).toBe(dialog)
+    expect(dialog).not.toHaveAttribute('inert')
+    expect(layerOf(dialog)).toHaveAttribute('data-state', 'open')
+    expect(dialog.contains(document.activeElement)).toBe(true)
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1)
+  })
+
+  it('keeps showing what it showed while it slides away (Add clears the form as it closes)', async () => {
+    const animations = holdExits()
+    function Clearing() {
+      const [open, setOpen] = useState(true)
+      const [typed, setTyped] = useState('kopi 2.40')
+      return (
+        <Sheet open={open} onClose={() => setOpen(false)} title="Add expense" side="bottom">
+          <p>{typed}</p>
+          <button
+            type="button"
+            onClick={() => {
+              setTyped('')
+              setOpen(false)
+            }}
+          >
+            Add
+          </button>
+        </Sheet>
+      )
+    }
+    render(<Clearing />)
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+    expect(screen.getByText('kopi 2.40')).toBeInTheDocument()
+    await finishExits(animations)
+    expect(screen.queryByText('kopi 2.40')).toBeNull()
   })
 
   // The tap that closes it is not let through: on /ledger the second press of a double click on
@@ -370,30 +423,113 @@ describe('Sheet stacking', () => {
 })
 
 describe('Sheet motion', () => {
-  it('slides in normally, and only fades (no transform at all) under reduced motion', () => {
+  // The slide itself is CSS (index.css, src/__tests__/motion-css.test.ts) keyed on the layer
+  // box's data-state; e2e/motion.spec.ts watches it in a browser.
+  it('slides a bottom sheet up and a side sheet in from the right, over a fading backdrop', () => {
+    holdExits()
     const view = render(
       <Sheet open onClose={() => {}} title="Add expense" side="bottom">
         <p>body</p>
       </Sheet>,
     )
-    expect(screen.getByRole('dialog').style.transform).toContain('translateY')
-    view.unmount()
-
-    setReducedMotion(true)
-    try {
-      render(
-        <Sheet open onClose={() => {}} title="Add expense" side="bottom">
-          <p>body</p>
-        </Sheet>,
-      )
-      const transform = screen.getByRole('dialog').style.transform
-      expect(transform === '' || transform === 'none').toBe(true)
-    } finally {
-      setReducedMotion(false)
-    }
+    const bottom = screen.getByRole('dialog')
+    expect(bottom).toHaveClass('sheet-panel', 'sheet-panel--bottom')
+    expect(bottom.parentElement).toHaveAttribute('data-state', 'open')
+    expect(bottom.parentElement?.querySelector(':scope > [data-sheet-backdrop]')).toHaveClass(
+      'sheet-backdrop',
+    )
+    view.rerender(
+      <Sheet open onClose={() => {}} title="Settings">
+        <p>body</p>
+      </Sheet>,
+    )
+    expect(screen.getByRole('dialog')).toHaveClass('sheet-panel', 'sheet-panel--right')
   })
 
-  it('never moves under Reduce Motion turned on while the app is open (framer reads it once)', () => {
+  it('leaves room for a drag: its position is CSS alone, never an inline transform or animation', async () => {
+    const animations = holdExits()
+    const view = render(
+      <Sheet open onClose={() => {}} title="Add expense" side="bottom">
+        <p>body</p>
+      </Sheet>,
+    )
+    const panel = screen.getByRole('dialog')
+    view.rerender(
+      <Sheet open={false} onClose={() => {}} title="Add expense" side="bottom">
+        <p>body</p>
+      </Sheet>,
+    )
+    expect(panel.style.transform).toBe('')
+    expect(panel.style.translate).toBe('')
+    expect(animations.animated.filter((a) => a.element === panel)).toEqual([])
+    await finishExits(animations)
+  })
+
+  // WebKit (every iPhone browser) puts a running CSS transition at its end when the body's
+  // overflow changes: restoring it as the sheet closed skipped the whole slide out.
+  it('keeps the page scroll locked until it has slid away, untouched by a reopen on its way', async () => {
+    const animations = holdExits()
+    const view = render(
+      <Sheet open onClose={() => {}} title="Add expense" side="bottom">
+        <p>body</p>
+      </Sheet>,
+    )
+    const dialog = screen.getByRole('dialog')
+    expect(document.body.style.overflow).toBe('hidden')
+    const changes: MutationRecord[] = []
+    const observer = new MutationObserver((records) => changes.push(...records))
+    observer.observe(document.body, { attributeFilter: ['style'] })
+
+    view.rerender(
+      <Sheet open={false} onClose={() => {}} title="Add expense" side="bottom">
+        <p>body</p>
+      </Sheet>,
+    )
+    await settle()
+    expect(dialog).toHaveAttribute('inert')
+    view.rerender(
+      <Sheet open onClose={() => {}} title="Add expense" side="bottom">
+        <p>body</p>
+      </Sheet>,
+    )
+    view.rerender(
+      <Sheet open={false} onClose={() => {}} title="Add expense" side="bottom">
+        <p>body</p>
+      </Sheet>,
+    )
+    await settle()
+    expect(dialog).toBeInTheDocument()
+    changes.push(...observer.takeRecords())
+    observer.disconnect()
+    expect(changes, 'the body untouched while the sheet is on screen').toEqual([])
+
+    await finishExits(animations)
+    expect(dialog).not.toBeInTheDocument()
+    expect(document.body.style.overflow).toBe('')
+  })
+
+  it('under reduced motion it is open on its first frame and gone at once on close', () => {
+    holdExits()
+    setReducedMotion(true)
+    const view = render(
+      <Sheet open onClose={() => {}} title="Add expense" side="bottom">
+        <p>body</p>
+      </Sheet>,
+    )
+    const panel = screen.getByRole('dialog')
+    expect(panel.parentElement).toHaveAttribute('data-state', 'open')
+    expect(panel.style.transform).toBe('')
+    expect(document.body.style.overflow).toBe('hidden')
+    view.rerender(
+      <Sheet open={false} onClose={() => {}} title="Add expense" side="bottom">
+        <p>body</p>
+      </Sheet>,
+    )
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+    expect(document.body.style.overflow).toBe('')
+  })
+
+  it('never moves under Reduce Motion turned on while it shows', () => {
     render(
       <Sheet open onClose={() => {}} title="Add expense" side="bottom">
         <p>body</p>

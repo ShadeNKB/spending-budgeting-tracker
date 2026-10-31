@@ -453,20 +453,25 @@ test.describe('Service worker build', () => {
 // ─── chunk graph ───────────────────────────────────────────────────────────
 
 test.describe('Chunk graph', () => {
-  test('framer-motion is off the entry path and React lives in vendor-react', async ({
+  // T5b: overlays and the ledger swipe move with CSS transitions and the Web Animations API.
+  test('no animation library ships, the entry preloads only React and the utils, React lives in vendor-react', async ({
     request,
   }) => {
     const { html, entry, chunk } = await builtShell(request)
-    expect(html).not.toMatch(/modulepreload[^>]*vendor-motion/)
-    expect(html).toMatch(/modulepreload[^>]*vendor-react/)
+    expect(html + entry).not.toMatch(/vendor-motion/)
+    const preloads = [...html.matchAll(/modulepreload[^>]*href="\/assets\/([\w-]+)-[\w-]{8}\.js"/g)]
+      .map((m) => m[1] ?? '')
+      .sort()
+    expect(preloads).toEqual(['vendor-react', 'vendor-utils'])
     const staticImports = [
       ...entry.matchAll(/(?:^|;)\s*import\s*(?:[^'"]*?from\s*)?["']([^"']+)["']/g),
     ].map((m) => m[1] ?? '')
     expect(staticImports.length).toBeGreaterThan(0)
-    expect(staticImports.filter((s) => s.includes('vendor-motion'))).toEqual([])
+    expect(staticImports.filter((s) => !/vendor-(react|utils)-/.test(s))).toEqual([])
     expect(entry).not.toContain('react.transitional.element')
-    expect(await chunk('vendor-motion')).not.toContain('react.transitional.element')
     expect(await chunk('vendor-react')).toContain('react.transitional.element')
+    // Nothing the service worker would cache for offline use is an animation library either.
+    expect(await getText(request, '/sw.js')).not.toMatch(/vendor-motion/)
   })
 })
 

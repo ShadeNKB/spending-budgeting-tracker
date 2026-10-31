@@ -8,8 +8,11 @@
  *    gone in forced colours and the same as "selected"). The only exception is a container that
  *    takes focus from code and is never tabbed to: a dialog panel or a `tabIndex={-1}` heading
  *    (and the C2 `.field-control`, whose `.field-focus` frame draws the indicator).
- * 2. Reduced motion. Every module that imports framer-motion opts into the user's
- *    `prefers-reduced-motion` with `<MotionConfig reducedMotion="user">` or `useReducedMotion()`.
+ * 2. Reduced motion. Every module that animates (Web Animations with keyframes, `usePresence`,
+ *    a pointer drag) honours the user's `prefers-reduced-motion`: it asks
+ *    `prefersReducedMotion()` (src/ui/motion.ts) before it moves anything, or carries the CSS
+ *    guard `motion-reduce:!transform-none` on what it moves. And no module imports an animation
+ *    library: framer-motion went in T5b, for CSS transitions and the Web Animations API.
  * 3. No focusable element hidden from assistive tech: `aria-hidden` never sits on an element
  *    that is in the tab order (a non-negative or computed `tabIndex`, or a natively focusable
  *    tag without `tabIndex={-1}`).
@@ -174,46 +177,72 @@ function bannedFocusStyles(path: string, text: string): string[] {
 
 // ─── rule 2: reduced motion ───────────────────────────────────────────────────
 
-const importsFramer = (file: ts.SourceFile) =>
-  file.statements.some(
-    (s) =>
-      ts.isImportDeclaration(s) &&
-      ts.isStringLiteral(s.moduleSpecifier) &&
-      s.moduleSpecifier.text === 'framer-motion',
-  )
+/** framer-motion, its successor `motion` and their parts (the packages T5b removed). */
+const ANIMATION_LIBRARY = /^(?:framer-motion|motion|motion-dom|motion-utils)(?:\/|$)/
 
-/** `<MotionConfig reducedMotion="user">` rendered, or `useReducedMotion()` called. */
-function honoursReducedMotion(path: string, text: string): boolean {
-  const file = parse(path, text)
-  let honours = false
-  walk(file, (node) => {
-    if (isJsxTag(node) && tagName(node) === 'MotionConfig') {
-      const reduced = attribute(node, 'reducedMotion')
-      if (reduced && literalValue(reduced) === 'user') honours = true
+/** A static import or re-export of an animation library, or a dynamic `import()` of one. */
+function importsAnimationLibrary(path: string, text: string): boolean {
+  let found = false
+  walk(parse(path, text), (node) => {
+    const specifier =
+      ts.isImportDeclaration(node) || ts.isExportDeclaration(node)
+        ? node.moduleSpecifier
+        : ts.isCallExpression(node) && node.expression.kind === ts.SyntaxKind.ImportKeyword
+          ? node.arguments[0]
+          : undefined
+    if (specifier && ts.isStringLiteral(specifier) && ANIMATION_LIBRARY.test(specifier.text))
+      found = true
+  })
+  return found
+}
+
+/**
+ * Moves something on screen: a Web Animation with keyframes (`el.animate(keyframes, …)`), an
+ * element that animates in and out (`usePresence(…)`), or a drag (`el.setPointerCapture(…)`).
+ */
+function animates(path: string, text: string): boolean {
+  let found = false
+  walk(parse(path, text), (node) => {
+    if (!ts.isCallExpression(node)) return
+    const callee = node.expression
+    if (ts.isPropertyAccessExpression(callee)) {
+      const name = callee.name.text
+      if ((name === 'animate' && node.arguments.length > 0) || name === 'setPointerCapture')
+        found = true
+    } else if (ts.isIdentifier(callee) && callee.text === 'usePresence') {
+      found = true
     }
+  })
+  return found
+}
+
+/** `prefersReducedMotion()` called. */
+function asksReducedMotion(file: ts.SourceFile): boolean {
+  let asks = false
+  walk(file, (node) => {
     if (
       ts.isCallExpression(node) &&
       ts.isIdentifier(node.expression) &&
-      node.expression.text === 'useReducedMotion'
+      node.expression.text === 'prefersReducedMotion'
     )
-      honours = true
+      asks = true
   })
-  return honours
+  return asks
+}
+
+/** `prefersReducedMotion()` called, or `motion-reduce:!transform-none` in its class text. */
+function honoursReducedMotion(path: string, text: string): boolean {
+  const file = parse(path, text)
+  const guard = tw('MOTION-REDUCE:!TRANSFORM-NONE')
+  return (
+    asksReducedMotion(file) ||
+    literalTexts(file).some(({ text: t }) => t.split(/\s+/).includes(guard))
+  )
 }
 
 // ─── rule 3: nothing focusable inside aria-hidden ─────────────────────────────
 
-const NATIVELY_FOCUSABLE = new Set([
-  'a',
-  'button',
-  'input',
-  'select',
-  'textarea',
-  'summary',
-  'motion.a',
-  'motion.button',
-  'motion.input',
-])
+const NATIVELY_FOCUSABLE = new Set(['a', 'button', 'input', 'select', 'textarea', 'summary'])
 
 function focusableHidden(path: string, text: string): string[] {
   const found: string[] = []
@@ -265,15 +294,26 @@ describe('accessibility guards (source)', () => {
   )
 
   it(
-    'honours prefers-reduced-motion in every module that imports framer-motion',
+    'honours prefers-reduced-motion in every module that animates',
     () => {
-      const framer = mentioning(/framer-motion/).filter(([path, text]) =>
-        importsFramer(parse(path, text)),
+      const animating = mentioning(/\.animate\(|usePresence\(|setPointerCapture\(/).filter(
+        ([path, text]) => animates(path, text),
       )
       // Sheet, the palette, the toast host and the ledger row's swipe.
-      expect(framer.length).toBeGreaterThanOrEqual(4)
+      expect(animating.length).toBeGreaterThanOrEqual(4)
       expect(
-        framer.filter(([path, text]) => !honoursReducedMotion(path, text)).map(([path]) => path),
+        animating.filter(([path, text]) => !honoursReducedMotion(path, text)).map(([path]) => path),
+      ).toEqual([])
+    },
+    SCAN,
+  )
+
+  it(
+    'imports no animation library: framer-motion and its parts are gone',
+    () => {
+      const named = mentioning(/framer-motion|['"]motion(?:-dom|-utils)?['"/]/)
+      expect(
+        named.filter(([path, text]) => importsAnimationLibrary(path, text)).map(([p]) => p),
       ).toEqual([])
     },
     SCAN,
@@ -374,26 +414,65 @@ describe('accessibility guard detectors', () => {
     ).toEqual(found('/e.tsx', 'OUTLINE-NONE'))
   })
 
-  it('recognises MotionConfig reducedMotion="user" and useReducedMotion()', () => {
+  it('knows a module that animates: keyframes, presence or a drag, never a mention', () => {
+    const moving = [
+      'export const f = (el: Element) => el.animate([{ opacity: 0 }, { opacity: 1 }], 200)',
+      'export function X({ open }: { open: boolean }) { return usePresence(open, { parts }) }',
+      'export const f = (el: Element, id: number) => { el.setPointerCapture(id) }',
+    ]
+    for (const body of moving) expect(animates('/a.tsx', body), body).toBe(true)
+    const still = [
+      'export const can = typeof Element.prototype.animate === "function"',
+      'export const n = (el: Element) => el.getAnimations().length',
+      '// el.animate([{ opacity: 0 }]), usePresence(open), el.setPointerCapture(1)',
+      'export function usePresence() { return null }',
+      'export const f = (a: { animate: () => void }) => { a.animate() }',
+    ]
+    for (const body of still) expect(animates('/b.tsx', body), body).toBe(false)
+  })
+
+  it('recognises prefersReducedMotion() and the motion-reduce guard class, never a comment', () => {
+    expect(
+      honoursReducedMotion('/m.ts', 'export const f = () => (prefersReducedMotion() ? 0 : 1)'),
+    ).toBe(true)
     expect(
       honoursReducedMotion(
         '/m.tsx',
-        tsx('<MotionConfig reducedMotion="user"><motion.div /></MotionConfig>'),
+        tsx(`<div className="${tw('FIXED INSET-0 MOTION-REDUCE:!TRANSFORM-NONE')}" />`),
       ),
     ).toBe(true)
     expect(
       honoursReducedMotion(
         '/m.tsx',
-        'export function f() { const r = useReducedMotion(); return r }',
+        `const c = clsx("${tw('ROUNDED-XL MOTION-REDUCE:!TRANSFORM-NONE')}", tone)`,
       ),
     ).toBe(true)
+    expect(honoursReducedMotion('/m.ts', '// prefersReducedMotion() in a comment')).toBe(false)
     expect(
-      honoursReducedMotion(
-        '/m.tsx',
-        tsx('<MotionConfig reducedMotion="never"><motion.div /></MotionConfig>'),
-      ),
+      honoursReducedMotion('/m.tsx', tsx(`<div className="${tw('MOTION-REDUCE:OPACITY-50')}" />`)),
     ).toBe(false)
-    expect(honoursReducedMotion('/m.tsx', '// useReducedMotion() in a comment')).toBe(false)
+    // Imported but never asked.
+    expect(honoursReducedMotion('/m.ts', "import { prefersReducedMotion } from './motion'")).toBe(
+      false,
+    )
+  })
+
+  it('flags an import of framer-motion or its parts, static, re-exported or dynamic', () => {
+    const bad = [
+      "import { motion } from 'framer-motion'",
+      "import { animate } from 'motion/react'",
+      "import { spring } from 'motion-dom'",
+      "export { frame } from 'motion-utils'",
+      "export const load = () => import('framer-motion')",
+    ]
+    for (const body of bad) expect(importsAnimationLibrary('/x.ts', body), body).toBe(true)
+    const ok = [
+      "import { prefersReducedMotion } from './motion'",
+      "import { spring } from '../ui/spring'",
+      "// import { motion } from 'framer-motion'",
+      "export const name = 'framer-motion'",
+    ]
+    for (const body of ok) expect(importsAnimationLibrary('/y.ts', body), body).toBe(false)
   })
 
   it('flags aria-hidden on anything in the tab order', () => {
@@ -401,7 +480,7 @@ describe('accessibility guard detectors', () => {
       '<div aria-hidden tabIndex={0} />',
       '<div aria-hidden="true" tabIndex={active ? 0 : -1} />',
       '<button aria-hidden="true" />',
-      '<motion.button aria-hidden onClick={f} />',
+      '<a aria-hidden href="/ledger" />',
     ]
     for (const body of bad) expect(focusableHidden('/h.tsx', tsx(body)), body).toHaveLength(1)
     const ok = [

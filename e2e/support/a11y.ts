@@ -145,16 +145,39 @@ export interface SeedOptions {
   now?: Date
   /** Holds the one-shot stale-chunk reload, so a failed chunk shows its card at once. */
   holdChunkReload?: boolean
+  /**
+   * How the date is fixed. `fixed` (the default): Playwright's clock holds it at `now`, and
+   * also runs the page's requestAnimationFrame off its own timers. `running`: the date alone
+   * starts at `now` and runs on, and frames stay the browser's own, so what a frame callback
+   * reads is what was painted then (CSS transitions and Web Animations move only on painted
+   * frames; motion recordings need this).
+   */
+  date?: 'fixed' | 'running'
+}
+
+/** In the page, before its scripts: Date starts at `at` and runs on; no other timer changes. */
+function startDateAt(at: number): void {
+  const RealDate = Date
+  const offset = at - RealDate.now()
+  const now = () => RealDate.now() + offset
+  window.Date = new Proxy(RealDate, {
+    construct: (target, args: unknown[]) =>
+      args.length === 0 ? new target(now()) : Reflect.construct(target, args),
+    apply: () => new RealDate(now()).toString(),
+    get: (target, property, receiver) =>
+      property === 'now' ? now : Reflect.get(target, property, receiver),
+  })
 }
 
 /**
- * Fixed clock, invented data, SGD and the theme, written once per test (init scripts run on
+ * Fixed date, invented data, SGD and the theme, written once per test (init scripts run on
  * every navigation, so a reload keeps what the test changed). Reduced motion is on: scans and
  * focus audits measure the settled page, never a frame of an animation.
  */
 export async function seed(page: Page, opts: SeedOptions = {}): Promise<void> {
   const theme = opts.theme ?? 'dark'
-  await page.clock.setFixedTime(opts.now ?? NOW)
+  if (opts.date === 'running') await page.addInitScript(startDateAt, (opts.now ?? NOW).getTime())
+  else await page.clock.setFixedTime(opts.now ?? NOW)
   await page.emulateMedia({
     colorScheme: theme === 'light' ? 'light' : 'dark',
     reducedMotion: 'reduce',
@@ -1249,8 +1272,12 @@ export async function fieldFillProblems(page: Page): Promise<string[]> {
 // ─── motion (AC-S3, AC-A3, AC-M1) ─────────────────────────────────────────────
 
 /**
- * Records, on every animation frame for `ms`, the transform of everything matching `selector`
- * that is not the identity, while `action` runs. Empty = no transform frame at all.
+ * Records, on every animation frame for `ms`, how everything matching `selector` is moved off
+ * its place while `action` runs: its `transform` when that is not the identity, and its
+ * individual `translate`, `scale` and `rotate` when set to anything but the identity (`none`, a
+ * zero translation, a scale of 1, a zero rotation). One entry per moved element per frame, the
+ * transform first (`matrix(…)`, then `translate: …`, `scale: …`, `rotate: …`). Empty = nothing
+ * moved on any frame.
  */
 export async function transformFrames(
   page: Page,
@@ -1265,10 +1292,19 @@ export async function transformFrames(
       const until = performance.now() + duration
       const identity =
         /^(none|matrix\(1, 0, 0, 1, 0, 0\)|matrix3d\(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1\))$/
+      const nums = (v: string) => (v.match(/-?[\d.]+(?:e-?\d+)?/g) ?? []).map(Number)
       const tick = () => {
         for (const el of document.querySelectorAll(sel)) {
-          const t = getComputedStyle(el).transform
-          if (!identity.test(t)) seen.push(t)
+          const s = getComputedStyle(el)
+          const parts: string[] = []
+          if (!identity.test(s.transform)) parts.push(s.transform)
+          if (s.translate !== 'none' && nums(s.translate).some((n) => n !== 0))
+            parts.push(`translate: ${s.translate}`)
+          if (s.scale !== 'none' && nums(s.scale).some((n) => n !== 1))
+            parts.push(`scale: ${s.scale}`)
+          // A rotation's angle is its last number (an axis may come first: `1 0 0 45deg`).
+          if (s.rotate !== 'none' && nums(s.rotate).at(-1) !== 0) parts.push(`rotate: ${s.rotate}`)
+          if (parts.length > 0) seen.push(parts.join(' '))
         }
         if (performance.now() < until) requestAnimationFrame(tick)
         else Reflect.set(window, '__e2eTransformsDone', true)
