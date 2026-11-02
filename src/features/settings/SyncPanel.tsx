@@ -1,16 +1,13 @@
 import { useEffect, useId, useRef, useState } from 'react'
+import { format } from 'date-fns'
 import {
   Cloud,
   CloudOff,
-  Copy,
-  Check,
   Link2,
   Link2Off,
   RefreshCw,
   AlertCircle,
   Loader2,
-  Smartphone,
-  Monitor,
   ShieldCheck,
   Info,
   Download,
@@ -18,7 +15,6 @@ import {
 } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { InlineConfirm } from '../../ui/InlineConfirm'
-import { Input } from '../../ui/Input'
 import { shieldGesture } from '../../ui/pressShield'
 import {
   FAILING_AFTER_MS,
@@ -26,10 +22,10 @@ import {
   failingSinceMessage,
   failureSeverity,
   isFailing,
+  isPaused,
   needsReload,
   pausedDetail,
   reloadSpendTrack,
-  syncMessage,
   syncsWhenOnline,
   useSyncStore,
   type CloudStatus,
@@ -41,23 +37,23 @@ import { useUIStore } from '../../stores/useUIStore'
 import { syncEnabled } from '../../services/syncConfig'
 import { useTick } from '../../hooks/useTick'
 import { useToast } from '../../hooks/useToast'
+import { ARIA_DISABLED, DemoQuestion, JoinSync } from './JoinSync'
+import { SyncCode } from './SyncCode'
+import { SyncDevices } from './SyncDevices'
+import {
+  forgetPrevious,
+  keepPrevious,
+  maskCode,
+  readPrevious,
+  spokenEnd,
+  timeAgo,
+} from './previousCode'
 import clsx from 'clsx'
 
 const LEGACY_BANNER_MS = 24 * 60 * 60_000
 
-// The code generated on this device in this session: the "Link your phone" steps are for it,
-// not for a device that joined a code or reloaded.
-let generatedCode: string | null = null
-
-function timeAgo(ts: number): string {
-  const s = Math.floor((Date.now() - ts) / 1000)
-  if (s < 5) return 'just now'
-  if (s < 60) return `${s}s ago`
-  const m = Math.floor(s / 60)
-  if (m < 60) return `${m}m ago`
-  const h = Math.floor(m / 60)
-  return `${h}h ago`
-}
+const CODE_SAFETY =
+  'Share the code only with your own devices: anyone with it can change your synced data.'
 
 // Short status-row labels; the banner under the row carries the full sentence.
 const ERROR_LABEL: Record<SyncFailure['kind'], string> = {
@@ -66,11 +62,14 @@ const ERROR_LABEL: Record<SyncFailure['kind'], string> = {
   permission: 'Sync server refused access',
   // Never a red label that starts with "Synced".
   invalid: "Couldn't read the synced copy",
+  busy: 'Devices synced at the same moment',
   offline: "Offline — will sync when you're back",
   'too-large': 'Sync paused',
   moved: 'Sync paused',
   'update-required': 'Sync paused',
   reload: 'Sync paused',
+  'not-found': 'Sync paused',
+  denied: 'Sync paused',
 }
 
 type Tone = 'muted' | 'accent' | 'positive' | 'info' | 'warning' | 'negative'
@@ -80,20 +79,15 @@ const failureTone = (failure: SyncFailure): Extract<Tone, 'warning' | 'negative'
   failureSeverity(failure) === 'warning' ? 'warning' : 'negative'
 
 /**
- * A failure in the banner's words. The status row above it already says "Sync paused", and
- * once a retried failure has lasted 10 minutes the banner says since when.
+ * A failure in the banner's words (the engine's own). The status row above it already says
+ * "Sync paused", and once a retried failure has lasted 10 minutes the banner says since when.
  */
 const bannerText = (failure: SyncFailure): string =>
   isFailing(failure) ? failingSinceMessage(failure.since) : pausedDetail(failure.message)
 
-const isFence = (failure: SyncFailure | null): boolean =>
-  failure?.kind === 'moved' || failure?.kind === 'update-required'
-
 /** What the banners say about a failure (offline has no banner: the status row says it). */
-function failureBanner(failure: SyncFailure | null): string | null {
-  if (!failure || failure.kind === 'offline') return null
-  return isFence(failure) ? syncMessage('moved') : bannerText(failure)
-}
+const failureBanner = (failure: SyncFailure | null): string | null =>
+  !failure || failure.kind === 'offline' ? null : bannerText(failure)
 
 /**
  * Re-renders once when a retried failure reaches 10 minutes, so its colour and words turn then
@@ -133,8 +127,9 @@ interface StatusInput {
   status: CloudStatus
   lastSyncAt: number | null
   pendingLocal: boolean
+  pending: number
   lastError: SyncFailure | null
-  waitingForOld: boolean
+  waitingForOld: number
   /** The owner's own Sync now is on the wire. */
   manual: boolean
   /** Offline, sync runs by itself once the device is back (`syncsWhenOnline`). */
@@ -146,6 +141,13 @@ interface StatusView {
   tone: Tone
   /** A cycle is running (the dot pulses). */
   busy: boolean
+}
+
+/** " · retry in 30 s" (rounded up to 5 s) while a retry is scheduled. */
+function retryIn(failure: SyncFailure): string {
+  if (failure.retryAt === undefined || isPaused(failure.kind)) return ''
+  const s = Math.ceil((failure.retryAt - Date.now()) / 5000) * 5
+  return s > 0 ? ` · retry in ${String(s)} s` : ''
 }
 
 /**
@@ -161,8 +163,9 @@ function statusView(s: StatusInput): StatusView {
   }
   if (s.status === 'offline') {
     // The promise only when sync will run by itself: not when its code failed to load here.
+    const waiting = s.pending > 0 ? ` · ${s.pending.toLocaleString()} to sync` : ''
     return {
-      label: s.resumes ? ERROR_LABEL.offline : 'Offline · not synced',
+      label: s.resumes ? `${ERROR_LABEL.offline}${waiting}` : 'Offline · not synced',
       tone: 'warning',
       busy: false,
     }
@@ -178,15 +181,22 @@ function statusView(s: StatusInput): StatusView {
         busy,
       }
     }
-    return { label: ERROR_LABEL[failure.kind], tone: failureTone(failure), busy }
+    return {
+      label: ERROR_LABEL[failure.kind] + retryIn(failure),
+      tone: failureTone(failure),
+      busy,
+    }
   }
   // The relay holds the old device's copy, not this one: saved, but not "Synced". Before
   // pending, which a held-back push leaves set: nothing is due until something changes here.
-  if (s.waitingForOld) {
+  if (s.waitingForOld > 0) {
     return { label: 'Saved here · other device needs update', tone: 'info', busy }
   }
-  if (busy && (s.pendingLocal || s.lastSyncAt === null)) {
+  if (busy && (s.pendingLocal || s.pending > 0 || s.lastSyncAt === null)) {
     return { label: 'Syncing…', tone: 'accent', busy }
+  }
+  if (s.pending > 0) {
+    return { label: `Saved here · ${s.pending.toLocaleString()} to sync`, tone: 'accent', busy }
   }
   if (s.pendingLocal) return { label: 'Saved here · syncing soon', tone: 'accent', busy }
   const ago = s.lastSyncAt === null ? '' : ` · ${timeAgo(s.lastSyncAt)}`
@@ -195,15 +205,12 @@ function statusView(s: StatusInput): StatusView {
 
 type BannerTone = 'error' | 'warning' | 'info'
 
-/** A busy button that keeps keyboard focus: it looks and acts disabled, but is not `disabled`. */
-const ARIA_DISABLED = 'aria-disabled:pointer-events-none aria-disabled:opacity-40'
-
 type SetupLead = 'generated' | 'connected'
 
 /**
- * A failed first sync after Generate or Connect, led by what did happen: the code was created
- * or saved, never "connected" (the relay may have refused it). A pause promises no sync "yet":
- * it lasts until the owner acts, and so does refused access. When a banner now says why
+ * A failed first sync after Generate, Join or Reconnect, led by what did happen: the code was
+ * created or saved, never "connected" (the relay may have refused it). A pause promises no sync
+ * "yet": it lasts until the owner acts, and so does refused access. When a banner now says why
  * (`bannerSaysWhy`), the toast leaves the why to it, so the same sentence is not said twice.
  */
 function setupFailure(
@@ -214,6 +221,8 @@ function setupFailure(
   const done = lead === 'generated' ? 'Sync code created' : 'Code saved'
   switch (result.error) {
     case 'too-large':
+    case 'not-found':
+    case 'denied':
       return bannerSaysWhy
         ? `${done}. Sync is paused.`
         : `${done}. Sync is paused: ${pausedDetail(result.message)}`
@@ -232,7 +241,7 @@ function setupFailure(
 }
 
 /** Controls that take focus after a view swap (see `focusNext`). */
-type FocusTarget = 'sync-now' | 'generate' | 'connect' | 'disconnect'
+type FocusTarget = 'sync-now' | 'generate' | 'reconnect' | 'disconnect'
 
 const BANNER_TONE: Record<BannerTone, string> = {
   error: 'border-negative/20 bg-negative/10 text-negative',
@@ -246,20 +255,33 @@ const ACTION_TONE: Record<Exclude<BannerTone, 'info'>, string> = {
 }
 
 interface BannerView {
-  key: 'reload' | 'failing' | 'old-device'
+  key: 'reload' | 'failing' | 'old-device' | 'size'
   tone: BannerTone
   icon: LucideIcon
   text: string
   action?: { icon: LucideIcon; label: string; onClick: () => void }
 }
 
-/** What the old-device banner says: one sentence when both apply. */
-function oldDeviceText(seen: boolean, waiting: boolean): string | null {
-  if (seen && waiting) {
-    return 'An older SpendTrack (0.8.4 or earlier) on your other device keeps overwriting the synced copy. Open it and reload; everything is saved here.'
+const UNTIL_UPDATED =
+  "Until then, don't rename categories, restore backups or delete everything on it."
+
+/** What the old-device banner says: one sentence, the oldest writer seen first. */
+function oldDeviceText(
+  seen: { v084: boolean; v085: boolean; v5pre: boolean },
+  waiting: boolean,
+): string | null {
+  if (seen.v084) {
+    return `${
+      waiting
+        ? 'An older SpendTrack (0.8.4 or earlier) on your other device keeps overwriting the synced copy. Open it and reload; everything is saved here.'
+        : 'A device still runs an old SpendTrack (0.8.4 or earlier). Open it and reload.'
+    } ${UNTIL_UPDATED}`
   }
-  if (seen) return 'Another device runs an older SpendTrack (0.8.4 or earlier). Open it and reload.'
-  return waiting ? OLD_DEVICE_WAITING : null
+  if (waiting) return OLD_DEVICE_WAITING
+  const version = seen.v085 ? '0.9.2' : seen.v5pre ? '0.10.0' : null
+  return version === null
+    ? null
+    : `Your other device runs SpendTrack ${version}. Open it and reload to update.`
 }
 
 /** What the owner must know about sync right now, worst first. */
@@ -267,6 +289,7 @@ function useBanners(): BannerView[] {
   const lastError = useSyncStore((s) => s.lastError)
   const legacyWriterAt = useSyncStore((s) => s.legacyWriterAt)
   const waitingForOld = useSyncStore((s) => s.waitingForOld)
+  const view = useSyncStore((s) => s.view)
   const focusSettings = useUIStore((s) => s.focusSettings)
   const banners: BannerView[] = []
   if (lastError && needsReload(lastError.kind)) {
@@ -274,7 +297,7 @@ function useBanners(): BannerView[] {
       key: 'reload',
       tone: 'warning',
       icon: AlertCircle,
-      text: failureBanner(lastError) ?? '',
+      text: bannerText(lastError),
       // A new build that is already waiting takes over first; a plain reload would come back
       // on the old one, to the same pause.
       action: { icon: RefreshCw, label: 'Reload', onClick: reloadSpendTrack },
@@ -296,9 +319,28 @@ function useBanners(): BannerView[] {
           : undefined,
     })
   }
-  const legacySeen = legacyWriterAt !== null && Date.now() - legacyWriterAt < LEGACY_BANNER_MS
-  const old = oldDeviceText(legacySeen, waitingForOld)
+  const now = Date.now()
+  const recent = (at: number | null | undefined) =>
+    at !== null && at !== undefined && now - at < LEGACY_BANNER_MS
+  const old = oldDeviceText(
+    {
+      v084: recent(legacyWriterAt) || recent(view?.legacy.v084At),
+      v085: recent(view?.legacy.v085At),
+      v5pre: recent(view?.legacy.v5preAt),
+    },
+    waitingForOld > 0,
+  )
   if (old !== null) banners.push({ key: 'old-device', tone: 'info', icon: Info, text: old })
+  const pct = view?.sizePct ?? null
+  // Over 100 % the too-large pause says it already, with the size.
+  if (pct !== null && pct >= 70 && lastError?.kind !== 'too-large') {
+    banners.push({
+      key: 'size',
+      tone: pct >= 90 ? 'warning' : 'info',
+      icon: pct >= 90 ? AlertCircle : Info,
+      text: `Sync uses ${String(pct)} % of the relay limit. At 100 % sync pauses; your data stays on this device.`,
+    })
+  }
   return banners
 }
 
@@ -309,7 +351,7 @@ function useBanners(): BannerView[] {
  * does: a button inside it would be read as part of the sentence ("…to update. Reload"). The
  * banner shows the same words to the eye, and its button is described by them.
  */
-function SyncBanners() {
+function SyncBanners({ flush = false }: { flush?: boolean }) {
   const banners = useBanners()
   const idBase = useId()
   const textId = (key: BannerView['key']) => `${idBase}-${key}`
@@ -323,7 +365,7 @@ function SyncBanners() {
         ))}
       </div>
       {/* Empty, it takes no space; with a banner, the margin stands in for the card's gap. */}
-      <div className="flex flex-col gap-2 [&:not(:empty)]:mt-3">
+      <div className={clsx('flex flex-col gap-2', !flush && '[&:not(:empty)]:mt-3')}>
         {banners.map(({ key, tone, icon: Icon, text, action }) => (
           <div
             key={key}
@@ -399,12 +441,18 @@ function NotConfigured() {
   )
 }
 
+type SetupRequest =
+  | { kind: 'generate' }
+  | { kind: 'join'; code: string }
+  | { kind: 'reconnect'; code: string; established: boolean }
+
 function SyncContent() {
   const syncId = useSyncStore((s) => s.syncId)
   const cloudStatus = useSyncStore((s) => s.cloudStatus)
   const lastSyncAt = useSyncStore((s) => s.lastSyncAt)
   const lastError = useSyncStore((s) => s.lastError)
   const pendingLocal = useSyncStore((s) => s.pendingLocal)
+  const pending = useSyncStore((s) => s.pending)
   const waitingForOld = useSyncStore((s) => s.waitingForOld)
   const resumes = useSyncStore(syncsWhenOnline)
   const setupSync = useSyncStore((s) => s.setupSync)
@@ -412,15 +460,19 @@ function SyncContent() {
   const triggerSync = useSyncStore((s) => s.triggerSync)
   const toast = useToast()
 
-  const [codeInput, setCodeInput] = useState('')
-  const [copied, setCopied] = useState(false)
-  const [connecting, setConnecting] = useState(false)
+  // The setup this panel is running, if any: every setup control waits for it.
+  const [connecting, setConnecting] = useState<SetupRequest['kind'] | null>(null)
   const [manualSyncing, setManualSyncing] = useState(false)
   const [confirmDisconnect, setConfirmDisconnect] = useState(false)
-  // Generate or Connect asked while the demo's sample rows are here (P2-22): they never sync,
-  // so the owner decides first whether to keep them on this device.
+  // Generate while this device remembers a code it left (F-050): one sync or two?
+  const [askSeparate, setAskSeparate] = useState(false)
+  // Generate or Reconnect asked while the demo's sample rows are here (P2-22): they never
+  // sync, so the owner decides first whether to keep them on this device. (Join asks in its
+  // own row.)
   const [askDemo, setAskDemo] = useState<SetupRequest | null>(null)
-  const copyResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // Join is checking a code or asking its own question: Generate and Reconnect wait, and Join
+  // waits while they ask, so one question is on screen at a time.
+  const [joinActive, setJoinActive] = useState(false)
   // Each request this panel starts takes a number, and Disconnect moves past it: a request
   // still on the wire then (a hung first sync) keeps no button busy and reports nothing.
   const requestGen = useRef(0)
@@ -428,9 +480,10 @@ function SyncContent() {
   // it mounts, so keyboard and screen-reader focus stays in the panel, never on <body>.
   const focusNext = useRef<FocusTarget | null>(null)
   const statusId = useId()
+  const reconnectHintId = useId()
   useFailingTurn(lastError)
-  // "Synced · 2m ago" ages while the panel stays open, as on the pill.
-  useTick(15_000)
+  // "Synced · 2m ago" ages while the panel stays open, as on the pill; a retry counts down.
+  useTick(lastError?.retryAt === undefined ? 15_000 : 5_000)
 
   /** A ref that focuses its element on mount when it is the successor asked for. */
   const focusWhenShown = (target: FocusTarget) => (element: HTMLElement | null) => {
@@ -444,13 +497,6 @@ function SyncContent() {
   const dropFocusRequest = (target: FocusTarget) => {
     if (focusNext.current === target) focusNext.current = null
   }
-
-  useEffect(
-    () => () => {
-      if (copyResetTimer.current) clearTimeout(copyResetTimer.current)
-    },
-    [],
-  )
 
   /** Runs one panel request; `report` sees its result only if no Disconnect came between. */
   const runRequest = async (
@@ -491,46 +537,60 @@ function SyncContent() {
   }
 
   /** Held back for an old device: saved here, but the relay does not hold this copy. */
-  const heldBack = () => useSyncStore.getState().waitingForOld
+  const heldBack = () => useSyncStore.getState().waitingForOld > 0
 
-  const generate = async () => {
+  /** Runs one setup, then says how it went: `done` on success. */
+  const link = async (
+    kind: SetupRequest['kind'],
+    request: () => Promise<SyncResult>,
+    done: string,
+    after?: (result: SyncResult) => void,
+  ) => {
     focusNext.current = 'sync-now'
-    const code = crypto.randomUUID()
-    generatedCode = code
+    const lead: SetupLead = kind === 'generate' ? 'generated' : 'connected'
     const before = failureBanner(useSyncStore.getState().lastError)
-    await runRequest(
-      setConnecting,
-      () => setupSync(code),
-      (result) => {
-        if (!result.ok)
-          reportFailure(result, setupFailure('generated', result, bannerNowSays(before)))
-        else if (heldBack()) toast.info(OLD_DEVICE_WAITING)
-        else toast.success('Sync code generated — enter it on your other device')
-      },
-    )
+    const setBusy = (busy: boolean) => {
+      setConnecting(busy ? kind : null)
+    }
+    await runRequest(setBusy, request, (result) => {
+      after?.(result)
+      if (!result.ok) reportFailure(result, setupFailure(lead, result, bannerNowSays(before)))
+      else if (heldBack()) toast.info(OLD_DEVICE_WAITING)
+      else toast.success(done)
+    })
     dropFocusRequest('sync-now')
-  }
-
-  const connect = async (code: string) => {
-    // The code is saved either way; a failed first sync keeps retrying in the background.
-    focusNext.current = 'sync-now'
-    const before = failureBanner(useSyncStore.getState().lastError)
-    await runRequest(
-      setConnecting,
-      () => setupSync(code),
-      (result) => {
-        if (!result.ok)
-          reportFailure(result, setupFailure('connected', result, bannerNowSays(before)))
-        else if (heldBack()) toast.info(OLD_DEVICE_WAITING)
-        else toast.success('Connected — data synced')
-      },
-    )
-    dropFocusRequest('sync-now')
-    setCodeInput('')
   }
 
   const run = (request: SetupRequest) => {
-    void (request.kind === 'generate' ? generate() : connect(request.code))
+    switch (request.kind) {
+      case 'generate': {
+        const code = crypto.randomUUID()
+        void link(
+          'generate',
+          () => setupSync(code),
+          'Sync code created. Join it on your other device.',
+        )
+        return
+      }
+      case 'join':
+        void link(
+          'join',
+          () => setupSync(request.code, { join: true }),
+          'Joined. This device is synced.',
+        )
+        return
+      case 'reconnect':
+        void link(
+          'reconnect',
+          // Not established when it left (a join that never found its copy): a join again.
+          () => setupSync(request.code, { join: !request.established }),
+          'Reconnected. This device is synced.',
+          (result) => {
+            // The code is this device's again (saved with the setup): the slot is spent.
+            if (result.ok || result.error !== 'off') forgetPrevious()
+          },
+        )
+    }
   }
 
   /** Sets up now, or first asks about the demo's sample rows while they are here. */
@@ -550,7 +610,7 @@ function SyncContent() {
     if (request === null) return
     setAskDemo(null)
     // The question's place goes back to the control that asked it until the linked view mounts.
-    focusNext.current = request.kind
+    focusNext.current = request.kind === 'reconnect' ? 'reconnect' : 'generate'
     if (remove) {
       try {
         useExpenseStore.getState().clearSampleData()
@@ -564,42 +624,8 @@ function SyncContent() {
 
   const backOutOfDemo = () => {
     if (askDemo === null) return
-    focusNext.current = askDemo.kind
+    focusNext.current = askDemo.kind === 'reconnect' ? 'reconnect' : 'generate'
     setAskDemo(null)
-  }
-
-  const handleGenerate = () => {
-    // aria-disabled, not disabled, while setting up: the button keeps keyboard focus.
-    if (connecting) return
-    setUp({ kind: 'generate' })
-  }
-
-  const handleConnect = () => {
-    const trimmed = codeInput.trim().toLowerCase()
-    if (!trimmed || connecting) return
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-    if (!uuidRegex.test(trimmed)) {
-      toast.error('Invalid sync code — paste the full code from your other device')
-      return
-    }
-    setUp({ kind: 'connect', code: trimmed })
-  }
-
-  const handleCopy = async () => {
-    if (!syncId) return
-    try {
-      await navigator.clipboard.writeText(syncId)
-    } catch {
-      // Clipboard access is denied or unavailable (insecure context) — the code stays selectable.
-      toast.error('Could not copy — select the code and copy it manually')
-      return
-    }
-    setCopied(true)
-    if (copyResetTimer.current) clearTimeout(copyResetTimer.current)
-    copyResetTimer.current = setTimeout(() => {
-      setCopied(false)
-      copyResetTimer.current = null
-    }, 2000)
   }
 
   const handleManualSync = () => {
@@ -609,7 +635,10 @@ function SyncContent() {
     // toast would say the same sentence a second time. A result the banners already showed
     // changes nothing there, so the toast is what tells the owner the tap was answered.
     const before = useSyncStore.getState()
-    const shownBefore = { failure: failureBanner(before.lastError), waiting: before.waitingForOld }
+    const shownBefore = {
+      failure: failureBanner(before.lastError),
+      waiting: before.waitingForOld > 0,
+    }
     void runRequest(
       setManualSyncing,
       () => triggerSync({ resetBackoff: true }),
@@ -623,77 +652,167 @@ function SyncContent() {
     )
   }
 
-  const handleDisconnect = () => {
-    focusNext.current = 'generate'
+  /** Stops syncing here. A plain code is remembered for 30 days for a one-tap Reconnect. */
+  const handleDisconnect = (code: string | null) => {
+    if (code !== null) keepPrevious(code, Date.now())
+    focusNext.current = readPrevious(Date.now()) === null ? 'generate' : 'reconnect'
     requestGen.current++
-    setConnecting(false)
+    setConnecting(null)
     setManualSyncing(false)
     disconnectSync()
     setConfirmDisconnect(false)
     toast.info('Sync disconnected')
   }
 
-  const status = statusView({
-    status: cloudStatus,
-    lastSyncAt,
-    pendingLocal,
-    lastError,
-    waitingForOld,
-    manual: manualSyncing,
-    resumes,
-  })
+  const disconnect = (code: string | null, detail: string) =>
+    // The shared confirmation: Cancel takes focus, Escape takes back the question (not
+    // Settings), and neither a double tap on "Disconnect sync" nor a held Enter can answer it.
+    // Cancel hands focus back to "Disconnect sync".
+    confirmDisconnect ? (
+      <InlineConfirm
+        tone="warning"
+        question="Disconnect sync on this device?"
+        detail={detail}
+        confirmLabel="Disconnect"
+        onConfirm={() => {
+          handleDisconnect(code)
+        }}
+        onCancel={() => {
+          focusNext.current = 'disconnect'
+          setConfirmDisconnect(false)
+        }}
+      />
+    ) : (
+      <Button
+        ref={focusWhenShown('disconnect')}
+        onClick={() => {
+          // The question takes this button's place: a double tap's second tap must not
+          // answer it.
+          shieldGesture()
+          setConfirmDisconnect(true)
+        }}
+        variant="ghost"
+        className="w-full text-[var(--text-tertiary)] hover:text-white"
+      >
+        <Link2Off size={14} /> Disconnect sync
+      </Button>
+    )
+
+  // A newer SpendTrack set sync up on this device: this build cannot read it, so it offers no
+  // Generate or Join (either would overwrite it), only a reload or an explicit Disconnect.
+  if (syncId === null && cloudStatus === 'paused') {
+    return (
+      <div className="flex flex-col gap-3">
+        <SyncBanners flush />
+        <div className="border-t border-white/[0.06] pt-3">
+          {disconnect(
+            null,
+            'This device forgets the sync a newer SpendTrack set up here. Your data stays on this device and on your other devices.',
+          )}
+        </div>
+        <AppVersion />
+      </div>
+    )
+  }
 
   if (!syncId) {
+    const prev = readPrevious(Date.now())
+    // aria-disabled, not disabled, while another setup runs or Join asks: focus stays put.
+    // Generate also waits while Reconnect asks about the sample data.
+    const waiting = connecting !== null || joinActive
+    const generateWaits = waiting || askDemo !== null
+    const generateButton = (
+      <Button
+        ref={focusWhenShown('generate')}
+        onClick={() => {
+          if (generateWaits) return
+          if (prev === null) {
+            setUp({ kind: 'generate' })
+            return
+          }
+          shieldGesture()
+          setAskSeparate(true)
+        }}
+        variant={prev === null ? 'primary' : 'ghost'}
+        aria-disabled={generateWaits}
+        className={ARIA_DISABLED}
+      >
+        {connecting === 'generate' ? (
+          <Loader2 size={14} className="animate-spin" />
+        ) : (
+          <Cloud size={14} />
+        )}
+        {connecting === 'generate' ? 'Setting up…' : 'Generate sync code for this device'}
+      </Button>
+    )
     return (
       <div className="flex flex-col gap-4">
-        <div className="flex flex-col gap-3 rounded-lg border border-accent/15 bg-accent/[0.04] p-4">
-          <div className="flex items-center gap-2 text-[13px] font-semibold text-white">
-            <Cloud size={14} className="text-accent" />
+        <div className="flex flex-col gap-2 rounded-lg border border-accent/15 bg-accent/[0.04] p-4">
+          <h3 className="flex items-center gap-2 text-[13px] font-semibold text-white">
+            <Cloud size={14} className="text-accent" aria-hidden />
             Link your devices
-          </div>
+          </h3>
           <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
-            Generate a sync code on one device, then paste it on every other device you want to keep
-            in sync. There are no accounts and no passwords — the code itself is the shared secret.
+            Generate a sync code here, then join it on your other device. There&apos;s no account:
+            the code links them. The synced copy isn&apos;t encrypted yet, so anyone with this
+            app&apos;s public key could read it.
           </p>
-          <div className="mt-1 grid grid-cols-2 gap-2">
-            <div className="flex items-start gap-2 rounded-md border border-white/[0.06] bg-surface-1 p-2.5">
-              <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[10px] font-semibold text-accent">
-                1
-              </span>
-              <div className="min-w-0">
-                <div className="text-[11px] font-medium text-white">On this device</div>
-                <div className="text-[10px] leading-snug text-[var(--text-tertiary)]">
-                  Generate a sync code
-                </div>
-              </div>
-            </div>
-            <div className="flex items-start gap-2 rounded-md border border-white/[0.06] bg-surface-1 p-2.5">
-              <span className="mt-0.5 inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[10px] font-semibold text-accent">
-                2
-              </span>
-              <div className="min-w-0">
-                <div className="text-[11px] font-medium text-white">On other devices</div>
-                <div className="text-[10px] leading-snug text-[var(--text-tertiary)]">
-                  Settings → Sync → paste it
-                </div>
-              </div>
-            </div>
-          </div>
         </div>
+
+        {prev !== null &&
+          (askDemo?.kind === 'reconnect' ? (
+            <DemoQuestion onAnswer={answerDemo} onBackOut={backOutOfDemo} />
+          ) : (
+            <div className="flex flex-col gap-1.5">
+              <Button
+                ref={focusWhenShown('reconnect')}
+                onClick={() => {
+                  if (waiting) return
+                  // "Reconnect instead" answers Generate's question about a separate sync.
+                  setAskSeparate(false)
+                  setUp({ kind: 'reconnect', code: prev.code, established: prev.established })
+                }}
+                aria-disabled={waiting}
+                aria-label={`Reconnect to the code ending in ${spokenEnd(prev.code)}`}
+                aria-describedby={reconnectHintId}
+                className={ARIA_DISABLED}
+              >
+                {connecting === 'reconnect' ? (
+                  <Loader2 size={14} className="animate-spin" aria-hidden />
+                ) : (
+                  <Link2 size={14} aria-hidden />
+                )}
+                Reconnect to <span className="font-mono">{maskCode(prev.code)}</span>
+              </Button>
+              <p
+                id={reconnectHintId}
+                className="text-center text-[12px] text-[var(--text-tertiary)]"
+              >
+                This device remembers the code until {format(prev.until, 'd MMM')}.
+              </p>
+            </div>
+          ))}
 
         {askDemo?.kind === 'generate' ? (
           <DemoQuestion onAnswer={answerDemo} onBackOut={backOutOfDemo} />
+        ) : askSeparate ? (
+          <InlineConfirm
+            tone="warning"
+            question="Start a separate sync?"
+            detail="Your other devices stay on the old code. Reconnect instead to keep one sync."
+            confirmLabel="Make a new code"
+            onConfirm={() => {
+              setAskSeparate(false)
+              focusNext.current = 'generate'
+              setUp({ kind: 'generate' })
+            }}
+            onCancel={() => {
+              focusNext.current = 'generate'
+              setAskSeparate(false)
+            }}
+          />
         ) : (
-          <Button
-            ref={focusWhenShown('generate')}
-            onClick={handleGenerate}
-            variant="primary"
-            aria-disabled={connecting}
-            className={ARIA_DISABLED}
-          >
-            {connecting ? <Loader2 size={14} className="animate-spin" /> : <Cloud size={14} />}
-            {connecting ? 'Setting up…' : 'Generate sync code for this device'}
-          </Button>
+          generateButton
         )}
 
         <div className="flex items-center gap-3">
@@ -702,55 +821,35 @@ function SyncContent() {
           <div className="h-px flex-1 bg-white/[0.06]" />
         </div>
 
-        {askDemo?.kind === 'connect' ? (
-          <DemoQuestion onAnswer={answerDemo} onBackOut={backOutOfDemo} />
-        ) : (
-          <div className="flex gap-2">
-            {/* min-w-0 lets the field shrink, so Connect stays on screen at 320 px. */}
-            <div className="min-w-0 flex-1">
-              <Input
-                label="Sync code"
-                placeholder="Paste sync code from another device"
-                value={codeInput}
-                onChange={(e) => setCodeInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key !== 'Enter') return
-                  // Without this, the Enter's own activation (keypress) lands on Sync now, which
-                  // the connected view focuses as it mounts, and runs a second cycle.
-                  e.preventDefault()
-                  handleConnect()
-                }}
-                className="min-w-0"
-              />
-            </div>
-            <Button
-              ref={focusWhenShown('connect')}
-              onClick={handleConnect}
-              disabled={!codeInput.trim()}
-              aria-disabled={connecting}
-              className={clsx('mt-0 shrink-0 self-end', ARIA_DISABLED)}
-            >
-              {connecting ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
-              Connect
-            </Button>
-          </div>
-        )}
+        <JoinSync
+          busy={connecting !== null || askSeparate || askDemo !== null}
+          joining={connecting === 'join'}
+          onJoin={(code) => {
+            run({ kind: 'join', code })
+          }}
+          onActiveChange={setJoinActive}
+        />
 
-        <div className="flex items-start gap-2 pt-1 text-[11px] leading-relaxed text-[var(--text-tertiary)]">
-          <ShieldCheck size={12} className="mt-0.5 shrink-0 text-positive/70" />
-          <span>
-            Treat the sync code like a password. Anyone with it can read &amp; write your synced
-            data. Don&apos;t share it in chats or screenshots.
-          </span>
-        </div>
+        <CodeSafety />
         <AppVersion />
       </div>
     )
   }
 
+  const status = statusView({
+    status: cloudStatus,
+    lastSyncAt,
+    pendingLocal,
+    pending,
+    lastError,
+    waitingForOld,
+    manual: manualSyncing,
+    resumes,
+  })
+
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex flex-col gap-3 rounded-lg border border-white/[0.06] bg-surface-1 p-4">
+      <div className="flex flex-col gap-4 rounded-lg border border-white/[0.06] bg-surface-1 p-4">
         <div>
           <div className="flex items-center justify-between gap-2">
             <div className="flex min-w-0 items-center gap-2">
@@ -769,7 +868,11 @@ function SyncContent() {
               </span>
             </div>
             <button
-              ref={focusWhenShown('sync-now')}
+              ref={(element) => {
+                focusWhenShown('sync-now')(element)
+                // The pill that opened Settings asked for it.
+                if (element && useUIStore.getState().takeSettingsFocus('sync-now')) element.focus()
+              }}
               type="button"
               onClick={handleManualSync}
               aria-disabled={manualSyncing}
@@ -783,104 +886,16 @@ function SyncContent() {
           </div>
           <SyncBanners />
         </div>
-
-        <div className="flex flex-col gap-1.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] text-[var(--text-tertiary)]">Your sync code</span>
-            <button
-              type="button"
-              onClick={handleCopy}
-              className="-mr-2 inline-flex min-h-11 items-center gap-1 px-2 text-[11px] text-accent/80 transition hover:text-accent md:mr-0 md:min-h-0 md:px-0"
-            >
-              {copied ? (
-                <>
-                  <Check size={11} /> Copied
-                </>
-              ) : (
-                <>
-                  <Copy size={11} /> Copy
-                </>
-              )}
-            </button>
-          </div>
-          <button
-            type="button"
-            onClick={handleCopy}
-            className="flex min-h-11 items-center gap-2 rounded-md border border-white/[0.06] bg-surface-2 px-3 py-2 text-left transition hover:border-accent/30 md:min-h-0"
-            title="Tap to copy"
-          >
-            <span className="flex-1 select-all truncate font-mono text-[11px] text-white/80">
-              {syncId}
-            </span>
-          </button>
-        </div>
+        <SyncCode code={syncId} />
+        <CodeSafety />
       </div>
 
-      {syncId === generatedCode && (
-        <div className="flex flex-col gap-2.5 rounded-lg border border-accent/15 bg-accent/[0.04] p-3.5">
-          <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-white">
-            <Smartphone size={12} className="text-accent" /> Link your phone in 3 steps
-          </div>
-          <ol className="flex flex-col gap-1.5 text-[11px] leading-relaxed text-[var(--text-secondary)]">
-            <li className="flex gap-2">
-              <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[10px] font-semibold text-accent">
-                1
-              </span>{' '}
-              Open{' '}
-              <span className="font-mono text-white/80">
-                {typeof window !== 'undefined' ? window.location.host : 'this site'}
-              </span>{' '}
-              on your phone browser.
-            </li>
-            <li className="flex gap-2">
-              <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[10px] font-semibold text-accent">
-                2
-              </span>{' '}
-              Go to Settings → <strong className="text-white/90">Sync</strong>.
-            </li>
-            <li className="flex gap-2">
-              <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[10px] font-semibold text-accent">
-                3
-              </span>{' '}
-              Paste the code above into <strong className="text-white/90">Connect</strong>.
-            </li>
-          </ol>
-          <div className="mt-1 inline-flex items-center gap-1.5 border-t border-white/[0.04] pt-1 text-[10px] text-[var(--text-tertiary)]">
-            <Monitor size={10} /> Same flow on any other laptop, tablet, or browser profile.
-          </div>
-        </div>
-      )}
+      <SyncDevices />
 
       <div className="border-t border-white/[0.06] pt-3">
-        {/* The shared confirmation: Cancel takes focus, Escape takes back the question (not
-            Settings), and neither a double tap on "Disconnect sync" nor a held Enter can answer
-            it. Cancel hands focus back to "Disconnect sync". */}
-        {confirmDisconnect ? (
-          <InlineConfirm
-            tone="warning"
-            question="Disconnect sync on this device?"
-            detail="This device stops syncing. Your data stays on this device, on your other devices and in the relay."
-            confirmLabel="Disconnect"
-            onConfirm={handleDisconnect}
-            onCancel={() => {
-              focusNext.current = 'disconnect'
-              setConfirmDisconnect(false)
-            }}
-          />
-        ) : (
-          <Button
-            ref={focusWhenShown('disconnect')}
-            onClick={() => {
-              // The question takes this button's place: a double tap's second tap must not
-              // answer it.
-              shieldGesture()
-              setConfirmDisconnect(true)
-            }}
-            variant="ghost"
-            className="w-full text-[var(--text-tertiary)] hover:text-white"
-          >
-            <Link2Off size={14} /> Disconnect sync
-          </Button>
+        {disconnect(
+          syncId,
+          'This device stops syncing. Your data stays on this device, on your other devices and in the relay.',
         )}
       </div>
       <AppVersion />
@@ -888,45 +903,13 @@ function SyncContent() {
   )
 }
 
-type SetupRequest = { kind: 'generate' } | { kind: 'connect'; code: string }
-
-/**
- * "Remove the sample data first?" before this device links up (P2-22). The sample rows never
- * reach the relay either way, so both answers set up; Escape backs out of setting up instead.
- */
-function DemoQuestion({
-  onAnswer,
-  onBackOut,
-}: {
-  onAnswer: (remove: boolean) => void
-  onBackOut: () => void
-}) {
+/** Who may see the code: said beside every place it can be copied or typed. */
+function CodeSafety() {
   return (
-    <div
-      // Both answers are long: on a phone they take a row each instead of running past the card
-      // (InlineConfirm's button row does not wrap; its buttons keep their labels on one line).
-      className="[&_[role=group]>div:last-child]:flex-wrap"
-      onKeyDownCapture={(e) => {
-        if (e.key !== 'Escape' || e.repeat || e.nativeEvent.isComposing) return
-        e.preventDefault()
-        e.stopPropagation()
-        onBackOut()
-      }}
-    >
-      <InlineConfirm
-        tone="warning"
-        question="Remove the sample data first?"
-        detail="Sample entries stay on this device and never sync. Remove them to start with your own."
-        confirmLabel="Remove and connect"
-        cancelLabel="Keep it on this device"
-        onConfirm={() => {
-          onAnswer(true)
-        }}
-        onCancel={() => {
-          onAnswer(false)
-        }}
-      />
-    </div>
+    <p className="flex items-start gap-2 text-[11px] leading-relaxed text-[var(--text-tertiary)]">
+      <ShieldCheck size={12} className="mt-0.5 shrink-0 text-positive/70" aria-hidden />
+      <span>{CODE_SAFETY}</span>
+    </p>
   )
 }
 

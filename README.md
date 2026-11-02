@@ -175,13 +175,15 @@ When sync is configured (Supabase env vars + a UUID sync code paired between dev
 - **Each device keeps a full copy.** Cloud is a relay between them.
 - **Per-field merge** (v5 wire, additive over the v4 payload so 0.9.2 devices still read it): each field of an entry, each budget, item pick and category rename converges on its newest change; deletions are dated, so Undo and Restore travel too.
 - **Pushes only when the relay lacks something** (digest compare, echo filter): two devices go quiet after one exchange, and beside a 0.9.2 device there is no ping-pong.
-- **1.5 s quiet push** on local changes (5 s at most); **Supabase Realtime subscription** for instant pull on remote changes; a pending outbox survives reloads.
+- **1.5 s quiet push** on local changes (5 s at most), and at once (with `keepalive`) when the app goes to the background; a pending outbox survives reloads and crashes.
+- **Realtime on a hashed topic** (never the code itself): Broadcast between 0.11 devices plus `postgres_changes`, an echo filter and a storm breaker. Only visible tabs subscribe; while visible the app also checks every minute (every 5 minutes while live), and a check that finds the same `updated_at` downloads nothing.
+- **Join never creates**: a code is validated before any request, previewed (exact counts, nothing saved), and a code with no synced copy creates nothing.
+- **Device registry**: every push carries this device's entry (its version, relay mode, last seen); Settings → Sync lists the devices and says when all of them run this build.
 - **Mass-removal guard**: a large removal from another device is snapshotted first and offered back with Undo.
-- **Single in-flight cycle** (with a cross-tab lock) prevents push-during-pull races.
-- **Exponential backoff** on push failure (2 s × 2ⁿ, cap 60 s); resets on success.
-- **Realtime auto-reconnect** on `CLOSED / CHANNEL_ERROR / TIMED_OUT`.
-- **Payload guard** pauses sync before a push passes 1 MB (Supabase row limit), with a clear message.
-- **No accounts.** The 122-bit UUID is the practical security boundary for a personal Supabase relay. Because the anon key is public and this table grants broad anon access, do not treat this model as hardened multi-user SaaS security.
+- **Single in-flight cycle** (with a cross-tab lock) prevents push-during-pull races; compare-and-set writes (behind `VITE_SYNC_CAS=on`) stop two crossing pushes from overwriting each other.
+- **Backoff** on push failure (2 s × 2ⁿ⁻¹, cap 60 s, ±20 % jitter), paused while hidden or offline; resets on success, `online` and coming back to the app.
+- **Payload guard** pauses sync before a push passes 1 MB (Supabase row limit), with a clear message and a size meter from 70 %.
+- **No accounts.** The anon key is public and this table grants broad anon access, so anyone with the key can read the relay copy; the 122-bit UUID is what a device needs to change it. Do not treat this model as hardened multi-user SaaS security. The relay functions and the table lockdown (migrations 004/005, `VITE_SYNC_RELAY`) close that gap later.
 
 See [`src/data/core`](src/data/core) for the merge logic and [`src/stores/syncEngine.ts`](src/stores/syncEngine.ts) for the cycle.
 
@@ -230,11 +232,11 @@ You need your own free Supabase project. This is what stores the synced data —
 
 ### 1 · Generate a sync code (Device A — typically your laptop)
 
-Settings → **Sync** → **Generate sync code for this device**. Copy the UUID that appears.
+Settings → **Sync** → **Generate sync code for this device**. The code shows masked (`••••-…-1a2b`): tap **Copy**, or **Show** to read it.
 
-### 2 · Connect Device B (your phone)
+### 2 · Join from Device B (your phone)
 
-Open the same site on your phone. Settings → **Sync** → paste the code into **Connect**. Within ~3 seconds your laptop's data appears on your phone.
+Open the same site on your phone. Settings → **Sync** → paste the code under **or join an existing one** → **Join**. SpendTrack reads the synced copy and shows what joining does ("This device: 0 entries · Synced: 641 entries · After joining: about 641 entries"); tap **Join** again and your laptop's data appears on your phone. A mistyped code says "No synced data found for this code" and creates nothing.
 
 ### 3 · Use either device
 
@@ -242,9 +244,9 @@ Add an expense on Device A. It appears on Device B within a second via Supabase 
 
 ### 4 · Add a third device — repeat step 2
 
-Tablet, work browser, partner's laptop — paste the same UUID into Settings → Sync → Connect. There's no device limit.
+Tablet, work browser, another browser profile — join the same code in Settings → Sync. There's no device limit, and Settings → Sync → **Devices** lists every device with its version.
 
-> **Treat the sync code like a password.** Anyone with it can read & write your synced data. Don't share it in chats or screenshots. If you ever lose or leak it, generate a new one — old buckets auto-prune after 90 days.
+> **Share the code only with your own devices.** Anyone with it can change your synced data. The relay copy isn't encrypted yet, so anyone with the app's public key could read it. **Disconnect** keeps the code on that device for 30 days (**Reconnect** is one tap); if you lose it, copy it from another linked device. Generating a new code starts a separate sync; old buckets are pruned after 90 days if you schedule `prune_stale_sync_buckets()`.
 
 ### How sync actually works
 
@@ -271,10 +273,10 @@ Device A                                    Device B
 - **Per-field merge**: an amount edited on the phone and a category changed on the laptop both survive; budgets, item picks, renames and the currency merge the same way, so a stale device cannot revert a newer change.
 - **Dated deletions**: deleted entries stay deleted, and an Undo or a Restore brings them back on every device.
 - **Single in-flight cycle** prevents push-during-pull races.
-- **Exponential backoff** on push failure (2 s × 2ⁿ, cap 60 s).
-- **Realtime auto-reconnect** on `CLOSED / CHANNEL_ERROR / TIMED_OUT`.
+- **Backoff** on push failure (2 s → 60 s with jitter), paused in the background, and a check every minute while the app is open if Realtime is unavailable.
+- **Realtime auto-reconnect** on `CLOSED / CHANNEL_ERROR / TIMED_OUT`, on a hashed topic.
 - **Payload guard** pauses sync before a push passes 1 MB (Supabase row limit).
-- **No accounts.** The 122-bit UUID is the practical security boundary for a personal Supabase relay, not a hardened multi-user SaaS boundary.
+- **No accounts.** The relay copy is readable with the public anon key; the 122-bit UUID is what it takes to change it. Fine for a personal Supabase relay, not a hardened multi-user SaaS boundary.
 
 Full architecture: [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) · [`src/services/syncService.ts`](src/services/syncService.ts).
 
@@ -309,7 +311,7 @@ The app works fully offline — every action writes to <code>localStorage</code>
 <details>
 <summary><b>What if I lose my sync code?</b></summary>
 <br/>
-Generate a new one in Settings → Sync. The old bucket stays in your Supabase project for 90 days then auto-prunes (if you scheduled <code>prune_stale_sync_buckets()</code>; otherwise it persists harmlessly).
+Copy it from another linked device (Settings → Sync → <b>Copy</b>, or <b>Show</b>). A device you disconnected remembers it for 30 days and offers <b>Reconnect</b>. Generating a new code starts a separate sync; the old bucket stays in your Supabase project until <code>prune_stale_sync_buckets()</code> removes it (90 days, if you scheduled it).
 </details>
 
 <details>
@@ -339,7 +341,7 @@ Yes. Settings → <b>Appearance</b> offers <b>Light</b>, <b>Dark</b>, and <b>Sys
 <details>
 <summary><b>Is my data encrypted?</b></summary>
 <br/>
-In transit (HTTPS to Supabase): yes. At rest in <code>localStorage</code> or Supabase: no, it's plain JSON. Treat your sync code as a password — that's the security boundary.
+In transit (HTTPS to Supabase): yes. At rest in <code>localStorage</code> or Supabase: no, it's plain JSON, and anyone with this app's public key could read the relay copy. Your sync code is what it takes to change it, so share it only with your own devices.
 </details>
 
 ---

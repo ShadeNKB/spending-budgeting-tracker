@@ -10,9 +10,12 @@ import { format } from 'date-fns'
 import { downloadJSON } from './download'
 
 /**
- * Keys left out of the dump. Name any new secret key so it matches this. The sync code lives in
- * `syncId` (the 0.9.x key, kept as the rollback mirror) and in `st5:sync`; a corrupt copy of either
- * is quarantined as `st5:q:syncId:<ts>` / `st5:q:st5:sync:<ts>`, and those stay behind too.
+ * Keys left out of the dump. Name any new secret key so it matches this, and so the older
+ * builds a rollback runs leave it out too (their patterns match by word: `synckey`, `secret`,
+ * `token`). The sync code lives in `syncId` (the 0.9.x key, kept as the rollback mirror), in
+ * `st5:sync`, and for 30 days after a Disconnect in `st5:synckey:prev` (the Reconnect slot); a
+ * corrupt copy of the first two is quarantined as `st5:q:syncId:<ts>` / `st5:q:st5:sync:<ts>`,
+ * and those stay behind too.
  */
 export const SECRET_KEY_PATTERN =
   /^syncId$|^st5:sync$|^st5:q:syncId:|^st5:q:st5:sync:|secret|token|passphrase|synckey|cryptokey|encryptionkey/i

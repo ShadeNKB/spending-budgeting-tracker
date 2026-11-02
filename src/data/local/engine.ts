@@ -1119,6 +1119,14 @@ export function createEngine(host: EngineHost): Engine {
       flush(r)
     },
     deviceId: () => need().dev,
+    register(id, info): void {
+      const r = need()
+      const devices = new Map(r.doc.devices)
+      devices.set(id, info)
+      r.doc = { ...r.doc, devices }
+      r.dirty = true
+      scheduleFlush(r)
+    },
     omitIds: omit,
     quarantine: (entries) => addQuarantine(need(), entries),
     keepRelayCopy(raw: unknown): boolean {

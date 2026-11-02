@@ -8,8 +8,10 @@ import {
   failureSeverity,
   isFailing,
   isPaused,
+  needsReload,
   pausedDetail,
   useSyncStore,
+  type SyncPauseReason,
 } from '../stores/useSyncStore'
 import { syncPanelShown, useUIStore } from '../stores/useUIStore'
 import { syncEnabled } from '../services/syncConfig'
@@ -25,6 +27,12 @@ function timeAgo(ts: number): string {
   return `${h}h ago`
 }
 
+/** "· 30 s" to the next retry, rounded up to 5 s; nothing once it is due. */
+function retryIn(at: number): string {
+  const s = Math.ceil((at - Date.now()) / 5000) * 5
+  return s > 0 ? ` · ${s} s` : ''
+}
+
 type Tone = 'neutral' | 'info' | 'saved' | 'accent' | 'warn' | 'error'
 
 /** Why nothing is being saved, in the tooltip. */
@@ -33,6 +41,16 @@ const NOT_SAVED: Record<LocalStatus, string | undefined> = {
   'error-quota': 'Storage on this device is full.',
   'error-storage': 'This browser is blocking storage.',
   'memory-only': "Saved data couldn't be read, so nothing is written over it.",
+}
+
+/** What a pause asks of the owner, in the few words the top bar has room for. */
+const PAUSED: Record<SyncPauseReason, string> = {
+  'too-large': 'too large',
+  denied: 'refused',
+  'not-found': 'code not found',
+  moved: 'reload to update',
+  'update-required': 'reload to update',
+  reload: 'reload to update',
 }
 
 // In the light theme the global amber-700 and green-700 text measured under 4.5:1 on these
@@ -51,19 +69,29 @@ interface PillView {
   state: string
   tone: Tone
   icon: LucideIcon
-  /** Fixed for the state: the live region speaks it, so a ticking clock never does. */
+  /** Fixed for the state: the live region speaks it, so a ticking clock or count never does. */
   label: string
+  /** Shown after the label only (" · 3 to sync"). */
+  more?: string
   /** Shown after the label as "· 2m ago" (visual only) and as the local time in the tooltip. */
   at?: number
-  /** Why: the tooltip, and read after the label. */
+  /** Shown after the label as "· 30 s" to the next retry (visual only). */
+  retryAt?: number
+  /** Why: read after the label, and the tooltip unless `title` says more. */
   reason?: string
+  title?: string
   /** The words a toast says this in, if one does. */
   news?: string
+  /** A sync problem: the pill is a button that opens Settings › Sync, which says what to do. */
+  opens?: boolean
 }
 
+const waitingTitle = (n: number): string =>
+  `${n.toLocaleString()} ${n === 1 ? 'change waits' : 'changes wait'} for your other device to update. Everything is saved here.`
+
 /**
- * Local save state and cloud sync state in one pill; the worst state wins. "Synced" shows only
- * when the last cycle succeeded and nothing local is waiting for the relay.
+ * Local save state and cloud sync state in one pill; the worst state wins (track spec §3.11).
+ * "Synced" shows only when the last cycle succeeded and nothing local is waiting for the relay.
  */
 function usePillView(): PillView {
   const localStatus = useExpenseStore((s) => s.syncStatus)
@@ -72,11 +100,14 @@ function usePillView(): PillView {
   const lastSavedAt = useExpenseStore((s) => s.lastSavedAt)
   const isOffline = useExpenseStore((s) => s.isOffline)
   const syncId = useSyncStore((s) => s.syncId)
+  const cloudStatus = useSyncStore((s) => s.cloudStatus)
   const lastError = useSyncStore((s) => s.lastError)
   const pendingLocal = useSyncStore((s) => s.pendingLocal)
+  const pending = useSyncStore((s) => s.pending)
   const waitingForOld = useSyncStore((s) => s.waitingForOld)
   const lastSyncAt = useSyncStore((s) => s.lastSyncAt)
-  const configured = syncEnabled && syncId !== null
+  // A sync set up by a newer SpendTrack is paused with no code this build can read.
+  const configured = syncEnabled && (syncId !== null || cloudStatus === 'paused')
   const cloudError = configured ? lastError : null
 
   // The data engine never loaded: nothing was read, so nothing can be called saved (the screen
@@ -99,55 +130,45 @@ function usePillView(): PillView {
       reason: NOT_SAVED[local],
     }
   }
-  if (cloudError && isPaused(cloudError.kind)) {
-    return {
-      state: 'paused',
-      // The same colour as Settings › Sync: amber for a reload, red for too large.
-      tone: failureSeverity(cloudError) === 'warning' ? 'warn' : 'error',
-      icon: AlertCircle,
-      label: 'Sync paused',
-      reason: pausedDetail(cloudError.message),
-      news: cloudError.message,
-    }
-  }
   if (cloudError && cloudError.kind !== 'offline') {
+    // The same colour as Settings › Sync: amber to wait out or reload, red when it needs you.
     const tone = failureSeverity(cloudError) === 'warning' ? 'warn' : 'error'
+    const problem = {
+      tone,
+      icon: AlertCircle,
+      reason: cloudError.message,
+      news: cloudError.message,
+      opens: true,
+    } as const
+    if (isPaused(cloudError.kind)) {
+      return {
+        ...problem,
+        state: `paused:${needsReload(cloudError.kind) ? 'reload' : cloudError.kind}`,
+        label: `Sync paused · ${PAUSED[cloudError.kind]}`,
+        // Said once: the label already says "Sync paused".
+        reason: pausedDetail(cloudError.message),
+      }
+    }
     if (isFailing(cloudError)) {
       return {
+        ...problem,
         state: 'failing',
-        tone,
-        icon: AlertCircle,
         label: `Sync failing since ${clockTime(cloudError.since)}`,
-        reason: cloudError.message,
-        news: cloudError.message,
       }
     }
     // Red says "needs you": a refusal is not something to wait out.
     if (cloudError.kind === 'permission') {
-      return {
-        state: 'refused',
-        tone,
-        icon: AlertCircle,
-        label: 'Sync refused',
-        reason: cloudError.message,
-        news: cloudError.message,
-      }
+      return { ...problem, state: 'refused', label: 'Sync refused' }
     }
-    return {
-      state: 'retrying',
-      tone,
-      icon: AlertCircle,
-      label: 'Sync retrying',
-      reason: cloudError.message,
-      news: cloudError.message,
-    }
+    return { ...problem, state: 'retrying', label: 'Sync retrying', retryAt: cloudError.retryAt }
   }
   if (isOffline || cloudError?.kind === 'offline') {
     return {
       state: 'offline',
       tone: 'warn',
       icon: WifiOff,
-      label: configured && pendingLocal ? 'Offline · not synced' : 'Offline',
+      label: 'Offline',
+      more: configured && pending > 0 ? ` · ${pending.toLocaleString()} to sync` : undefined,
     }
   }
   if (localStatus === 'saving') {
@@ -155,18 +176,30 @@ function usePillView(): PillView {
   }
   // Before pending: a held-back push is pending too, but no push is due until something
   // changes here (which clears waitingForOld), so a spinner would spin over nothing.
-  if (configured && waitingForOld) {
+  if (configured && waitingForOld > 0) {
     // Short: the pill shares the top bar with quick add. The tooltip tells the whole story.
     return {
       state: 'waiting-for-old',
       tone: 'info',
       icon: Info,
-      label: 'Update old device',
+      label: 'Update other device',
       reason: OLD_DEVICE_WAITING,
+      title: waitingTitle(waitingForOld),
       news: OLD_DEVICE_WAITING,
+      opens: true,
     }
   }
-  if (configured && pendingLocal) {
+  if (configured && (pending > 0 || pendingLocal)) {
+    // Waiting for its debounce: counted, not spun. A cycle carrying it, or the first cycle
+    // (nothing is known to be on the relay yet), spins.
+    if (pending > 0 && cloudStatus !== 'syncing') {
+      return {
+        state: 'to-sync',
+        tone: 'accent',
+        icon: Cloud,
+        label: `${pending.toLocaleString()} to sync`,
+      }
+    }
     return { state: 'syncing', tone: 'accent', icon: Loader2, label: 'Syncing…' }
   }
   if (configured && lastSyncAt !== null) {
@@ -178,18 +211,18 @@ function usePillView(): PillView {
   return { state: 'idle', tone: 'neutral', icon: Check, label: 'Saved' }
 }
 
-/** States that need the owner: announced as they happen. */
+/** States that need the owner: announced as they happen. Every pause (`paused:<kind>`) too. */
 const ALERTS: ReadonlySet<string> = new Set([
   'save-failed',
-  'paused',
   'failing',
   'refused',
   'retrying',
   'offline',
   'waiting-for-old',
 ])
+const isAlert = (state: string): boolean => ALERTS.has(state) || state.startsWith('paused:')
 /** States on the way somewhere: never announced, and no recovery yet. */
-const PASSING: ReadonlySet<string> = new Set(['saving', 'syncing'])
+const PASSING: ReadonlySet<string> = new Set(['saving', 'syncing', 'to-sync'])
 
 const spoken = (view: PillView): string =>
   view.reason ? `${view.label}. ${view.reason}` : view.label
@@ -217,12 +250,12 @@ interface Said {
 function useAnnouncement(view: PillView, muted: boolean, toasted: boolean): string {
   const [said, setSaid] = useState<Said>(() => ({
     state: view.state,
-    text: ALERTS.has(view.state) ? spoken(view) : '',
-    recovering: ALERTS.has(view.state),
+    text: isAlert(view.state) ? spoken(view) : '',
+    recovering: isAlert(view.state),
     muted,
   }))
   if (view.state === said.state && muted === said.muted) return said.text
-  const alert = ALERTS.has(view.state)
+  const alert = isAlert(view.state)
   const passing = PASSING.has(view.state)
   let next: Said
   if (view.state === said.state) {
@@ -252,6 +285,18 @@ function useAnnouncement(view: PillView, muted: boolean, toasted: boolean): stri
   return next.text
 }
 
+/**
+ * Settings › Sync, with focus on Sync now beside the status row that says what is wrong (one
+ * Tab from the problem, not five). A sync a newer SpendTrack set up has no Sync now: its view
+ * opens as it is.
+ */
+function openSyncSettings(): void {
+  const ui = useUIStore.getState()
+  if (useSyncStore.getState().syncId === null) ui.setSettingsTab('sync')
+  else ui.focusSettings('sync', 'sync-now')
+  ui.setSettingsOpen(true)
+}
+
 export function SyncPill() {
   const view = usePillView()
   const muted = useUIStore(syncPanelShown)
@@ -261,40 +306,68 @@ export function SyncPill() {
   // A failed save is said by its strip under the top bar (DataNotices), on every screen size;
   // this pill is hidden on phones. The region still says the save that ends it.
   const announcement = useAnnouncement(view, muted, toasted || view.state === 'save-failed')
-  // Re-render every 15 s so the relative times stay current and a failure turns red on time.
-  useTick(15_000)
+  // Re-render so the relative times stay current, a failure turns red on time and the retry
+  // countdown moves in its 5 s steps.
+  useTick(view.retryAt === undefined ? 15_000 : 5_000)
 
   const Icon = view.icon
   const title =
-    view.reason ?? (view.at === undefined ? undefined : new Date(view.at).toLocaleTimeString())
-  // Screen readers hear the live region, which stays mounted (a change inside it is announced,
-  // a region inserted with its content often is not). The pill they skip carries the ticking
-  // "2m ago", which would otherwise be read out every 15 s.
+    view.title ??
+    view.reason ??
+    (view.at === undefined ? undefined : new Date(view.at).toLocaleTimeString())
+  const className = clsx(
+    // display: none below 1280 px, so the pill is never an invisible focus stop on a phone.
+    'hidden min-h-6 max-w-52 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium xl:inline-flex',
+    TONES[view.tone],
+  )
+  const content = (
+    <>
+      <Icon
+        size={12}
+        className={clsx('shrink-0', Icon === Loader2 && 'animate-spin')}
+        aria-hidden="true"
+      />
+      <span className="min-w-0 truncate">
+        {view.label}
+        {view.more}
+        {view.at !== undefined && ` · ${timeAgo(view.at)}`}
+        {view.retryAt !== undefined && retryIn(view.retryAt)}
+      </span>
+    </>
+  )
+  const entrance = { animation: 'sync-pill-in 0.15s ease both' }
+  // Screen readers hear the live region, which stays mounted at every width (a change inside it
+  // is announced, a region inserted with its content often is not). The pill carries the ticking
+  // "2m ago" and the countdown, which would otherwise be read out every few seconds: a plain
+  // pill is hidden from them, and a problem pill is a button named by its fixed label.
   return (
-    <div>
+    <>
       <span role="status" aria-live="polite" className="sr-only">
         {announcement}
       </span>
-      <div
-        key={view.state}
-        aria-hidden="true"
-        style={{ animation: 'sync-pill-in 0.15s ease both' }}
-        className={clsx(
-          'inline-flex max-w-52 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium',
-          TONES[view.tone],
-        )}
-        title={title}
-      >
-        <Icon
-          size={12}
-          className={clsx('shrink-0', Icon === Loader2 && 'animate-spin')}
+      {view.opens ? (
+        <button
+          key={view.state}
+          type="button"
+          onClick={openSyncSettings}
+          aria-label={`${view.label}. Opens Settings, Sync.`}
+          title={title}
+          style={entrance}
+          className={clsx(className, 'transition hover:brightness-110')}
+        >
+          {content}
+        </button>
+      ) : (
+        <div
+          key={view.state}
           aria-hidden="true"
-        />
-        <span className="min-w-0 truncate">
-          {view.label}
-          {view.at !== undefined && ` · ${timeAgo(view.at)}`}
-        </span>
-      </div>
-    </div>
+          title={title}
+          style={entrance}
+          className={className}
+        >
+          {content}
+        </div>
+      )}
+    </>
   )
 }

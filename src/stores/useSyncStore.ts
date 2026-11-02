@@ -5,14 +5,24 @@
 import { create } from 'zustand'
 import { getUpdateController } from '../app/swUpdate'
 import { STUCK_HINT, importWithReload, reloadedRecently } from '../lib/chunkReload'
-import { storage } from '../services/storage'
+import { storage, type SyncConfig } from '../services/storage'
 import { syncEnabled } from '../services/syncConfig'
 import { syncPanelShown, useUIStore } from './useUIStore'
 import type * as SyncEngineModule from './syncEngine'
 
-export type SyncErrorKind = 'network' | 'server' | 'permission' | 'invalid'
-/** `reload`: the sync engine's code did not load on this page, and only a reload fetches it again. */
-export type SyncPauseReason = 'too-large' | 'moved' | 'update-required' | 'reload'
+export type SyncErrorKind = 'network' | 'server' | 'permission' | 'invalid' | 'busy'
+/**
+ * Paused until something changes: `reload`, the sync engine's code did not load on this page and
+ * only a reload fetches it again; `not-found`, a joined code has no relay copy (yet); `denied`,
+ * the relay refused this device even through its sync functions.
+ */
+export type SyncPauseReason =
+  | 'too-large'
+  | 'moved'
+  | 'update-required'
+  | 'reload'
+  | 'not-found'
+  | 'denied'
 export type SyncResult =
   | { ok: true; pushed: boolean; changedLocal: boolean }
   | { ok: false; error: SyncErrorKind | SyncPauseReason | 'off' | 'offline'; message: string }
@@ -20,9 +30,54 @@ export type CloudStatus = 'off' | 'idle' | 'syncing' | 'synced' | 'offline' | 'e
 
 export interface SyncFailure {
   kind: SyncErrorKind | SyncPauseReason | 'offline'
+  /** The engine's words, shown as they are by every surface. */
   message: string
   /** Start of the failure streak: kept across consecutive failures. */
   since: number
+  /** When the scheduled retry runs (absent when none is scheduled). */
+  retryAt?: number
+}
+
+/** One device in Settings › Sync, from the relay copy's registry (the engine builds these). */
+export interface DeviceRow {
+  readonly id: string
+  /** "iPhone · Safari"; a device on an older release that never registers: "Older SpendTrack (0.9.2)". */
+  readonly name: string
+  /** "0.11.0", "0.9.2". */
+  readonly app: string
+  readonly mode: 'table' | 'rpc'
+  readonly me: boolean
+  /** Its last push, epoch ms; 0 = unknown. */
+  readonly seen: number
+  /** When it first reported RPC mode, epoch ms; 0 = not in RPC mode. */
+  readonly rpcSince: number
+  /** Not seen for 60 days: greyed, and left out of readiness. */
+  readonly stale: boolean
+  /** Runs an older SpendTrack than this one. */
+  readonly older: boolean
+  /** A device on a release that never registers itself (0.9.2's writer stamp, a 0.10.0 seen writing). */
+  readonly legacy: boolean
+}
+
+/** What Settings › Sync shows beyond the status (published by the engine; stable while unchanged). */
+export interface SyncView {
+  /** `••••-…-1a2b`; null without a code. */
+  readonly codeMasked: string | null
+  readonly transport: 'table' | 'rpc'
+  /** Joined · joining · not joined, storm or blocked (polling instead) · hidden. */
+  readonly live: 'on' | 'connecting' | 'polling' | 'off'
+  /** This device first, then by last seen. */
+  readonly devices: readonly DeviceRow[]
+  readonly legacy: {
+    readonly v084At: number | null
+    readonly v085At: number | null
+    readonly v5preAt: number | null
+  }
+  /** round(100 × wire chars / the push limit); null until measured. */
+  readonly sizePct: number | null
+  readonly allCurrent: boolean
+  /** Null unless this device uses the relay's sync functions. */
+  readonly lockdown: { readonly ready: boolean; readonly reason: string | null } | null
 }
 
 interface SyncState {
@@ -31,10 +86,15 @@ interface SyncState {
   /** Last successful cycle. */
   lastSyncAt: number | null
   lastError: SyncFailure | null
-  /** Local changes not yet known to be on the relay. */
+  /** Something not known to be on the relay (also before the first cycle). */
   pendingLocal: boolean
-  /** The last cycle held back a push because an older device keeps overwriting the relay. */
-  waitingForOld: boolean
+  /** Changes in the outbox, not yet known to be on the relay (0 with sync off). */
+  pending: number
+  /**
+   * Changes an older device on the relay has not taken yet (0 = none); a push held back for
+   * such a device with no change of its own counts 1.
+   */
+  waitingForOld: number
   /** When a v0.8.4-or-older device last wrote over this device's push. */
   legacyWriterAt: number | null
   /**
@@ -43,48 +103,36 @@ interface SyncState {
    * so nothing promises a sync meanwhile.
    */
   engineFailed: boolean
+  view: SyncView | null
 
   initSync: () => void
-  setupSync: (syncId: string) => Promise<SyncResult>
+  /** `join`: not established until a cycle finds the relay copy, so it never creates one. */
+  setupSync: (syncId: string, opts?: { join?: boolean }) => Promise<SyncResult>
   disconnectSync: () => void
   triggerSync: (opts?: { resetBackoff?: boolean }) => Promise<SyncResult>
   scheduleSyncPush: () => void
 }
 
 // ---------------------------------------------------------------------------
-// Copy (single source for the panel, the pill and the toasts)
+// Copy the eager code needs (the engine's own words live in syncEngine.ts, a lazy chunk)
 // ---------------------------------------------------------------------------
 
-export function syncMessage(
-  kind: SyncErrorKind | SyncPauseReason | 'off' | 'offline',
-  kb?: number,
-): string {
-  switch (kind) {
-    case 'offline':
-      return "You're offline. Changes are saved on this device and will sync when you're back online."
-    case 'network':
-      return "Couldn't reach the sync server. Your changes are saved on this device."
-    case 'server':
-      return 'The sync server had a problem. Your changes are saved on this device.'
-    case 'permission':
-      return 'The sync server refused access. Your data is safe on this device.'
-    case 'invalid':
-      return "The synced copy couldn't be read, so nothing was merged. Your data is safe on this device."
-    case 'too-large':
-      return `Sync paused: your data${kb === undefined ? '' : ` (${String(kb)} KB)`} is too large for the sync server. It's still saved here — export a backup.`
-    case 'moved':
-    case 'update-required':
-      return 'Sync moved to a newer version. Reload SpendTrack to update.'
-    case 'reload':
-      return "Sync couldn't start on this page. Reload SpendTrack to sync. Your changes are saved on this device."
-    case 'off':
-      return "Sync isn't set up on this device."
-  }
-}
+export const SYNC_OFF_MESSAGE = "Sync isn't set up on this device."
+export const SYNC_RELOAD_MESSAGE =
+  "Sync couldn't start on this page. Reload SpendTrack to sync. Your changes are saved on this device."
 
-/** Paused until the owner acts (reload, or export and trim): no retry, and offline ends nothing. */
+const PAUSES: readonly string[] = [
+  'too-large',
+  'moved',
+  'update-required',
+  'reload',
+  'not-found',
+  'denied',
+]
+
+/** Paused until the owner acts or the relay changes: no retry, and offline ends nothing. */
 export function isPaused(kind: SyncFailure['kind']): kind is SyncPauseReason {
-  return kind === 'too-large' || kind === 'moved' || kind === 'update-required' || kind === 'reload'
+  return PAUSES.includes(kind)
 }
 
 /** Paused until SpendTrack is reloaded: the relay moved to a newer version, or sync's code did not load. */
@@ -135,6 +183,7 @@ export function isFailing(failure: Pick<SyncFailure, 'kind' | 'since'>, now = Da
     case 'server':
     case 'invalid':
     case 'permission':
+    case 'busy':
       return now - failure.since >= FAILING_AFTER_MS
     default:
       return false
@@ -160,9 +209,12 @@ export function failureSeverity(
     case 'network':
     case 'server':
     case 'invalid':
+    case 'busy':
       return isFailing(failure, now) ? 'error' : 'warning'
     case 'permission':
     case 'too-large':
+    case 'not-found':
+    case 'denied':
       return 'error'
   }
 }
@@ -218,9 +270,9 @@ export function syncToast(kind: 'error' | 'warning', message: string, withReload
 export const noSyncSurface = (): boolean =>
   !syncPillShown() && !syncPanelShown(useUIStore.getState())
 
-function savedCode(): string | null {
+function savedConfig(): SyncConfig | null {
   try {
-    return storage.getSyncId()
+    return storage.getSyncConfig()
   } catch {
     return null
   }
@@ -229,16 +281,18 @@ function savedCode(): string | null {
 let codeWarned = false
 
 /**
- * Saves the sync code. When storage refuses it (full), the code still works for this session,
- * but this device forgets it when SpendTrack closes: the owner hears that, once.
+ * Saves the sync code (`established` as storage.saveSyncId takes it). When storage refuses it
+ * (full), the code still works for this session, but this device forgets it when SpendTrack
+ * closes: the owner hears that, once.
  */
-export function keepCode(syncId: string): void {
+export function keepCode(syncId: string, established?: boolean): void {
   try {
-    storage.saveSyncId(syncId)
+    storage.saveSyncId(syncId, established)
   } catch {
     // Checked below: the code may already be there (start-up re-saves the saved code).
   }
-  if (savedCode() === syncId || codeWarned) return
+  const saved = savedConfig()
+  if ((saved?.kind === 'plain' && saved.code === syncId) || codeWarned) return
   codeWarned = true
   syncToast(
     'warning',
@@ -265,7 +319,7 @@ let loading: Promise<SyncEngine> | null = null
 let setupTicket = 0
 let installed = false
 
-const offResult = (): SyncResult => ({ ok: false, error: 'off', message: syncMessage('off') })
+const offResult = (): SyncResult => ({ ok: false, error: 'off', message: SYNC_OFF_MESSAGE })
 
 /** Loads the sync engine chunk once (a failed load is retried on the next use) and starts it. */
 export function loadSyncEngine(): Promise<SyncEngine> {
@@ -304,8 +358,8 @@ function engineMissing(syncId: string, user: boolean): Extract<SyncResult, { ok:
   const message = offline
     ? "You're offline. Changes are saved on this device."
     : reloadedRecently()
-      ? `${syncMessage('reload')} ${STUCK_HINT}`
-      : syncMessage('reload')
+      ? `${SYNC_RELOAD_MESSAGE} ${STUCK_HINT}`
+      : SYNC_RELOAD_MESSAGE
   useSyncStore.setState({
     syncId,
     cloudStatus: offline ? 'offline' : 'paused',
@@ -325,7 +379,7 @@ function engineMissing(syncId: string, user: boolean): Extract<SyncResult, { ok:
   return { ok: false, error: kind, message }
 }
 
-async function setup(syncId: string, user: boolean): Promise<SyncResult> {
+async function setup(syncId: string, user: boolean, join = false): Promise<SyncResult> {
   const ticket = ++setupTicket
   let loaded: SyncEngine
   try {
@@ -333,13 +387,13 @@ async function setup(syncId: string, user: boolean): Promise<SyncResult> {
   } catch {
     if (ticket !== setupTicket) return offResult()
     // Keep the code, as a failed first sync does, and set up again on the next resume,
-    // 'online' or Sync now.
-    keepCode(syncId)
+    // 'online' or Sync now. A joined code stays unestablished: it never creates a relay copy.
+    keepCode(syncId, join ? false : undefined)
     return engineMissing(syncId, user)
   }
   if (ticket !== setupTicket) return offResult()
   if (useSyncStore.getState().engineFailed) useSyncStore.setState({ engineFailed: false })
-  return loaded.setupSync(syncId, user)
+  return loaded.setupSync(syncId, user, join)
 }
 
 export const useSyncStore = create<SyncState>((set, get) => ({
@@ -348,22 +402,39 @@ export const useSyncStore = create<SyncState>((set, get) => ({
   lastSyncAt: null,
   lastError: null,
   pendingLocal: false,
-  waitingForOld: false,
+  pending: 0,
+  waitingForOld: 0,
   legacyWriterAt: null,
   engineFailed: false,
+  view: null,
 
   initSync: () => {
     if (!syncEnabled) return
-    const saved = savedCode()
+    const saved = savedConfig()
+    if (saved?.kind === 'newer') {
+      // A newer SpendTrack set sync up here (then this build came back): it cannot read that
+      // setup, so it pauses, makes no request, and never overwrites it (only Disconnect does).
+      set({
+        cloudStatus: 'paused',
+        lastError: {
+          kind: 'update-required',
+          message:
+            'Sync on this device was set up by a newer SpendTrack. Reload SpendTrack to update. Your data is safe here.',
+          since: Date.now(),
+        },
+      })
+      return
+    }
     if (!saved) return
     // Linked from the first frame: while the engine chunk loads, the panel shows this code, not
     // the unlinked view with its Generate button. Nothing is known to be on the relay until the
     // first cycle, so a change made meanwhile reads "Syncing…", never "Saved".
-    if (get().syncId === null) set({ syncId: saved, cloudStatus: 'idle', pendingLocal: true })
-    void setup(saved, false)
+    if (get().syncId === null) set({ syncId: saved.code, cloudStatus: 'idle', pendingLocal: true })
+    void setup(saved.code, false)
   },
 
-  setupSync: (syncId) => (syncEnabled ? setup(syncId, true) : Promise.resolve(offResult())),
+  setupSync: (syncId, opts) =>
+    syncEnabled ? setup(syncId, true, opts?.join === true) : Promise.resolve(offResult()),
 
   disconnectSync: () => {
     setupTicket++
@@ -379,9 +450,11 @@ export const useSyncStore = create<SyncState>((set, get) => ({
       lastSyncAt: null,
       lastError: null,
       pendingLocal: false,
-      waitingForOld: false,
+      pending: 0,
+      waitingForOld: 0,
       legacyWriterAt: null,
       engineFailed: false,
+      view: null,
     })
   },
 

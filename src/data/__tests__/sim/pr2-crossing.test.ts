@@ -5,6 +5,8 @@
 // v5 device got X in the realtime event of the old push: the bridge keeps that payload and merges
 // it into its next cycle, so X reaches the relay with no further change on the old device. With
 // absorption off (the PR-0 behaviour) X stays off the relay: the scenario really crosses.
+// 0.11.0 (mode 'pr3') keeps the news with CAS off, the same way; with CAS on the crossing cannot
+// happen at all (its push is refused, it re-pulls X and merges it), absorption or not.
 //
 // Fixed 100 ms per network leg, so the timeline is exact:
 //   t+1450 old: add X, Sync now → pull reaches the relay at +1550 → push lands at +1750 (with X)
@@ -28,12 +30,14 @@ async function crossing(
   peer: 'v085' | 'v084',
   absorbNews: boolean,
   seed: number,
+  mode: 'pr2' | 'pr3' = 'pr2',
+  cas = false,
 ): Promise<{ readonly relay: string[]; readonly x: string; readonly w: World }> {
   const w = new World({
     seed,
     devices: [{ kind: 'v5' }, { kind: peer }],
-    net: FIXED,
-    mode: 'pr2',
+    net: { ...FIXED, cas },
+    mode,
     absorbNews,
   })
   await w.setup()
@@ -71,6 +75,40 @@ describe('crossing pushes beside an old device (P2-10, acceptance 19)', () => {
           expect(off.relay, `control, seed ${seed}`).not.toContain(off.x)
           expect(must(off.w.v5[0]).doc.expenses.has(off.x), `control, seed ${seed}`).toBe(false)
           off.w.stop()
+        }
+      },
+      SIM_TIMEOUT,
+    )
+  }
+})
+
+describe('crossing pushes beside an old device on 0.11.0 (news with CAS off, CAS on)', () => {
+  for (const peer of ['v085', 'v084'] as const) {
+    it(
+      `${peer}: CAS off, X reaches the relay through the kept news (control: lost without it); CAS on, X survives either way`,
+      async () => {
+        for (const seed of [1, 2, 3, 90058]) {
+          const on = await crossing(peer, true, seed, 'pr3')
+          expect(on.relay, `seed ${seed}`).toContain(on.x)
+          expect(must(on.w.v5[0]).absorbed, `seed ${seed}`).toBeGreaterThan(0)
+          // the old writer is on record (meta.sync.legacySeen: the old-device banner)
+          expect(must(on.w.v5[0]).legacySeen[peer], `seed ${seed}`).not.toBeNull()
+          expect(on.w.violations, `seed ${seed}`).toEqual([])
+          on.w.stop()
+
+          const off = await crossing(peer, false, seed, 'pr3')
+          expect(off.relay, `control, seed ${seed}`).not.toContain(off.x)
+          off.w.stop()
+
+          for (const absorb of [true, false]) {
+            const cas = await crossing(peer, absorb, seed, 'pr3', true)
+            const v5 = must(cas.w.v5[0])
+            expect(cas.relay, `CAS, news ${String(absorb)}, seed ${seed}`).toContain(cas.x)
+            expect(v5.doc.expenses.has(cas.x), `CAS, seed ${seed}`).toBe(true)
+            expect(v5.conflicts, `CAS, seed ${seed}`).toBeGreaterThan(0)
+            expect(cas.w.violations, `CAS, seed ${seed}`).toEqual([])
+            cas.w.stop()
+          }
         }
       },
       SIM_TIMEOUT,

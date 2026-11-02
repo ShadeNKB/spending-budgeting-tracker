@@ -754,6 +754,16 @@ export const STATES: readonly UiState[] = [
       )
     },
   },
+  {
+    id: 'S31',
+    title: 'Offline strip',
+    path: '/pulse',
+    expenses: RICH,
+    open: async (page) => {
+      await page.context().setOffline(true)
+      await expect(page.getByRole('region', { name: 'Offline' })).toBeVisible()
+    },
+  },
 ]
 
 /**
@@ -1289,6 +1299,10 @@ export async function auditTargets(page: Page): Promise<{ checked: number; probl
         if (el.closest('[aria-hidden="true"], [inert]')) return true
         if (el.matches(':disabled')) return true
         const s = getComputedStyle(el)
+        // Disabled the other way (aria-disabled keeps keyboard focus) and out of the pointer's
+        // reach: a tap goes through it, as through a disabled one. An enabled control the pointer
+        // cannot reach is still checked, and fails.
+        if (el.getAttribute('aria-disabled') === 'true' && s.pointerEvents === 'none') return true
         if (s.visibility === 'hidden' || s.display === 'none') return true
         for (let n: Element | null = el; n; n = n.parentElement) {
           const style = getComputedStyle(n)

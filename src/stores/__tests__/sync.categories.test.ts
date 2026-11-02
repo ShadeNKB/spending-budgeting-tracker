@@ -576,7 +576,7 @@ describe('an old (v0.8.4) device on the relay', () => {
     expect(relay().pushes.length).toBe(pushes)
     expect(phone.sync.useSyncStore.getState()).toMatchObject({
       cloudStatus: 'synced',
-      waitingForOld: false,
+      waitingForOld: 0,
     })
   })
 })

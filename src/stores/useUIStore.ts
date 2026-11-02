@@ -22,7 +22,7 @@ export type Theme = 'dark' | 'light' | 'system'
 
 export type SettingsTab = 'categories' | 'budgets' | 'backup' | 'sync'
 /** A control in Settings that another panel can send focus to. */
-export type SettingsControl = 'backup-download' | 'backup-attention'
+export type SettingsControl = 'backup-download' | 'backup-attention' | 'sync-now'
 
 // Preferences are best-effort: if storage is unavailable they last for this session only.
 function persistPreference(key: string, value: string): void {

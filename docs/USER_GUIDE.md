@@ -67,25 +67,41 @@ Settings → **Budgets**: a monthly cap per category, more than 0 and at most 10
 
 ## Cross-device sync
 
-> **Sync is optional.** Skip this section if you only use one device. You'll never need an account or a password — your data stays local until you opt in.
+> **Sync is optional.** Skip this section if you only use one device. There's no account and no password, and nothing leaves the device until you link one.
 >
-> If you do want phone ↔ laptop sync, **plan for ~5 minutes of one-time Supabase setup.** After that, every additional device is just a paste-the-code step.
+> If you do want phone ↔ laptop sync, **plan for ~5 minutes of one-time Supabase setup.** After that, every additional device is a join-the-code step.
 
-There are no accounts and no passwords — a UUID sync code acts as the shared secret between your devices.
+A sync code links your devices: there's no account. The synced copy on the relay isn't encrypted yet, so anyone with this app's public key could read it; the code itself is what lets a device change it. Share it only with your own devices.
 
 **One-time setup (per Supabase project):**
 
 1. Create a free project at [supabase.com](https://supabase.com).
 2. In the Supabase SQL Editor, run `supabase/migrations/001_sync.sql` (and optionally `002_sync_indexes.sql` for retention helpers). The helper only creates a manual pruning function; schedule it yourself if you want automatic 90-day cleanup.
 3. Copy your project URL and anon public key into `.env.local` as `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
-4. Open Settings → **Sync** in the app and tap **Generate sync code**. Paste the same code into Settings → Sync on every other device.
+4. Open Settings → **Sync** in the app and tap **Generate sync code for this device**. On every other device, paste the code under **or join an existing one** and tap **Join**.
 
-**About the sync code:**
+**Linking a device:**
 
-- Treat it like a password — anyone with it can read and write your synced data. Don't share it in chats or screenshots.
+- **Generate** makes a new code here. Use it once, on the first device.
+- **Join** checks the code before anything goes on the network (a typo or a private code says so at once), then reads the synced copy and shows what joining does: "This device: 12 entries · Synced: 641 entries · After joining: about 653 entries." Nothing is saved until you tap **Join** again; **Cancel** changes nothing. A code with no synced copy says "No synced data found for this code" and creates nothing, so a mistyped code can never start a second, empty sync.
+- In the demo, both first ask whether to remove the sample data; sample entries never sync either way.
+- **Disconnect** stops syncing on this device only. Your data stays here, on your other devices and in the relay. For 30 days the device remembers the code and offers **Reconnect**; **Generate** then asks "Start a separate sync?" first, because your other devices would stay on the old code.
+
+**The sync code:**
+
+- It's masked (`••••-…-1a2b`). **Show** reveals it until you tap **Hide**, for 30 seconds at most, and it hides again when you leave the app or close Settings. **Copy** always copies the full code, to paste on your other device.
 - Pair as many devices as you like with the same code (phone + laptop + tablet + work browser, etc.). Changes from every device are merged; nothing is overwritten wholesale.
-- If you ever lose the code, just generate a new one. The old bucket stays in Supabase for 90 days then auto-prunes if `prune_stale_sync_buckets()` is scheduled.
+- If you ever lose the code, copy it from another linked device (Settings → Sync). Generating a new one starts a separate sync; the old bucket stays in Supabase until `prune_stale_sync_buckets()` removes it (90 days, if you scheduled it).
 - This no-account relay is designed for a personal Supabase project. It uses broad anon table access, so it is not a hardened multi-user SaaS security model.
+
+**What Settings → Sync shows:**
+
+- the status (**Synced · 2m ago**, **Saved here · 3 to sync**, **Can't reach the sync server · retry in 30 s**, **Sync paused**) with **Sync now**;
+- **Devices**: every device on this sync, **This device** first, then each **Other device**, with its SpendTrack version and when it last synced. A device on an older SpendTrack says "update it" (0.10.0 and 0.9.2 don't report themselves, so they show as "Older SpendTrack (0.10.0)"); one not seen for 60 days is greyed. When every other device runs this version it says so ("All your devices run SpendTrack 0.11.0."), which is the sign it's safe to rely on the newest sync features;
+- in one line, whether live updates are on, or unavailable (then it syncs when you open the app and every minute);
+- a banner when a device on SpendTrack 0.10.0, 0.9.2 or 0.8.4 wrote the synced copy in the last day, and how full the relay row is from 70 % ("Sync uses 82 % of the relay limit"). At 100 % sync pauses; your data stays on this device and merges keep coming in.
+
+On a laptop (1280 px and wider) the pill in the top bar says the same in short: **Synced · 2m ago**, **3 to sync**, **Offline · 3 to sync**, **Sync retrying · 30 s**, **Sync paused · code not found**. When it reports a problem, it is a button that opens Settings → Sync.
 
 How it works:
 
@@ -93,10 +109,11 @@ How it works:
 - Each field of an entry (name, amount, category, date, notes) merges on its own, newest change wins, so an amount edited on the phone and a category changed on the laptop both survive.
 - Budgets, item categories, category renames and the currency merge the same way, so a stale device cannot revert a newer change. The currency you pick applies on every synced device.
 - Deletions travel as dated markers, so a deleted entry never comes back, and an Undo (or a restore from a backup) brings it back everywhere.
-- Your changes go out 1.5 seconds after you stop (5 seconds at most while you keep typing); other devices' changes arrive at once via Supabase Realtime. Changes made offline are kept and sent when you are back.
-- If a push fails, retries back off (2 s × 2ⁿ, at most a minute). The pill says **Synced** only when every change has reached the relay.
+- Your changes go out 1.5 seconds after you stop (5 seconds at most while you keep typing), and at once when you leave the app. Other devices' changes arrive within seconds through Supabase Realtime while the app is open; if live updates are blocked, the app checks every minute and whenever you come back to it (a check that finds nothing new downloads nothing). Changes made offline are kept and sent when you are back.
+- If a push fails, retries back off (2, 4, 8, 16, 32, then 60 seconds, a little randomised), pause while the app is in the background or offline, and start again at once when you come back. The pill says **Synced** only when every change has reached the relay.
 - If your other device removes a lot of entries at once (10 or more, and 50 or more or a tenth of everything), this device keeps a copy first and says "Your other device removed N entries" with **Undo** for 30 seconds.
-- A device still on 0.9.2 keeps syncing with this version, and a 0.9.2 device's entries reach the relay even when two pushes cross. Update every device when you can.
+- Devices still on 0.10.0 or 0.9.2 keep syncing with this version. Update every device when you can: the devices list tells you which one is behind.
+- A sync set up by a newer SpendTrack (after going back to an older version) is left untouched: Settings → Sync asks you to reload, and offers only **Disconnect**.
 
 If you'd rather not run a Supabase project, a JSON backup moves your data between devices: download it on one, import it on the other.
 
@@ -131,8 +148,8 @@ SpendTrack has no built-in backend and no account system. Your spending data sta
 That means:
 
 - no third-party analytics, no telemetry
-- no cloud recovery unless you set up sync (or download your own backups)
-- the UUID sync code is your only credential — treat it like a password
+- no recovery from the relay unless you set up sync (or download your own backups)
+- the synced copy isn't encrypted yet: anyone with this app's public key could read it, and anyone with your sync code can change it. Share the code only with your own devices
 
 ## Operational limits
 

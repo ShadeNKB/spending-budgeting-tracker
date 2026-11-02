@@ -1,8 +1,10 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { SettingsDrawer } from './SettingsDrawer'
+import { keepPrevious } from './previousCode'
+import { SyncPill } from '../../app/SyncPill'
 import { useExpenseStore } from '../../stores/useExpenseStore'
-import { syncMessage, useSyncStore } from '../../stores/useSyncStore'
+import { useSyncStore } from '../../stores/useSyncStore'
 import { useUIStore } from '../../stores/useUIStore'
 
 // A build with sync configured; the stores are set directly, so no request is made.
@@ -14,6 +16,9 @@ vi.mock('../../services/syncConfig', async (importOriginal) => ({
 const CODE = '11111111-1111-4111-8111-111111111111'
 const NOW = Date.UTC(2026, 9, 19, 8, 0, 0)
 const T1 = '2026-10-01T04:00:00.000Z'
+/** The engine's too-large words (syncEngine.ts owns them; the panel shows them as they are). */
+const TOO_LARGE =
+  "Sync paused: your data (1365 KB) is too large for the sync server. It's still saved here — export a backup."
 
 const initialExpense = useExpenseStore.getState()
 const initialSync = useSyncStore.getState()
@@ -77,7 +82,7 @@ describe('SettingsDrawer focus', () => {
     useSyncStore.setState({
       syncId: CODE,
       cloudStatus: 'paused',
-      lastError: { kind: 'too-large', message: syncMessage('too-large', 1365), since: NOW },
+      lastError: { kind: 'too-large', message: TOO_LARGE, since: NOW },
     })
     openOn('sync')
     const exportButton = screen.getByRole('button', { name: 'Export backup' })
@@ -110,6 +115,71 @@ describe('SettingsDrawer focus', () => {
     useUIStore.setState({ settingsFocus: 'backup-attention' })
     openOn('backup')
     expect(screen.getByRole('region', { name: 'Needs attention' })).toHaveFocus()
+  })
+})
+
+describe('Settings › Sync names and focus (PR-3)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+    useExpenseStore.setState({ hydrated: true })
+  })
+
+  it("the pill's button opens Settings on the Sync tab, whose panel is named by it", () => {
+    useSyncStore.setState({
+      syncId: CODE,
+      cloudStatus: 'error',
+      lastError: { kind: 'network', message: "Couldn't reach the sync server.", since: NOW },
+    })
+    render(
+      <>
+        <SyncPill />
+        <SettingsDrawer />
+      </>,
+    )
+    fireEvent.click(
+      screen.getByRole('button', { name: /^Sync retrying\. Opens Settings, Sync\.$/ }),
+    )
+    act(() => {
+      vi.advanceTimersByTime(50)
+    })
+    expect(screen.getByRole('tab', { name: 'Sync' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tabpanel', { name: 'Sync' })).toHaveTextContent(
+      "Couldn't reach the sync server.",
+    )
+  })
+
+  it('linked: every control is named, Show says what it does, and Sync now comes first', () => {
+    useSyncStore.setState({ syncId: CODE, cloudStatus: 'synced', lastSyncAt: NOW })
+    openOn('sync')
+    const panel = screen.getByRole('tabpanel', { name: 'Sync' })
+    const names = within(panel)
+      .getAllByRole('button')
+      .map((b) => b.getAttribute('aria-label') ?? b.textContent.trim())
+    expect(names).toEqual(['Sync now', 'Show code', 'Copy', 'Disconnect sync'])
+    // its name changes to "Hide code" once shown, so it is no pressed toggle as well
+    expect(within(panel).getByRole('button', { name: 'Show code' })).not.toHaveAttribute(
+      'aria-pressed',
+    )
+  })
+
+  it('unlinked: Reconnect is named without the code and described by its date; Join by its field', () => {
+    keepPrevious(CODE, NOW)
+    openOn('sync')
+    const panel = screen.getByRole('tabpanel', { name: 'Sync' })
+    const reconnect = within(panel).getByRole('button', {
+      name: /^Reconnect to the code ending in /,
+    })
+    expect(reconnect).toHaveAccessibleDescription(/^This device remembers the code until /)
+    const field = within(panel).getByRole('textbox', { name: 'Sync code' })
+    expect(document.getElementById(field.getAttribute('aria-describedby') ?? '')).toHaveAttribute(
+      'role',
+      'status',
+    )
+    expect(within(panel).getByRole('button', { name: 'Join' })).toBeDisabled()
+    expect(
+      within(panel).getByRole('button', { name: 'Generate sync code for this device' }),
+    ).toBeInTheDocument()
   })
 })
 

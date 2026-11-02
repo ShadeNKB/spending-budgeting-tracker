@@ -1,6 +1,7 @@
-// Mutation suite of the v5 data core (DATA-ENGINE-SPEC §16.6, track spec P-28).
+// Mutation suites of the v5 data engine (DATA-ENGINE-SPEC §16.6, track spec P-28; PR-3 §7).
 //
-//   node scripts/mutate-core.mjs
+//   node scripts/mutate-core.mjs           the core's suite (default, unchanged since PR-2)
+//   node scripts/mutate-core.mjs --sync    the sync engine's suite (PR-3)
 //
 // Proves the src/data test suite has teeth: a control run with no mutation must be green, then
 // each known-bad change below must turn it red. Every mutation is applied IN MEMORY by a Vite
@@ -11,7 +12,20 @@
 // (src/data/__tests__/sim/negative-control.test.ts); M12 belongs to PR-2's persistence layer
 // (src/data/local, not in this script). M13–M16 cover PR-2's core changes (P2-2…P2-4, P2-10);
 // M17 proves the golden vectors of the frozen 0.9.2 model (legacy/v085.golden.test.ts) have teeth.
-// The suite is the core's: src/data/core and src/data/__tests__ (the local engine has its own).
+// The default suite is the core's: src/data/core and src/data/__tests__.
+//
+// --sync re-injects the sync engine's known-bad changes (PR-3 track spec §7) against the tests of
+// the stores, the local engine, src/data/sync and src/services: S1 the pushed copy read before
+// the pull, S2 the head short-circuit blind to a non-empty outbox, S3 the memo committed before
+// the push lands, S4 a joined device treated as established (it creates the relay copy), S5 a CAS
+// conflict taken for a landed push, S6 every foreign row event taken for our own echo, S7 a storm
+// breaker that never trips, S8 the registry comparing `seen`, S9 a HEAD trusting an etag from
+// before the setup, S10 a tab's name pushing, S11 a carried entry taken for a registration, S12
+// a forced write for a missing row, S13 a registration judged by the clocks alone (a slow peer
+// read as 0.10.0), S14 a copy judged again by the time passed (a stamp pushed ahead); and PR-2's
+// two survivors by name, M23 (absorb's raw copy of a damaged envelope ignored) and M34 (outbox
+// written with sync off).
+// A mutation may need more than one edit (`edits`); each anchor must occur exactly once.
 // Exit code 0 only when the control is green and every mutation is killed. A mutation run that
 // bail stops with no failure on record is run again without bail, never scored as a survivor.
 import { readFileSync } from 'node:fs'
@@ -20,8 +34,10 @@ import { startVitest } from 'vitest/node'
 
 const ROOT = resolve(import.meta.dirname, '..')
 process.env.ST5_SIM_SEEDS ??= '10'
+const SYNC = process.argv.includes('--sync')
 
-/** @typedef {{ id: string, name: string, file: string, find: string, replace: string, expect: string }} Mutation */
+/** @typedef {{ find: string, replace: string }} Edit */
+/** @typedef {{ id: string, name: string, file: string, find?: string, replace?: string, edits?: Edit[], expect: string }} Mutation */
 
 /** @type {Mutation[]} */
 const MUTATIONS = [
@@ -51,7 +67,7 @@ const MUTATIONS = [
     replace:
       '      this.memo = commitPush(this.memo, decision, this.wall())\n' +
       '      const res = await this.relay.push(\n',
-    expect: 'lost-push retry test',
+    expect: 'sim/pr3-protocol T-002-3: a dropped push of news is retried',
   },
   {
     id: 'M5',
@@ -190,16 +206,182 @@ const MUTATIONS = [
   },
 ]
 
+/** @type {Mutation[]} */
+const SYNC_MUTATIONS = [
+  {
+    id: 'S1',
+    name: 'The pushed copy is the doc read before the pull (F-001 shape)',
+    file: 'src/stores/syncEngine.ts',
+    edits: [
+      {
+        find: '    const pulled = await t.pull(code)\n',
+        replace: '    globalThis.__st5Stale = port.doc()\n    const pulled = await t.pull(code)\n',
+      },
+      {
+        find: '    wire: encodeWire(port.doc(), opts),\n',
+        replace: '    wire: encodeWire(globalThis.__st5Stale ?? port.doc(), opts),\n',
+      },
+    ],
+    expect: 'T-001-1 / T-001-2: a write during the pull reaches the relay',
+  },
+  {
+    id: 'S2',
+    name: 'The head short-circuit ignores unsent changes (a non-empty outbox, a commit since)',
+    file: 'src/stores/syncEngine.ts',
+    edits: [
+      { find: '    held.rev === port.localRev() &&\n', replace: '' },
+      { find: '    port.outbox().size === 0 &&\n', replace: '' },
+    ],
+    expect: 'T-018-1: a non-empty outbox, or a change committed since, skips the HEAD',
+  },
+  {
+    id: 'S3',
+    name: 'Memo committed before the push lands',
+    file: 'src/stores/syncEngine.ts',
+    find: '      res = await t.push(code, step.wire, {\n',
+    replace:
+      '      port.setMeta({ memo: commitPush(port.meta().memo, step.decision, Date.now()) })\n' +
+      '      res = await t.push(code, step.wire, {\n',
+    expect: 'T-002-3: a lost push is retried (memo only after landing)',
+  },
+  {
+    id: 'S4',
+    name: 'A joined device is treated as established (it creates the relay copy)',
+    file: 'src/stores/syncEngine.ts',
+    find: "  if (missing && !established) return done(pause('not-found', syncMessage('not-found')))\n",
+    replace: '',
+    expect: 'AC-E5: a join never creates',
+  },
+  {
+    id: 'S5',
+    name: 'A CAS conflict is taken for a landed push',
+    file: 'src/stores/syncEngine.ts',
+    find: '    if (!res.ok) {\n',
+    replace: "    if (!res.ok && res.reason !== 'conflict') {\n",
+    expect: 'AC-T2 / T-001-1 with CAS on: re-pull and re-merge',
+  },
+  {
+    id: 'S6',
+    name: 'Every foreign row event is taken for our own echo',
+    file: 'src/stores/syncEngine.ts',
+    find: 'function isOwnEcho(payload: Record<string, unknown>): boolean {\n',
+    replace: 'function isOwnEcho(payload: Record<string, unknown>): boolean {\n  return true\n',
+    expect: 'AC-E17: any other event starts one coalesced cycle',
+  },
+  {
+    id: 'S7',
+    name: 'The storm breaker never trips',
+    file: 'src/stores/syncEngine.ts',
+    find: '  if (remoteCycles.length < STORM_CYCLES) {\n',
+    replace: '  if (true) {\n',
+    expect: 'T-002-4: the 21st remote cycle does not run',
+  },
+  {
+    id: 'S8',
+    name: 'The registry compares `seen` (sameEntry)',
+    file: 'src/data/sync/registry.ts',
+    find: '    a.rpcSince === b.rpcSince\n',
+    replace: '    a.rpcSince === b.rpcSince &&\n    a.seen === b.seen\n',
+    expect: 'AC-E18 / T-018-1: seen alone never pushes, idle polls are HEADs',
+  },
+  {
+    id: 'S9',
+    name: 'The head short-circuit trusts an etag from before this setup (a Disconnect keeps it)',
+    file: 'src/stores/syncEngine.ts',
+    edits: [
+      {
+        find: '  if (held === null || held.gen !== setupGen || held.port !== port) return false\n',
+        replace: '',
+      },
+      { find: '    held.rev === port.localRev() &&\n', replace: '' },
+    ],
+    expect: 'T-018-1: changes made while disconnected reach the relay after a Reconnect',
+  },
+  {
+    id: 'S10',
+    name: "A tab's own name (its user agent) makes it register and push before deciding",
+    file: 'src/data/sync/registry.ts',
+    find: '  return !sameEntry({ ...prev, name: next.name }, next)\n',
+    replace: '  return !sameEntry(prev, next)\n',
+    expect: 'registerFirst: a name alone never pushes (two tabs would push in turn)',
+  },
+  {
+    id: 'S11',
+    name: 'A v5 writer that only carried its entry counts as registering (a rollback hidden)',
+    file: 'src/data/sync/registry.ts',
+    find: '  return wroteAt === null || wroteAt - entry.seen <= CARRIED_AFTER_MS\n',
+    replace: '  return true\n',
+    expect: 'P3-8: a device rolled back to 0.10.0 is a 0.10.0 writer',
+  },
+  {
+    id: 'S12',
+    name: 'A forced write is sent for a row that is missing (it never creates: busy)',
+    file: 'src/stores/syncEngine.ts',
+    find: '        force: conflicts >= CAS_FORCE_AFTER && step.base !== null,\n',
+    replace: '        force: conflicts >= CAS_FORCE_AFTER,\n',
+    expect: 'AC-T2: a row gone under a forced write is inserted in the same cycle',
+  },
+  {
+    id: 'S13',
+    name: "A registration is judged by the clocks alone, never by the writer's entry moving",
+    file: 'src/data/sync/registry.ts',
+    find: '  if (known !== undefined && entry.seen > known.seen) return true\n',
+    replace: '',
+    expect: 'P3-8: a 0.11.0 peer whose clock runs 7 hours slow is itself once seen writing again',
+  },
+  {
+    id: 'S14',
+    name: 'A copy already judged is judged again by the time passed since',
+    file: 'src/stores/syncEngine.ts',
+    find: '  const registered = judged ?? wroteItself(dec.doc.devices.get(writer), known, wroteAt)\n',
+    replace: '  const registered = wroteItself(dec.doc.devices.get(writer), known, wroteAt)\n',
+    expect: 'P3-8: a write stamped days ahead never makes a current 0.11.0 peer a 0.10.0 writer',
+  },
+  {
+    id: 'M23',
+    name: "absorb ignores the raw copy of another tab's damaged envelope",
+    file: 'src/data/local/engine.ts',
+    find: '      if (r.q?.addRaw(DB_KEY, raw.value, wall, RAW_COPIES_PER_KEY) !== true) {\n',
+    replace: '      if (false) {\n',
+    expect: 'syncSeams: the damaged envelope is copied to st5:q before it is written over',
+  },
+  {
+    id: 'M34',
+    name: 'The outbox is written with sync off',
+    file: 'src/data/local/engine.ts',
+    find: '    if (touched.length > 0 && syncOn()) r.outbox = addTouched(r.outbox, touched)\n',
+    replace: '    if (touched.length > 0) r.outbox = addTouched(r.outbox, touched)\n',
+    expect: 'syncSeams: changes made with sync off leave the outbox empty',
+  },
+]
+
+const SUITES = {
+  core: {
+    mutations: MUTATIONS,
+    dirs: ['src/data/core', 'src/data/__tests__'],
+  },
+  sync: {
+    mutations: SYNC_MUTATIONS,
+    dirs: ['src/stores/__tests__', 'src/data/local/__tests__', 'src/data/sync', 'src/services'],
+  },
+}
+const SUITE = SYNC ? SUITES.sync : SUITES.core
+
 const norm = (p) => p.split('\\').join('/').toLowerCase()
 const lf = (s) => s.split('\r\n').join('\n')
 const occurrences = (text, find) => text.split(find).length - 1
+/** @param {Mutation} m @returns {Edit[]} */
+const editsOf = (m) => m.edits ?? [{ find: m.find ?? '', replace: m.replace ?? '' }]
 
 /** Up front, from the source on disk (read only): every anchor occurs exactly once. */
 function checkAnchors() {
   const bad = []
-  for (const m of MUTATIONS) {
-    const n = occurrences(lf(readFileSync(resolve(ROOT, m.file), 'utf8')), m.find)
-    if (n !== 1) bad.push(`${m.id}: anchor occurs ${n} times in ${m.file}`)
+  for (const m of SUITE.mutations) {
+    const text = lf(readFileSync(resolve(ROOT, m.file), 'utf8'))
+    for (const [i, e] of editsOf(m).entries()) {
+      const n = e.find === '' ? 0 : occurrences(text, e.find)
+      if (n !== 1) bad.push(`${m.id}: anchor ${i + 1} occurs ${n} times in ${m.file}`)
+    }
   }
   return bad
 }
@@ -214,12 +396,16 @@ function mutationPlugin(m, hits) {
       // the module itself only: `?raw` text imports (purity.test.ts) keep the source on disk
       if (id.includes('?') || norm(id) !== target) return null
       const crlf = code.includes('\r\n')
-      const find = crlf ? m.find.split('\n').join('\r\n') : m.find
-      const replace = crlf ? m.replace.split('\n').join('\r\n') : m.replace
-      const n = occurrences(code, find)
-      if (n !== 1) throw new Error(`${m.id}: anchor occurs ${n} times in ${m.file}`)
+      let out = code
+      for (const [i, e] of editsOf(m).entries()) {
+        const find = crlf ? e.find.split('\n').join('\r\n') : e.find
+        const replace = crlf ? e.replace.split('\n').join('\r\n') : e.replace
+        const n = occurrences(out, find)
+        if (n !== 1) throw new Error(`${m.id}: anchor ${i + 1} occurs ${n} times in ${m.file}`)
+        out = out.replace(find, () => replace)
+      }
       hits.count++
-      return { code: code.replace(find, () => replace), map: null }
+      return { code: out, map: null }
     },
   }
 }
@@ -250,11 +436,11 @@ function tally(vitest) {
   return t
 }
 
-/** One run of the core's suite (benchmarks excluded: timing is not behaviour). */
+/** One run of the suite (benchmarks excluded: timing is not behaviour). */
 async function run(plugins, bail) {
   const vitest = await startVitest(
     'test',
-    ['src/data/core', 'src/data/__tests__'],
+    SUITE.dirs,
     { watch: false, bail, reporters: ['dot'], cliExclude: ['**/__tests__/bench/**'] },
     { plugins },
   )
@@ -295,7 +481,7 @@ async function main() {
   }
   const rows = []
   let bad = 0
-  for (const m of MUTATIONS) {
+  for (const m of SUITE.mutations) {
     let hits = { count: 0 }
     let r = await run([mutationPlugin(m, hits)], 1)
     let v = verdict(r, hits, control)
@@ -314,10 +500,10 @@ async function main() {
     )
   }
   console.log(
-    `\ncontrol: green, ${counts(control, control)} (ST5_SIM_SEEDS=${process.env.ST5_SIM_SEEDS})`,
+    `\n${SYNC ? 'sync' : 'core'} suite control: green, ${counts(control, control)} (ST5_SIM_SEEDS=${process.env.ST5_SIM_SEEDS})`,
   )
   for (const row of rows) console.log(row)
-  console.log(bad === 0 ? `ALL ${MUTATIONS.length} MUTATIONS KILLED` : `${bad} NOT KILLED`)
+  console.log(bad === 0 ? `ALL ${SUITE.mutations.length} MUTATIONS KILLED` : `${bad} NOT KILLED`)
   process.exit(bad === 0 ? 0 : 1)
 }
 

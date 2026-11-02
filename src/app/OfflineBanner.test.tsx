@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import { OfflineBanner } from './OfflineBanner'
-import { syncMessage, useSyncStore, type SyncFailure } from '../stores/useSyncStore'
+import { syncMessage } from '../stores/syncEngine'
+import { useSyncStore, type SyncFailure } from '../stores/useSyncStore'
 
 const build = vi.hoisted(() => ({ syncEnabled: true }))
 vi.mock('../services/syncConfig', async (importOriginal) => ({
@@ -60,6 +61,14 @@ describe('OfflineBanner', () => {
     render(<OfflineBanner />)
     expect(screen.getByText(SAVED)).toBeInTheDocument()
     expect(screen.queryByText(/will sync/)).toBeNull()
+  })
+
+  it('is a named region, never a second live region beside the pill’s (one event, one voice)', () => {
+    useSyncStore.setState({ syncId: 'code', cloudStatus: 'offline', lastError: failure('offline') })
+    render(<OfflineBanner />)
+    expect(screen.getByRole('region', { name: 'Offline' })).toHaveTextContent(WILL_SYNC)
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(document.querySelector('[aria-live]')).toBeNull()
   })
 
   // amber-700 on the 10 % amber tint measured 4.29:1 in the light theme (12 px text needs 4.5);

@@ -25,7 +25,9 @@ import {
   writeAsOther,
   type Device,
   type Failure,
+  steadyRandom,
 } from '../../__tests__/fakeRelay'
+import { syncMessage } from '../syncEngine'
 
 vi.mock(
   '@supabase/supabase-js',
@@ -43,6 +45,7 @@ beforeEach(() => {
   localStorage.clear()
   stubRelayEnv()
   resetRelay()
+  steadyRandom() // the backoff jitter is asserted elsewhere (sync.status)
 })
 
 afterEach(() => {
@@ -111,7 +114,7 @@ describe('every injected failure resolves an honest result (T-016-1)', () => {
     await advance(14_999)
     expect(phone.sync.useSyncStore.getState().cloudStatus).toBe('syncing')
     expect(await settle(pending, 1)).toMatchObject({ ok: false, error: 'network' })
-    await advance(2000) // the first backoff retry loads the SDK again
+    await advance(2100) // the first backoff retry (2 s) loads the SDK again
     expect(phone.sync.useSyncStore.getState()).toMatchObject({
       cloudStatus: 'synced',
       pendingLocal: false,
@@ -315,7 +318,8 @@ describe('too large: paused, one toast, merging continues (AC-18)', () => {
 
     const pulls = relay().pulls
     await advance(5 * MINUTE)
-    expect(relay().pulls).toBe(pulls) // no retry storm
+    // No retry storm: only the live-updates poll (one per 5 min) looks, to keep merging (P3-13).
+    expect(relay().pulls - pulls).toBeLessThanOrEqual(1)
     expect(relay().upserts).toBe(0)
 
     // Another device writes a small change: it is still merged here.
@@ -405,22 +409,29 @@ describe('going offline never ends a pause, nor promises a sync it will not run'
     'moved',
     'update-required',
     'reload',
-  ] as const)('the words for %s promise no retry', async (kind) => {
-    const { syncMessage } = await import('../useSyncStore')
+    'busy',
+    'not-found',
+    'denied',
+  ] as const)('the words for %s promise no retry', (kind) => {
     expect(syncMessage(kind)).not.toMatch(/retr/i)
   })
 
   it('offline keeps refused access, its words and its result, and promises nothing', async () => {
     const phone = await connected()
+    // A refusal is the relay's: a HEAD (online, resume, poll) meets it as well as a pull.
+    failNext('head', ...Array.from({ length: 10 }, (): Failure => ({ status: 401 })))
     failNext('pull', ...Array.from({ length: 10 }, (): Failure => ({ status: 401 })))
     expect(await trigger(phone)).toMatchObject({ ok: false, error: 'permission' })
     const refused = phone.sync.useSyncStore.getState().lastError
 
     setOnline(false)
+    // Kept, without the retry time: no retry runs while offline.
+    expect(refused?.retryAt).toBeGreaterThan(Date.now())
     expect(phone.sync.useSyncStore.getState()).toMatchObject({
       cloudStatus: 'error',
-      lastError: refused,
+      lastError: { kind: refused?.kind, message: refused?.message, since: refused?.since },
     })
+    expect(phone.sync.useSyncStore.getState().lastError?.retryAt).toBeUndefined()
     expect(phone.sync.syncsWhenOnline(phone.sync.useSyncStore.getState())).toBe(false)
     expect(await trigger(phone)).toEqual({
       ok: false,
@@ -475,6 +486,8 @@ describe('a long failure streak (AC-19)', () => {
   it('keeps the start of the streak across an offline blip, and toasts it once', async () => {
     const phone = await connected()
     const started = Date.now()
+    // The relay is down: a HEAD ('online' below) fails like a pull.
+    failNext('head', ...Array.from({ length: 80 }, (): Failure => ({ status: 503 })))
     failNext('pull', ...Array.from({ length: 80 }, (): Failure => ({ status: 503 })))
     await trigger(phone)
     await advance(10.5 * MINUTE)
@@ -576,7 +589,7 @@ describe('a phone hears what needs the owner (no pill below 1280 px)', () => {
     }
   }
   const refusedToasts = (phone: Device) =>
-    toastsOf(phone).filter((t) => t.message === phone.sync.syncMessage('permission'))
+    toastsOf(phone).filter((t) => t.message === syncMessage('permission'))
   /** A background cycle: a local change pushes 3 s later, with no owner waiting on it. */
   const addInBackground = async (phone: Device) => {
     phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
@@ -628,7 +641,7 @@ describe('a phone hears what needs the owner (no pill below 1280 px)', () => {
     expect(toasts).toEqual([
       expect.objectContaining({
         kind: 'warning',
-        message: phone.sync.syncMessage('moved'),
+        message: syncMessage('moved'),
         action: expect.objectContaining({ label: 'Reload' }) as unknown,
       }),
     ])

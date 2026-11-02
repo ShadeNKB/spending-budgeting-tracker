@@ -1,10 +1,11 @@
 // Devices for the data-engine release gate: one browser context per device, each on its own
 // origin (so its own localStorage), all on one sync code through the fake relay.
 
+import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { expect, type Browser, type BrowserContext, type Page } from '@playwright/test'
-import type { BuildToServe } from './relayServer'
+import type { BuildToServe, Relay } from './relayServer'
 
 const CACHE = resolve(
   process.env.ST5_E2E_CACHE ?? join(process.cwd(), 'node_modules/.cache/st5-e2e'),
@@ -20,8 +21,16 @@ export const PORTS = {
 /** One invented sync code for the suite. */
 export const SYNC_CODE = '5e5e5e5e-0e2e-4e2e-8e2e-000000000092'
 
+/** The 0.11.0 realtime topic of a code (§11.2): `st:` + 32 hex of SHA-256, never the raw code. */
+export function plainTopic(code: string): string {
+  const hex = createHash('sha256').update(`spendtrack/topic/v1|${code}`).digest('hex')
+  return `st:${hex.slice(0, 32)}`
+}
+
+export type BuildName = 'candidate' | 'candidate-flags' | 'v010' | 'v092'
+
 /** A build made by scripts/build-mixed.mjs. */
-export function build(name: 'candidate' | 'v092'): BuildToServe {
+export function build(name: BuildName): BuildToServe {
   const dir = join(CACHE, name)
   try {
     return { dir, csp: readFileSync(join(CACHE, `${name}.csp`), 'utf8') }
@@ -126,6 +135,56 @@ export async function itemNames(page: Page): Promise<string[]> {
   return (await storedRows(page)).map((r) => r.itemName).sort()
 }
 
+/** The item names the relay copy of `code` holds, sorted. */
+export function relayNames(relay: Relay, code = SYNC_CODE): string[] {
+  const payload = relay.row(code)?.payload
+  const list: unknown =
+    typeof payload === 'object' && payload !== null ? Reflect.get(payload, 'expenses') : null
+  if (!Array.isArray(list)) return []
+  return list
+    .map((r: unknown) =>
+      typeof r === 'object' && r !== null ? String(Reflect.get(r, 'itemName')) : '',
+    )
+    .sort()
+}
+
+/** The device registry the relay copy carries (`x5.devs`): id → its entry. */
+export function relayDevices(relay: Relay, code = SYNC_CODE): Record<string, unknown> {
+  const payload = relay.row(code)?.payload
+  const x5: unknown =
+    typeof payload === 'object' && payload !== null ? Reflect.get(payload, 'x5') : null
+  const devs: unknown = typeof x5 === 'object' && x5 !== null ? Reflect.get(x5, 'devs') : null
+  return typeof devs === 'object' && devs !== null ? { ...devs } : {}
+}
+
+/** What a device keeps about sync: the saved setup and the envelope's outbox size. */
+export async function syncState(
+  page: Page,
+): Promise<{ config: unknown; outbox: number; code: string | null }> {
+  return page.evaluate(() => {
+    const raw = localStorage.getItem('st5:sync')
+    let config: unknown = null
+    try {
+      config = raw === null ? null : (JSON.parse(raw) as unknown)
+    } catch {
+      config = raw
+    }
+    const envelope = localStorage.getItem('st5:db') ?? ''
+    let outbox = 0
+    try {
+      const body: unknown = JSON.parse(envelope.slice(envelope.indexOf('|', 2) + 1))
+      const meta: unknown =
+        typeof body === 'object' && body !== null ? Reflect.get(body, 'meta') : null
+      const list: unknown =
+        typeof meta === 'object' && meta !== null ? Reflect.get(meta, 'outbox') : null
+      outbox = Array.isArray(list) ? list.length : 0
+    } catch {
+      outbox = 0
+    }
+    return { config, outbox, code: localStorage.getItem('syncId') }
+  })
+}
+
 export async function closeAll(devices: readonly (Device | undefined)[]): Promise<void> {
   for (const d of devices) await d?.context.close()
 }
@@ -182,6 +241,11 @@ export async function editAmount(page: Page, item: string, amount: string) {
     .first()
     .click()
   const sheet = page.getByRole('dialog', { name: 'Edit expense' })
+  // 0.9.2 fills the form in an effect after the sheet opens, and its fields' handlers spread the
+  // form they were rendered with: a fill that lands first is overwritten by an empty form (no
+  // item, today) that Save then refuses. A person reads the entry's name before typing; so does
+  // this (0.9.2 is frozen; 0.10.0 and later update the form with a function).
+  await expect(sheet.getByLabel('Item', { exact: true })).toHaveValue(item)
   await sheet.getByLabel('Amount', { exact: true }).fill(amount)
   await sheet.getByRole('button', { name: 'Save changes' }).click()
   await expect(sheet).toHaveCount(0)

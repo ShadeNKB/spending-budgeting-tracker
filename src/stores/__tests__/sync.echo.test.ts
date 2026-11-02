@@ -22,6 +22,7 @@ import {
   stubRelayEnv,
   writeAsLegacy,
   writeAsOther,
+  steadyRandom,
 } from '../../__tests__/fakeRelay'
 
 vi.mock(
@@ -42,6 +43,7 @@ beforeEach(() => {
   localStorage.clear()
   stubRelayEnv()
   resetRelay()
+  steadyRandom() // retries at exactly 2, 4, 8 … s (the jitter is asserted in sync.status)
 })
 
 afterEach(() => {
@@ -346,7 +348,7 @@ describe('old writers (v0.8.4 and earlier) on the relay', () => {
     await advance(MINUTE)
     const sync = phone.sync.useSyncStore.getState()
     expect(sync.legacyWriterAt).not.toBeNull()
-    expect(sync.waitingForOld).toBe(true)
+    expect(sync.waitingForOld).toBeGreaterThan(0)
     expect(ourPushes()).toBeLessThanOrEqual(1)
 
     await advance(29 * MINUTE)
@@ -393,7 +395,7 @@ describe('old writers (v0.8.4 and earlier) on the relay', () => {
     phone.expense.useExpenseStore.getState().updateExpense('e1', { notes: 'kept here' })
     const chatter = setInterval(() => writeAsLegacy(SYNC_CODE, payloadOf(theirs)), 600)
     await advance(MINUTE)
-    expect(phone.sync.useSyncStore.getState().waitingForOld).toBe(true)
+    expect(phone.sync.useSyncStore.getState().waitingForOld).toBeGreaterThan(0)
 
     const added = phone.expense.useExpenseStore.getState().addExpense({
       itemName: 'Kopi',
@@ -402,7 +404,7 @@ describe('old writers (v0.8.4 and earlier) on the relay', () => {
     // At once, not at the next cycle: a change the relay has not seen is pending, no longer held
     // back (the pill and the status row then say "Syncing…", not "Update old device").
     expect(phone.sync.useSyncStore.getState()).toMatchObject({
-      waitingForOld: false,
+      waitingForOld: 0,
       pendingLocal: true,
     })
     const before = relay().pushes.length

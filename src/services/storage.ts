@@ -111,15 +111,20 @@ function parseJson(text: string): unknown {
   }
 }
 
-/** The plaintext code of a `st5:sync` value, or null when it is not a readable plain config. */
-function codeOf(raw: string): string | null {
-  const cfg = parseJson(raw)
-  if (!isRecordLike(cfg) || cfg.kind !== 'plain') return null
-  return validCode(cfg.code) ? cfg.code : null
-}
+/** A parsed `st5:sync` this build reads: plain, or another kind (a newer build's) it must keep. */
+const plainOf = (cfg: unknown): Readonly<Record<string, unknown>> | null =>
+  isRecordLike(cfg) && cfg.kind === 'plain' && validCode(cfg.code) ? cfg : null
 
-const configOf = (code: string, joinedAt: number): string =>
-  JSON.stringify({ kind: 'plain', code, rowId: code, joinedAt, established: true })
+/** A well-formed config of a kind this build does not know (P3-19): never quarantined or removed. */
+const isNewer = (cfg: unknown): boolean =>
+  isRecordLike(cfg) && typeof cfg.kind === 'string' && cfg.kind !== 'plain'
+
+const configOf = (code: string, joinedAt: unknown, established: boolean): string =>
+  JSON.stringify({ kind: 'plain', code, rowId: code, joinedAt, established })
+
+export type SyncConfig =
+  | { readonly kind: 'plain'; readonly code: string; readonly established: boolean }
+  | { readonly kind: 'newer' }
 
 // One raw copy per distinct corrupt value per session: getSyncId runs on every sync cycle.
 const quarantinedConfigs = new Set<string>()
@@ -167,14 +172,16 @@ export const storage = {
    */
   getSyncId(): string | null {
     const raw = read(SYNC_KEY)
-    const code = raw === null ? null : codeOf(raw)
-    if (raw !== null && code === null) quarantineConfig(raw)
+    const cfg = raw === null ? null : parseJson(raw)
+    if (isNewer(cfg)) return null
+    const code = plainOf(cfg)?.code
+    if (raw !== null && !validCode(code)) quarantineConfig(raw)
     const legacy = readKey(SYNC_ID_KEY)
     if (validCode(legacy)) {
-      if (code !== legacy) tryWrite(SYNC_KEY, configOf(legacy, Date.now()))
+      if (code !== legacy) tryWrite(SYNC_KEY, configOf(legacy, Date.now(), true))
       return legacy
     }
-    if (code === null) return null
+    if (!validCode(code)) return null
     if (legacy === null) {
       forget(SYNC_KEY)
       return null
@@ -184,18 +191,58 @@ export const storage = {
   },
 
   /**
+   * The saved setup: a plain code and whether this device is established on it (it may create
+   * the relay copy), a newer build's setup this one must keep, or null.
+   */
+  getSyncConfig(): SyncConfig | null {
+    const raw = read(SYNC_KEY)
+    const cfg = raw === null ? null : parseJson(raw)
+    if (isNewer(cfg)) return { kind: 'newer' }
+    const code = this.getSyncId()
+    if (code === null) return null
+    const plain = plainOf(cfg)
+    return { kind: 'plain', code, established: plain?.code !== code || plain.established !== false }
+  },
+
+  /**
    * Saves the code (both keys) or, with null (Disconnect, an explicit action), forgets it.
    * `syncId` goes first: a code this build saved is never in `st5:sync` alone, so that state
-   * always means an old build's disconnect.
+   * always means an old build's disconnect. `established` false for a joined code; left out, the
+   * same code keeps its flag and a new one is established. A joined code is never left in
+   * `syncId` alone: read that way it is an old build's code, established, and the next start
+   * could create its relay copy (P3-5). When `st5:sync` refuses it, `syncId` goes back to what
+   * it held, so the code lasts this session only (the caller says so).
    */
-  saveSyncId(id: string | null): void {
+  saveSyncId(id: string | null, established?: boolean): void {
     if (id === null) {
       localStorage.removeItem(SYNC_KEY)
       localStorage.removeItem(SYNC_ID_KEY)
       return
     }
+    const raw = read(SYNC_KEY)
+    const same = plainOf(raw === null ? null : parseJson(raw))
+    const kept = same?.code === id ? same : null
+    const flag = established ?? kept?.established !== false
+    const before = readKey(SYNC_ID_KEY)
     safeSet(SYNC_ID_KEY, id)
-    safeSet(SYNC_KEY, configOf(id, Date.now()))
+    try {
+      safeSet(SYNC_KEY, configOf(id, kept?.joinedAt ?? Date.now(), flag))
+    } catch (err) {
+      if (!flag && before !== id) {
+        if (typeof before === 'string') tryWrite(SYNC_ID_KEY, before)
+        else forget(SYNC_ID_KEY)
+      }
+      throw err
+    }
+  },
+
+  /** A joined code's first cycle found its relay copy: from now on this device may re-create it. */
+  markEstablished(code: string): void {
+    const raw = read(SYNC_KEY)
+    const cfg = plainOf(raw === null ? null : parseJson(raw))
+    if (cfg?.code === code && cfg.established === false) {
+      tryWrite(SYNC_KEY, configOf(code, cfg.joinedAt, true))
+    }
   },
 
   /**

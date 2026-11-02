@@ -1,6 +1,8 @@
-// The simulated world: one relay, v5 devices and frozen old clients, human-paced random ops on
-// virtual time, then idle chatter, in-place upgrade of the old clients and a run to quiescence.
-// Collects every invariant violation (I1–I5, field oracle, I3) and a seed-reproducible trace digest.
+// The simulated world: one relay, v5 devices (0.11.0 = mode 'pr3', 0.10.0 = mode 'pr2') and frozen
+// old clients (0.9.2 = v085, v0.8.4), human-paced random ops on virtual time, then idle chatter,
+// in-place upgrade of every older device (old clients migrate their storage; 0.10.0 keeps its
+// envelope and becomes 0.11.0) and a run to quiescence. Collects every invariant violation (I1–I5,
+// field oracle, I3) and a seed-reproducible trace digest.
 import { displayList } from '../../core/categories'
 import { FNV_A, fnvLane } from '../../core/hash'
 import {
@@ -32,12 +34,20 @@ import { makeRng, type Rng } from '../support/rng'
 import { VirtualClock } from './clock'
 import { OldDevice, type OldKind } from './oldDevices'
 import { CALM, Relay, type NetOptions } from './relay'
-import { V5Device, type Observer } from './v5device'
+import { POLL_LIVE, V5Device, type Observer, type V5Mode } from './v5device'
 
 export interface DeviceSpec {
   readonly kind: 'v5' | OldKind
   readonly skew?: number
+  /** v5 only: this device's engine; the world's `mode` when omitted ('pr2' = 0.10.0). */
+  readonly mode?: V5Mode
 }
+
+/** AC-P1 shorthands. */
+export const V011: DeviceSpec = { kind: 'v5', mode: 'pr3' }
+export const V010: DeviceSpec = { kind: 'v5', mode: 'pr2' }
+export const V092: DeviceSpec = { kind: 'v085' }
+export const V084: DeviceSpec = { kind: 'v084' }
 
 export interface WorldOptions {
   readonly seed: number
@@ -45,8 +55,8 @@ export interface WorldOptions {
   readonly net?: NetOptions
   /** Negative control (M1): every v5 device snapshots before its pull await. */
   readonly readBeforeAwait?: boolean
-  /** The v5 devices' cycle: 'pr3' (CAS + polling, default) or the PR-2 bridge (§9). */
-  readonly mode?: 'pr3' | 'pr2'
+  /** The v5 devices' default engine: 'pr3' (0.11.0, default) or the PR-2 bridge (0.10.0). */
+  readonly mode?: V5Mode
   /** pr2 only: absorb foreign event payloads (P2-10); false is the crossing-push control. */
   readonly absorbNews?: boolean
 }
@@ -94,7 +104,12 @@ export class World implements Observer {
 
   constructor(readonly opts: WorldOptions) {
     this.rng = makeRng(opts.seed)
-    this.relay = new Relay(this.clock, makeRng(opts.seed * 7919 + 1), opts.net ?? CALM)
+    this.relay = new Relay(
+      this.clock,
+      makeRng(opts.seed * 7919 + 1),
+      opts.net ?? CALM,
+      makeRng(opts.seed * 7919 + 2),
+    )
   }
 
   // ── Observer ────────────────────────────────────────────────────────────────────────────
@@ -120,10 +135,15 @@ export class World implements Observer {
 
   // ── setup ───────────────────────────────────────────────────────────────────────────────
 
+  get mode(): V5Mode {
+    return this.opts.mode ?? 'pr3'
+  }
+
   private addV5(
     name: string,
     skew: number,
     established: boolean,
+    mode: V5Mode,
     doc?: Doc,
     outbox?: V5Device['outbox'],
   ): V5Device {
@@ -132,7 +152,7 @@ export class World implements Observer {
       skew,
       established,
       readBeforeAwait: this.opts.readBeforeAwait ?? false,
-      mode: this.opts.mode ?? 'pr3',
+      mode,
       absorbNews: this.opts.absorbNews ?? true,
       ...(doc === undefined ? {} : { doc }),
       ...(outbox === undefined ? {} : { outbox }),
@@ -147,10 +167,12 @@ export class World implements Observer {
   async setup(): Promise<void> {
     let i = 0
     for (const spec of this.opts.devices) {
-      const name = `${spec.kind}-${String.fromCharCode(97 + i)}`
+      const mode = spec.mode ?? this.mode
+      const kind = spec.kind === 'v5' && mode === 'pr2' && this.mode === 'pr3' ? 'v010' : spec.kind
+      const name = `${kind}-${String.fromCharCode(97 + i)}`
       const skew = spec.skew ?? 0
       if (spec.kind === 'v5') {
-        const d = this.addV5(name, skew, i === 0)
+        const d = this.addV5(name, skew, i === 0, mode)
         d.start()
         await this.settleCycle(d.triggerSync('boot'))
       } else {
@@ -324,11 +346,39 @@ export class World implements Observer {
     return this.v5.reduce((n, d) => n + d.pushes, 0) - before
   }
 
-  /** Every old client upgrades in place to v5 and boots a cycle. */
+  /**
+   * Every older device updates in place and boots a cycle: an old client migrates its storage
+   * (a full outbox); in a 0.11.0 world a 0.10.0 device keeps its envelope (doc, outbox, memo,
+   * lastRev, repairAt; the 0.11.0-only etag is unknown) and its device id, as the real reload does.
+   */
   upgradeAll(): void {
     for (const o of this.old.splice(0)) {
       const { doc, outbox } = o.migrate()
-      const d = this.addV5(o.name.replace(/^v08[45]/, 'up'), o.skew, true, doc, outbox)
+      const d = this.addV5(o.name.replace(/^v08[45]/, 'up'), o.skew, true, this.mode, doc, outbox)
+      d.start()
+      void d.triggerSync('boot')
+    }
+    if (this.mode !== 'pr3') return
+    for (const [i, prev] of [...this.v5.entries()]) {
+      if (prev.mode !== 'pr2') continue
+      prev.stop()
+      const d = new V5Device(this.clock, this.relay, makeRng(this.rng.int(2 ** 31)), this, {
+        name: prev.name,
+        skew: prev.skew,
+        established: true,
+        mode: 'pr3',
+        absorbNews: this.opts.absorbNews ?? true,
+        doc: prev.doc,
+        outbox: prev.outbox,
+        memo: prev.memo,
+        lastRev: prev.lastRev,
+        repairAt: prev.repairAt,
+      })
+      d.hlc.last = Math.max(d.hlc.last, prev.hlc.last)
+      const watch = this.watches.get(prev)
+      if (watch !== undefined) this.watches.set(d, watch)
+      this.watches.delete(prev)
+      this.v5[i] = d
       d.start()
       void d.triggerSync('boot')
     }
@@ -338,12 +388,23 @@ export class World implements Observer {
     return this.v5.every((d) => !d.busy && d.outbox.size === 0)
   }
 
-  /** Runs until a full poll period passes with no relay write and nothing pending. */
+  /**
+   * Runs until nothing is pending and no relay write happened for a full poll period of the
+   * slowest device (0.11.0 polls every 5 min while live, so a device that missed the last event
+   * has pulled it by then; 0.10.0 never polls), checked in 65 s steps.
+   */
   async settle(maxMinutes = 60): Promise<boolean> {
+    const window = this.v5.some((d) => d.mode === 'pr3') ? POLL_LIVE + 65_000 : 0
+    let writes = this.relay.writes
+    let since = this.clock.now
     for (let i = 0; i < maxMinutes; i++) {
-      const writes = this.relay.writes
       await this.clock.run(65_000)
-      if (this.relay.writes === writes && this.quiet) return true
+      if (this.relay.writes !== writes || !this.quiet) {
+        writes = this.relay.writes
+        since = this.clock.now
+        continue
+      }
+      if (this.clock.now - since >= window) return true
     }
     return false
   }
@@ -400,6 +461,12 @@ export async function scenario(opts: WorldOptions, ops: number): Promise<World> 
 
 export const SKEWS = { slow: -DAY, fast: 2 * HOUR } as const
 
+export interface Traffic {
+  readonly heads: number
+  readonly pulls: number
+  readonly pushes: number
+}
+
 export interface RunReport {
   readonly seed: number
   readonly violations: readonly string[]
@@ -410,35 +477,67 @@ export interface RunReport {
   readonly roundPushes: number
   /** Pushes caused by one add on one device after quiescence (I5: ≤ 2), when measured. */
   readonly addPushes: number | null
+  /** Pushes in the 60 s after that add settled (must be 0), when measured. */
+  readonly afterAddPushes: number | null
+  /** Relay requests of the 0.11.0 devices over 10 idle minutes at the end: HEADs only. */
+  readonly idleTraffic: Traffic
+  /** A 0.11.0 device saw a 0.10.0 writer (legacySeen.v5pre) before the upgrade, when one ran. */
+  readonly v5preSeen: boolean | null
   readonly digest: string
   readonly ops: number
 }
 
-/** The standard run of §16.4 for one seed and one configuration. */
+/** What a set of devices asked of the relay so far. */
+function traffic(w: World): Traffic {
+  const names = w.v5.filter((d) => d.mode === 'pr3').map((d) => d.name)
+  const sum = (m: ReadonlyMap<string, number>): number =>
+    names.reduce((n, k) => n + (m.get(k) ?? 0), 0)
+  return {
+    heads: sum(w.relay.headsBy),
+    pulls: sum(w.relay.pullsBy),
+    pushes: sum(w.relay.writesBy),
+  }
+}
+
+/** The standard run of §16.4 for one seed and one configuration (AC-P1). */
 export async function standardRun(
   devices: readonly DeviceSpec[],
   seed: number,
   net: NetOptions,
   measureAdd = false,
-  mode: 'pr3' | 'pr2' = 'pr3',
+  mode: V5Mode = 'pr3',
 ): Promise<RunReport> {
   const w = new World({ seed, devices, net, mode })
   await w.setup()
   await w.runOps(60 + w.rng.int(61))
   await w.clock.run(15_000)
   const idlePushes = await w.idle(60_000)
+  const hasV010 = mode === 'pr3' && w.v5.some((d) => d.mode === 'pr2')
+  const v5preSeen = hasV010
+    ? w.v5.some((d) => d.mode === 'pr3' && d.legacySeen.v5pre !== null)
+    : null
   w.upgradeAll()
   await w.settle()
   await w.resumeAll()
   const settled = await w.settle()
   const roundPushes = await w.rounds()
   let addPushes: number | null = null
+  let afterAddPushes: number | null = null
   const first = w.v5[0]
   if (measureAdd && first !== undefined) {
     const before = w.v5.reduce((n, d) => n + d.pushes, 0)
     first.op((doc, ctx) => addExpense(doc, ctx, { itemName: 'one more', amount: 3 }))
     await w.settle()
     addPushes = w.v5.reduce((n, d) => n + d.pushes, 0) - before
+    afterAddPushes = await w.idle(60_000)
+  }
+  const start = traffic(w)
+  await w.clock.run(10 * 60_000)
+  const end = traffic(w)
+  const idleTraffic = {
+    heads: end.heads - start.heads,
+    pulls: end.pulls - start.pulls,
+    pushes: end.pushes - start.pushes,
   }
   const violations = [...w.violations, ...w.checkConverged()]
   if (!settled) violations.push('did not settle')
@@ -450,9 +549,40 @@ export async function standardRun(
     settled,
     roundPushes,
     addPushes,
+    afterAddPushes,
+    idleTraffic,
+    v5preSeen,
     digest: w.traceDigest,
     ops: w.ops,
   }
+}
+
+export interface Bounds {
+  /** v5 pushes allowed in the 60 s idle window (old clients chattering). */
+  readonly idle: number
+  /** The 10 idle minutes at the end are HEADs only (false on a lossy network: retries pull). */
+  readonly headOnly?: boolean
+}
+
+/**
+ * Everything AC-P1 asks of one standard run, as readable problems (empty = pass): I1–I5, the field
+ * oracle, no resurrection and byte-equal replicas (violations), quiet afterwards (settled, 20
+ * rounds push nothing), the §11.4 push bounds (idle chatter, one add ≤ 2 pushes then none), an
+ * idle 0.11.0 device only HEADs, and a 0.10.0 writer is flagged before its update.
+ */
+export function runProblems(r: RunReport, b: Bounds): string[] {
+  const out = [...r.violations]
+  if (r.roundPushes !== 0) out.push(`20 rounds pushed ${String(r.roundPushes)}`)
+  if (r.idlePushes > b.idle)
+    out.push(`idle window: ${String(r.idlePushes)} pushes > ${String(b.idle)}`)
+  if (r.addPushes !== null && r.addPushes > 2) out.push(`one add: ${String(r.addPushes)} pushes`)
+  if (r.afterAddPushes !== null && r.afterAddPushes !== 0)
+    out.push(`after the add: ${String(r.afterAddPushes)} pushes`)
+  if ((b.headOnly ?? true) && (r.idleTraffic.pulls !== 0 || r.idleTraffic.pushes !== 0))
+    out.push(`idle 10 min not HEAD-only: ${JSON.stringify(r.idleTraffic)}`)
+  if (r.idleTraffic.pushes !== 0) out.push(`idle 10 min pushed ${String(r.idleTraffic.pushes)}`)
+  if (r.v5preSeen === false) out.push('the 0.10.0 writer was never flagged (legacySeen.v5pre)')
+  return out
 }
 
 /** Per-test timeout of a simulation file (virtual time is fast, but 150 seeds in CI take a while). */

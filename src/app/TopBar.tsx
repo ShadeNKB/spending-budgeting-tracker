@@ -92,11 +92,10 @@ export function TopBar() {
           <SmartInput dense className="mx-auto max-w-[520px]" />
         </div>
 
-        {/* The pill shows from 1280 px; below that it is screen-reader-only, never removed, so
-            its live region still says when saving or syncing goes wrong. */}
-        <div className="sr-only xl:not-sr-only">
-          <SyncPill />
-        </div>
+        {/* The pill shows from 1280 px (display: none below, so never a hidden focus stop); its
+            live region is rendered at every width, so it still says when saving or syncing goes
+            wrong. */}
+        <SyncPill />
 
         {/* Named by its visible word, so voice control ("click Search") finds it. */}
         <button
