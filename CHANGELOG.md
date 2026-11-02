@@ -4,7 +4,7 @@
 
 PR-2 of the data-engine overhaul: the local engine. Your entries now live in one safety-checked copy on the device, written the moment you add or change anything. SpendTrack never deletes anything it can't read. It sets it aside, and you can download it. Undo, a restored backup and a category rename now hold through sync. Every delete says exactly what it reaches, and a large removal made on your other device can be undone.
 
-The first time 0.10.0 opens, it upgrades your data once and says so ("Your data was upgraded: N entries"). Every entry, category, budget and item pick shows as before, on the same day. It also keeps a copy in the 0.9.x format, so an older version opened on this device still finds everything.
+The first time 0.10.0 opens, it upgrades your data once. When every row reads cleanly, it does so quietly; when some need attention, it says so ("Your data was upgraded: N entries · N need attention · Review"). Every entry, category, budget and item pick shows as before, on the same day. It also keeps a copy in the 0.9.x format, so an older version opened on this device still finds everything.
 
 A device still on 0.9.x keeps syncing with this one, both ways, so the phone and the laptop can update in either order. One difference stays until both run 0.10.0: if the same entry is changed on both devices before either syncs, the change saved later is kept whole, as on 0.9.x.
 
@@ -89,7 +89,7 @@ A device still on 0.9.x keeps syncing with this one, both ways, so the phone and
 
 - **Needs attention** in Settings › Backup: "N entries couldn't be read. They're kept on this device, untouched.", with **Download them**. **Review** on the toast takes you there. (F-005, F-014)
 - **Notices under the top bar:** recovered data (with **Download damaged data** and **Dismiss**), memory only (with **Download raw data**), "Storage on this device is nearly full · Download a backup" (from 80 % of the space SpendTrack plans for), the sticky "Not saved", and the demo banner with **Clear sample data**.
-- **An upgrade report**, once: "Your data was upgraded: N entries", plus "· N need attention" and **Review** when some rows couldn't be listed.
+- **An upgrade report**, once, only when the upgrade set rows aside, repaired, merged duplicates or brought rows back: "Your data was upgraded: N entries · N need attention", with **Review**. A clean upgrade shows nothing.
 - **Snapshots before every big change** (delete all, an import, a large removal from another device, and the upgrade itself), and a journal of what sync changed, both kept on the device. A screen to list them comes with PR-4. (F-014, F-050)
 - **A rollback copy in the 0.9.x format.** 0.9.2 opens on this device with every entry, item pick and budget, and 0.10.0 folds 0.9.2's changes back in afterwards. When storage is tight, this copy is the first thing dropped, never a save. Backup then says "Rollback copy: off (storage full)", and the copy returns at a later start with room.
 - **How to install, in Backup:** iPhone (Safari, Share, Add to Home Screen), Android or a computer (Install app), and how another device gets the data.
