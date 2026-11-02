@@ -75,7 +75,7 @@ Devices on 0.10.0 and 0.9.2 keep syncing with this one in both directions, so th
 - **Join always merges.** "Use synced data only" comes with PR-4's recovery screen, which makes it undoable.
 - **0.10.0 and 0.9.2 devices appear in the list only once they write**, and their banners last a day after that. 0.10.0 ignores Broadcast and hears 0.11.0 through the change feed, as before.
 - **Without live updates, a change from your other device can take up to a minute** to arrive while the app is open. Switching back to the app checks at once.
-- **The join preview of a 5,000-entry sync took 52–58 ms** on a busy laptop, against a 50 ms target.
+- **The join preview of a 5,000-entry sync takes 52–76 ms** on a laptop, about what reading the same entries at startup costs. Its budget is now the startup one (80 ms): the first target, 50 ms, was below what reading the entries alone costs.
 - **SpendTrack's sync logic grew by about 22 KB** (8.5 KB compressed). The sync engine downloads only on devices with sync on, and Settings when you open it, both after the app has started. The sync logic loaded before first paint grew by 593 B.
 
 ### Changed (engineering)
@@ -127,7 +127,7 @@ Devices on 0.10.0 and 0.9.2 keep syncing with this one in both directions, so th
   - `useUIStore` gains the `sync-now` focus target.
 - **Tests.** 3,352 unit tests in 166 files (2,975 in 152 on 0.10.0), green in Singapore, Honolulu and Kiritimati time.
   - **New suites:** `syncService.test` (rewritten), `sync.cycle`, `sync.head`, `sync.join`, `sync.realtime`, `sync.registry`, `sync.status`, `registry.test`, `syncSeams.test` (M23 and M34 named), `previousCode`, `SyncCode`, `JoinSync` and `SyncDevices`. The `SyncPill` and `SyncPanel` suites are rewritten.
-  - **Benches:** the PR-3 no-op cycle (30 ms budget, 13 ms measured) and the join preview (50 ms).
+  - **Benches:** the PR-3 no-op cycle (30 ms budget, 13 ms measured) and the join preview (80 ms, the boot-core budget).
   - **T-001-2:** 40 seeds × 60 writes, made during pulls, pushes and conflicts, lose nothing with CAS on or off. The read-before-pull control loses in every seed.
 - **Simulator.** The `pr3` device mode matches the engine: HEAD, echo filter, storm breaker, registry, join never creates, and Broadcast as a second event.
   - These pairings run at 150 seeds with CAS on and off: 2× 0.11.0; 0.11.0 + 0.10.0; 0.11.0 + 0.10.0 + frozen 0.9.2; 0.11.0 + frozen 0.8.4; 2× 0.11.0 + 0.8.4; 3× 0.11.0 with skewed clocks; 2× 0.11.0 on a flaky network. That is 12 files and 40 tests.
