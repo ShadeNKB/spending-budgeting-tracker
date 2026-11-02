@@ -319,6 +319,7 @@ export function SyncPill() {
     // display: none below 1280 px, so the pill is never an invisible focus stop on a phone.
     'hidden min-h-6 max-w-52 items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-medium xl:inline-flex',
     TONES[view.tone],
+    isAlert(view.state) && 'sync-pill-in',
   )
   const content = (
     <>
@@ -335,7 +336,6 @@ export function SyncPill() {
       </span>
     </>
   )
-  const entrance = { animation: 'sync-pill-in 0.15s ease both' }
   // Screen readers hear the live region, which stays mounted at every width (a change inside it
   // is announced, a region inserted with its content often is not). The pill carries the ticking
   // "2m ago" and the countdown, which would otherwise be read out every few seconds: a plain
@@ -352,19 +352,12 @@ export function SyncPill() {
           onClick={openSyncSettings}
           aria-label={`${view.label}. Opens Settings, Sync.`}
           title={title}
-          style={entrance}
-          className={clsx(className, 'transition hover:brightness-110')}
+          className={clsx(className, 'tap-target transition hover:brightness-110')}
         >
           {content}
         </button>
       ) : (
-        <div
-          key={view.state}
-          aria-hidden="true"
-          title={title}
-          style={entrance}
-          className={className}
-        >
+        <div key={view.state} aria-hidden="true" title={title} className={className}>
           {content}
         </div>
       )}

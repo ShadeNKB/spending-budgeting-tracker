@@ -70,15 +70,17 @@ export function SyncDevices() {
               >
                 <p
                   className={clsx(
-                    'text-[13px] leading-snug',
-                    d.stale ? 'text-[var(--text-tertiary)]' : d.me ? 'text-accent' : 'text-white',
+                    'text-[13px]',
+                    d.stale
+                      ? 'text-[var(--text-tertiary)]'
+                      : d.me
+                        ? 'text-accent'
+                        : 'text-white/90',
                   )}
                 >
                   {d.name}
                 </p>
-                <p className="text-[12px] leading-snug text-[var(--text-tertiary)]">
-                  {meta(d, now)}
-                </p>
+                <p className="text-[12px] text-[var(--text-tertiary)]">{meta(d, now)}</p>
               </li>
             ))}
           </ul>

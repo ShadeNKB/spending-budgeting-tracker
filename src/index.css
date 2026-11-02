@@ -1277,6 +1277,16 @@
       transform: translateY(0);
     }
   }
+  /* The sync pill eases in only when it reports a problem; routine steps (Saving…, 3 to sync,
+     Syncing…, Synced) change in place. */
+  .sync-pill-in {
+    animation: sync-pill-in 0.15s ease-out both;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sync-pill-in {
+      animation: none;
+    }
+  }
 
   /* ── Light mode component overrides ─────────────────────────── */
 

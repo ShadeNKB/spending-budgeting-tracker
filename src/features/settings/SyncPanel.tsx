@@ -384,7 +384,7 @@ function SyncBanners({ flush = false }: { flush?: boolean }) {
                 onClick={action.onClick}
                 aria-describedby={textId(key)}
                 className={clsx(
-                  'inline-flex h-11 shrink-0 items-center gap-1.5 rounded-md border px-3 text-[12px] font-medium transition md:h-8',
+                  'tap-target inline-flex h-11 shrink-0 items-center gap-1.5 rounded-md border px-3 text-[12px] font-medium transition md:h-8',
                   ACTION_TONE[tone],
                 )}
               >
@@ -879,7 +879,7 @@ function SyncContent() {
               aria-describedby={statusId}
               aria-label="Sync now"
               title="Sync now"
-              className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-[var(--text-tertiary)] transition hover:bg-surface-2 hover:text-white aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:hover:bg-transparent aria-disabled:hover:text-[var(--text-tertiary)] md:h-8 md:w-8"
+              className="tap-target inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-[var(--text-tertiary)] transition hover:bg-surface-2 hover:text-white aria-disabled:cursor-default aria-disabled:opacity-40 aria-disabled:hover:bg-transparent aria-disabled:hover:text-[var(--text-tertiary)] md:h-8 md:w-8"
             >
               <RefreshCw size={13} className={manualSyncing ? 'animate-spin' : ''} />
             </button>
