@@ -1,5 +1,159 @@
 # Changelog
 
+## 0.11.0 — 2026-11-02
+
+PR-3 of the data-engine overhaul: the sync engine. Sync now asks the relay whether anything changed before it downloads anything. It keeps working when live updates die, and it sends what you typed as the app closes. Joining a device shows what joining will do before anything changes, and a mistyped code can no longer start a separate sync. Settings › Sync shows what is waiting, which devices are on the sync and which SpendTrack each one runs. The sync code stays hidden until you ask to see it.
+
+Nothing changes on the database and there is nothing to set up: the update installs as usual. Two protections for the next step ship switched off: compare-and-set writes and the relay's own sync functions. They come on with the database update (PR-5). Until then, this version writes to the relay the way 0.10.0 does.
+
+Devices on 0.10.0 and 0.9.2 keep syncing with this one in both directions, so the phone and the laptop can update in either order. Going back to 0.10.0 keeps your data, your code and your sync.
+
+### Fixed
+
+- **A mistyped code can't start a separate sync.** Join now reads the synced copy before it saves anything. A code with no synced copy says "No synced data found for this code. Check it on your other device." and changes nothing, on this device or on the relay. A synced copy that has gone can be created again only by the device that made the code or a device that has synced with it. 0.10.0 created a new synced copy under any code it was given, which split your devices.
+- **What you add just before leaving the app reaches the relay.** When the app is hidden or closed, waiting changes go out at once. They go on a request the browser finishes after the page has gone, for a sync copy of up to 60,000 bytes. In 0.10.0 that upload could be cut off along with the page. (F-017)
+- **Switching back to the app checks for changes if it last synced more than 5 seconds ago** (30 seconds on 0.10.0). Coming back to the app, focusing the window or getting back online first asks the relay whether anything changed. When nothing did, nothing is downloaded. (F-002, F-018)
+- **Changes keep arriving when live updates stop.** iPhone drops the live connection of an app in the background, and a connection can also die without a sound. While the app is open, it now checks every minute when live updates are unavailable and every 5 minutes when they're on. In 0.10.0 nothing arrived until you switched away and back. (F-018)
+- **Retries wait their turn.** After a failed sync, the app tries again after 2, 4, 8, 16 and 32 seconds, then every 60. Each wait is a little randomised, so two devices don't retry in step. It no longer retries in the background or offline, and it tries again at once when you come back or reconnect. (F-018)
+- **Only the tab you're using listens for live updates.** A tab in the background closes its connection after 30 seconds and opens it again when you return to it. (F-003)
+- **A device that joined never writes over a synced copy it can't read.** Only the device that made the code, or a device that has synced with it, repairs a damaged copy. It keeps the raw copy first, and repairs at most once every 10 minutes. (F-005)
+- **Settings no longer calls the sync code a "shared secret".** It now says what is true: there's no account and the code links your devices. The synced copy isn't encrypted yet, so anyone with this app's public key could read it. Anyone with the code can change your synced data, so share it only with your own devices. The user guide and README say the same. (F-006, F-026)
+
+### Changed
+
+- **The pill says how much is waiting and when sync tries again** (on a laptop, 1280 px and wider). It reads "3 to sync" or "Offline · 3 to sync". It reads "Sync retrying · 30 s" while it counts down to the next try. A pause reads "Sync paused · too large", "· refused", "· code not found" or "· reload to update". (F-016)
+  - When the pill reports a sync problem, it is a button that opens Settings › Sync with focus on **Sync now**. "Update other device" works the same way.
+  - Below 1280 px the pill takes no space and no Tab stop. A screen reader still hears each problem once. Counts and "Syncing…" are never announced.
+- **The sync code is hidden** as `••••-…-1a2b`. **Show** reveals it for 30 seconds at most, and it hides again when you leave the app or close Settings. **Copy** always copies the full code. A screen reader hears "Sync code, hidden, ends in 1 a 2 b". (F-104)
+- **Join shows what it will do first.** (F-026)
+  - The code is checked before anything goes on the network. A bad code says "That code isn't valid. Paste the full code from your other device." A private code says "That's a private sync code. Update SpendTrack on this device to use it." Offline, it says "You're offline. Join when you're back online."
+  - Then the synced copy is read and counted: "This device: 12 entries · Synced: 641 entries · After joining: about 653 entries. Nothing here is removed."
+  - Some entries here may have been deleted on your other devices. Then the preview says how many will go and that a copy is kept on this device, and the button reads **Join and remove N**. Synced entries that can't be read are counted and set aside, not merged.
+  - Nothing is saved until you confirm, and **Cancel** changes nothing. A double tap or a held Enter checks only once.
+- **Disconnect remembers the code for 30 days.** (F-050)
+  - The unlinked view then offers **Reconnect to ••••-…-1a2b**, with "This device remembers the code until 2 Dec."
+  - **Generate** first asks "Start a separate sync?", because your other devices would stay on the old code.
+  - Remove from this device wipes the remembered code. A raw data download never contains it, and neither does one from 0.10.0 or 0.9.2 after going back.
+- **The sample-data question** ("Remove the sample data first?") still comes before Join, Generate and Reconnect. (F-027)
+- **Settings › Sync, linked,** shows the status with what's waiting, such as "Saved here · 3 to sync" or "Can't reach the sync server · retry in 30 s". Below it come **Sync now**, the code, the devices and **Disconnect**. (F-016, F-026)
+- **Settings › Sync, unlinked,** opens with **Link your devices** and the new intro.
+  - The two how-to cards are gone: "On this device / On other devices" and "Link your phone in 3 steps".
+  - The toasts say "Sync code created. Join it on your other device.", "Joined. This device is synced." and "Reconnected. This device is synced."
+- **New sync messages.**
+  - When the relay refuses a write for lack of room: "The sync relay is full. Your changes are saved on this device." (F-068)
+  - "Sync paused: the sync server refused access. Your data is safe on this device."
+  - "No synced data found for this code. Check it on your other device."
+- **The live-updates channel is named by a hash of the code**, never by the code itself. (F-006)
+- **A sync set up by a newer SpendTrack is left alone.** Suppose a later version set up private sync and you then go back to this one. Sync here pauses with "Sync on this device was set up by a newer SpendTrack. Reload SpendTrack to update. Your data is safe here." It makes no request and keeps that setup and your data. Settings offers only **Reload** and **Disconnect**. 0.10.0 sets such a setup aside as damaged and turns sync off.
+- **The offline strip is a named region** ("Offline") that a screen reader can jump to. The pill's status says "Offline" once.
+
+### Added
+
+- **A Devices list in Settings › Sync** shows every device on this sync. **This device** comes first, then each **Other device**, each with its SpendTrack version and when it last synced. (F-026)
+  - A device on an older version says "update it". One not seen for 60 days is greyed and no longer counts.
+  - 0.10.0 and 0.9.2 don't report themselves. They show as "Older SpendTrack (0.10.0)" or "Older SpendTrack (0.9.2)" once they write.
+  - When every device is current, it says "All your devices run SpendTrack 0.11.0." Read that line before the next update gate.
+  - One line says how changes arrive: "Live updates on", or "Live updates unavailable · syncing on open and every minute".
+- **Banners for older devices.** They show when an older device wrote the synced copy in the last day: "Your other device runs SpendTrack 0.10.0. Open it and reload to update." 0.9.2 gets the same banner. The 0.8.4 banner adds "Until then, don't rename categories, restore backups or delete everything on it." (F-026)
+- **A size meter** shows from 70 %: "Sync uses 82 % of the relay limit. At 100 % sync pauses; your data stays on this device." It turns amber at 90 %. Over 100 %, uploads pause, and changes from your other devices still merge. (F-016)
+- **Live updates have a second path.** (F-002)
+  - Each upload also tells your other devices directly, through Supabase Broadcast.
+  - If the database's change feed is refused, Broadcast alone carries changes. If both fail, the check every minute does.
+  - Your own echoes start nothing.
+  - A flood of remote changes means more than 20 syncs in a minute with nothing changed here. The app then stops reacting to remote changes for a minute and keeps checking every minute. A change of your own ends the pause.
+- **Ready for the database update, switched off.** (F-001, F-006)
+  - Compare-and-set writes (`VITE_SYNC_CAS=on`) stop two crossing uploads from overwriting each other on the relay.
+  - The relay's sync functions (`VITE_SYNC_RELAY=auto`) let the table be locked down later.
+  - Both are proved against a fake relay that models migrations 004 and 005. Both stay off until the owner turns them on with PR-5.
+
+### Known limits
+
+- **Compare-and-set and the relay functions are off.** Until PR-5, two uploads that cross both write the whole synced copy, as on 0.10.0. 0.10.0's rule still holds: the device whose upload was overwritten merges the other copy and sends its changes again on its next sync. The simulator (150 seeds) and the two-device tests lost nothing, with CAS off and on.
+- **The synced copy is still readable** by anyone with the app's public key (F-006, confidentiality part). Private sync comes in PR-5 and PR-6. Settings says so.
+- **Devices aren't named.** The list says "This device" and "Other device", and the delete-everywhere question still says "your other devices". Names worked out from the browser were cut to stay near the bundle budget. (F-026, part)
+- **There's no Share button, only Copy.** A share sheet was cut for the same reason. The pairing link and QR come with private sync in PR-6. (F-104, part)
+- **Join always merges.** "Use synced data only" comes with PR-4's recovery screen, which makes it undoable.
+- **0.10.0 and 0.9.2 devices appear in the list only once they write**, and their banners last a day after that. 0.10.0 ignores Broadcast and hears 0.11.0 through the change feed, as before.
+- **Without live updates, a change from your other device can take up to a minute** to arrive while the app is open. Switching back to the app checks at once.
+- **The join preview of a 5,000-entry sync took 52–58 ms** on a busy laptop, against a 50 ms target.
+- **SpendTrack's sync logic grew by about 22 KB** (8.5 KB compressed). The sync engine downloads only on devices with sync on, and Settings when you open it, both after the app has started. The sync logic loaded before first paint grew by 593 B.
+
+### Changed (engineering)
+
+- **Transport (`services/syncService.ts`).**
+  - **Table mode is the default.** Each push is one upsert with `updated_at = tok(base)` and `select=updated_at`, and the stored string becomes the etag. Without flags, no request reaches `/rest/v1/rpc/` and no conditional write is sent.
+  - **Etags.** `tok(base)` is ISO with 6 fraction digits and `Z`: `max(now µs, base µs + 1)`. `sameEtag` compares microsecond instants (`Z`, `±hh:mm` or no zone). Etags are kept exactly as PostgREST returns them (`+00:00`).
+  - **`VITE_SYNC_CAS=on`.** A missing row is inserted (23505/409 = conflict). An existing one gets `PATCH sync_id=eq.<code>&updated_at=eq.<the pulled etag, verbatim>`, and 0 rows means a conflict. A forced write never creates a row. The flag is read in place, so builds without it drop the CAS code.
+  - **`VITE_SYNC_RELAY`.** `table` is the default and never probes. `rpc` uses the relay functions only. `auto` probes `st_sync_head` on the session's first relay call:
+    - PGRST202 means table, probed again after 24 h;
+    - a table 401/403/42501 probes again at once, then uses RPC or `paused('denied')`;
+    - RPC PGRST202 falls back to the table in the same cycle;
+    - RPC calls send `p_row`, `p_payload`, `p_base` and `p_force`.
+  - **Also new.** `head()`; a 15 s deadline on every request; error kinds network, server, permission, invalid, no-rpc and full (53400); 22023 over the limit = too-large; `relayFetch` with `keepalive` for hide pushes of up to 60,000 UTF-8 bytes.
+- **Realtime.**
+  - One channel per row, on `st:` + SHA-256 of the code (`topicOf`, asserted equal to core `plainTopic`).
+  - Broadcast `rev` (`{rev, dev}`, `self: false`) is always bound, plus `postgres_changes` on the row. After two `CHANNEL_ERROR`s in a row, the channel is Broadcast only.
+  - Reconnect backoff runs from 2 s to 60 s. Announces go over `send` when joined, else over `httpSend` on a throwaway channel.
+- **Cycle (`stores/syncEngine.ts`).**
+  - **Kept from PR-2:** the synchronous merge section, news, repair and writer classes.
+  - **Attempts.** Up to 6 per cycle. A conflict pulls and merges again. The 4th attempt after 3 conflicts is forced, and after the 6th the cycle ends `busy`.
+  - **HEAD short-circuit,** for `resume`, `poll`, `resubscribe` and `online`. It applies only when the outbox is empty, no news waits and this device's registry entry is current. The etag must also belong to this code (`etagFor` = fnv36) and to this setup, with nothing committed since.
+  - **Join never creates.** `setupSync(code, {join: true})` saves the code unestablished until its first cycle on an existing row, and `previewJoin(code)` is read-only.
+  - **A newer writer** is merged and never pushed over (`paused('update-required')`).
+- **Triggers.**
+  - **Resume,** throttled to 5 s, on visible, `pageshow` and `focus`.
+  - **Hide.** `pagehide` and `freeze` flush the envelope first, then push with keepalive and skip `navigator.locks`.
+  - **Backoff** is `min(60 s, 2 s·2ⁿ⁻¹) × (1 ± 0.2)`, never while hidden or offline.
+  - **Channels and polls.** Only visible tabs subscribe; a hidden tab unsubscribes after 30 s. Polls run every 60 s, or every 5 min while live updates are on.
+  - **Storm breaker:** more than 20 remote cycles in 60 s.
+  - Every channel join, the first included, runs `cycle('resubscribe')`, which is a HEAD.
+- **Echo filter.** These start nothing: our own landed etag, our rev with the digest we sent, a rev already merged, and a Broadcast from this device or carrying our rev. Any other event starts one coalesced cycle (300 ms, at least 2 s apart).
+- **Device registry (`src/data/sync/registry.ts`, pure).**
+  - **Entry.** At push, `devices[me] = {name: '', app, mode, e2e: false, seen, rpcSince?}` goes through the new `port.register`: no outbox entry, no `localRev` bump, the same `expenses` Map.
+  - **Pushes.** `seen` never causes a push; a new app version or mode causes exactly one. `seen = max(now, prev.seen + 1)`.
+  - **0.10.0 writers** are recorded as `legacySeen.v5pre` (plus `v5preDev`). A 0.10.0 writer is a v5 copy whose writer has no entry of its own, an older one, or one it only carried.
+  - **Judging writers.** A writer seen before is judged by whether its entry moved. The etag counts as a write time only up to this device's clock. A copy already judged keeps its verdict.
+  - Readiness (`allCurrent`, and `lockdown` in RPC mode) and 60-day staleness are informational only.
+- **Store (`useSyncStore.ts`).**
+  - New state: `pending` (the outbox size), `waitingForOld` as a count, `lastError.retryAt`, pause kinds `not-found` and `denied`, error kind `busy`, and `view: SyncView` with a stable identity.
+  - `syncMessage` and the engine-only copy moved to the lazy `syncEngine.ts` (P3-11). The panel shows `lastError.message`.
+- **Storage.** `getSyncConfig()` returns `{kind: 'newer'}` for an unknown but well-formed `st5:sync.kind`, which is never quarantined, removed or overwritten. Also new: `saveSyncId(id, established?)` and `markEstablished()`.
+- **Local engine.** `SyncMeta` gains `lastEtag`, `etagFor`, `transport`, `probedAt`, `legacySeen.v5pre` and `v5preDev`. They are read tolerantly and joined across tabs. The code itself is never stored in `st5:db`. The M23 and M34 anchor lines are byte-identical.
+- **UI.**
+  - `SyncPanel` is split into `SyncCode`, `JoinSync`, `SyncDevices` and `previousCode.ts`.
+  - The Reconnect slot is `st5:synckey:prev`. Older builds' rescue patterns match `synckey`, so they leave it out too.
+  - The UI never imports `src/data` or `syncMessage`.
+  - The pill's visual is `hidden xl:inline-flex`, and its sr-only live region renders at every width. `TopBar` drops the `sr-only xl:not-sr-only` wrapper.
+  - `useUIStore` gains the `sync-now` focus target.
+- **Tests.** 3,352 unit tests in 166 files (2,975 in 152 on 0.10.0), green in Singapore, Honolulu and Kiritimati time.
+  - **New suites:** `syncService.test` (rewritten), `sync.cycle`, `sync.head`, `sync.join`, `sync.realtime`, `sync.registry`, `sync.status`, `registry.test`, `syncSeams.test` (M23 and M34 named), `previousCode`, `SyncCode`, `JoinSync` and `SyncDevices`. The `SyncPill` and `SyncPanel` suites are rewritten.
+  - **Benches:** the PR-3 no-op cycle (30 ms budget, 13 ms measured) and the join preview (50 ms).
+  - **T-001-2:** 40 seeds × 60 writes, made during pulls, pushes and conflicts, lose nothing with CAS on or off. The read-before-pull control loses in every seed.
+- **Simulator.** The `pr3` device mode matches the engine: HEAD, echo filter, storm breaker, registry, join never creates, and Broadcast as a second event.
+  - These pairings run at 150 seeds with CAS on and off: 2× 0.11.0; 0.11.0 + 0.10.0; 0.11.0 + 0.10.0 + frozen 0.9.2; 0.11.0 + frozen 0.8.4; 2× 0.11.0 + 0.8.4; 3× 0.11.0 with skewed clocks; 2× 0.11.0 on a flaky network. That is 12 files and 40 tests.
+  - The probes G3 and T-004-1 now use fixed timing; they had passed by seed luck. An unpinned G3 shows that 0.9.2's own merge drops its unpushed amount beside another 0.9.2 too.
+- **E2E.** The main suite runs 542 tests on Chromium and iPhone WebKit: 498 pass and 44 skip by project. It adds a11y state S31 (the offline strip).
+  - **`npm run e2e:data`:** 34 tests. 33 pass and 1 skips by project (a desktop-only pill test). New:
+    - 0.11.0 beside 0.10.0 for 60 s;
+    - 0.11.0 → 0.10.0 → 0.11.0 on one origin;
+    - Join: preview, merge, and a missing code that writes nothing;
+    - a build with the flags on: CAS crossing pushes, RPC after 004, a re-probe after 005, 004 rolled back;
+    - Broadcast-only delivery within 5 s, and poll-only delivery within 75 s with an idle minute of HEADs only;
+    - a renderer killed after an offline add (CDP `SystemInfo.getProcessInfo`);
+    - 7 new a11y states on both projects.
+  - **`build-mixed.mjs`** adds `candidate-flags` and `v010` (the `v0.10.0` tag, else `02a2e40`).
+  - **The fake relay** gains HEAD, insert, the CAS PATCH, µs `+00:00` etags, RPC, lockdown, and Broadcast over WS and HTTP.
+- **Mutations.** `scripts/mutate-core.mjs` kills all 18. The new `--sync` suite kills all 16: S1–S14, plus PR-2's survivors M23 (absorb raw copy ignored) and M34 (outbox written with sync off).
+- **Bundle.** No-relay JS is 708,813 B, 692.2 KB of the 700 KB budget (707,620 B on 0.10.0: +1,193 B).
+  - **No-relay chunks:** entry 129,806 B (+577, within the 130,253 B line); engine 94,672 B (+616); SettingsDrawer 32,986 B (unchanged); CSS 62,537 B (−352). The PWA precache is 34 entries, 935.0 KiB.
+  - **Relay build:** entry 133,700 B (+1,170); engine 56,703 B (+615); shared core 42,860 B (+122); `syncEngine` 27,962 B (+15,113); SettingsDrawer 54,507 B (+7,124). The Supabase SDK chunk is unchanged. All JS is 976,858 B (+24,144).
+  - **`size:relay`:** eager sync is 3,894 B of 4,096 (3,301 on 0.10.0); boot sync is 8,785 B of 12,288 (8,071).
+  - **The +4,096 B lazy line** for `syncEngine` + SettingsDrawer is missed at +22,237 B. No budget was raised. The spec's three cuts were applied: device names, the footnotes in one line, and Share.
+  - No runtime or dev dependency was added. `package.json` changes only the version.
+- **Performance.** Measured on the round-2 review build with Chromium at 4× CPU and 2,000 invented rows, medians of 3:
+  - with sync: boot 1,305 → 1,341 ms, first sync 1,333 → 1,367 ms, add to toast 381 → 370 ms, add to the upload landing 1,833 → 1,937 ms (including the 1.5 s wait), heap 10.5 → 10.7 MB;
+  - without sync: boot 1,442 → 1,425 ms, add to toast 407 → 420 ms, long tasks during the add 214 → 254 ms.
+
 ## 0.10.0 — 2026-11-02
 
 PR-2 of the data-engine overhaul: the local engine. Your entries now live in one safety-checked copy on the device, written the moment you add or change anything. SpendTrack never deletes anything it can't read. It sets it aside, and you can download it. Undo, a restored backup and a category rename now hold through sync. Every delete says exactly what it reaches, and a large removal made on your other device can be undone.
