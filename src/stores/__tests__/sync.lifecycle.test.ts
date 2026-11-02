@@ -1,4 +1,4 @@
-// F-017 / F-018: the app lifecycle drives saving and syncing (AC-23 to AC-27).
+// F-017 / F-018: the app lifecycle drives saving and syncing (AC-23 to AC-27, T-018-x).
 // Ports the auditors' lifecycle-flush probe (jsdom half; the browser half is e2e).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -8,11 +8,13 @@ import {
   connect,
   expense,
   failNext,
+  MemoryStorage,
   loadDevice,
   relay,
   relayRows,
   resetRelay,
   retireDevices,
+  seedV4,
   setVisibility,
   settle,
   stubRelayEnv,
@@ -62,15 +64,17 @@ async function connected(): Promise<Device> {
   return phone
 }
 
-describe('hide flushes the save at once (F-017, AC-23)', () => {
-  it('an add followed by visibilitychange -> hidden in the same task is in localStorage', async () => {
+describe('saving never waits (F-017, AC-23)', () => {
+  it('an add is in st5:db after one microtask, and in the rollback copy once hidden in the same task', async () => {
     const phone = await bootDevice({ persist: true })
     const added = phone.expense.useExpenseStore
       .getState()
       .addExpense({ itemName: 'lifecycle test', amount: 3.3 })
-    expect(localStorage.getItem('expenses') ?? '').not.toContain(added.id) // still debounced
+    await Promise.resolve()
+    expect(phone.storage.getItem('st5:db') ?? '').toContain(added.id)
+    expect(phone.storage.getItem('expenses') ?? '').not.toContain(added.id) // the mirror waits 1 s
     setVisibility('hidden')
-    expect(localStorage.getItem('expenses') ?? '').toContain(added.id)
+    expect(phone.storage.getItem('expenses') ?? '').toContain(added.id)
   })
 })
 
@@ -82,7 +86,7 @@ describe('hide syncs what is pending (AC-24)', () => {
       .getState()
       .addExpense({ itemName: 'Kopi', amount: 1.5 })
     setVisibility('hidden')
-    await advance(100) // well before the 3 s push timer
+    await advance(100) // well before the 1.5 s push timer
     expect(relay().pulls).toBe(pulls + 1)
     expect(relayRows()).toContainEqual(expect.objectContaining({ id: added.id }))
     await advance(10_000)
@@ -262,10 +266,11 @@ describe('realtime re-subscribe catches up (AC-27)', () => {
 })
 
 describe('start-up with a saved code', () => {
-  it('is linked from the first frame, before the engine chunk has loaded', async () => {
-    const phone = await loadDevice()
-    phone.expense.useExpenseStore.setState({ hydrated: true, expenses: [expense('e1')] })
-    localStorage.setItem('syncId', SYNC_CODE)
+  it('is linked from the first frame, before local data or the engine chunk has loaded', async () => {
+    const storage = new MemoryStorage()
+    seedV4(storage, { expenses: [expense('e1')] })
+    storage.setItem('syncId', SYNC_CODE)
+    const phone = await loadDevice(storage)
     phone.sync.installSync()
     // Synchronously: the panel never offers Generate to a linked device while sync loads, and
     // nothing is known to be on the relay yet, so a change made now reads "Syncing…".
@@ -274,7 +279,12 @@ describe('start-up with a saved code', () => {
       cloudStatus: 'idle',
       pendingLocal: true,
     })
+    // The first cycle waits for local data: it never merges into an empty doc.
     await advance(5000)
+    expect(relay().pulls).toBe(0)
+    await phone.expense.useExpenseStore.getState().hydrate()
+    await advance(5000)
+    expect(relayRows()).toContainEqual(expect.objectContaining({ id: 'e1' }))
     expect(phone.sync.useSyncStore.getState()).toMatchObject({
       syncId: SYNC_CODE,
       cloudStatus: 'synced',
@@ -286,7 +296,6 @@ describe('start-up with a saved code', () => {
 // Storage full: the code works for this session, but this device forgets it when SpendTrack
 // closes. That must not be silent: after a restart the device would simply not sync.
 describe('a sync code that storage refuses', () => {
-  const quota = () => new DOMException('The quota has been exceeded.', 'QuotaExceededError')
   const forgets = (phone: Awaited<ReturnType<typeof loadDevice>>) =>
     phone.ui.useUIStore
       .getState()
@@ -296,14 +305,13 @@ describe('a sync code that storage refuses', () => {
   })
 
   it('still syncs, and says once that this device forgets it when SpendTrack closes', async () => {
-    const phone = await bootDevice({ expenses: [expense('e1')] })
-    const write = Storage.prototype.setItem.bind(localStorage)
-    vi.spyOn(Storage.prototype, 'setItem').mockImplementation((key: string, value: string) => {
-      if (key === 'syncId') throw quota()
-      write(key, value)
-    })
+    const storage = new MemoryStorage()
+    const phone = await bootDevice({ expenses: [expense('e1')], storage })
+    storage.refuse.add('syncId')
+    storage.refuse.add('st5:sync')
     expect(await connect(phone)).toMatchObject({ ok: true })
-    expect(localStorage.getItem('syncId')).toBeNull()
+    expect(storage.getItem('syncId')).toBeNull()
+    expect(storage.getItem('st5:sync')).toBeNull()
     expect(forgets(phone)).toEqual([expect.objectContaining({ kind: 'warning' })])
     phone.ui.useUIStore.setState({ toasts: [] })
     await settle(phone.sync.useSyncStore.getState().setupSync(SYNC_CODE))
@@ -311,15 +319,17 @@ describe('a sync code that storage refuses', () => {
   })
 
   it('says nothing at start-up, when the saved code is already there', async () => {
-    const phone = await loadDevice()
-    phone.expense.useExpenseStore.setState({ hydrated: true, expenses: [expense('e1')] })
-    localStorage.setItem('syncId', SYNC_CODE)
-    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
-      throw quota()
-    })
+    const storage = new MemoryStorage()
+    seedV4(storage, { expenses: [expense('e1')] })
+    storage.setItem('syncId', SYNC_CODE)
+    const phone = await loadDevice(storage)
+    await phone.expense.useExpenseStore.getState().hydrate()
+    storage.refuse.add('*') // full from now on
+    const setItem = vi.spyOn(storage, 'setItem')
     phone.sync.installSync()
     await advance(5000)
-    expect(setItem).toHaveBeenCalledWith('syncId', SYNC_CODE) // re-saved, and refused
+    // Re-saved (syncId first, so st5:sync is never written alone, P2-7), and refused.
+    expect(setItem.mock.calls.some(([key]) => key === 'syncId')).toBe(true)
     expect(phone.sync.useSyncStore.getState().cloudStatus).toBe('synced')
     expect(forgets(phone)).toEqual([])
   })

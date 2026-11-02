@@ -2,6 +2,7 @@
 // lost responses and reordering, optional CAS on updated_at, and realtime fan-out to every
 // subscriber including the writer (self-echo), as postgres_changes does today.
 import type { RelayPort } from '../legacy/v084'
+import type { RelayPort085 } from '../legacy/v085'
 import type { Rng } from '../support/rng'
 import type { VirtualClock } from './clock'
 
@@ -164,6 +165,15 @@ export class Relay {
     )
   }
 
+  /** The PR-2 bridge's transport (P2-8): a plain upsert, whatever the row holds. */
+  upsert(who: string, payload: unknown): Promise<string> {
+    const drop = this.dropNextPush
+    const lose = this.loseNextPushResponse
+    this.dropNextPush = false
+    this.loseNextPushResponse = false
+    return this.call(() => this.write(who, payload), drop, lose)
+  }
+
   /** The current etag without transfer (head); synchronous in this model. */
   head(): string | null {
     return this.row === null ? null : String(this.etag)
@@ -187,6 +197,19 @@ export class Relay {
       subscribe: (_syncId, onUpdate) =>
         this.subscribe(who, () => {
           onUpdate()
+        }),
+    }
+  }
+
+  /** The port of a v0.8.5 client (app 0.9.2): realtime passes the change, its echo filter reads it. */
+  legacyPort085(who: string): RelayPort085 {
+    const port = this.legacyPort(who)
+    return {
+      pull: (syncId) => port.pull(syncId),
+      push: (syncId, payload) => port.push(syncId, payload),
+      subscribe: (_syncId, onChange) =>
+        this.subscribe(who, (e) => {
+          onChange({ payload: e.payload, updatedAt: e.updatedAt })
         }),
     }
   }

@@ -2,7 +2,7 @@
   "name": "spendtrack",
   "private": true,
   "description": "A fast, local-first spending tracker with smart categorisation, real-time budgets, and optional cross-device sync.",
-  "version": "0.9.4",
+  "version": "0.10.0",
   "type": "module",
   "license": "MIT",
   "repository": {
@@ -49,6 +49,7 @@
     "a11y": "playwright test e2e/a11y.spec.ts e2e/keyboard.spec.ts",
     "e2e": "playwright test",
     "e2e:ui": "playwright test --ui",
+    "e2e:data": "node scripts/build-mixed.mjs && playwright test --config playwright.data-engine.config.ts",
     "verify": "npm run check:backups && npm run typecheck && npm run lint && npm run format:check && npm run test:run && npm run build && npm run size && npm run size:relay && npm run smoke"
   },
   "dependencies": {

@@ -1,9 +1,11 @@
-// F-016 honest results, F-005 lenient pulls with fences, and the writer stamp on the wire
-// (AC-17 to AC-22, AC-28). Every failure resolves a SyncResult; nothing throws.
+// F-016 honest results, F-005/F-006 poisoned relay copies (quarantine, a bounded repair, fences)
+// and the v5 wire stamp (AC-17 to AC-22, AC-28, T-005-2). Every failure resolves a SyncResult;
+// nothing throws.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Expense } from '../../types'
 import { isRecord } from '../../lib/backup'
 import {
+  MemoryStorage,
   SYNC_CODE,
   advance,
   bootDevice,
@@ -13,6 +15,7 @@ import {
   payloadOf,
   relay,
   relayRows,
+  relayDeleted,
   resetRelay,
   retireDevices,
   rowPayload,
@@ -116,27 +119,179 @@ describe('every injected failure resolves an honest result (T-016-1)', () => {
     expect(relayRows()).toHaveLength(1)
   })
 
-  it.each([
-    ['a non-object', 'garbage'],
-    ['a top-level array', [expense('e1')]],
-    ['expenses: null', { expenses: null, categories: [] }],
-  ])('an unreadable relay copy (%s) is invalid: no merge, no push', async (_label, raw) => {
-    const phone = await connected()
-    const before = phone.expense.useExpenseStore.getState().expenses
-    seedRow(SYNC_CODE, raw)
-    const upserts = relay().upserts
-    const result = await trigger(phone)
-    expect(result).toMatchObject({ ok: false, error: 'invalid' })
-    expect(phone.sync.useSyncStore.getState().cloudStatus).toBe('error')
-    expect(phone.expense.useExpenseStore.getState().expenses).toBe(before)
-    expect(relay().upserts).toBe(upserts)
-  })
-
   it('setupSync resolves the same honest result', async () => {
     const phone = await bootDevice()
     failNext('pull', { status: 503 })
     const result = await settle(phone.sync.useSyncStore.getState().setupSync(SYNC_CODE))
     expect(result).toMatchObject({ ok: false, error: 'server' })
+  })
+})
+
+// P2-8: a relay copy this device cannot read is kept (needs attention) and pushed over with this
+// device's doc, at most once per 10 minutes, so two devices that disagree cannot loop.
+describe('a damaged relay copy is quarantined and repaired, at most once per 10 minutes (T-005-2)', () => {
+  const garbage: [string, unknown][] = [
+    ['a non-object', 'garbage'],
+    ['a top-level array', [expense('e1')]],
+    ['expenses: null', { expenses: null, categories: [] }],
+  ]
+
+  it.each(garbage)('%s: kept for the owner, repaired from this device', async (_label, raw) => {
+    const phone = await connected([expense('e1'), expense('e2')])
+    const store = phone.expense.useExpenseStore
+    const before = store.getState().expenses
+    const attention = store.getState().attention.quarantined
+    seedRow(SYNC_CODE, raw)
+    const upserts = relay().upserts
+
+    expect(await trigger(phone)).toMatchObject({ ok: true, pushed: true })
+    expect(relay().upserts).toBe(upserts + 1)
+    expect(relayRows().map((r) => (isRecord(r) ? r.id : r))).toEqual(['e1', 'e2'])
+    expect(store.getState().expenses).toBe(before) // nothing merged from it
+    expect(store.getState().attention.quarantined).toBeGreaterThan(attention)
+    expect(toastsOf(phone).map((t) => t.message)).toEqual([
+      'The sync copy was damaged. Restored it from this device.',
+    ])
+  })
+
+  // P2-8, P2-16: the quarantine entry holds a 64 KB excerpt, so the push over the copy waits for
+  // a whole copy of it on this device.
+  it('keeps the whole damaged copy (past the 64 KB excerpt) before pushing over it', async () => {
+    const phone = await connected()
+    const big = { expenses: 'x'.repeat(90_000), categories: 7 }
+    seedRow(SYNC_CODE, big)
+    expect(await trigger(phone)).toMatchObject({ ok: true, pushed: true })
+    const keys = Array.from({ length: phone.storage.length }, (_, i) => phone.storage.key(i))
+    const copies = keys.filter((k) => k?.startsWith('st5:q:relay:') === true)
+    expect(copies).toHaveLength(1)
+    expect(phone.storage.getItem(copies[0] ?? '')).toBe(JSON.stringify(big))
+  })
+
+  it('pushes nothing over a damaged copy it cannot keep whole', async () => {
+    const disk = new MemoryStorage()
+    const phone = await bootDevice({ storage: disk, expenses: [expense('e1')] })
+    await connect(phone)
+    disk.refuse.add('st5:q:relay:*')
+    seedRow(SYNC_CODE, 'garbage')
+    const upserts = relay().upserts
+    expect(await trigger(phone)).toMatchObject({ ok: false, error: 'invalid' })
+    expect(relay().upserts).toBe(upserts)
+    expect(rowPayload(SYNC_CODE)).toBe('garbage')
+  })
+
+  it('damaged again within 10 minutes: an honest failure and no push, then one repair', async () => {
+    const phone = await connected()
+    seedRow(SYNC_CODE, 'garbage')
+    expect(await trigger(phone)).toMatchObject({ ok: true, pushed: true })
+    const upserts = relay().upserts
+
+    // Another device keeps writing what this one cannot read.
+    seedRow(SYNC_CODE, [1, 2, 3])
+    expect(await trigger(phone)).toMatchObject({ ok: false, error: 'invalid' })
+    expect(phone.sync.useSyncStore.getState().cloudStatus).toBe('error')
+    await advance(9 * MINUTE) // its retries pull, and push nothing
+    expect(relay().upserts).toBe(upserts)
+    expect(rowPayload(SYNC_CODE)).toEqual([1, 2, 3])
+
+    await advance(2 * MINUTE) // the repair is due again
+    expect(relay().upserts).toBe(upserts + 1)
+    expect(relayRows()).toHaveLength(1)
+    // Said once per session, however often it is repaired.
+    expect(
+      toastsOf(phone).filter((t) => t.message.startsWith('The sync copy was damaged')),
+    ).toHaveLength(1)
+  })
+
+  it('a poisoned copy (bad dates, objects, far-future stamps) never crashes and never wipes', async () => {
+    const phone = await connected([expense('e1'), expense('e2', { amount: 7 })])
+    const far = '2999-01-01T00:00:00.000Z'
+    writeAsOther(
+      SYNC_CODE,
+      payloadOf(
+        [
+          { ...expense('p1'), date: 'yesterday' },
+          { ...expense('p2'), amount: { value: 5 } },
+          expense('e2', { amount: 9999, updatedAt: far }), // a far-future stamp orders as unknown
+          { ...expense('p3'), category: ['Food'] },
+          expense('p4', { itemName: 'Fresh', amount: 3 }),
+        ],
+        { categories: 'Food', categoryMappings: [], budgets: { Food: 'lots' } },
+      ),
+    )
+    await advance(5000)
+    const store = phone.expense.useExpenseStore.getState()
+    const ids = store.expenses.map((e) => e.id)
+    expect(ids).toEqual(expect.arrayContaining(['e1', 'e2', 'p4']))
+    expect(ids).not.toContain('p1')
+    expect(ids).not.toContain('p2')
+    // A stamp outside 2000–2099 never beats a real edit: e2 keeps the amount it had here.
+    expect(store.expenses.find((e) => e.id === 'e2')?.amount).toBe(7)
+    expect(store.attention.quarantined).toBeGreaterThanOrEqual(2)
+    expect(phone.sync.useSyncStore.getState()).toMatchObject({ cloudStatus: 'synced' })
+    // The relay gets this device's readable doc back, and stays quiet.
+    const upserts = relay().upserts
+    await advance(10 * MINUTE)
+    expect(relay().upserts).toBe(upserts)
+  })
+
+  it('a tombstone flood is applied, snapshotted and undoable in one tap (T-006-2)', async () => {
+    const rows = Array.from({ length: 60 }, (_, i) => expense(`m${String(i)}`))
+    const phone = await connected(rows)
+    // A hostile (or confused) writer deletes everything the relay holds.
+    writeAsOther(
+      SYNC_CODE,
+      payloadOf([], { deletedIds: rows.map((r) => r.id), wr: { rev: 'flood', dev: 'x' } }),
+    )
+    await advance(5000)
+    expect(phone.expense.useExpenseStore.getState().expenses).toHaveLength(0)
+    const toast = toastsOf(phone).find((t) => t.message.startsWith('Your other device removed'))
+    expect(toast).toMatchObject({
+      kind: 'warning',
+      message: 'Your other device removed 60 entries',
+      action: { label: 'Undo' },
+    })
+
+    toast?.action?.onClick()
+    await advance(0) // the restore reads its snapshot asynchronously when it is not cached
+    expect(phone.expense.useExpenseStore.getState().expenses).toHaveLength(60)
+    expect(toastsOf(phone).some((t) => t.message === 'Restored 60 entries')).toBe(true)
+    // The revival is a forward write: it reaches the relay and sticks there.
+    await advance(10_000)
+    expect(relayRows()).toHaveLength(60)
+    expect(relayDeleted()).toHaveLength(60) // the old ids stay dead; the rows live on new ids
+    await advance(5 * MINUTE)
+    expect(phone.expense.useExpenseStore.getState().expenses).toHaveLength(60)
+  })
+
+  it('Delete everywhere on one device: the other says so, and its Undo brings them back on both (acceptance 15)', async () => {
+    const rows = Array.from({ length: 12 }, (_, i) => expense(`m${String(i)}`))
+    const laptop = await bootDevice({ expenses: rows })
+    const phone = await bootDevice({ expenses: rows })
+    relay().latency = { pull: 150, push: 150, realtime: 60 }
+    await connect(laptop)
+    await connect(phone)
+    await advance(10_000)
+
+    laptop.expense.useExpenseStore.getState().deleteAllEverywhere()
+    await advance(10_000)
+    expect(phone.expense.useExpenseStore.getState().expenses).toHaveLength(0)
+    // 12 of 12 live entries: under 50, but every one of them (>= 10 and >= 10 % of live).
+    const toast = toastsOf(phone).find((t) => t.message.startsWith('Your other device removed'))
+    expect(toast).toMatchObject({ message: 'Your other device removed 12 entries' })
+    expect(toast?.duration).toBe(30_000)
+    // The device that deleted was asked first, and has its own Undo: no toast about itself.
+    expect(toastsOf(laptop).some((t) => t.message.startsWith('Your other device'))).toBe(false)
+
+    toast?.action?.onClick()
+    await advance(10_000)
+    for (const device of [laptop, phone]) {
+      const back = device.expense.useExpenseStore.getState().expenses
+      expect(back.map((e) => e.itemName).sort()).toEqual(rows.map((e) => e.itemName).sort())
+    }
+    expect(relayRows()).toHaveLength(12)
+    const idle = relay().upserts
+    await advance(5 * MINUTE)
+    expect(relay().upserts).toBe(idle)
   })
 })
 
@@ -510,10 +665,11 @@ describe('fences fail closed and resume (AC-20)', () => {
       'moved',
     ],
     [
-      'x5.min above 4',
-      { ...payloadOf([expense('e1')]), x5: { schema: 5, min: 5 } },
+      'x5.min above 5 (a newer SpendTrack)',
+      { ...payloadOf([expense('e1')]), x5: { schema: 5, min: 6 } },
       'update-required',
     ],
+    ['an end-to-end encrypted row', { st: 'v1', ct: 'opaque' }, 'update-required'],
   ])(
     '%s: no push, local data untouched, then sync resumes once the fence is gone',
     async (_label, fence, kind) => {
@@ -571,7 +727,10 @@ describe('fences fail closed and resume (AC-20)', () => {
   })
 })
 
-describe('lenient pulls: unreadable rows are never merged and never deleted (AC-21, AC-22)', () => {
+// v5 (intentional change from PR-0): an unreadable relay row is no longer passed through. It is
+// quarantined here (Needs attention, downloadable, never deleted) and the relay then carries this
+// device's readable doc.
+describe('pulls: unreadable rows are quarantined, never merged blind (AC-21, AC-22)', () => {
   const unreadable: unknown[] = [
     { ...expense('b1'), date: 'last tuesday' },
     { ...expense('b2'), date: '18/10/2026' },
@@ -584,24 +743,34 @@ describe('lenient pulls: unreadable rows are never merged and never deleted (AC-
     { itemName: 'no id', amount: 1, category: 'Other', date: '2026-10-01' },
     null,
   ]
+  const idOf = (row: unknown): unknown => (isRecord(row) ? row.id : row)
 
-  it('merges the readable rows only and puts every unreadable row back on the relay', async () => {
+  it('merges what it can read; the rest is kept for the owner, once, and sync goes quiet', async () => {
     seedRow(SYNC_CODE, payloadOf([...unreadable, expense('g1')], { categories: 5 }))
     const phone = await bootDevice({ expenses: [expense('e1')] })
-    const result = await connect(phone)
-    expect(result).toMatchObject({ ok: true, pushed: true })
+    expect(await connect(phone)).toMatchObject({ ok: true, pushed: true })
 
-    const local = phone.expense.useExpenseStore.getState().expenses
-    expect(local.map((e) => e.id).sort()).toEqual(['e1', 'g1'])
-    const rows = relayRows()
-    for (const row of unreadable) expect(rows).toContainEqual(row)
-    expect(rows).toHaveLength(unreadable.length + 2)
+    const store = phone.expense.useExpenseStore
+    const live = new Set(store.getState().expenses.map((e) => e.id))
+    expect(live.has('e1') && live.has('g1')).toBe(true)
+    // A row is either readable after repair (live) or in Needs attention: none is lost.
+    const notLive = unreadable.filter((row) => !live.has(String(idOf(row))))
+    expect(store.getState().attention.quarantined).toBeGreaterThanOrEqual(notLive.length)
     expect(rowPayload(SYNC_CODE)).toMatchObject({ categories: ['Other', 'Meals'] })
+    for (const row of notLive) expect(relayRows().map(idOf)).not.toContain(idOf(row))
+
+    // Pulled again, the same rows are not kept twice (P2-15), and nothing is pushed.
+    const attention = store.getState().attention.quarantined
+    const upserts = relay().upserts
+    await advance(10 * MINUTE)
+    expect(await trigger(phone)).toMatchObject({ ok: true, pushed: false })
+    expect(store.getState().attention.quarantined).toBe(attention)
+    expect(relay().upserts).toBe(upserts)
   })
 
   // It used to overflow the content key's recursion: every device failed the read ('invalid')
   // and retried forever, so sync stopped for all of them until someone rewrote the row.
-  it('a hostile row nested 3,000 levels deep rides along, and sync goes on', async () => {
+  it('a hostile row nested 3,000 levels deep never stops sync', async () => {
     let deep: unknown = 1
     for (let i = 0; i < 3000; i++) deep = { a: deep }
     const hostile = { ...expense('h1'), x: deep }
@@ -614,90 +783,71 @@ describe('lenient pulls: unreadable rows are never merged and never deleted (AC-
     const state = phone.sync.useSyncStore.getState()
     expect(state).toMatchObject({ cloudStatus: 'synced', lastError: null, pendingLocal: false })
     const ids = phone.expense.useExpenseStore.getState().expenses.map((e) => e.id)
-    expect(ids).toHaveLength(3)
-    expect(ids).not.toContain('h1')
-    expect(relayRows()).toHaveLength(4)
-    expect(relayRows()).toContainEqual(hostile)
+    expect(ids).toEqual(expect.arrayContaining(['e1', 'g1']))
+    expect(JSON.stringify(rowPayload(SYNC_CODE)).length).toBeLessThan(10_000)
     const upserts = relay().upserts
     await advance(10 * MINUTE)
     expect(relay().upserts).toBe(upserts)
   })
 
-  it('keeps a local unreadable row in the store and in storage, and never sends it', async () => {
+  it('keeps a local unreadable row in Needs attention and in storage, and never sends it', async () => {
     const bad = { ...expense('bad'), date: 'last tuesday' }
-    // Hydrate no longer runs the category migration, so a corrupt row reaches the store.
     const phone = await bootDevice({ persist: true, storedRows: [expense('e1'), bad, null] })
     await connect(phone)
     phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
     await advance(5000)
 
-    const stored: readonly unknown[] = phone.expense.useExpenseStore.getState().expenses
-    // The null carried no data: storage drops it on load, so no reader dereferences it.
-    expect(stored).toHaveLength(3)
-    expect(stored).toContainEqual(bad)
-    expect(stored).not.toContain(null)
-    expect(localStorage.getItem('expenses')).toContain('last tuesday')
-    const relayIds = relayRows().map((r) =>
-      typeof r === 'object' && r !== null && 'id' in r ? r.id : r,
-    )
+    const store = phone.expense.useExpenseStore.getState()
+    expect(store.expenses.map((e) => e.id)).not.toContain('bad')
+    expect(store.expenses).toHaveLength(2)
+    expect(store.attention.quarantined).toBeGreaterThanOrEqual(1)
+    expect(JSON.stringify(store.quarantineFile())).toContain('last tuesday')
+    const relayIds = relayRows().map(idOf)
     expect(relayIds).not.toContain('bad')
     expect(relayIds).not.toContain(null)
     expect(relayIds).toContain('e1')
   })
 
-  it('keeps a local row with no positive amount here and never sends it', async () => {
+  it('keeps a local row with no positive amount out of the doc and never sends it', async () => {
     const zero = { ...expense('zero'), amount: 0 }
     const phone = await bootDevice({ persist: true, storedRows: [expense('e1'), zero] })
     await connect(phone)
     phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
     await advance(5000)
 
-    const stored: readonly unknown[] = phone.expense.useExpenseStore.getState().expenses
-    expect(stored).toContainEqual(zero)
-    const relayIds = relayRows().map((r) => (isRecord(r) ? r.id : r))
+    expect(phone.expense.useExpenseStore.getState().attention.quarantined).toBeGreaterThanOrEqual(1)
+    const relayIds = relayRows().map(idOf)
     expect(relayIds).toContain('e1')
     expect(relayIds).not.toContain('zero')
-  })
-
-  it('drops a local unreadable row once the relay has deleted its id', async () => {
-    const bad = { ...expense('bad'), date: 'last tuesday' }
-    seedRow(SYNC_CODE, payloadOf([expense('e1')], { deletedIds: ['bad'] }))
-    const phone = await bootDevice({ persist: true, storedRows: [expense('e1'), bad] })
-    await connect(phone)
-
-    const stored: readonly unknown[] = phone.expense.useExpenseStore.getState().expenses
-    expect(stored).not.toContainEqual(bad)
-    expect(stored).toHaveLength(1)
-    expect(rowPayload(SYNC_CODE)).toMatchObject({ deletedIds: ['bad'] })
   })
 })
 
 describe('the writer stamp and local markers (AC-28)', () => {
-  it('stamps every push with wr and keeps version 4.0 and no x5', async () => {
+  it('stamps every push with x5 (its device, a fresh rev, min 4) on the v4 payload, and no wr', async () => {
     const phone = await connected()
     phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
     await advance(5000)
     const pushes = relay().pushes
     expect(pushes.length).toBeGreaterThanOrEqual(2)
-    const dev = localStorage.getItem('spendtrack:dev')
-    expect(dev).toMatch(/^[0-9a-z]{6}$/)
     const revs = new Set<unknown>()
+    let dev: unknown = undefined
     for (const push of pushes) {
-      expect(push.payload).toMatchObject({ version: '4.0', wr: { app: '0.8.5', dev } })
-      expect(push.payload).not.toHaveProperty('x5')
-      const wr = isRecord(push.payload) && isRecord(push.payload.wr) ? push.payload.wr : {}
-      expect(wr.rev).toMatch(/^[A-Za-z0-9_-]{22}$/)
-      expect(new Date(String(wr.at)).toISOString()).toBe(wr.at)
-      expect(Object.keys(wr).sort()).toEqual(['app', 'at', 'dev', 'rev'])
-      revs.add(wr.rev)
+      expect(push.payload).toMatchObject({ version: '4.0', x5: { schema: 5, min: 4 } })
+      expect(push.payload).not.toHaveProperty('wr')
+      const x5 = isRecord(push.payload) && isRecord(push.payload.x5) ? push.payload.x5 : {}
+      expect(x5.rev).toMatch(/^[A-Za-z0-9_-]{22}$/)
+      expect(x5.dev).toMatch(/^[0-9a-z]{6}$/)
+      dev ??= x5.dev
+      expect(x5.dev).toBe(dev)
+      revs.add(x5.rev)
     }
     expect(revs.size).toBe(pushes.length)
   })
 
-  it('marks every save with spendtrack:app', async () => {
+  it('marks the rollback copy with spendtrack:app = 5', async () => {
     const phone = await bootDevice({ persist: true })
     phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
-    await advance(1000)
-    expect(localStorage.getItem('spendtrack:app')).toBe('0.8.5')
+    await advance(3000) // the mirror is written on a 1 s idle debounce
+    expect(phone.storage.getItem('spendtrack:app')).toBe('5')
   })
 })

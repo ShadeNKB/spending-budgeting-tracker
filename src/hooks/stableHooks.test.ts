@@ -6,7 +6,7 @@ import { useToast } from './useToast'
 import { useHaptic } from './useHaptic'
 import { useCurrencySymbol, useFormatMoney } from './useFormatMoney'
 import { useUIStore } from '../stores/useUIStore'
-import { useExpenseStore } from '../stores/useExpenseStore'
+import { useExpenseStore, whenHydrated } from '../stores/useExpenseStore'
 import { AppShell } from '../app/AppShell'
 
 // AppShell's children subscribe to stores of their own; replacing them with empty components
@@ -43,9 +43,12 @@ vi.mock('../ui/HotkeyHints', () => ({
   },
 }))
 
-beforeEach(() => {
+beforeEach(async () => {
   useUIStore.setState({ currency: 'SGD', theme: 'dark', toasts: [] })
-  useExpenseStore.setState({ expenses: [], undoStack: [] })
+  // a real engine: once the shell has booted it, re-boot it over empty storage (P2-14)
+  localStorage.clear()
+  if (useExpenseStore.getState().hydrated) await useExpenseStore.getState().hydrate()
+  useUIStore.setState({ currency: 'SGD' })
 })
 afterEach(() => {
   vi.unstubAllGlobals()
@@ -171,7 +174,11 @@ describe('AppShell', () => {
         ),
       ),
     )
-    // Let bootstrap hydrate, the idle overlays mount and their lazy children resolve.
+    // Let bootstrap hydrate (the engine is its own chunk), the idle overlays mount and their lazy
+    // children resolve.
+    await act(async () => {
+      await whenHydrated()
+    })
     for (let i = 0; i < 3; i++) {
       await act(async () => {
         await new Promise((resolve) => setTimeout(resolve, 0))
@@ -249,8 +256,10 @@ describe('AppShell', () => {
 
   it('shows the storage-full toast when the quota event fires', async () => {
     const { view } = await mountShell()
-    act(() => {
+    // said once the data's boot is known (a memory-only boot has its own strip instead)
+    await act(async () => {
       window.dispatchEvent(new CustomEvent('spendtrack:quota-exceeded'))
+      await Promise.resolve()
     })
     expect(useUIStore.getState().toasts.map((t) => t.kind)).toEqual(['error'])
     view.unmount()

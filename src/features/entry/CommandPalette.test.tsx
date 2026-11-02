@@ -1,17 +1,29 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { MemoryRouter, useLocation } from 'react-router-dom'
 import { CommandPalette } from './CommandPalette'
 import { useUIStore } from '../../stores/useUIStore'
-import { useExpenseStore } from '../../stores/useExpenseStore'
+import { undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
 import { CONFIRM_DELAY_MS } from '../../utils/amountGuard'
 import { Sheet } from '../../ui/Sheet'
 import { installFakeAnimations, type FakeAnimations } from '../../__tests__/fakeAnimations'
-import type { Expense } from '../../types'
+import type { ExpenseView } from '../../types'
+
+// The first hydrate loads the engine chunk, the data core with it. Under a full parallel run on a
+// busy machine that load alone ran past the 5 s default, and the timed-out boot then landed in
+// the next test. Load it once here, with room: every boot after it is quick.
+beforeAll(async () => {
+  await useExpenseStore.getState().hydrate()
+}, 60_000)
 
 function Where() {
-  const { pathname } = useLocation()
-  return <p data-testid="path">{pathname}</p>
+  const { pathname, search } = useLocation()
+  return (
+    <>
+      <p data-testid="path">{pathname}</p>
+      <p data-testid="search">{search}</p>
+    </>
+  )
 }
 
 function App() {
@@ -53,9 +65,17 @@ function activeOption(): HTMLElement | null {
   return id ? document.getElementById(id) : null
 }
 
-beforeEach(() => {
+/** P2-14: an empty device, booted for real (whatever the last test left pending settles first). */
+async function bootEmpty() {
+  await useExpenseStore.getState().hydrate()
+  localStorage.clear()
+  await useExpenseStore.getState().hydrate()
+}
+
+beforeEach(async () => {
   vi.useFakeTimers({ toFake: ['Date'] })
   vi.setSystemTime(new Date(2026, 9, 18, 10, 0))
+  await bootEmpty()
   useUIStore.setState({
     paletteOpen: false,
     addSheetOpen: false,
@@ -63,7 +83,6 @@ beforeEach(() => {
     toasts: [],
     currency: 'SGD',
   })
-  useExpenseStore.setState({ expenses: [] })
 })
 // jsdom has no Web Animations API, so the palette leaves at once here. Tests of its exit
 // install fake animations: the exit then lasts until they finish.
@@ -203,13 +222,16 @@ function recordStatus(region: HTMLElement) {
   }
 }
 
-const expense = (id: string, itemName: string, amount: number): Expense => ({
+/** A view as the store hands it out (render-only tests may set them, P2-14). */
+const expense = (id: string, itemName: string, amount: number): ExpenseView => ({
   id,
   itemName,
   amount,
   category: 'Food & Dining',
   date: '2026-10-17T12:00:00',
+  day: '2026-10-17',
   createdAt: '2026-10-17T12:00:00',
+  ext: {},
 })
 
 describe('CommandPalette status', () => {
@@ -408,5 +430,109 @@ describe('CommandPalette quick add', () => {
     openPalette()
     type('house 99999999')
     expect(screen.getByRole('status')).toHaveTextContent(/Amount too large/)
+  })
+})
+
+// P2-2: the quick add writes a day (today when the text has none), and the hits read each
+// entry's day. Run in Asia/Singapore, Pacific/Honolulu and Pacific/Kiritimati (PowerShell $env:TZ).
+describe('CommandPalette days', () => {
+  /** Quick adds `text` and returns the entry stored for `item`. */
+  const quickAdd = (text: string, item = 'kopi') => {
+    render(<App />)
+    openPalette()
+    type(text)
+    fireEvent.keyDown(input(), { key: 'Enter' })
+    return useExpenseStore.getState().expenses.find((e) => e.itemName === item)
+  }
+
+  it("stores an undated quick add on today's local day, at local noon with no zone", () => {
+    expect(quickAdd('kopi 2.40')).toMatchObject({ day: '2026-10-18', date: '2026-10-18T12:00:00' })
+  })
+
+  it('stores a dated quick add on the day it names', () => {
+    expect(quickAdd('kopi 2.40 yesterday')).toMatchObject({
+      day: '2026-10-17',
+      date: '2026-10-17T12:00:00',
+    })
+  })
+
+  it('keeps 00:30 on 1 Jan on the new day, and 23:59 on 31 Dec on the old one', () => {
+    vi.setSystemTime(new Date(2026, 0, 1, 0, 30))
+    expect(quickAdd('kopi 2.40')).toMatchObject({ day: '2026-01-01' })
+    cleanup()
+    vi.setSystemTime(new Date(2025, 11, 31, 23, 59))
+    expect(quickAdd('teh 1.80', 'teh')).toMatchObject({ day: '2025-12-31' })
+  })
+
+  it('shows each hit on its day and opens the Ledger on that day', () => {
+    // A view whose stored date reads as another day here: the day it carries wins.
+    useExpenseStore.setState({
+      expenses: [
+        { ...expense('a', 'kopi o', 1.8), day: '2026-10-15', date: '2026-10-16T01:00:00' },
+      ],
+    })
+    render(<App />)
+    openPalette()
+    type('kopi o')
+    const hit = screen.getByRole('option', { name: /kopi o/ })
+    expect(hit).toHaveTextContent('Food & Dining / Oct 15')
+    fireEvent.mouseMove(hit)
+    fireEvent.keyDown(input(), { key: 'Enter' })
+    expect(screen.getByTestId('path')).toHaveTextContent('/ledger')
+    expect(screen.getByTestId('search')).toHaveTextContent('?date=2026-10-15&q=kopi%20o')
+  })
+})
+
+// P2-13 and P2-12: what the store refuses is said, and Undo reports a part it could not undo.
+describe('CommandPalette quick add outcomes', () => {
+  it('shows the reason for a refused add and keeps the query open to fix', () => {
+    render(<App />)
+    openPalette()
+    type(`${'k'.repeat(201)} 2`)
+    fireEvent.keyDown(input(), { key: 'Enter' })
+    expect(useExpenseStore.getState().expenses).toHaveLength(0)
+    expect(useUIStore.getState().toasts.at(-1)).toMatchObject({
+      kind: 'error',
+      message: 'Item name must be 1 to 200 characters.',
+    })
+    expect(useUIStore.getState().paletteOpen).toBe(true)
+    expect(input()).toHaveValue(`${'k'.repeat(201)} 2`)
+  })
+
+  it('offers Undo, which takes the entry back out', () => {
+    render(<App />)
+    openPalette()
+    type('kopi 2.40')
+    fireEvent.keyDown(input(), { key: 'Enter' })
+    const toast = useUIStore.getState().toasts.at(-1)
+    expect(toast?.message).toBe('Added "kopi" · S$2.40')
+    expect(toast?.action?.label).toBe('Undo')
+    act(() => {
+      toast?.action?.onClick()
+    })
+    expect(useExpenseStore.getState().expenses).toEqual([])
+    expect(useUIStore.getState().toasts.filter((t) => t.kind === 'warning')).toEqual([])
+  })
+
+  it('says how many entries changed since when Undo has to leave them', () => {
+    render(<App />)
+    openPalette()
+    type('kopi 2.40')
+    fireEvent.keyDown(input(), { key: 'Enter' })
+    const added = useExpenseStore.getState().expenses[0]
+    if (!added) throw new Error('nothing added')
+    const toast = useUIStore.getState().toasts.at(-1)
+    // Changed again after the add, as another device's edit would be: Undo must not take it.
+    act(() => {
+      useExpenseStore.getState().updateExpense(added.id, { amount: 3 })
+    })
+    act(() => {
+      toast?.action?.onClick()
+    })
+    expect(useExpenseStore.getState().expenses.map((e) => e.amount)).toEqual([3])
+    expect(useUIStore.getState().toasts.at(-1)).toMatchObject({
+      kind: 'warning',
+      message: undoOutcomeMessage({ applied: 0, skipped: 1 }),
+    })
   })
 })

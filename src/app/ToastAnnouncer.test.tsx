@@ -10,6 +10,15 @@ function push(toast: Omit<Toast, 'id'>) {
   })
 }
 
+/** An open sheet's dialog in the page: while one is open the undo key is worth naming. */
+function openSheet(): HTMLElement {
+  const dialog = document.createElement('div')
+  dialog.setAttribute('role', 'dialog')
+  dialog.setAttribute('aria-modal', 'true')
+  document.body.append(dialog)
+  return dialog
+}
+
 /** Toasts are announced just after the commit they arrive in. */
 function settle() {
   act(() => {
@@ -40,6 +49,86 @@ describe('ToastAnnouncer', () => {
     settle()
     expect(screen.getByRole('status')).toBe(status)
     expect(status).toHaveTextContent('Added "kopi" · S$4.50. Undo available.')
+  })
+
+  // While a sheet is open its toast's Undo comes last in the Tab order: the key is quicker.
+  it('names the undo key for a toast that answers the undo stack, where there is a keyboard', () => {
+    const fine = vi.fn((query: string) => ({ matches: query === '(pointer: fine)' }))
+    vi.stubGlobal('matchMedia', fine)
+    const sheet = openSheet()
+    try {
+      render(<ToastAnnouncer />)
+      push({
+        kind: 'info',
+        message: 'All entries deleted',
+        undoId: 'all-x1',
+        action: { label: 'Undo', onClick: () => {} },
+      })
+      settle()
+      expect(screen.getByRole('status')).toHaveTextContent(
+        /^All entries deleted\. Undo available, or press (Ctrl\+Z|⌘Z)\.$/,
+      )
+      // an Undo the key cannot reach (a mass removal's, from the journal) names no key
+      push({
+        kind: 'warning',
+        message: 'Your other device removed 60 entries',
+        action: { label: 'Undo', onClick: () => {} },
+      })
+      settle()
+      expect(screen.getByRole('status')).toHaveTextContent(
+        'Your other device removed 60 entries. Undo available.',
+      )
+      // the sheet closing (inert as it animates out) is no sheet open
+      sheet.setAttribute('inert', '')
+      push({
+        kind: 'success',
+        message: 'Added "kopi" · S$4.50',
+        undoId: 'add-x1',
+        action: { label: 'Undo', onClick: () => {} },
+      })
+      settle()
+      expect(screen.getByRole('status')).toHaveTextContent('Added "kopi" · S$4.50. Undo available.')
+    } finally {
+      sheet.remove()
+      vi.unstubAllGlobals()
+    }
+  })
+
+  // On the page the toast's Undo is in the Tab order where it shows: every add says no more.
+  it('names no key on the page, with no sheet open', () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(pointer: fine)' }))
+    try {
+      render(<ToastAnnouncer />)
+      push({
+        kind: 'success',
+        message: 'Added "kopi" · S$4.50',
+        undoId: 'add-x1',
+        action: { label: 'Undo', onClick: () => {} },
+      })
+      settle()
+      expect(screen.getByRole('status')).toHaveTextContent('Added "kopi" · S$4.50. Undo available.')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('names no key on a touch screen (a phone has no Ctrl+Z)', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }))
+    const sheet = openSheet()
+    try {
+      render(<ToastAnnouncer />)
+      push({
+        kind: 'info',
+        message: 'All entries deleted',
+        undoId: 'all-x1',
+        action: { label: 'Undo', onClick: () => {} },
+      })
+      settle()
+      expect(screen.getByRole('status')).toHaveTextContent('All entries deleted. Undo available.')
+    } finally {
+      sheet.remove()
+      vi.unstubAllGlobals()
+    }
   })
 
   it('puts errors in the alert region', () => {

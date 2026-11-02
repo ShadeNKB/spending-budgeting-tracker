@@ -1,40 +1,18 @@
-import type {
-  Expense,
-  CategoryMappings,
-  CategoryColors,
-  CategoryBudgets,
-  CategoryBudgetTimestamps,
-  CategoryMappingTimestamps,
-} from '../types'
-import { isNumber, isRecord, isString, listOf, recordOf } from '../lib/backup'
+// The one safe writer and the device's sync identity (track spec §6.3, P2-7).
+//
+// The data itself lives in the local engine (src/data/local): one atomic envelope plus the v4
+// mirror. What stays here is what the shell and the sync bridge need without the engine: the
+// quota-aware writer every persistence write goes through, the sync code and the device id.
 
-const KEY_EXPENSES = 'expenses'
-const KEY_CATEGORIES = 'categories'
-const KEY_MAPPINGS = 'categoryMappings'
-const KEY_MAPPING_UPDATED_AT = 'categoryMappingUpdatedAt'
-const KEY_COLORS = 'categoryColors'
-const KEY_BUDGETS = 'categoryBudgets'
-const KEY_BUDGET_UPDATED_AT = 'categoryBudgetUpdatedAt'
-const KEY_BUDGET_DELETED_AT = 'categoryBudgetDeletedAt'
-const KEY_DELETED_IDS = 'deletedExpenseIds'
-const KEY_SYNC_ID = 'syncId'
-const KEY_APP = 'spendtrack:app'
-const KEY_DEVICE = 'spendtrack:dev'
-
-/**
- * Protocol version of this writer, not the display version: it marks local data written by
- * this build (`spendtrack:app`) and every push (`wr.app`), so later engines know the writer.
- */
-export const WRITER_VERSION = '0.8.5'
+const SYNC_KEY = 'st5:sync'
+const SYNC_ID_KEY = 'syncId'
+const DEV_KEY = 'st5:dev'
+const LEGACY_DEV_KEY = 'spendtrack:dev'
+const QUARANTINE_SYNC_PREFIX = 'st5:q:st5:sync:'
+const QUARANTINE_SYNC_ID_PREFIX = 'st5:q:syncId:'
 
 const DEVICE_ID_PATTERN = /^[0-9a-z]{6}$/
-// Kept for the session when storage refuses the write, so pushes keep one device id.
-let sessionDeviceId: string | null = null
-
-function newDeviceId(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(6))
-  return Array.from(bytes, (b) => (b % 36).toString(36)).join('')
-}
+const CODE_MAX = 200
 
 /**
  * Quota-aware setItem — every persistence write goes through this.
@@ -52,17 +30,27 @@ export class StorageQuotaError extends Error {
   }
 }
 
+// Match on `name`: the deprecated numeric `code` (22 / 1014) is derived from it.
+// NS_ERROR_DOM_QUOTA_REACHED is the legacy Firefox name.
+const isQuota = (err: unknown): boolean =>
+  err instanceof DOMException &&
+  (err.name === 'QuotaExceededError' || err.name === 'NS_ERROR_DOM_QUOTA_REACHED')
+
 let quotaWarned = false
-function safeSet(key: string, value: string): void {
+
+/**
+ * Writes one key. `area` is the Storage to write (the engine passes the one it booted on, so two
+ * engines in one test each write their own tab's view); it defaults to `localStorage`.
+ */
+export function safeSet(
+  key: string,
+  value: string,
+  area: Pick<Storage, 'setItem'> = localStorage,
+): void {
   try {
-    localStorage.setItem(key, value)
+    area.setItem(key, value)
   } catch (err) {
-    // Match on `name` — the deprecated numeric `code` (22 / 1014) is derived from it.
-    // NS_ERROR_DOM_QUOTA_REACHED is the legacy Firefox name.
-    const isQuota =
-      err instanceof DOMException &&
-      (err.name === 'QuotaExceededError' || err.name === 'NS_ERROR_DOM_QUOTA_REACHED')
-    if (isQuota) {
+    if (isQuota(err)) {
       if (!quotaWarned && typeof window !== 'undefined') {
         quotaWarned = true
         window.dispatchEvent(
@@ -75,203 +63,156 @@ function safeSet(key: string, value: string): void {
   }
 }
 
+/** The stored value, or null when absent or unreadable. */
+function read(key: string): string | null {
+  return readKey(key) ?? null
+}
+
+/** The stored value; null when the key is absent; undefined when storage refused the read. */
+function readKey(key: string): string | null | undefined {
+  try {
+    return localStorage.getItem(key)
+  } catch {
+    return undefined
+  }
+}
+
+/** Best effort: a key that cannot be removed is read the same way next time. */
+function forget(key: string): void {
+  try {
+    localStorage.removeItem(key)
+  } catch {
+    // storage refused: the next read decides again from the same keys
+  }
+}
+
+/** Best effort: a write that fails leaves the session value in place. */
+function tryWrite(key: string, value: string): boolean {
+  try {
+    safeSet(key, value)
+    return true
+  } catch {
+    return false
+  }
+}
+
+const isRecordLike = (v: unknown): v is Readonly<Record<string, unknown>> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+
+const validCode = (v: unknown): v is string =>
+  typeof v === 'string' && v.trim() !== '' && v.length <= CODE_MAX
+
+function parseJson(text: string): unknown {
+  try {
+    const value: unknown = JSON.parse(text)
+    return value
+  } catch {
+    return undefined
+  }
+}
+
+/** The plaintext code of a `st5:sync` value, or null when it is not a readable plain config. */
+function codeOf(raw: string): string | null {
+  const cfg = parseJson(raw)
+  if (!isRecordLike(cfg) || cfg.kind !== 'plain') return null
+  return validCode(cfg.code) ? cfg.code : null
+}
+
+const configOf = (code: string, joinedAt: number): string =>
+  JSON.stringify({ kind: 'plain', code, rowId: code, joinedAt, established: true })
+
+// One raw copy per distinct corrupt value per session: getSyncId runs on every sync cycle.
+const quarantinedConfigs = new Set<string>()
+
+function quarantineConfig(raw: string, prefix: string = QUARANTINE_SYNC_PREFIX): void {
+  const seen = `${prefix}${raw}`
+  if (quarantinedConfigs.has(seen)) return
+  quarantinedConfigs.add(seen)
+  // a copy made in the same millisecond never overwrites another one
+  let ts = Date.now()
+  while (read(`${prefix}${String(ts)}`) !== null) ts++
+  tryWrite(`${prefix}${String(ts)}`, raw)
+}
+
+let sessionDeviceId: string | null = null
+
+function newDeviceId(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(6))
+  return Array.from(bytes, (b) => (b % 36).toString(36)).join('')
+}
+
+function storedDeviceId(): string | null {
+  const raw = read(DEV_KEY)
+  if (raw !== null) {
+    const dev = parseJson(raw)
+    if (isRecordLike(dev) && typeof dev.id === 'string' && DEVICE_ID_PATTERN.test(dev.id)) {
+      return dev.id
+    }
+  }
+  return null
+}
+
 export const storage = {
   /**
-   * The stored rows. An entry that is not an object (a `null` after corruption) carries no
-   * data and is dropped, so no reader dereferences it; object rows are kept as they are.
+   * The saved sync code. This build always saves it to both keys, `syncId` (the plaintext key a
+   * rolled-back 0.9.x reads and writes) first, then `st5:sync`; so when they disagree, an old
+   * build changed the code. A `syncId` that differs from `st5:sync` (0.9.x connected another code)
+   * wins and is adopted; a `st5:sync` without any `syncId` (0.9.x disconnected, which removes only
+   * `syncId`) stays disconnected here. Only a plain code has the `syncId` mirror, so only a plain
+   * config is ever forgotten this way, and only when `syncId` is really absent: a `syncId` that
+   * cannot be read (storage refused) or does not hold a code (damaged) is no disconnect, so
+   * `st5:sync` and its code stay (a damaged `syncId` is copied to the quarantine; never a removal
+   * on a failed read, I12). A corrupt `st5:sync` is copied to the quarantine, and the code falls
+   * back to `syncId`.
    */
-  getExpenses(): Expense[] {
-    try {
-      const raw = localStorage.getItem(KEY_EXPENSES)
-      if (!raw) return []
-      const parsed = JSON.parse(raw) as unknown
-      if (Array.isArray(parsed)) return listOf(parsed, isRecord) as unknown as Expense[]
-    } catch {
-      try {
-        const raw = localStorage.getItem(KEY_EXPENSES)
-        if (raw) {
-          const repaired = raw.replace(/,(\s*[}\]])/g, '$1')
-          const parsed = JSON.parse(repaired) as unknown
-          if (Array.isArray(parsed)) return listOf(parsed, isRecord) as unknown as Expense[]
-        }
-      } catch {
-        localStorage.removeItem(KEY_EXPENSES)
-      }
-    }
-    return []
-  },
-
-  saveExpenses(data: Expense[]): void {
-    safeSet(KEY_EXPENSES, JSON.stringify(data))
-  },
-
-  getCategories(): string[] | null {
-    try {
-      const raw = localStorage.getItem(KEY_CATEGORIES)
-      if (!raw) return null
-      const categories = listOf(JSON.parse(raw), isString)
-      if (categories.length > 0) return categories
-    } catch {
-      localStorage.removeItem(KEY_CATEGORIES)
-    }
-    return null
-  },
-
-  saveCategories(data: string[]): void {
-    safeSet(KEY_CATEGORIES, JSON.stringify(data))
-  },
-
-  getCategoryMappings(): CategoryMappings {
-    try {
-      const raw = localStorage.getItem(KEY_MAPPINGS)
-      if (raw) return recordOf(JSON.parse(raw), isString)
-    } catch {
-      localStorage.removeItem(KEY_MAPPINGS)
-    }
-    return {}
-  },
-
-  saveCategoryMappings(data: CategoryMappings): void {
-    safeSet(KEY_MAPPINGS, JSON.stringify(data))
-  },
-
-  getMappingUpdatedAt(): CategoryMappingTimestamps {
-    try {
-      const raw = localStorage.getItem(KEY_MAPPING_UPDATED_AT)
-      if (raw) return recordOf(JSON.parse(raw), isString)
-    } catch {
-      localStorage.removeItem(KEY_MAPPING_UPDATED_AT)
-    }
-    return {}
-  },
-
-  saveMappingUpdatedAt(data: CategoryMappingTimestamps): void {
-    safeSet(KEY_MAPPING_UPDATED_AT, JSON.stringify(data))
-  },
-
-  getCategoryColors(): CategoryColors {
-    try {
-      const raw = localStorage.getItem(KEY_COLORS)
-      if (raw) return JSON.parse(raw) as CategoryColors
-    } catch {
-      localStorage.removeItem(KEY_COLORS)
-    }
-    return {}
-  },
-
-  saveCategoryColors(data: CategoryColors): void {
-    safeSet(KEY_COLORS, JSON.stringify(data))
-  },
-
-  getBudgets(): CategoryBudgets {
-    try {
-      const raw = localStorage.getItem(KEY_BUDGETS)
-      if (raw) return recordOf(JSON.parse(raw), isNumber)
-    } catch {
-      localStorage.removeItem(KEY_BUDGETS)
-    }
-    return {}
-  },
-
-  saveBudgets(data: CategoryBudgets): void {
-    safeSet(KEY_BUDGETS, JSON.stringify(data))
-  },
-
-  getBudgetUpdatedAt(): CategoryBudgetTimestamps {
-    try {
-      const raw = localStorage.getItem(KEY_BUDGET_UPDATED_AT)
-      if (raw) return recordOf(JSON.parse(raw), isString)
-    } catch {
-      localStorage.removeItem(KEY_BUDGET_UPDATED_AT)
-    }
-    return {}
-  },
-
-  saveBudgetUpdatedAt(data: CategoryBudgetTimestamps): void {
-    safeSet(KEY_BUDGET_UPDATED_AT, JSON.stringify(data))
-  },
-
-  getBudgetDeletedAt(): CategoryBudgetTimestamps {
-    try {
-      const raw = localStorage.getItem(KEY_BUDGET_DELETED_AT)
-      if (raw) return recordOf(JSON.parse(raw), isString)
-    } catch {
-      localStorage.removeItem(KEY_BUDGET_DELETED_AT)
-    }
-    return {}
-  },
-
-  saveBudgetDeletedAt(data: CategoryBudgetTimestamps): void {
-    safeSet(KEY_BUDGET_DELETED_AT, JSON.stringify(data))
-  },
-
-  getDeletedIds(): string[] {
-    try {
-      const raw = localStorage.getItem(KEY_DELETED_IDS)
-      if (!raw) return []
-      const parsed = JSON.parse(raw) as unknown
-      if (Array.isArray(parsed)) return parsed.filter((id): id is string => typeof id === 'string')
-    } catch {
-      localStorage.removeItem(KEY_DELETED_IDS)
-    }
-    return []
-  },
-
-  saveDeletedIds(data: string[]): void {
-    safeSet(KEY_DELETED_IDS, JSON.stringify(data))
-  },
-
-  saveAll(
-    expenses: Expense[],
-    categories: string[],
-    mappings: CategoryMappings,
-    budgets?: CategoryBudgets,
-    budgetUpdatedAt?: CategoryBudgetTimestamps,
-    budgetDeletedAt?: CategoryBudgetTimestamps,
-    deletedIds?: string[],
-    mappingUpdatedAt?: CategoryMappingTimestamps,
-  ): void {
-    this.saveExpenses(expenses)
-    this.saveCategories(categories)
-    this.saveCategoryMappings(mappings)
-    if (mappingUpdatedAt !== undefined) this.saveMappingUpdatedAt(mappingUpdatedAt)
-    if (budgets !== undefined) this.saveBudgets(budgets)
-    if (budgetUpdatedAt !== undefined) this.saveBudgetUpdatedAt(budgetUpdatedAt)
-    if (budgetDeletedAt !== undefined) this.saveBudgetDeletedAt(budgetDeletedAt)
-    if (deletedIds !== undefined) this.saveDeletedIds(deletedIds)
-    try {
-      safeSet(KEY_APP, WRITER_VERSION)
-    } catch {
-      // The marker is best-effort; the data keys above are what matter.
-    }
-  },
-
-  /** This device's id for writer stamps: 6 base36 chars, created once (`spendtrack:dev`). */
-  getDeviceId(): string {
-    try {
-      const stored = localStorage.getItem(KEY_DEVICE)
-      if (stored !== null && DEVICE_ID_PATTERN.test(stored)) return stored
-    } catch {
-      // Storage unavailable: fall through to the session id.
-    }
-    sessionDeviceId ??= newDeviceId()
-    try {
-      safeSet(KEY_DEVICE, sessionDeviceId)
-    } catch {
-      // Not persisted; the id still holds for this session.
-    }
-    return sessionDeviceId
-  },
-
   getSyncId(): string | null {
-    return localStorage.getItem(KEY_SYNC_ID)
+    const raw = read(SYNC_KEY)
+    const code = raw === null ? null : codeOf(raw)
+    if (raw !== null && code === null) quarantineConfig(raw)
+    const legacy = readKey(SYNC_ID_KEY)
+    if (validCode(legacy)) {
+      if (code !== legacy) tryWrite(SYNC_KEY, configOf(legacy, Date.now()))
+      return legacy
+    }
+    if (code === null) return null
+    if (legacy === null) {
+      forget(SYNC_KEY)
+      return null
+    }
+    if (typeof legacy === 'string') quarantineConfig(legacy, QUARANTINE_SYNC_ID_PREFIX)
+    return code
   },
 
+  /**
+   * Saves the code (both keys) or, with null (Disconnect, an explicit action), forgets it.
+   * `syncId` goes first: a code this build saved is never in `st5:sync` alone, so that state
+   * always means an old build's disconnect.
+   */
   saveSyncId(id: string | null): void {
     if (id === null) {
-      localStorage.removeItem(KEY_SYNC_ID)
-    } else {
-      safeSet(KEY_SYNC_ID, id)
+      localStorage.removeItem(SYNC_KEY)
+      localStorage.removeItem(SYNC_ID_KEY)
+      return
     }
+    safeSet(SYNC_ID_KEY, id)
+    safeSet(SYNC_KEY, configOf(id, Date.now()))
+  },
+
+  /**
+   * This device's id for writer stamps: 6 base36 chars in `st5:dev`, adopting 0.9.x's
+   * `spendtrack:dev` so a device keeps one id across the upgrade (and a rollback).
+   */
+  getDeviceId(): string {
+    const stored = storedDeviceId()
+    if (stored !== null) return stored
+    const legacy = read(LEGACY_DEV_KEY)
+    const id =
+      legacy !== null && DEVICE_ID_PATTERN.test(legacy)
+        ? legacy
+        : (sessionDeviceId ?? newDeviceId())
+    sessionDeviceId = id
+    tryWrite(DEV_KEY, JSON.stringify({ id, name: '' }))
+    if (legacy !== id) tryWrite(LEGACY_DEV_KEY, id)
+    return id
   },
 }

@@ -153,6 +153,13 @@ export interface SeedOptions {
    * frames; motion recordings need this).
    */
   date?: 'fixed' | 'running'
+  /**
+   * Raw keys written as they are, after the seed (a damaged key, an envelope): they win over the
+   * seeded v4 keys of the same name.
+   */
+  raw?: Record<string, string>
+  /** Runs in the page before its scripts on every load (a storage that refuses writes). */
+  before?: () => void
 }
 
 /** In the page, before its scripts: Date starts at `at` and runs on; no other timer changes. */
@@ -189,22 +196,25 @@ export async function seed(page: Page, opts: SeedOptions = {}): Promise<void> {
       }
       if (sessionStorage.getItem('e2e-seeded')) return
       sessionStorage.setItem('e2e-seeded', '1')
+      // The v4 keys, the public format: 0.10.0 migrates them on its first boot (P2-14).
       localStorage.setItem('expenses', JSON.stringify(s.expenses))
       localStorage.setItem('categoryBudgets', JSON.stringify(s.budgets))
       localStorage.setItem('spendtrack:currency', 'SGD')
       localStorage.setItem('spendtrack:theme', s.theme)
+      for (const [key, value] of Object.entries(s.raw)) localStorage.setItem(key, value)
     },
     {
       expenses: opts.expenses ?? [],
       budgets: opts.budgets ?? {},
       theme,
       holdChunkReload: opts.holdChunkReload ?? false,
+      raw: opts.raw ?? {},
     },
   )
+  if (opts.before) await page.addInitScript(opts.before)
 }
 
-export const storedExpenses = async (page: Page): Promise<SeedExpense[]> =>
-  JSON.parse(await page.evaluate(() => localStorage.getItem('expenses') ?? '[]')) as SeedExpense[]
+export { storedExpenses } from './stored'
 
 /**
  * With the stored theme on `system`: flips the emulated OS scheme and waits until the app has
@@ -360,9 +370,65 @@ export interface UiState {
   reopen?: (page: Page) => Promise<void>
   /** What may stick out at 320 px because its fix is deferred, and why (horizontalOverflow). */
   knownReflow?: { readonly selector: string; readonly why: string }
+  /** Raw storage written after the seed (SeedOptions.raw). */
+  raw?: Record<string, string>
+  /** Runs in the page before its scripts (SeedOptions.before). */
+  before?: () => void
 }
 
 const VIRTUAL_300 = manyRows(300)
+
+/** One live row the sanitiser cannot read: its amount is not a number (invented). */
+const UNREADABLE_ROW = {
+  id: 'needs-attention-1',
+  itemName: 'unreadable amount',
+  amount: 'twelve',
+  category: 'Other',
+  date: '2026-10-17T12:00:00',
+  createdAt: '2026-10-17T12:00:00',
+}
+
+/** A v5 envelope cut off mid-write: its body is not JSON. The v4 keys still hold the data. */
+const DAMAGED_ENVELOPE = '5|0000000|{"f":1,"doc":{"expenses":[{"id":"cut-o'
+
+/** In the page: the envelope cannot be written (a full storage), everything else can. */
+function refuseEnvelopeWrites(): void {
+  const setItem = Storage.prototype.setItem
+  Storage.prototype.setItem = function (this: Storage, key: string, value: string) {
+    if (key === 'st5:db') {
+      throw new DOMException('The quota has been exceeded.', 'QuotaExceededError')
+    }
+    setItem.call(this, key, value)
+  }
+}
+
+/** A backup file with one new entry, one already here and one the sanitiser cannot read. */
+const IMPORT_FILE = {
+  name: 'spendtrack-backup-2026-10-12.json',
+  mimeType: 'application/json',
+  buffer: Buffer.from(
+    JSON.stringify({
+      version: '4.0',
+      exportDate: '2026-10-12T04:00:00.000Z',
+      categories: [...CATEGORIES],
+      categoryMappings: {},
+      expenses: [
+        row('import-new-1', '2026-10-11', 6.5, 'imported laksa'),
+        ...RICH.slice(0, 1),
+        { ...row('import-bad-1', '2026-10-11', 1, 'bad date'), date: 'last tuesday' },
+      ],
+    }),
+  ),
+}
+
+/** Settings › Backup with the preview of IMPORT_FILE, Restore focused. */
+export async function openImportPreview(page: Page): Promise<Locator> {
+  const sheet = await openSettings(page, 'Backup')
+  await sheet.locator('input[type="file"]').setInputFiles(IMPORT_FILE)
+  const preview = sheet.getByRole('region', { name: `Import ${IMPORT_FILE.name}?` })
+  await expect(preview.getByRole('button', { name: 'Restore', exact: true })).toBeFocused()
+  return preview
+}
 
 export const STATES: readonly UiState[] = [
   { id: 'S01', title: 'Pulse, empty', path: '/pulse', expenses: [] },
@@ -510,13 +576,13 @@ export const STATES: readonly UiState[] = [
   },
   {
     id: 'S17',
-    title: 'Settings, Backup with the clear-all confirmation',
+    title: 'Settings, Backup with the delete-all confirmation',
     path: '/pulse',
     expenses: RICH,
     open: async (page) => {
       const sheet = await openSettings(page, 'Backup')
-      await sheet.getByRole('button', { name: 'Clear all expenses' }).click()
-      await expect(sheet.getByRole('button', { name: 'Yes, delete all' })).toBeVisible()
+      await sheet.getByRole('button', { name: 'Delete all entries', exact: true }).click()
+      await expect(sheet.getByRole('button', { name: 'Delete all', exact: true })).toBeVisible()
     },
   },
   {
@@ -619,6 +685,75 @@ export const STATES: readonly UiState[] = [
       await expect(page.getByRole('button', { name: 'Reload', exact: true })).toBeFocused()
     },
   },
+  {
+    id: 'S25',
+    title: 'Settings, Backup with an import preview',
+    path: '/pulse',
+    expenses: RICH,
+    open: async (page) => {
+      await openImportPreview(page)
+    },
+  },
+  {
+    id: 'S26',
+    title: 'Settings, Backup, Replace with REPLACE typed',
+    path: '/pulse',
+    expenses: RICH,
+    open: async (page) => {
+      const preview = await openImportPreview(page)
+      await preview.getByRole('button', { name: 'Replace instead…', exact: true }).click()
+      await preview.getByRole('textbox', { name: 'Type REPLACE to confirm' }).fill('REPLACE')
+      await expect(preview.getByRole('button', { name: 'Replace', exact: true })).toBeEnabled()
+    },
+  },
+  {
+    id: 'S27',
+    title: 'Settings, Backup with entries that need attention',
+    path: '/pulse',
+    expenses: RICH,
+    raw: { expenses: JSON.stringify([...RICH, UNREADABLE_ROW]) },
+    open: async (page) => {
+      const sheet = await openSettings(page, 'Backup')
+      await expect(sheet.getByRole('region', { name: 'Needs attention' })).toBeVisible()
+    },
+  },
+  {
+    id: 'S28',
+    title: 'Recovered banner (a damaged envelope, recovered from the rollback copy)',
+    path: '/pulse',
+    expenses: RICH,
+    raw: { 'st5:db': DAMAGED_ENVELOPE, 'spendtrack:app': '5' },
+    open: async (page) => {
+      await expect(page.getByRole('region', { name: 'Data recovered' })).toContainText(
+        "We couldn't read part of your saved data.",
+      )
+    },
+  },
+  {
+    id: 'S29',
+    title: 'Boot failure card (the engine did not load)',
+    path: '/pulse',
+    expenses: RICH,
+    failChunk: '**/assets/engine-*.js',
+    open: async (page) => {
+      await expect(page.getByText("SpendTrack couldn't start.")).toBeVisible()
+      await expect(
+        page.getByRole('button', { name: 'Download my data', exact: true }),
+      ).toBeVisible()
+    },
+  },
+  {
+    id: 'S30',
+    title: 'Storage full banner',
+    path: '/pulse',
+    expenses: RICH,
+    before: refuseEnvelopeWrites,
+    open: async (page) => {
+      await expect(page.getByRole('region', { name: 'Not saved' })).toContainText(
+        'Not saved: storage is full',
+      )
+    },
+  },
 ]
 
 /**
@@ -637,6 +772,8 @@ export async function enterState(
     budgets: state.budgets,
     theme,
     holdChunkReload: state.failChunk !== undefined,
+    raw: state.raw,
+    before: state.before,
   })
   await page.goto(state.path)
   await waitForApp(page)
@@ -984,6 +1121,33 @@ export function ringProblems(stops: readonly FocusStop[], opts: { contrast: bool
 // ─── focus not obscured (AC-F5) ───────────────────────────────────────────────
 
 /**
+ * WCAG 2.2 SC 2.4.11 against the toasts: how the visible toasts cover the focused element, one
+ * line per toast that covers any of it (empty when none does). Toasts float over whatever is at
+ * the bottom of the screen, an open sheet's last controls included.
+ */
+export async function focusUnderToasts(page: Page): Promise<string[]> {
+  return page.evaluate(() => {
+    const el = document.activeElement
+    if (!(el instanceof HTMLElement) || el === document.body || el.closest('[data-toast]'))
+      return []
+    const a = el.getBoundingClientRect()
+    const out: string[] = []
+    for (const toast of document.querySelectorAll('[data-toast]')) {
+      const b = toast.getBoundingClientRect()
+      const w = Math.min(a.right, b.right) - Math.max(a.left, b.left)
+      const h = Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top)
+      if (w <= 0.5 || h <= 0.5) continue
+      const share = Math.round((100 * w * h) / Math.max(1, a.width * a.height))
+      const name = el.getAttribute('aria-label') ?? el.textContent?.trim() ?? el.tagName
+      out.push(
+        `"${name}" is ${String(share)} % under the toast "${toast.textContent?.trim() ?? ''}"`,
+      )
+    }
+    return out
+  })
+}
+
+/**
  * Tabs (or Shift+Tabs) through the page until focus comes back round, leaves the document or
  * `max` presses. After each press, once scrolling has settled, it reports the focused element
  * if any part of it is outside the band between the sticky header's bottom and the fixed tab
@@ -1181,6 +1345,9 @@ export async function auditTargets(page: Page): Promise<{ checked: number; probl
               continue
             }
             if (hit === target || target.contains(hit)) continue
+            // A tap on a checkbox's or radio's own label toggles it (HTML: the label's activation
+            // behaviour), so its label is part of the target.
+            if (hit.closest('label')?.control === target) continue
             // A heatmap day may sit in the 4 px gap; it must never land on a neighbouring day.
             if (cell !== null && !hit.closest('[role="gridcell"], button, a[href]')) continue
             const over = fixedLayer(hit)

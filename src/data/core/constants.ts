@@ -131,17 +131,22 @@ export const V4_KEYS: readonly V4Key[] = Object.freeze([
   'expenses',
   'categories',
   'categoryMappings',
+  'categoryMappingUpdatedAt',
   'categoryBudgets',
   'categoryBudgetUpdatedAt',
   'categoryBudgetDeletedAt',
   'deletedExpenseIds',
 ])
 
-/** Crash-safe write order of the v4 mirror: tombstones before expenses (§9.10, I10). */
+/**
+ * Crash-safe write order of the v4 mirror: tombstones before expenses (§9.10, I10), a mapping's
+ * stamp just before its value (P2-3).
+ */
 export const MIRROR_ORDER: readonly V4Key[] = Object.freeze([
   'categoryBudgetDeletedAt',
   'categoryBudgets',
   'categoryBudgetUpdatedAt',
+  'categoryMappingUpdatedAt',
   'categoryMappings',
   'categories',
   'deletedExpenseIds',

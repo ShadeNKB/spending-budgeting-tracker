@@ -1,6 +1,6 @@
 import { useUIStore, type Toast } from '../stores/useUIStore'
 
-type ToastOptions = Pick<Toast, 'duration' | 'action'>
+type ToastOptions = Pick<Toast, 'duration' | 'action' | 'undoId'>
 
 const push = (kind: Toast['kind'], message: string, opts?: ToastOptions) =>
   useUIStore.getState().pushToast({ kind, message, ...opts })
@@ -10,8 +10,7 @@ const toastApi = Object.freeze({
   success: (message: string, opts?: ToastOptions) => push('success', message, opts),
   error: (message: string, opts?: Pick<ToastOptions, 'duration'>) => push('error', message, opts),
   info: (message: string, opts?: ToastOptions) => push('info', message, opts),
-  warning: (message: string, opts?: Pick<ToastOptions, 'duration'>) =>
-    push('warning', message, opts),
+  warning: (message: string, opts?: ToastOptions) => push('warning', message, opts),
 })
 
 export function useToast() {

@@ -1,5 +1,5 @@
 import type { Expense } from '../types'
-import { dayKeyOfStored } from './dates'
+import { entryDay } from './ledgerIndex'
 
 // One CSV writer for every export. The text inside an expense can come from an
 // imported backup or a synced device, so each cell is treated as untrusted:
@@ -37,19 +37,19 @@ export function toCsvCell(value: string | number | null | undefined): string {
 }
 
 /**
- * The calendar day of a stored expense date, as `yyyy-MM-dd` in local time, using the same
- * reader as the Ledger (`dayKeyOfStored`), so an export can never put an entry on a different
- * day than the screen does. Anything the Ledger shows as "Unknown date" is exported raw.
+ * The Date cell of an expense: its day, `yyyy-MM-dd`, read exactly as the Ledger reads it
+ * (`entryDay`), so an export can never put an entry on a different day than the screen does.
+ * Anything the Ledger shows as "Unknown date" is exported raw.
  */
-export function csvDate(date: string): string {
-  return dayKeyOfStored(date) ?? date
+export function csvDay(expense: Expense): string {
+  return entryDay(expense) ?? expense.date
 }
 
 /** The CSV export of `expenses`: BOM, header, one row per expense, CRLF line endings. */
 export function expensesToCsv(expenses: readonly Expense[]): string {
   const rows = expenses.map((e) =>
     [
-      toCsvCell(csvDate(e.date)),
+      toCsvCell(csvDay(e)),
       toCsvCell(e.itemName),
       toCsvCell(e.category),
       toCsvCell(e.amount),

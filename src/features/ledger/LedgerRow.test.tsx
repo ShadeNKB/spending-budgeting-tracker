@@ -7,6 +7,7 @@ import { LedgerRow } from './LedgerRow'
 import { LedgerScreen } from './LedgerScreen'
 import { CLICK_GUARD_MS, SNAP_HZ, SNAP_SPRING, actionOpacity, tintOpacity } from './swipe'
 import { useExpenseStore } from '../../stores/useExpenseStore'
+import { useUIStore } from '../../stores/useUIStore'
 import { GESTURE_MS, noteToastLeft } from '../../ui/pressShield'
 import { springSamples } from '../../ui/spring'
 import {
@@ -698,10 +699,17 @@ describe('Ledger screen focus', ROOMY, () => {
 
   let clock = 0
   const scrollIntoView = vi.fn()
-  beforeEach(() => {
+  beforeEach(async () => {
+    // P2-14: the rows as 0.9.x stored them, then a real boot of the engine (settling whatever
+    // the last test left pending first, so nothing lands on top of this seed).
+    await useExpenseStore.getState().hydrate()
+    localStorage.clear()
+    localStorage.setItem('expenses', JSON.stringify([A, B, C]))
+    await useExpenseStore.getState().hydrate()
     // The screen ignores a delete until the last one has been on screen for 450 ms (a reflex
     // double tap), judged by when the press was made: event times come from Date.now() here.
-    clock = 1_000_000
+    // A real-looking clock: the engine stamps each delete from it.
+    clock = new Date(2026, 9, 20, 9).getTime()
     vi.spyOn(Date, 'now').mockImplementation(() => clock)
     vi.stubGlobal('matchMedia', (media: string) =>
       Object.assign(new EventTarget(), { media, matches: false }),
@@ -711,7 +719,6 @@ describe('Ledger screen focus', ROOMY, () => {
       value: scrollIntoView,
       configurable: true,
     })
-    useExpenseStore.setState({ expenses: [A, B, C], hydrated: true })
   })
   afterEach(() => {
     Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
@@ -817,6 +824,60 @@ describe('Ledger screen focus', ROOMY, () => {
     expect(custom).toHaveFocus()
     expect(scrollIntoView.mock.contexts).toContain(custom)
     expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' })
+  })
+
+  it('offers Undo for a delete, which brings the row back on its day', async () => {
+    renderLedger()
+    fireEvent.keyDown(row('Teh peng'), { key: 'Delete' })
+    expect(ids()).toEqual(['a', 'c'])
+    const toast = useUIStore.getState().toasts.at(-1)
+    expect(toast).toMatchObject({ kind: 'info', message: 'Deleted "Teh peng"' })
+    act(() => {
+      toast?.action?.onClick()
+    })
+    await painted()
+    const back = useExpenseStore.getState().expenses
+    expect(back.map((e) => e.itemName)).toEqual(['Laksa', 'Teh peng', 'Bus fare'])
+    expect(back[1]).toMatchObject({ day: '2026-10-18', amount: 3 })
+    expect(row('Teh peng')).toBeInTheDocument()
+  })
+
+  it('undoes the row it deleted, not another whose id starts the same way', async () => {
+    localStorage.clear()
+    localStorage.setItem(
+      'expenses',
+      JSON.stringify([day('ab', 'Teh peng', '2026-10-18'), day('abc', 'Bus fare', '2026-10-17')]),
+    )
+    await useExpenseStore.getState().hydrate()
+    renderLedger()
+    // "abc" goes first, so its undo sits under the one for "ab" on the stack.
+    act(() => {
+      useExpenseStore.getState().deleteExpense('abc')
+    })
+    fireEvent.keyDown(row('Teh peng'), { key: 'Delete' })
+    act(() => {
+      useUIStore.getState().toasts.at(-1)?.action?.onClick()
+    })
+    expect(useExpenseStore.getState().expenses.map((e) => e.itemName)).toEqual(['Teh peng'])
+  })
+
+  it('undoes the row it deleted when another id is that id, a dash and more', async () => {
+    localStorage.clear()
+    localStorage.setItem(
+      'expenses',
+      JSON.stringify([day('ab', 'Teh peng', '2026-10-18'), day('ab-1', 'Bus fare', '2026-10-17')]),
+    )
+    await useExpenseStore.getState().hydrate()
+    renderLedger()
+    // The undo for "ab-1" is `del-ab-1-<n>`, which also starts with `del-ab-`.
+    act(() => {
+      useExpenseStore.getState().deleteExpense('ab-1')
+    })
+    fireEvent.keyDown(row('Teh peng'), { key: 'Delete' })
+    act(() => {
+      useUIStore.getState().toasts.at(-1)?.action?.onClick()
+    })
+    expect(useExpenseStore.getState().expenses.map((e) => e.itemName)).toEqual(['Teh peng'])
   })
 
   it('labels each day with a level-2 heading under the screen heading', () => {

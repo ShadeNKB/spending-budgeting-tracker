@@ -4,25 +4,30 @@ import { CalendarDays, ChevronDown } from 'lucide-react'
 import { Sheet } from '../../ui/Sheet'
 import { Input } from '../../ui/Input'
 import { Button } from '../../ui/Button'
-import { useExpenseStore } from '../../stores/useExpenseStore'
+import { undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
 import { useToast } from '../../hooks/useToast'
 import { useHaptic } from '../../hooks/useHaptic'
 import { useCurrencySymbol, useFormatMoney } from '../../hooks/useFormatMoney'
 import { useToday } from '../../hooks/useToday'
 import { addDays, formatKey, keyYear, shortDate, shortDateYear, type DayKey } from '../../lib/dates'
 import { DatePicker } from '../../ui/DatePicker'
+import { DataUnavailable } from '../../app/DataNotices'
 import {
+  actionErrorMessage,
+  confirmAdded,
   chosenChipFill,
   firstInvalidField,
   validateExpenseForm,
   type ExpenseFormErrors,
   type ExpenseFormField,
 } from './expenseForm'
+import type { ExpenseView } from '../../types'
 
 interface Props {
   open: boolean
   onClose: () => void
-  prefill?: { itemName?: string; amount?: number; category?: string; date?: string }
+  /** `date` is a day, `yyyy-MM-dd`. */
+  prefill?: { itemName?: string; amount?: number; category?: string; date?: DayKey }
 }
 
 function formFrom(prefill: Props['prefill'], today: string) {
@@ -37,8 +42,8 @@ function formFrom(prefill: Props['prefill'], today: string) {
 
 export function AddExpenseSheet({ open, onClose, prefill }: Props) {
   const categories = useExpenseStore((s) => s.categories)
-  const addExpense = useExpenseStore((s) => s.addExpense)
-  const consumeUndo = useExpenseStore((s) => s.consumeUndo)
+  // The data engine did not load (bootError): nothing typed here could be saved this time.
+  const cantSave = useExpenseStore((s) => s.bootError !== null)
   const toast = useToast()
   const vibrate = useHaptic()
   const fmt = useFormatMoney()
@@ -88,25 +93,34 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
       fields[invalid].current?.focus()
       return
     }
-    const created = addExpense({
-      itemName: form.itemName.trim(),
-      amount: parseFloat(form.amount),
-      category: form.category || undefined,
-      date: new Date(form.date + 'T12:00:00').toISOString(),
-      notes: form.notes.trim() || undefined,
-    })
+    let created: ExpenseView
+    try {
+      // The picked day as it is: the store keeps it as the entry's day (P2-2).
+      created = useExpenseStore.getState().addExpense({
+        itemName: form.itemName.trim(),
+        amount: parseFloat(form.amount),
+        category: form.category || undefined,
+        day: form.date,
+        notes: form.notes.trim() || undefined,
+      })
+    } catch (err) {
+      // The sheet stays open with everything typed, so the owner can fix what the message names.
+      toast.error(actionErrorMessage(err))
+      return
+    }
     vibrate(10)
     const isBackdated = form.date !== today
-    toast.success(
+    const undoId = `add-${created.id}`
+    confirmAdded(
+      toast,
       `Added "${created.itemName}" · ${fmt(created.amount)}${isBackdated ? ` · ${dayLabel(form.date)}` : ''}`,
       {
+        undoId,
         action: {
           label: 'Undo',
           onClick: () => {
-            const entry = useExpenseStore
-              .getState()
-              .undoStack.find((u) => u.id === `add-${created.id}`)
-            if (entry) consumeUndo(entry.id)
+            const outcome = useExpenseStore.getState().consumeUndo(undoId)
+            if (outcome !== null && outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
           },
         },
       },
@@ -131,6 +145,24 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
   ]
   const isPreset = presets.some((p) => p.val === form.date)
   const isCustomActive = !isPreset
+
+  // Said as the sheet opens, before anything is typed, never only on Save (a Reload would
+  // then throw away the whole form).
+  if (cantSave) {
+    return (
+      <Sheet open={open} onClose={onClose} title="Add expense" side="bottom">
+        <div className="flex flex-col gap-3 px-4 pb-6 pt-2">
+          <DataUnavailable
+            failed
+            detail="Nothing can be added until it does. Reload to try again: your data is still saved on this device."
+          />
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+        </div>
+      </Sheet>
+    )
+  }
 
   return (
     <Sheet open={open} onClose={onClose} title="Add expense" side="bottom">

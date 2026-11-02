@@ -211,6 +211,23 @@ describe('InlineConfirm', () => {
     )
     expect(screen.getByRole('button', { name: 'Delete' }).className).toMatch(/bg-negative/)
   })
+
+  // The solid cyan primary means a safe main action (Restore, Download): a confirm that wipes
+  // this device's data was the most inviting control in the danger zone.
+  it('draws a serious, not destructive, confirm in amber, never the cyan primary', () => {
+    render(
+      <InlineConfirm
+        tone="warning"
+        question="Remove SpendTrack data from this device?"
+        confirmLabel="Remove from this device"
+        onConfirm={() => {}}
+        onCancel={() => {}}
+      />,
+    )
+    const confirm = screen.getByRole('button', { name: 'Remove from this device' })
+    expect(confirm).toHaveClass('text-warning', 'bg-warning/10', 'border-warning/40')
+    expect(confirm.className).not.toMatch(/bg-accent/)
+  })
 })
 
 /** A trigger that is replaced by its confirmation, as every confirmation in the app is. */

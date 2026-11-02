@@ -1,11 +1,18 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { EditExpenseSheet } from './EditExpenseSheet'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useUIStore } from '../../stores/useUIStore'
-import { addDays, todayKey } from '../../lib/dates'
-import type { Expense } from '../../types'
+import { addDays, shortDateYear, todayKey } from '../../lib/dates'
+import type { Expense, ExpenseView } from '../../types'
+
+// The first hydrate loads the engine chunk, the data core with it. Under a full parallel run on a
+// busy machine that load alone ran past the 5 s default, and the timed-out boot then landed in
+// the next test. Load it once here, with room: every boot after it is quick.
+beforeAll(async () => {
+  await useExpenseStore.getState().hydrate()
+}, 60_000)
 
 // Invented data.
 const KOPI: Expense = {
@@ -17,6 +24,22 @@ const KOPI: Expense = {
   createdAt: '2026-10-19T12:00:00',
 }
 const GRAB: Expense = { ...KOPI, id: 'e-2', itemName: 'Grab to camp', amount: 14.2 }
+
+/** P2-14: the rows as 0.9.x stored them (the public v4 keys), then a real boot of the engine. */
+async function boot(rows: readonly Expense[]) {
+  // Settle whatever the last test left pending, so nothing lands on top of this seed.
+  await useExpenseStore.getState().hydrate()
+  localStorage.clear()
+  localStorage.setItem('expenses', JSON.stringify(rows))
+  await useExpenseStore.getState().hydrate()
+}
+
+/** The store's view of a row, as the Ledger hands it to the sheet. */
+function view(id: string): ExpenseView {
+  const found = useExpenseStore.getState().expenses.find((e) => e.id === id)
+  if (!found) throw new Error(`no expense ${id}`)
+  return found
+}
 
 /** jsdom has no matchMedia: answer every query as a phone (coarse pointer) or a laptop would. */
 function stubPointer(pointer: 'fine' | 'coarse') {
@@ -31,13 +54,13 @@ function stubPointer(pointer: 'fine' | 'coarse') {
 // jsdom does not lay out, so it has no scrollIntoView; record the calls instead.
 const scrollIntoView = vi.fn()
 
-beforeEach(() => {
+beforeEach(async () => {
   stubPointer('coarse')
   Object.defineProperty(Element.prototype, 'scrollIntoView', {
     value: scrollIntoView,
     configurable: true,
   })
-  useExpenseStore.setState({ expenses: [KOPI, GRAB], hydrated: true })
+  await boot([KOPI, GRAB])
   useUIStore.setState({ toasts: [] })
 })
 afterEach(() => {
@@ -158,7 +181,7 @@ describe('EditExpenseSheet delete confirmation', () => {
     await user.click(screen.getByRole('button', { name: 'Delete expense' }))
 
     const group = screen.getByRole('group', { name: 'Delete "Kopi O"?' })
-    expect(group).toHaveAccessibleDescription('This cannot be undone.')
+    expect(group).toHaveAccessibleDescription('You can undo it for a few seconds.')
     expect(within(group).getByRole('button', { name: 'Cancel' })).toHaveFocus()
 
     await user.keyboard('{Enter}')
@@ -176,6 +199,27 @@ describe('EditExpenseSheet delete confirmation', () => {
     await user.dblClick(confirm)
     expect(onClose).toHaveBeenCalledTimes(1)
     expect(useExpenseStore.getState().expenses.map((e) => e.id)).toEqual(['e-2'])
+  })
+
+  it('offers Undo in the message, which brings the entry back', async () => {
+    const user = userEvent.setup()
+    render(<EditExpenseSheet expense={view('e-1')} onClose={() => {}} />)
+    await user.click(screen.getByRole('button', { name: 'Delete expense' }))
+    await user.click(screen.getByRole('button', { name: 'Delete' }))
+    const toast = useUIStore.getState().toasts.at(-1)
+    expect(toast).toMatchObject({ kind: 'info', message: 'Deleted "Kopi O"' })
+    expect(toast?.action?.label).toBe('Undo')
+    act(() => {
+      toast?.action?.onClick()
+    })
+    const back = useExpenseStore.getState().expenses
+    expect(back.map((e) => e.itemName).sort()).toEqual(['Grab to camp', 'Kopi O'])
+    expect(back.find((e) => e.itemName === 'Kopi O')).toMatchObject({
+      amount: 1.8,
+      day: '2026-10-19',
+    })
+    // All of it applied: nothing more to say.
+    expect(useUIStore.getState().toasts.filter((t) => t.kind === 'warning')).toEqual([])
   })
 
   it('starts without the question when the sheet opens again, for this or another expense', async () => {
@@ -273,5 +317,100 @@ describe('EditExpenseSheet Escape in the delete question', () => {
     // A new press of Escape closes the sheet, as ever.
     await user.keyboard('{Escape}')
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+})
+
+// P2-2: the sheet edits an entry's day, the one the Ledger lists it under, and saves a new day as
+// that day. Run in Asia/Singapore, Pacific/Honolulu and Pacific/Kiritimati (PowerShell $env:TZ).
+describe('EditExpenseSheet day contract', () => {
+  /** A local wall time as 0.9.x stored it: the instant, in UTC with a Z. */
+  const instant = (y: number, m: number, d: number, h: number, min = 0) =>
+    new Date(y, m - 1, d, h, min).toISOString()
+  const pickedDay = (day: string) =>
+    within(screen.getByRole('group', { name: 'Date' })).getByRole('button', {
+      name: `Change date, selected ${shortDateYear(day)}`,
+    })
+
+  it('opens on the day of the view, whatever its stored date reads as here', () => {
+    const shown: ExpenseView = { ...KOPI, day: '2026-10-15', ext: {} }
+    render(<EditExpenseSheet expense={shown} onClose={() => {}} />)
+    expect(pickedDay('2026-10-15')).toBeInTheDocument()
+  })
+
+  it.each([
+    ['a Z-noon date from the add sheet', instant(2026, 10, 15, 12), '2026-10-15'],
+    ['a raw quick-add instant just after midnight', instant(2026, 10, 15, 0, 30), '2026-10-15'],
+    ['a quick add at 23:59 on 31 Dec', instant(2025, 12, 31, 23, 59), '2025-12-31'],
+    ['a quick add at 00:00 on 1 Jan', instant(2026, 1, 1, 0, 0), '2026-01-01'],
+    ['a floating local noon', '2026-10-15T12:00:00', '2026-10-15'],
+  ])(
+    'keeps %s on its day, and an amount-only edit keeps the date byte for byte',
+    async (_, date, day) => {
+      const user = userEvent.setup()
+      await boot([{ ...KOPI, date, createdAt: date }])
+      expect(view('e-1')).toMatchObject({ day, date })
+      render(<EditExpenseSheet expense={view('e-1')} onClose={() => {}} />)
+      expect(pickedDay(day)).toBeInTheDocument()
+
+      await user.clear(amount())
+      await user.type(amount(), '2.2')
+      await user.click(screen.getByRole('button', { name: 'Save changes' }))
+      expect(view('e-1')).toMatchObject({ amount: 2.2, day, date })
+    },
+  )
+
+  it('stores a new day as that day at local noon, with no zone', async () => {
+    const user = userEvent.setup()
+    const yesterday = addDays(todayKey(), -1)
+    render(<EditExpenseSheet expense={view('e-1')} onClose={() => {}} />)
+    await user.click(screen.getByRole('button', { name: 'Yesterday' }))
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+    expect(view('e-1')).toMatchObject({ day: yesterday, date: `${yesterday}T12:00:00` })
+  })
+
+  it('clears the notes when they are emptied', async () => {
+    const user = userEvent.setup()
+    await boot([{ ...KOPI, notes: 'with kaya toast' }])
+    render(<EditExpenseSheet expense={view('e-1')} onClose={() => {}} />)
+    await user.clear(screen.getByRole('textbox', { name: 'Notes' }))
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+    expect(view('e-1').notes).toBeUndefined()
+  })
+})
+
+// P2-13: what the store refuses is said, and nothing typed is lost.
+describe('EditExpenseSheet refused saves', () => {
+  it('shows the reason and stays open with the edits', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(<EditExpenseSheet expense={view('e-1')} onClose={onClose} />)
+    fireEvent.change(screen.getByRole('textbox', { name: 'Notes' }), {
+      target: { value: 'n'.repeat(501) },
+    })
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+    expect(useUIStore.getState().toasts.at(-1)).toMatchObject({
+      kind: 'error',
+      message: 'Notes are at most 500 characters.',
+    })
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByRole('textbox', { name: 'Notes' })).toHaveValue('n'.repeat(501))
+    expect(view('e-1').notes).toBeUndefined()
+  })
+
+  it('says so when the entry was deleted while the sheet was open', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(<EditExpenseSheet expense={view('e-1')} onClose={onClose} />)
+    act(() => {
+      useExpenseStore.getState().deleteExpense('e-1')
+    })
+    await user.clear(item())
+    await user.type(item(), 'Kopi C')
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+    expect(useUIStore.getState().toasts.at(-1)).toMatchObject({
+      kind: 'error',
+      message: 'That entry no longer exists.',
+    })
+    expect(onClose).not.toHaveBeenCalled()
   })
 })

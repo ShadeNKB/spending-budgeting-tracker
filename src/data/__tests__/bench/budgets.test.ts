@@ -71,6 +71,29 @@ describe(`performance budgets (${ROWS} owner-shaped rows, ${BENCH_STRICT ? 'stri
     check('no-op pull', ms, 30)
   }, 120_000)
 
+  it('no-op pull beside 0.9.2 (it wrote the relay): + its writer-aware news check (P2-4): 30 ms', () => {
+    // 0.9.2 re-pushes our records as it holds them, drops x5 and stamps its own writer
+    const wire = parseJson(wireString(base, { rev: 'r' }))
+    const relay092 =
+      typeof wire === 'object' && wire !== null
+        ? {
+            ...Object.fromEntries(Object.entries(wire).filter(([k]) => k !== 'x5')),
+            wr: { app: '0.8.5', dev: 'phone1', rev: 'p', at: '2026-10-18T04:00:00.000Z' },
+          }
+        : null
+    // what this device holds after its first exchange with it (the old device is now known)
+    const held = mergeDoc(base, decodeWire(relay092, 'remote', { reuse: base }).doc).doc
+    const ms = median(() => {
+      const dec = decodeWire(relay092, 'remote', { reuse: held })
+      if (dec.writer !== 'v085') throw new Error('expected a v0.8.5 relay')
+      const m = mergeDoc(held, dec.doc)
+      const d = decidePush(m.doc, dec, { etag: 'e' }, 'remote', NEW_MEMO, T0)
+      if (d.kind !== 'none') throw new Error(`0.9.2 holds everything: expected quiet, got ${d.why}`)
+      if (m.doc !== held) throw new Error('a no-op pull must return the same doc')
+    })
+    check('no-op pull beside 0.9.2', ms, 30)
+  }, 120_000)
+
   it('boot core: parse + decode + displayList + budgetView + dayOf (cold caches): 80 ms', () => {
     const text = wireString(base)
     let k = 0

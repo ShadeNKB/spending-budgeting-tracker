@@ -39,7 +39,7 @@ export function InlineConfirm({
   confirmName?: string
   cancelLabel?: React.ReactNode
   cancelName?: string
-  /** `danger` confirms with the solid red button; `warning` with the primary one. */
+  /** `danger` confirms with the solid red button; `warning` with the amber one. */
   tone?: 'danger' | 'warning'
   /** `card`: a boxed block with full-width buttons. `row`: inline in a list row, icon buttons. */
   layout?: 'card' | 'row'
@@ -136,7 +136,7 @@ export function InlineConfirm({
       <div className={clsx('flex', row ? 'gap-3' : 'gap-2')}>
         <Button
           {...button}
-          variant={tone === 'danger' ? 'dangerSolid' : 'primary'}
+          variant={tone === 'danger' ? 'dangerSolid' : 'warning'}
           aria-label={confirmName}
           onClick={confirm}
           onKeyDown={backOut}

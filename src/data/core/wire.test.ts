@@ -50,6 +50,11 @@ const v4 = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
   ...over,
 })
 const roundTrip = (d: Doc): Doc => decodeWire(parseJson(wireString(d)), 'remote').doc
+const entriesOf = (v: unknown): [string, unknown][] =>
+  typeof v === 'object' && v !== null ? Object.entries(v) : []
+const keysOf = (v: unknown): string[] => entriesOf(v).map(([k]) => k)
+const byKey = <V>(m: ReadonlyMap<string, V>): [string, V][] =>
+  [...m].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
 
 describe('writer classes (§8.2)', HEAVY, () => {
   it('classifies every payload shape', () => {
@@ -433,6 +438,108 @@ describe('encodeWire / wireString (§10.1, P-15)', HEAVY, () => {
   })
 })
 
+describe('mappingUpdatedAt on the wire (P2-3, entry criterion b)', HEAVY, () => {
+  const doc: Doc = {
+    ...docOf({ categories: ['Food', 'Drinks'] }),
+    mappings: new Map([
+      ['kopi', { v: 'Drinks', s: T0 + 7 }],
+      ['chicken rice', { v: 'Food', s: T0 }],
+      ['unstamped', { v: 'Food', s: 0 }],
+    ]),
+  }
+  const stamps = { 'chicken rice': iso(T0), kopi: iso(T0 + 7) }
+
+  it('encodeWire, wireString and the backup file emit the stamps > 0 right after categoryMappings', () => {
+    const w = encodeWire(doc, { dev: 'k', rev: 'r' })
+    expect({ ...w.mappingUpdatedAt }).toEqual(stamps)
+    expect({ ...w.x5.mts }).toEqual({ 'chicken rice': T0, kopi: T0 + 7 })
+    const keys = Object.keys(w)
+    expect(keys.indexOf('mappingUpdatedAt')).toBe(keys.indexOf('categoryMappings') + 1)
+    expect(wireString(doc, { dev: 'k', rev: 'r' })).toBe(JSON.stringify(w))
+    const f = encodeBackupFile(doc)
+    expect({ ...f.mappingUpdatedAt }).toEqual(stamps)
+    const fkeys = Object.keys(f)
+    expect(fkeys.indexOf('mappingUpdatedAt')).toBe(fkeys.indexOf('categoryMappings') + 1)
+    expect(wireString(EMPTY_DOC)).toContain('"categoryMappings":{},"mappingUpdatedAt":{},')
+  })
+
+  it('decode: a stamp is max(x5.mts, mappingUpdatedAt), so it survives a v0.8.5 push that drops x5', () => {
+    const wire = parseJson(wireString(doc, { dev: 'k', rev: 'r' }))
+    const stripped: Record<string, unknown> = {
+      ...Object.fromEntries(entriesOf(wire).filter(([k]) => k !== 'x5')),
+      wr: { app: '0.8.5', dev: 'abcdef', rev: 'w', at: iso(T0) },
+    }
+    const back = decodeWire(stripped, 'remote')
+    expect(back.writer).toBe('v085')
+    expect(byKey(back.doc.mappings)).toEqual(byKey(doc.mappings))
+    // the larger of the two wins whichever carries it; ties and absences are harmless
+    const mixed = decodeWire(
+      v4({
+        categoryMappings: { a: 'Food', b: 'Food', c: 'Food', d: 'Food' },
+        mappingUpdatedAt: { a: iso(T0 + 9), b: iso(T0), c: '1970-01-01T00:00:00.000Z' },
+        x5: { schema: 5, minor: 0, min: 4, mts: { a: T0, b: T0 + 9, d: T0 + 3 } },
+      }),
+      'remote',
+    ).doc.mappings
+    expect([...mixed].map(([k, g]) => [k, g.s])).toEqual([
+      ['a', T0 + 9],
+      ['b', T0 + 9],
+      ['c', 0],
+      ['d', T0 + 3],
+    ])
+  })
+
+  it('a wrong-shaped mappingUpdatedAt is dropped and reported; the mappings still decode', () => {
+    const whole = decodeWire(
+      v4({ categoryMappings: { kopi: 'Food' }, mappingUpdatedAt: [1] }),
+      'remote',
+    )
+    expect(whole.report.droppedKeys).toContain('mappingUpdatedAt')
+    expect(must(whole.doc.mappings.get('kopi')).s).toBe(0)
+    const one = decodeWire(
+      v4({
+        categoryMappings: { kopi: 'Food' },
+        mappingUpdatedAt: { kopi: T0 + 1, ghost: iso(T0) },
+      }),
+      'remote',
+    )
+    expect(one.report.droppedKeys).toEqual(['mappingUpdatedAt.kopi'])
+    expect(must(one.doc.mappings.get('kopi')).s).toBe(0)
+    expect(one.doc.mappings.has('ghost')).toBe(false)
+  })
+
+  it('round-trips the wire, the backup file and the eight mirror keys losslessly', () => {
+    expect(byKey(roundTrip(doc).mappings)).toEqual(byKey(doc.mappings))
+    const file = decodeWire(parseJson(JSON.stringify(encodeBackupFile(doc))), 'file').doc
+    expect(byKey(file.mappings)).toEqual(byKey(doc.mappings))
+    const m = toV4Mirror(doc)
+    expect(Object.keys(m)).toHaveLength(8)
+    expect(parseJson(m.categoryMappingUpdatedAt)).toEqual(stamps)
+    const parsed: Partial<Record<V4Key, unknown>> = {}
+    for (const k of MIRROR_ORDER) parsed[k] = parseJson(m[k])
+    const back = decodeWire(fromV4Keys(parsed), 'local-v4', { legacyRank: 1 }).doc
+    expect(byKey(back.mappings)).toEqual(byKey(doc.mappings))
+  })
+
+  it('the mirror stamps exactly the mappings it lists: resolved, live targets only', () => {
+    const renamed: Doc = {
+      ...doc,
+      renames: new Map([
+        ['Drinks', { to: 'Kopitiam', s: T0 + 8 }],
+        ['Kopitiam', { to: null, s: T0 + 8 }],
+      ]),
+    }
+    const m = toV4Mirror(renamed)
+    const values = prop(parseJson(m.categoryMappings), 'kopi')
+    expect(values).toBe('Kopitiam')
+    expect(keysOf(parseJson(m.categoryMappingUpdatedAt)).sort()).toEqual(
+      keysOf(parseJson(m.categoryMappings))
+        .filter((k) => k !== 'unstamped')
+        .sort(),
+    )
+  })
+})
+
 describe('decode reuse (P-21, §9.12)', HEAVY, () => {
   it('reuses record objects for exact wire copies and is digest-equal to a fresh decode', () => {
     const r = makeRng(4)
@@ -588,7 +695,7 @@ describe('adoptableNews (§11.4, P-11)', HEAVY, () => {
     const clock = { now: () => T0 + 99, setTimeout: () => 0, clearTimeout: () => undefined }
     const r = makeRng(41)
     let news = 0
-    for (let i = 0; i < 1500; i++) {
+    for (let i = 0; i < 2000; i++) {
       const w = encodeWire(genDoc(r))
       // the relay as a v0.8.4 client wrote it: its own records and lists, x5 stripped
       const relayData: BackupData = {
@@ -635,8 +742,8 @@ describe('adoptableNews (§11.4, P-11)', HEAVY, () => {
       if (kept) news++
     }
     // both outcomes are exercised
-    expect(news).toBeGreaterThan(100)
-    expect(news).toBeLessThan(1400)
+    expect(news).toBeGreaterThan(130)
+    expect(news).toBeLessThan(1870)
   })
 
   it('budgets: news only when the v4 rule outcome changes on the old client', () => {

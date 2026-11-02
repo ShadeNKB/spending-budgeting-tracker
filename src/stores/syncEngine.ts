@@ -1,35 +1,55 @@
-// The v0.8 sync engine on the v4 wire: the cycle, realtime, lifecycle triggers and backoff.
+// The sync engine: PR-0's cycle, realtime, lifecycle triggers and backoff, now running the v5
+// core codec on the local engine (DATA-ENGINE-SPEC §11.3 without CAS or RPC; PR-2 track spec §9).
 // A lazy chunk: `useSyncStore` (eager, small) loads it on first use, the way this module loads
 // the Supabase SDK, so the main bundle carries only the sync state the UI reads.
 // The state below is module-level on purpose: one engine per app, loaded once.
 //
-// The merge is whole-record last-writer-wins with deterministic ties (`mergeBackups`): every
-// device resolves every pair of copies alike, so the devices converge and a cycle pushes only
-// when the merge holds something the relay does not. The v4 wire has one stamp per record:
-// when two devices edit the same record before either has seen the other's edit, the later
-// record wins whole (v5 merges per field).
+// Every pulled payload is decoded by `decodeWire` (bad rows quarantined, never merged blind) and
+// joined into the local doc by the engine's SyncPort (`applyRemote`: guard, snapshot, merge,
+// commit, journal). The merge is a join, so a cycle pushes only when the relay lacks something:
+// against a v5 writer when the digests differ, against an old writer (0.9.2 or 0.8.4) only what
+// it will keep (`decidePush`). The push is a plain upsert of the v5 wire (`x5` rides along, and
+// 0.9.2 reads the rest as the v4 payload it knows).
 
-import { storage, WRITER_VERSION } from '../services/storage'
+import {
+  MEMO_WINDOW,
+  PLAIN_MIN,
+  PUSH_MAX_WAIT,
+  PUSH_QUIET,
+  REMOTE_COALESCE,
+  WIRE_PUSH_MAX,
+} from '../data/core/constants'
+import { EMPTY_DOC, digestDoc } from '../data/core/doc'
+import { newRev } from '../data/core/ids'
+import { commitPush, decidePush } from '../data/core/push'
+import type {
+  CycleReason,
+  Doc,
+  ExpenseRec,
+  OutboxKey,
+  PushDecision,
+  SanitizeResult,
+  Stamp,
+  WriterClass,
+} from '../data/core/types'
+import { decodeWire, encodeWire, wireString } from '../data/core/wire'
+import { SafetyCopyError } from '../data/local/refusal'
+import { isRecord } from '../lib/backup'
 import {
   PayloadTooLargeError,
   SyncTransportError,
-  contentKey,
-  isSyncableExpense,
-  mergeBackups,
   pullSync,
   pushSync,
-  readRemote,
   subscribeSync,
   type RemoteChange,
-  type SyncPayload,
-  type WriterStamp,
 } from '../services/syncService'
-import { isRecord } from '../lib/backup'
-import { canon, fnv1a } from '../lib/canon'
-import { stampMs } from '../lib/stamps'
-import type { BackupData, Expense } from '../types'
-import { applySync } from './applySync'
-import { useExpenseStore } from './useExpenseStore'
+import {
+  getSyncPort,
+  useExpenseStore,
+  whenHydrated,
+  type RemoteApplied,
+  type SyncPort,
+} from './useExpenseStore'
 import { syncPanelShown, useUIStore } from './useUIStore'
 import {
   FAILING_AFTER_MS,
@@ -51,15 +71,24 @@ import {
 // Tuning
 // ---------------------------------------------------------------------------
 
-const PUSH_DEBOUNCE_MS = 3000
 const RETRY_BASE_MS = 2000
 const RETRY_MAX_MS = 60_000
-const REMOTE_COALESCE_MS = 300
 const REMOTE_MIN_GAP_MS = 2000
 const RESUME_AFTER_MS = 30_000
-// An older device that overrides our push is not pushed over again for this long.
-const OLD_WRITER_MEMO_MS = 10 * 60_000
 const ECHO_MEMORY = 8
+/** Foreign payloads kept from realtime events until the next cycle merges them (P2-10). */
+const NEWS_MEMORY = 4
+/** A relay copy this device cannot read is pushed over at most this often (P2-8). */
+export const REPAIR_EVERY_MS = MEMO_WINDOW
+/** How long a cycle waits for another tab's cycle before it runs anyway (a frozen tab, P2-18). */
+const LOCK_WAIT_MS = 35_000
+const LOCK_NAME = 'st5:sync'
+/** An old writer's sighting is persisted at most this often (it costs an envelope write). */
+const LEGACY_SEEN_EVERY_MS = 60_000
+/** The mass-removal toast stays this long, like every Undo for a bulk change (P2-12, P2-20). */
+export const MASS_UNDO_MS = 30_000
+
+export const REPAIRED_MESSAGE = 'The sync copy was damaged. Restored it from this device.'
 
 // ---------------------------------------------------------------------------
 // Module-level coordination state
@@ -69,10 +98,12 @@ const ECHO_MEMORY = 8
 let setupGen = 0
 let realtimeUnsub: (() => void) | null = null
 let subscribingGen: number | null = null
-let pushTimer: ReturnType<typeof setTimeout> | null = null
+let quietTimer: ReturnType<typeof setTimeout> | null = null
+let maxWaitTimer: ReturnType<typeof setTimeout> | null = null
 let retryTimer: ReturnType<typeof setTimeout> | null = null
 let remoteTimer: ReturnType<typeof setTimeout> | null = null
 let retryAttempt = 0
+let retryReason: CycleReason = 'again'
 let lastRemoteCycleAt = Number.NEGATIVE_INFINITY
 
 // Single flight: one cycle at a time. A trigger during a cycle sets `again` and waits for
@@ -86,20 +117,15 @@ let running = false
 let again = false
 let queued: Waiter[] = []
 let current: Waiter[] = []
-
-// Local writes are counted, so a cycle knows whether one landed while it awaited the network.
-let localRev = 0
-// True while a merge is applied to the store, so it is not counted as a local write.
-let applying = false
+/** Why the next cycle runs (the strongest reason asked for since the last one started). */
+let nextReason: CycleReason | null = null
 
 // Echo filter: what this tab sent recently. A push is known by its rev AND its content, so a
-// write that kept our `wr` (a copy of our push with edits) is still news.
+// write that kept our rev is still news unless it holds exactly the doc we sent (P2-9).
 interface SentPush {
   rev: string
-  /** Hash of the `contentKey` of what was sent (a key is as long as the payload, up to 1 MB). */
-  hash: string
-  /** The `contentKey` option it was compared with. */
-  mappingStamps: boolean
+  /** digestDoc of the doc as sent (demo rows left out on a demo build). */
+  digest: string
   /**
    * The relay answered it, so it landed before this tab sent anything newer. A push that was
    * never answered (it timed out) can still land later, over a newer one.
@@ -109,34 +135,46 @@ interface SentPush {
 const sentPushes: SentPush[] = []
 const sentUpdatedAt: number[] = []
 
-// Old (v0.8.4-) writers: the codes this tab pushed to, and when it last pushed over a given
-// (relay content, our content) pair.
-const pushedThisSession = new Set<string>()
-const oldWriterMemo = new Map<string, number>()
+// News (P2-10): foreign payloads that realtime delivered. Without compare-and-set a push that
+// crosses ours on the wire can be overwritten on the relay before this device ever pulls it;
+// the event still carried it, so the next cycle merges it (the merge is a join, so a stale or
+// repeated payload is harmless) and the relay gets it back from here.
+const news: Record<string, unknown>[] = []
 
-const toastedOnce = new Set<'too-large' | 'moved' | 'permission'>()
+// The codes this tab pushed to: an old device that writes after that is overwriting our copy.
+const pushedThisSession = new Set<string>()
+
+const toastedOnce = new Set<'too-large' | 'moved' | 'permission' | 'repair'>()
 // A failure streak runs from the first failed attempt to the next cycle that reaches the relay.
 // Offline spells in between make no attempt, so they neither end it nor restart it.
 let streakSince: number | null = null
 let streakToasted = false
 let started = false
 
+// The local engine's port this engine listens to (a re-hydrate may hand out a new one).
+let attachedPort: SyncPort | null = null
+let detachPort: (() => void) | null = null
+
 const isOffline = () => typeof navigator !== 'undefined' && !navigator.onLine
 
 // Only loaded in builds with a relay, so a saved code is all "configured" needs.
 const configured = (): boolean => useSyncStore.getState().syncId !== null
 
-const idOf = (row: unknown): string | undefined =>
-  isRecord(row) && typeof row.id === 'string' ? row.id : undefined
-
-const stampOf = (e: Expense): number => stampMs(e.updatedAt ?? e.createdAt)
-
 /** The owner is waiting on this cycle's result in the panel, which shows it there. */
 const ownerWaiting = (): boolean => current.some((w) => w.user) || queued.some((w) => w.user)
 
-function clearPushTimer() {
-  if (pushTimer) clearTimeout(pushTimer)
-  pushTimer = null
+/** Reasons that may re-publish v5-only facts to a relay an old device wrote (§11.4). */
+const REFRESH_REASONS: ReadonlySet<CycleReason> = new Set(['boot', 'resume', 'local-change'])
+
+/** Keeps a refresh reason once asked for, so a coalesced cycle never loses it. */
+const strongest = (held: CycleReason | null, asked: CycleReason): CycleReason =>
+  held !== null && REFRESH_REASONS.has(held) ? held : asked
+
+function clearPushTimers() {
+  if (quietTimer) clearTimeout(quietTimer)
+  if (maxWaitTimer) clearTimeout(maxWaitTimer)
+  quietTimer = null
+  maxWaitTimer = null
 }
 
 function clearRetry() {
@@ -145,7 +183,7 @@ function clearRetry() {
 }
 
 function clearTimers() {
-  clearPushTimer()
+  clearPushTimers()
   clearRetry()
   if (remoteTimer) clearTimeout(remoteTimer)
   remoteTimer = null
@@ -157,27 +195,80 @@ function stopRealtime() {
   unsubscribe?.()
 }
 
-function remember<T>(list: T[], value: T) {
+function remember<T>(list: T[], value: T, size = ECHO_MEMORY) {
   list.push(value)
-  if (list.length > ECHO_MEMORY) list.shift()
+  if (list.length > size) list.shift()
 }
 
-function newRev(): string {
-  const bytes = crypto.getRandomValues(new Uint8Array(16))
-  return btoa(String.fromCharCode(...bytes))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '')
+/** "1 entry", "2,000 entries": counts read the same here as in Settings and the undo toasts. */
+const entries = (n: number): string => `${n.toLocaleString()} ${n === 1 ? 'entry' : 'entries'}`
+
+// ---------------------------------------------------------------------------
+// The local engine
+// ---------------------------------------------------------------------------
+
+/** Listens to the port's commits; a port handed out by a re-hydrate replaces the old one. */
+function attach(port: SyncPort): void {
+  if (attachedPort === port) return
+  detachPort?.()
+  attachedPort = port
+  detachPort = port.onCommit(onCommit)
 }
 
-function writerStamp(): WriterStamp {
-  return {
-    app: WRITER_VERSION,
-    dev: storage.getDeviceId(),
-    rev: newRev(),
-    at: new Date().toISOString(),
-  }
+/** The port, attached, or null while the engine has not hydrated. */
+function livePort(): SyncPort | null {
+  const port = getSyncPort()
+  if (port !== null) attach(port)
+  return port
 }
+
+/**
+ * Resolves once local data is loaded (true), or as soon as it can never be (false: the local
+ * engine's code failed to load, so there is nothing to merge into).
+ */
+function engineReady(): Promise<boolean> {
+  if (getSyncPort() !== null) return Promise.resolve(true)
+  if (useExpenseStore.getState().bootError !== null) return Promise.resolve(false)
+  return new Promise((resolve) => {
+    const unsubscribe = useExpenseStore.subscribe((s) => {
+      if (s.bootError === null) return
+      unsubscribe()
+      resolve(false)
+    })
+    void whenHydrated().then(() => {
+      unsubscribe()
+      resolve(getSyncPort() !== null)
+    })
+  })
+}
+
+/** The doc as the wire carries it: demo rows stay on this device (P2-22). */
+function wireDoc(doc: Doc, omit: ((id: string) => boolean) | undefined): Doc {
+  if (omit === undefined || ![...doc.expenses.keys()].some(omit)) return doc
+  const kept = new Map<string, ExpenseRec>()
+  for (const [id, rec] of doc.expenses) if (!omit(id)) kept.set(id, rec)
+  return { ...doc, expenses: kept }
+}
+
+/** What the transport gives for a row that does not exist yet: nothing to merge. */
+const MISSING: SanitizeResult = {
+  doc: EMPTY_DOC,
+  writer: 'v5',
+  report: {
+    quarantined: [],
+    repaired: 0,
+    repairs: [],
+    deduped: 0,
+    liveAndDeleted: 0,
+    droppedKeys: [],
+  },
+  legacyTs: new Map(),
+  rev: null,
+}
+
+/** A writer whose copy is merged: v5, 0.9.2 (v085) and 0.8.4 (v084). */
+const mergeable = (writer: WriterClass): boolean =>
+  writer === 'v5' || writer === 'v085' || writer === 'v084'
 
 // ---------------------------------------------------------------------------
 // Results
@@ -186,21 +277,33 @@ function writerStamp(): WriterStamp {
 const offResult = (): SyncResult => ({ ok: false, error: 'off', message: syncMessage('off') })
 
 /**
- * A cycle that ended with the relay holding this device's state as of `snapRev`, unless
- * `heldBack` (a push held back for an old device that keeps overwriting the relay).
+ * A cycle that ended with the relay holding this device's state as of `snapRev`, except the
+ * `waiting` changes an old device on the relay has not taken yet, and unless `heldBack` (a push
+ * held back for an old device that keeps overwriting the relay).
  */
-function succeed(snapRev: number, pushed: boolean, changedLocal: boolean, heldBack: boolean) {
+function succeed(
+  snapRev: number,
+  pushed: boolean,
+  changedLocal: boolean,
+  waiting: number,
+  heldBack = false,
+) {
+  const port = livePort()
   // A local write that landed while this cycle awaited the network needs one more cycle.
-  const behind = localRev !== snapRev
-  if (behind) again = true
+  const behind = port !== null && port.localRev() !== snapRev
+  if (behind) {
+    again = true
+    nextReason = strongest(nextReason, 'local-change')
+  }
   retryAttempt = 0
   endStreak()
   useSyncStore.setState({
     cloudStatus: 'synced',
     lastSyncAt: Date.now(),
     lastError: null,
-    pendingLocal: behind || heldBack,
-    waitingForOld: heldBack,
+    // "Synced" is only true of an empty outbox (I11): every change is known to be on the relay.
+    pendingLocal: behind || heldBack || (port !== null && port.outbox().size > 0),
+    waitingForOld: heldBack || waiting > 0,
   })
   return { ok: true, pushed, changedLocal } satisfies SyncResult
 }
@@ -256,19 +359,37 @@ function pause(reason: Exclude<SyncPauseReason, 'reload'>, message: string): Syn
   return { ok: false, error: reason, message }
 }
 
+/** The local engine never loaded on this page, so there is nothing to sync until a reload. */
+function engineDown(): SyncResult {
+  const prev = useSyncStore.getState().lastError
+  const message = syncMessage('reload')
+  useSyncStore.setState({
+    cloudStatus: 'paused',
+    lastError: {
+      kind: 'reload',
+      message,
+      since: prev?.kind === 'reload' ? prev.since : Date.now(),
+    },
+  })
+  return { ok: false, error: 'reload', message }
+}
+
+/** A relay copy this device cannot read, while its repair is not due yet (P2-8). */
 class InvalidRemoteError extends Error {}
 
-function fail(err: unknown): SyncResult {
+function fail(err: unknown, reason: CycleReason): SyncResult {
   if (err instanceof PayloadTooLargeError) {
     return pause('too-large', syncMessage('too-large', Math.round(err.bytes / 1024)))
   }
   const kind: SyncErrorKind = err instanceof SyncTransportError ? err.kind : 'invalid'
   if (kind === 'network' && isOffline()) return goOffline()
-  const message = syncMessage(kind)
+  // A merge the engine refused for want of room for its safety copy says so in its own words:
+  // the synced copy read fine, and nothing was removed here.
+  const message = err instanceof SafetyCopyError ? err.message : syncMessage(kind)
   streakSince ??= Date.now()
   const since = streakSince
   useSyncStore.setState({ cloudStatus: 'error', lastError: { kind, message, since } })
-  scheduleRetry()
+  scheduleRetry(reason)
   // The pill is desktop-only, so on a phone a toast is what says it: refused access (red, it
   // needs the owner) at once and once per session, any other streak once it has failed for 10
   // minutes. A cycle the owner asked for shows its own result instead, and where the pill or
@@ -284,192 +405,286 @@ function fail(err: unknown): SyncResult {
   return { ok: false, error: kind, message }
 }
 
-function scheduleRetry() {
+function scheduleRetry(reason: CycleReason) {
   clearRetry()
   if (isOffline()) return // the 'online' handler resumes
+  retryReason = reason
   retryAttempt = Math.min(retryAttempt + 1, 16)
   const delay = Math.min(RETRY_MAX_MS, RETRY_BASE_MS * 2 ** (retryAttempt - 1))
   retryTimer = setTimeout(() => {
     retryTimer = null
-    void requestCycle()
+    void requestCycle(retryReason)
   }, delay)
+}
+
+// ---------------------------------------------------------------------------
+// What a merge tells the owner
+// ---------------------------------------------------------------------------
+
+/** The guard tripped (§11.9): applied, snapshotted and journaled; one tap brings it all back. */
+function toastMassRemoval(mass: NonNullable<RemoteApplied['mass']>): void {
+  useUIStore.getState().pushToast({
+    kind: 'warning',
+    message: `Your other device removed ${entries(mass.count)}`,
+    duration: MASS_UNDO_MS,
+    action: {
+      label: 'Undo',
+      onClick: () => {
+        void restoreMass(mass.entryId)
+      },
+    },
+  })
+}
+
+async function restoreMass(entryId: string): Promise<void> {
+  const ui = useUIStore.getState()
+  try {
+    const { applied } = await useExpenseStore.getState().restoreJournal(entryId)
+    ui.pushToast({
+      kind: 'success',
+      message: applied > 0 ? `Restored ${entries(applied)}` : 'Those entries are already back.',
+    })
+  } catch (err) {
+    ui.pushToast({
+      kind: 'error',
+      message: err instanceof Error ? err.message : "Couldn't restore those entries.",
+    })
+  }
+}
+
+/** An old device wrote the relay: remember when (§11.10), and banner a v0.8.4 overwriting us. */
+function noteWriter(code: string, writer: WriterClass, port: SyncPort, now: number): void {
+  if (writer !== 'v084' && writer !== 'v085') return
+  const seen = port.meta().legacySeen
+  if (now - (seen[writer] ?? Number.NEGATIVE_INFINITY) >= LEGACY_SEEN_EVERY_MS) {
+    port.setMeta({ legacySeen: { ...seen, [writer]: now } })
+  }
+  // An old device wrote after this one: tell the owner to update it.
+  if (writer === 'v084' && pushedThisSession.has(code)) {
+    useSyncStore.setState({ legacyWriterAt: now })
+  }
 }
 
 // ---------------------------------------------------------------------------
 // The cycle
 // ---------------------------------------------------------------------------
 
-/** The relay before its first push: merging with it normalises the local copy. */
-const EMPTY: BackupData = {
-  expenses: [],
-  categories: [],
-  categoryMappings: {},
-  deletedIds: [],
-  exportDate: '',
-  version: '4.0',
-}
-
-/**
- * A v0.8.4 device re-files rows by keyword (and renames) without touching their stamps, so its
- * copy ties with this one and differs only in the category. The content tie-break would adopt
- * its re-file for some rows (F-015 spreading again); this device keeps its own copy instead.
- * Only for a legacy writer: v0.8.5 and v5 stamp every change, so a tie from them is a real tie
- * that every device must resolve alike.
- */
-function keepLocalRefiles(
-  merged: BackupData,
-  local: readonly Expense[],
-  remote: readonly Expense[],
-): BackupData {
-  const mine = new Map(local.map((e) => [e.id, e]))
-  const theirs = new Map(remote.map((e) => [e.id, e]))
-  const expenses = merged.expenses.map((m) => {
-    const l = mine.get(m.id)
-    const r = theirs.get(m.id)
-    if (!l || !r || m === l || l.category === r.category || stampOf(l) !== stampOf(r)) return m
-    if (canon({ ...l, category: undefined }) !== canon({ ...r, category: undefined })) return m
-    return l
-  })
-  return expenses.some((e, i) => e !== merged.expenses[i]) ? { ...merged, expenses } : merged
-}
+const REPAIR: PushDecision = { kind: 'push', why: 'repair', memoKey: null }
+const MERGE_ONLY: PushDecision = { kind: 'none', why: 'newer', memoKey: null }
 
 type Step =
   | { kind: 'done'; result: SyncResult }
   | {
       kind: 'push'
-      payload: SyncPayload
+      wire: unknown
       sent: SentPush
+      /** The outbox entries this push carries (acknowledged once it lands). */
+      outbox: readonly (readonly [OutboxKey, Stamp])[]
+      dec: SanitizeResult
+      decision: PushDecision
       snapRev: number
       changedLocal: boolean
-      memoKey: string | null
     }
 
+const done = (result: SyncResult): Step => ({ kind: 'done', result })
+
 /**
- * The synchronous section: read the pulled payload, merge it into the CURRENT local state,
- * apply the result and decide what to push, with no await in between, so a local write can
- * never be overwritten by a merge of an older snapshot.
+ * The synchronous section: merge the news and the pulled payload into the CURRENT local doc,
+ * commit it and decide what to push, with no await in between, so a local write can never be
+ * overwritten by a merge of an older snapshot (F-001).
  */
-function mergeStep(code: string, raw: unknown): Step {
-  const rem = readRemote(raw)
-  if (rem.kind === 'moved' || rem.kind === 'update-required') {
-    return { kind: 'done', result: pause(rem.kind, syncMessage(rem.kind)) }
-  }
-  if (rem.kind === 'invalid') throw new InvalidRemoteError(rem.reason)
-
-  const snapRev = localRev
-  clearPushTimer() // this cycle carries every change made so far
-  const local = useExpenseStore.getState().exportBackup()
-  // Rows this version cannot read are merged by no one: they stay in the store (unless the
-  // merge has a row or a tombstone with their id) and are never sent.
-  const readable = local.expenses.filter(isSyncableExpense)
-  const unreadable = local.expenses.filter((row) => !isSyncableExpense(row))
-  const mine: BackupData = { ...local, expenses: readable }
-  const legacy = rem.kind === 'ok' && rem.writer === 'legacy'
-  const remote = rem.kind === 'ok' ? rem.data : EMPTY
-  const plain = mergeBackups(mine, remote)
-  const merged = legacy ? keepLocalRefiles(plain, readable, remote.expenses) : plain
-
-  const known = new Set([...merged.expenses.map((e) => e.id), ...(merged.deletedIds ?? [])])
-  const keep = unreadable.filter((row) => {
-    const id = idOf(row)
-    return id === undefined || !known.has(id)
-  })
-  // Relay rows we could not read go back as they were, unless they have been deleted.
-  const dead = new Set(merged.deletedIds ?? [])
-  const passthrough =
-    rem.kind === 'ok'
-      ? rem.passthrough.filter((row) => {
-          const id = idOf(row)
-          return id === undefined || !dead.has(id)
-        })
-      : []
-
-  applying = true
-  let changedLocal: boolean
-  try {
-    changedLocal = applySync(
-      keep.length ? { ...merged, expenses: [...merged.expenses, ...keep] } : merged,
-    )
-  } finally {
-    applying = false
+function mergeStep(code: string, raw: unknown, reason: CycleReason): Step {
+  const port = livePort()
+  if (port === null) return done(engineDown())
+  const now = Date.now()
+  clearPushTimers() // this cycle carries every change made so far
+  let changedLocal = false
+  const take = (applied: RemoteApplied) => {
+    changedLocal ||= applied.changedLocal
+    if (applied.mass !== null) toastMassRemoval(applied.mass)
   }
 
-  const outgoing = { ...merged, expenses: [...passthrough, ...merged.expenses], version: '4.0' }
-  // A v0.8.4 writer drops the mapping stamps on every push: against its copy, the mappings
-  // themselves are what can be compared.
-  const keyOpts = { mappingStamps: !legacy }
-  const outKey = contentKey(outgoing, keyOpts)
-  const relayKey = rem.kind === 'ok' ? contentKey(raw, keyOpts) : null
-
-  const pushedBefore = pushedThisSession.has(code)
-  // An old device wrote after this one: tell the owner to update it.
-  if (legacy && pushedBefore) useSyncStore.setState({ legacyWriterAt: Date.now() })
-  const memoKey = legacy && relayKey !== null ? fnv1a(`${relayKey}\n${outKey}`) : null
-
-  const equal = outKey === relayKey
-  // Equal content needs no push, except once per session over an old writer's row: the row
-  // then carries our stamp, so other devices (and v5) stop reading it as an old device's write.
-  if (equal && !(legacy && !pushedBefore)) {
-    return { kind: 'done', result: succeed(snapRev, false, changedLocal, false) }
-  }
-  if (
-    !equal &&
-    memoKey !== null &&
-    (oldWriterMemo.get(memoKey) ?? Number.NEGATIVE_INFINITY) > Date.now() - OLD_WRITER_MEMO_MS
-  ) {
-    // An old device already overwrote this exact push; pushing again would ping-pong.
-    return { kind: 'done', result: succeed(snapRev, false, changedLocal, true) }
+  // News first: what realtime carried and the relay may since have lost to a crossing push. A
+  // merge the engine refuses for want of room for its safety copy keeps that payload and the
+  // rest for the next cycle: the event may be the only copy of what it carried.
+  const pending = news.splice(0)
+  for (const [i, payload] of pending.entries()) {
+    const item = decodeWire(payload, 'remote', { reuse: port.doc(), at: now })
+    if (!mergeable(item.writer)) continue
+    try {
+      take(port.applyRemote(item))
+    } catch (err) {
+      if (err instanceof SafetyCopyError) news.unshift(...pending.slice(i))
+      throw err
+    }
   }
 
-  const payload: SyncPayload = { ...outgoing, wr: writerStamp() }
+  const missing = raw === null || raw === undefined
+  const dec = missing ? MISSING : decodeWire(raw, 'remote', { reuse: port.doc(), at: now })
+  if (dec.writer === 'moved') return done(pause('moved', syncMessage('moved')))
+  if (dec.writer === 'e2e') return done(pause('update-required', syncMessage('update-required')))
+  const repair = dec.writer === 'invalid'
+  if (repair) {
+    // Kept for the owner (needs attention), never merged; pushed over at most every 10 minutes,
+    // so two devices that disagree about the copy cannot overwrite each other in a loop.
+    port.quarantine(dec.report.quarantined)
+    if (now - port.meta().repairAt < REPAIR_EVERY_MS) throw new InvalidRemoteError()
+    // The quarantine entry holds an excerpt; the push over the copy waits until this device
+    // keeps all of it (P2-8, P2-16: never overwrite the only copy of something).
+    if (!port.keepRelayCopy(raw)) throw new InvalidRemoteError()
+  }
+
+  const snapRev = port.localRev()
+  const sent = [...port.outbox()]
+  // A newer SpendTrack's copy is merged too (its data is ours as well); it is only never pushed over.
+  if (!missing && (mergeable(dec.writer) || dec.writer === 'newer')) take(port.applyRemote(dec))
+  noteWriter(code, dec.writer, port, now)
+
+  const omitIds = port.omitIds()
+  const local = wireDoc(port.doc(), omitIds)
+  let decision =
+    dec.writer === 'newer'
+      ? MERGE_ONLY
+      : repair
+        ? REPAIR
+        : decidePush(local, dec, missing ? null : { etag: '' }, reason, port.meta().memo, now)
+  // The memo holds back the push an old device already overwrote, never a change made since:
+  // that one gets its push (bounded by the owner's own changes, so it cannot loop).
+  if (decision.kind === 'suppressed' && sent.length > 0) {
+    decision = { kind: 'push', why: 'adoptable', memoKey: decision.memoKey }
+  }
+  if (decision.kind !== 'push') {
+    const waiting = port.ack(sent, dec, decision)
+    // A newer SpendTrack wrote the relay: its data is merged here, and nothing is pushed over it.
+    if (dec.writer === 'newer')
+      return done(pause('update-required', syncMessage('update-required')))
+    // Held back: an old device overwrote this exact push, so the relay lacks what is here.
+    return done(succeed(snapRev, false, changedLocal, waiting, decision.kind === 'suppressed'))
+  }
+
+  const rev = newRev(() => port.rng())
+  const opts = { dev: port.deviceId(), rev, min: PLAIN_MIN, omitIds }
+  const chars = wireString(port.doc(), opts).length
+  if (chars > WIRE_PUSH_MAX) {
+    return done(pause('too-large', syncMessage('too-large', Math.round(chars / 1024))))
+  }
   // Remembered before sending, so our own echo is filtered however early it arrives, and a
   // push that lands although its answer never came back (a timeout) is still known as ours.
-  const sent: SentPush = {
-    rev: payload.wr.rev,
-    hash: fnv1a(outKey),
-    mappingStamps: keyOpts.mappingStamps,
-    answered: false,
+  const sentPush: SentPush = { rev, digest: digestDoc(local), answered: false }
+  remember(sentPushes, sentPush)
+  return {
+    kind: 'push',
+    wire: encodeWire(port.doc(), opts),
+    sent: sentPush,
+    outbox: sent,
+    dec,
+    decision,
+    snapRev,
+    changedLocal,
   }
-  remember(sentPushes, sent)
-  return { kind: 'push', payload, sent, snapRev, changedLocal, memoKey }
 }
 
-async function runCycle(): Promise<SyncResult> {
-  const code = useSyncStore.getState().syncId
-  if (code === null) return offResult()
-  const gen = setupGen
-  if (isOffline()) return goOffline()
-  useSyncStore.setState({ cloudStatus: 'syncing' })
+/** After a push lands: the memo, the outbox and the repair stamp (never before, M4). */
+function landed(step: Extract<Step, { kind: 'push' }>): number {
+  const port = livePort()
+  if (port === null) return 0
+  const now = Date.now()
+  const repaired = step.decision.why === 'repair'
+  port.setMeta({
+    lastRev: step.sent.rev,
+    memo: commitPush(port.meta().memo, step.decision, now),
+    ...(repaired ? { repairAt: now } : {}),
+  })
+  const waiting = port.ack(step.outbox, step.dec, 'pushed')
+  if (repaired && !toastedOnce.has('repair')) {
+    toastedOnce.add('repair')
+    useUIStore.getState().pushToast({ kind: 'warning', message: REPAIRED_MESSAGE })
+  }
+  return waiting
+}
 
+async function cycle(code: string, gen: number, reason: CycleReason): Promise<SyncResult> {
+  useSyncStore.setState({ cloudStatus: 'syncing' })
   let raw: unknown
   try {
     raw = await pullSync(code)
   } catch (err) {
-    return gen === setupGen ? fail(err) : offResult()
+    return gen === setupGen ? fail(err, reason) : offResult()
   }
   if (gen !== setupGen) return offResult() // disconnected or switched code: discard
 
   let step: Step
   try {
-    step = mergeStep(code, raw)
+    step = mergeStep(code, raw, reason)
   } catch (err) {
-    return fail(err)
+    return fail(err, reason)
   }
   if (step.kind === 'done') return step.result
 
   let updatedAt: string
   try {
-    updatedAt = (await pushSync(code, step.payload)).updatedAt
+    updatedAt = (await pushSync(code, step.wire)).updatedAt
   } catch (err) {
-    return gen === setupGen ? fail(err) : offResult()
+    return gen === setupGen ? fail(err, reason) : offResult()
   }
   step.sent.answered = true
   if (gen !== setupGen) return offResult()
   remember(sentUpdatedAt, Date.parse(updatedAt))
   pushedThisSession.add(code)
-  if (step.memoKey !== null) oldWriterMemo.set(step.memoKey, Date.now())
   // The relay received this state, so "Synced" is honest.
-  return succeed(step.snapRev, true, step.changedLocal, false)
+  return succeed(step.snapRev, true, step.changedLocal, landed(step))
+}
+
+function lockManager(): LockManager | null {
+  if (typeof navigator === 'undefined') return null
+  const locks: unknown = Reflect.get(navigator, 'locks')
+  return isLockManager(locks) ? locks : null
+}
+
+const isLockManager = (value: unknown): value is LockManager =>
+  isRecord(value) && typeof value.request === 'function'
+
+/**
+ * One cycle at a time across this device's tabs (P2-18), so two tabs never push over each other.
+ * A tab that holds the lock too long (frozen in the background) cannot stop this one syncing:
+ * the merge is a join, so two cycles at once only cost a push.
+ */
+async function withLock(run: () => Promise<SyncResult>): Promise<SyncResult> {
+  const locks = lockManager()
+  if (locks === null) return run()
+  const giveUp = new AbortController()
+  const timer = setTimeout(() => {
+    giveUp.abort()
+  }, LOCK_WAIT_MS)
+  // An object, not a `let`: the grant happens in a callback the type checker cannot follow.
+  const lock = { granted: false }
+  try {
+    return await locks.request(LOCK_NAME, { signal: giveUp.signal }, () => {
+      lock.granted = true
+      clearTimeout(timer)
+      return run()
+    })
+  } catch (err) {
+    // A cycle that failed inside the lock fails as it would without one.
+    if (lock.granted) throw err
+    // Never granted: another tab held it too long (a frozen tab), or this page may not lock.
+    clearTimeout(timer)
+    return run()
+  }
+}
+
+async function runCycle(reason: CycleReason): Promise<SyncResult> {
+  const code = useSyncStore.getState().syncId
+  if (code === null) return offResult()
+  const gen = setupGen
+  if (isOffline()) return goOffline()
+  // A cycle may be asked for before local data has loaded (start-up with a saved code): it
+  // merges into the loaded doc, never into an empty one.
+  const ready = await engineReady()
+  if (gen !== setupGen) return offResult()
+  if (!ready) return engineDown()
+  if (isOffline()) return goOffline()
+  return withLock(() => cycle(code, gen, reason))
 }
 
 // Read through a function: cycles change these while the loop awaits.
@@ -483,12 +698,14 @@ async function runLoop(): Promise<void> {
       queued = []
       again = false
       clearRetry()
+      const reason = nextReason ?? 'again'
+      nextReason = null
       const gen = setupGen
       let result: SyncResult
       try {
-        result = await runCycle()
+        result = await runCycle(reason)
       } catch (err) {
-        result = fail(err)
+        result = fail(err, reason)
       }
       for (const waiter of current) waiter.resolve(result)
       current = []
@@ -507,10 +724,11 @@ async function runLoop(): Promise<void> {
   }
 }
 
-function requestCycle(user = false): Promise<SyncResult> {
+function requestCycle(reason: CycleReason, user = false): Promise<SyncResult> {
   if (!configured()) return Promise.resolve(offResult())
   return new Promise((resolve) => {
     queued.push({ resolve, user })
+    nextReason = strongest(nextReason, reason)
     if (running) again = true
     else void runLoop()
   })
@@ -521,27 +739,28 @@ function requestCycle(user = false): Promise<SyncResult> {
 // ---------------------------------------------------------------------------
 
 /**
- * The event is our own push coming back: our rev, and exactly the content we sent, from a push
- * that cannot have landed over a newer one (the latest, or one the relay answered before
- * anything newer was sent). An older push that was never answered (it timed out) and lands
- * after a newer one has put the relay back: that is news, and the cycle it starts repairs it.
+ * The event is our own push coming back: our rev, exactly the doc we sent, from a push that
+ * cannot have landed over a newer one (the latest, or one the relay answered before anything
+ * newer was sent). An older push that was never answered (it timed out) and lands after a newer
+ * one has put the relay back: that is news, and the cycle it starts repairs it (P2-9).
  */
 function isOwnEcho(payload: Record<string, unknown>): boolean {
-  const wr = payload.wr
-  if (!isRecord(wr)) return false
-  const rev = wr.rev
+  const x5 = payload.x5
+  if (!isRecord(x5)) return false
+  const rev = x5.rev
   const sent = sentPushes.find((push) => push.rev === rev)
-  return (
-    sent !== undefined &&
-    (sent.answered || sent === sentPushes.at(-1)) &&
-    fnv1a(contentKey(payload, { mappingStamps: sent.mappingStamps })) === sent.hash
-  )
+  if (sent === undefined || !(sent.answered || sent === sentPushes.at(-1))) return false
+  const port = getSyncPort()
+  if (port === null) return false
+  const echoed = decodeWire(payload, 'remote', { reuse: port.doc(), at: Date.now() })
+  return digestDoc(echoed.doc) === sent.digest
 }
 
 function onRemoteChange(change: RemoteChange) {
   const { payload } = change
   if (isRecord(payload)) {
     if (isOwnEcho(payload)) return
+    remember(news, payload, NEWS_MEMORY)
   } else if (
     payload === undefined &&
     change.updatedAt !== null &&
@@ -551,11 +770,11 @@ function onRemoteChange(change: RemoteChange) {
   }
   // Coalesce a burst into one pull, and start remote-triggered cycles at least 2 s apart.
   if (remoteTimer) return
-  const wait = Math.max(REMOTE_COALESCE_MS, lastRemoteCycleAt + REMOTE_MIN_GAP_MS - Date.now())
+  const wait = Math.max(REMOTE_COALESCE, lastRemoteCycleAt + REMOTE_MIN_GAP_MS - Date.now())
   remoteTimer = setTimeout(() => {
     remoteTimer = null
     lastRemoteCycleAt = Date.now()
-    void requestCycle()
+    void requestCycle('remote')
   }, wait)
 }
 
@@ -570,7 +789,7 @@ async function ensureSubscribed(gen: number): Promise<void> {
       },
       // Events are not replayed after a drop, so every (re)subscribe catches up with a cycle.
       onSubscribed: () => {
-        if (gen === setupGen) void requestCycle()
+        if (gen === setupGen) void requestCycle('resubscribe')
       },
     })
     if (gen === setupGen) {
@@ -601,6 +820,7 @@ export async function setupSync(syncId: string, user: boolean): Promise<SyncResu
   clearTimers()
   retryAttempt = 0
   endStreak()
+  if (!sameCode) news.length = 0 // another code's relay copy is no news for this one
   useSyncStore.setState({
     syncId,
     cloudStatus: 'idle',
@@ -611,7 +831,8 @@ export async function setupSync(syncId: string, user: boolean): Promise<SyncResu
     legacyWriterAt: sameCode ? useSyncStore.getState().legacyWriterAt : null,
   })
   // Pull first, then subscribe; SUBSCRIBED runs one more cycle to close the gap between.
-  const result = await requestCycle(user)
+  // The first cycle on a code is a boot: it may publish what an old writer's copy lacks (§11.4).
+  const result = await requestCycle('boot', user)
   if (gen === setupGen && !isOffline()) await ensureSubscribed(gen)
   return result
 }
@@ -622,60 +843,65 @@ export function stop(): void {
   stopRealtime()
   clearTimers()
   retryAttempt = 0
+  news.length = 0
 }
 
 export function triggerSync(opts?: { resetBackoff?: boolean }): Promise<SyncResult> {
   if (opts?.resetBackoff) retryAttempt = 0
-  return requestCycle(true)
+  return requestCycle('manual', true)
 }
 
+/** A local change: sync once it has been quiet for 1.5 s, and at most 5 s after the first. */
 export function scheduleSyncPush(): void {
   if (!configured()) return
-  clearPushTimer()
-  pushTimer = setTimeout(() => {
-    pushTimer = null
-    void requestCycle()
-  }, PUSH_DEBOUNCE_MS)
+  if (quietTimer) clearTimeout(quietTimer)
+  const fire = () => {
+    clearPushTimers()
+    void requestCycle('local-change')
+  }
+  quietTimer = setTimeout(fire, PUSH_QUIET)
+  maxWaitTimer ??= setTimeout(fire, PUSH_MAX_WAIT)
 }
 
 // ---------------------------------------------------------------------------
-// Wiring: local changes and app lifecycle → cycles
+// Wiring: local commits and app lifecycle → cycles
 // ---------------------------------------------------------------------------
 
-type ExpenseSnapshot = ReturnType<typeof useExpenseStore.getState>
-
-const syncedCollections = (s: ExpenseSnapshot): readonly unknown[] => [
-  s.expenses,
-  s.categories,
-  s.categoryMappings,
-  s.mappingUpdatedAt,
-  s.budgets,
-  s.budgetUpdatedAt,
-  s.budgetDeletedAt,
-  s.deletedIds,
-]
-
-function onLocalChange() {
-  if (applying || !useExpenseStore.getState().hydrated) return
-  localRev++
+function onCommit(source: 'local' | 'tab' | 'remote' | 'boot') {
   if (!configured()) return
-  // A change the relay has not seen: the next cycle pushes it, even over an old device's copy
-  // (the old-writer memo holds back only the exact push that device already overwrote).
-  const { pendingLocal, waitingForOld } = useSyncStore.getState()
-  if (!pendingLocal || waitingForOld) {
-    useSyncStore.setState({ pendingLocal: true, waitingForOld: false })
+  if (source === 'local' || source === 'tab') {
+    // A change the relay has not seen: the next cycle pushes it, even over an old device's copy.
+    const { pendingLocal, waitingForOld } = useSyncStore.getState()
+    if (!pendingLocal || waitingForOld) {
+      useSyncStore.setState({ pendingLocal: true, waitingForOld: false })
+    }
+    scheduleSyncPush()
+    return
   }
-  scheduleSyncPush()
+  if (source === 'boot') {
+    // Local data was loaded again: what it still has to send is what the outbox says.
+    const port = getSyncPort()
+    if (port !== null && port.outbox().size > 0 && !useSyncStore.getState().pendingLocal) {
+      useSyncStore.setState({ pendingLocal: true })
+    }
+  }
+}
+
+/** Something not yet on the relay: a change waiting for its push, or the durable outbox. */
+function unsent(): boolean {
+  if (quietTimer !== null) return true
+  const port = getSyncPort()
+  return port === null ? useSyncStore.getState().pendingLocal : port.outbox().size > 0
 }
 
 function onVisibilityChange() {
   if (document.visibilityState === 'hidden') {
-    // Persistence has already written the save (its listener runs first, from bootstrap). Send
-    // anything not yet on the relay now: a backgrounded app may be suspended before the 3 s
+    // The local engine has already written the save (its listener runs first, from bootstrap).
+    // Send anything not yet on the relay now: a backgrounded app may be suspended before the
     // push timer fires.
-    if (configured() && (pushTimer !== null || useSyncStore.getState().pendingLocal)) {
-      clearPushTimer()
-      void requestCycle()
+    if (configured() && unsent()) {
+      clearPushTimers()
+      void requestCycle('hide')
     }
     return
   }
@@ -683,7 +909,7 @@ function onVisibilityChange() {
   if (Date.now() - (useSyncStore.getState().lastSyncAt ?? 0) > RESUME_AFTER_MS) {
     retryAttempt = 0
     void ensureSubscribed(setupGen)
-    void requestCycle()
+    void requestCycle('resume')
   }
 }
 
@@ -691,7 +917,7 @@ function onOnline() {
   if (!configured()) return
   retryAttempt = 0
   void ensureSubscribed(setupGen)
-  void requestCycle()
+  void requestCycle('online')
 }
 
 function onOffline() {
@@ -700,12 +926,12 @@ function onOffline() {
   if (configured()) goOffline()
 }
 
-/** Wires local changes and lifecycle events to cycles. Runs once, when the engine loads. */
+/** Wires local commits and lifecycle events to cycles. Runs once, when the engine loads. */
 export function start(): void {
   if (started) return
   started = true
-  useExpenseStore.subscribe(syncedCollections, onLocalChange, {
-    equalityFn: (a, b) => a.every((value, i) => value === b[i]),
+  void whenHydrated().then(() => {
+    livePort()
   })
   if (typeof window !== 'undefined') {
     document.addEventListener('visibilitychange', onVisibilityChange)

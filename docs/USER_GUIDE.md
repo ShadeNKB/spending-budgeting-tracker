@@ -49,7 +49,7 @@ Pills under the bar show what will be saved (name, amount, category, date) befor
 
 - Everything else, as typed. `monthly`, `weekly` and `yearly` at the end are dropped from the name; they do not set up a recurring charge yet.
 
-Quick adds are stored at midday of their day, the same as the full entry form.
+Every entry is stored with the calendar day it is for (and that day at midday local time), the same from quick add and the full entry form, so it stays on that day in every time zone.
 
 ## Daily Workflow
 
@@ -57,7 +57,13 @@ Quick adds are stored at midday of their day, the same as the full entry form.
 2. Use Pulse to check current month pace.
 3. Use Ledger to search, filter, edit, or delete entries.
 4. Use Insights to spot recurring charges and spending changes.
-5. Export a JSON backup regularly if the data matters to you.
+5. Download a JSON backup regularly if the data matters to you (Settings → **Backup** shows when you last did).
+
+## Categories and budgets
+
+Settings → **Categories**: add a category, rename one by typing over its name, or delete one. Deleting a category moves its entries to **Other** and removes its budget; **Undo** on the toast brings both back. Other is where those entries go, so it can't be renamed or deleted. A name SpendTrack can't use (longer than 60 characters, or reserved such as `constructor`) is refused with the reason, and nothing changes.
+
+Settings → **Budgets**: a monthly cap per category, more than 0 and at most 10,000,000. Empty the field to remove a budget.
 
 ## Cross-device sync
 
@@ -77,36 +83,46 @@ There are no accounts and no passwords — a UUID sync code acts as the shared s
 **About the sync code:**
 
 - Treat it like a password — anyone with it can read and write your synced data. Don't share it in chats or screenshots.
-- Pair as many devices as you like with the same code (phone + laptop + tablet + work browser, etc.). Expenses and budgets merge with last-write-wins metadata.
+- Pair as many devices as you like with the same code (phone + laptop + tablet + work browser, etc.). Changes from every device are merged; nothing is overwritten wholesale.
 - If you ever lose the code, just generate a new one. The old bucket stays in Supabase for 90 days then auto-prunes if `prune_stale_sync_buckets()` is scheduled.
 - This no-account relay is designed for a personal Supabase project. It uses broad anon table access, so it is not a hardened multi-user SaaS security model.
 
 How it works:
 
-- localStorage stays the source of truth — the cloud is a stateless relay.
-- Each expense merges by **last-write-wins** using its `updatedAt` (or `createdAt`) timestamp.
-- Each budget category merges by set/delete timestamps, so stale tabs cannot revert newer budget changes.
-- Tombstone sets propagate deletions across devices, so deleted expenses and removed budgets do not resurrect.
-- Local edits push 3 seconds after your last change. Remote edits arrive instantly via Supabase Realtime.
-- If a push fails, retries back off exponentially (1.5 s × 2ⁿ, capped at 2 minutes) until you're online again.
+- Each device keeps its own full copy — the cloud is a relay between them.
+- Each field of an entry (name, amount, category, date, notes) merges on its own, newest change wins, so an amount edited on the phone and a category changed on the laptop both survive.
+- Budgets, item categories, category renames and the currency merge the same way, so a stale device cannot revert a newer change. The currency you pick applies on every synced device.
+- Deletions travel as dated markers, so a deleted entry never comes back, and an Undo (or a restore from a backup) brings it back everywhere.
+- Your changes go out 1.5 seconds after you stop (5 seconds at most while you keep typing); other devices' changes arrive at once via Supabase Realtime. Changes made offline are kept and sent when you are back.
+- If a push fails, retries back off (2 s × 2ⁿ, at most a minute). The pill says **Synced** only when every change has reached the relay.
+- If your other device removes a lot of entries at once (10 or more, and 50 or more or a tenth of everything), this device keeps a copy first and says "Your other device removed N entries" with **Undo** for 30 seconds.
+- A device still on 0.9.2 keeps syncing with this version, and a 0.9.2 device's entries reach the relay even when two pushes cross. Update every device when you can.
 
-If you'd rather not run a Supabase project, JSON export/import works the same way it always did.
+If you'd rather not run a Supabase project, a JSON backup moves your data between devices: download it on one, import it on the other.
 
 ## Backups
 
-SpendTrack stores data in browser `localStorage`. This keeps the app private and fast, but browser storage is still local storage.
+SpendTrack keeps your data in this browser's storage, in one safety-checked copy written the moment you add or change anything (nothing waits to be saved when you switch apps). Before every big change (delete all, an import, a large removal from another device) it keeps a snapshot on the device, and it keeps a second copy in the format of 0.9.x, so going back to an older version keeps everything too. Anything it ever finds damaged is set aside, never deleted.
 
-Export a JSON backup before:
+Settings → **Backup** shows:
 
-- clearing browser data
-- switching browsers
-- changing devices (if you don't have sync configured)
-- reinstalling the app
-- testing with real spending records
+- where your data lives: only on this device, or synced through your relay (every linked device has a full copy; the relay copy isn't encrypted yet, so anyone with this app's public key could read it);
+- whether the browser protects the storage from automatic cleanup, and when you last downloaded a backup;
+- **Download JSON backup** and **Export to CSV** (for Excel, Google Sheets or another finance tool).
 
-Use CSV export when you want to analyse records in Excel, Google Sheets, or another finance tool.
+Download a JSON backup before you clear browser data, switch browsers or devices (without sync), or reinstall the app.
 
-If browser storage is full, SpendTrack will surface a toast prompting you to export and clear data before continuing — it never silently fails to persist.
+**Import JSON backup** shows what the file would do before anything changes: how many entries are in it, new, restored (they had been deleted), updated, already here, and any it can't read. **Restore** (the default) only adds and brings back; nothing on this device or your other devices is removed, and the next sync keeps it. **Replace instead…** makes the file the whole truth and deletes the entries that aren't in it, on every linked device; you type REPLACE to confirm. Both can be undone for 30 seconds. A backup from a newer SpendTrack is refused.
+
+**Needs attention** appears when entries couldn't be read (from storage, a file or the relay). They're kept on the device, untouched; **Download them** saves them as they are.
+
+Deleting:
+
+- Without sync, **Delete all entries** removes every entry on this device. A copy is kept and you can undo for 30 seconds.
+- With sync, the two actions do different things. **Delete all N entries everywhere** removes them on every linked device (type DELETE to confirm; a copy is kept here and you can undo for 30 seconds). **Remove SpendTrack from this device only** forgets this device's data and its sync code and starts fresh, while your other devices and the relay keep everything. The backup comes first, as its own tap (untick it to skip it); while changes on this device haven't synced yet, the backup is required, since nothing else keeps them.
+- In the demo, **Clear sample data** removes the sample entries for good.
+
+If storage is full, SpendTrack says "Not saved: storage is full" and keeps trying; it never claims a change was saved when it wasn't. Download a backup and free some space.
 
 ## Privacy Model
 
@@ -115,18 +131,18 @@ SpendTrack has no built-in backend and no account system. Your spending data sta
 That means:
 
 - no third-party analytics, no telemetry
-- no cloud recovery unless you set up sync (or export your own backups)
+- no cloud recovery unless you set up sync (or download your own backups)
 - the UUID sync code is your only credential — treat it like a password
 
 ## Operational limits
 
-|                          |                                                                                                                                                                              |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **localStorage cap**     | ~5–10 MB per browser (varies by device). SpendTrack alerts you with a toast if storage is full and stops silently — never silent data loss.                                  |
-| **Sync device count**    | Unbounded — pair any number of devices with the same code; expenses and budgets merge via last-write-wins metadata.                                                          |
-| **Sync payload size**    | Soft warning at 800 KB, hard reject at 1 MB (Supabase row limit). Tombstone array auto-caps at 1000 entries.                                                                 |
-| **Tested expense count** | Up to ~5000 entries renders smoothly. Beyond that, Ledger may benefit from virtualised scrolling — not yet implemented.                                                      |
-| **Time zones**           | Entries are kept at midday local time; every screen groups by the device's calendar day. A device set over 12 hours away from where an entry was made can show it a day off. |
+|                          |                                                                                                                                             |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| **localStorage cap**     | ~5–10 MB per browser (varies by device). When it is full SpendTrack says "Not saved: storage is full" and retries — never silent data loss. |
+| **Sync device count**    | Unbounded — pair any number of devices with the same code; expenses and budgets merge via last-write-wins metadata.                         |
+| **Sync payload size**    | Sync pauses before a push would pass the relay's row limit (about 1 MB) and says so; your data stays saved on the device.                   |
+| **Tested expense count** | Up to ~5000 entries renders smoothly; the Ledger list is virtualised.                                                                       |
+| **Time zones**           | Each entry keeps the calendar day it was logged for; every screen, the CSV and backups use that day, in any time zone.                      |
 
 ## What SpendTrack doesn't do
 
@@ -135,7 +151,7 @@ It is intentionally focused. The following are **not** supported:
 - Bank/card imports — manual entry only
 - Shared / household budgets — single-user
 - Investment portfolio tracking
-- Account-based recovery (use sync or JSON export instead)
+- Account-based recovery (use sync or JSON backups instead)
 - Multiple currencies in one ledger — all expenses in one base currency
 
 These are valid future directions; the current product is optimised for fast, private personal tracking.

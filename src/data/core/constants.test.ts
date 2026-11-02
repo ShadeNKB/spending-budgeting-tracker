@@ -55,11 +55,17 @@ describe('constants (§3.2)', () => {
       'categoryBudgetDeletedAt',
       'categoryBudgets',
       'categoryBudgetUpdatedAt',
+      'categoryMappingUpdatedAt',
       'categoryMappings',
       'categories',
       'deletedExpenseIds',
       'expenses',
     ])
+    // P2-3: a mapping's stamp is written before its value, as a budget's is
+    expect(MIRROR_ORDER.indexOf('categoryMappingUpdatedAt')).toBe(
+      MIRROR_ORDER.indexOf('categoryMappings') - 1,
+    )
+    expect(V4_KEYS).toHaveLength(8)
     expect([...V4_KEYS].sort()).toEqual([...MIRROR_ORDER].sort())
     // tombstones are written before expenses, a deletion stamp before its value removal
     expect(MIRROR_ORDER.indexOf('deletedExpenseIds')).toBeLessThan(MIRROR_ORDER.indexOf('expenses'))

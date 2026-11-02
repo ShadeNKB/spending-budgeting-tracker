@@ -6,7 +6,7 @@ export interface ParsedExpense {
   amount: number | null
   suggestedCategory?: string
   confidence?: number
-  parsedDate?: string // local calendar day yyyy-MM-dd, undefined = no date in the text (today)
+  parsedDate?: string // the day to store, yyyy-MM-dd; undefined = no date in the text (today)
   raw: string
 }
 
@@ -775,11 +775,6 @@ export function parseExpense(
 
 function todayKeyOf(now: Date): string {
   return keyOf({ y: now.getFullYear(), m: now.getMonth(), d: now.getDate() })
-}
-
-/** The stored date of a quick add: its parsed day, or today, at local noon (as the entry sheets store it). */
-export function quickAddStoredDate(parsedDate: string | undefined, now: Date = new Date()): string {
-  return new Date(`${parsedDate ?? todayKeyOf(now)}T12:00:00`).toISOString()
 }
 
 /** "Oct 17" for another day this year, "Dec 31, 2025" for another year, null for today. */

@@ -8,7 +8,10 @@
 // file and an exact `find` anchor that must occur there exactly once, so a refactor can never
 // silently disable a mutation: a missing or duplicated anchor, or a target module that no test
 // loaded, fails the runner. M1 (snapshot before the await) is the in-suite negative control
-// (src/data/__tests__/sim/negative-control.test.ts); M12 needs PR-2's persistence layer.
+// (src/data/__tests__/sim/negative-control.test.ts); M12 belongs to PR-2's persistence layer
+// (src/data/local, not in this script). M13–M16 cover PR-2's core changes (P2-2…P2-4, P2-10);
+// M17 proves the golden vectors of the frozen 0.9.2 model (legacy/v085.golden.test.ts) have teeth.
+// The suite is the core's: src/data/core and src/data/__tests__ (the local engine has its own).
 // Exit code 0 only when the control is green and every mutation is killed. A mutation run that
 // bail stops with no failure on record is run again without bail, never scored as a survivor.
 import { readFileSync } from 'node:fs'
@@ -140,6 +143,51 @@ const MUTATIONS = [
     replace: '    (f) => fsStamp(fs[f], C),\n    () => 2,\n  )\n',
     expect: 'W5, W6, T-015-2',
   },
+  {
+    id: 'M13',
+    name: "v0.8.5's top-level mapping stamps ignored on decode (P2-3)",
+    file: 'src/data/core/wire.ts',
+    find: "    if (typeof v === 'string') stamps.set(k, Math.max(stamps.get(k) ?? 0, ps(v)))\n",
+    replace: "    if (typeof v === 'string') stamps.set(k, stamps.get(k) ?? 0)\n",
+    expect: 'wire P2-3, item picks LWW beside 0.9.2',
+  },
+  {
+    id: 'M14',
+    name: 'Old-writer news blind to the writer: 0.9.2 judged by the v0.8.4 rule (P2-4)',
+    file: 'src/data/core/wire.ts',
+    find:
+      "  return relay.writer === 'v085' && relay.v085 !== undefined\n" +
+      '    ? adoptable085(m, relay.v085, relay.legacyTs)\n' +
+      '    : adoptable084(m, relay)\n',
+    replace: '  return adoptable084(m, relay)\n',
+    expect: 'props/adoptable vs the frozen 0.9.2 merge',
+  },
+  {
+    id: 'M15',
+    name: 'Day dates stored as the UTC instant of local noon again (P2-2)',
+    file: 'src/data/core/dates.ts',
+    find: 'export const localNoonIso = (day: string): string => `${day}T12:00:00`\n',
+    replace:
+      'export const localNoonIso = (day: string): string =>\n' +
+      '  new Date(`${day}T12:00:00`).toISOString()\n',
+    expect: 'dates / ops T-096-1 in every zone',
+  },
+  {
+    id: 'M16',
+    name: 'The bridge drops news payloads (PR-0 crossing-push residual, P2-10)',
+    file: 'src/data/__tests__/sim/v5device.ts',
+    find: '      this.news.push(e.payload)\n',
+    replace: '',
+    expect: 'sim/pr2-crossing',
+  },
+  {
+    id: 'M17',
+    name: "The frozen 0.9.2 model's budget tie-break inverted (P2-5 goldens)",
+    file: 'src/data/__tests__/legacy/v085.ts',
+    find: '          side.value > winner.value ||\n',
+    replace: '          side.value < winner.value ||\n',
+    expect: 'legacy/v085.golden, v085 budgets',
+  },
 ]
 
 const norm = (p) => p.split('\\').join('/').toLowerCase()
@@ -202,11 +250,11 @@ function tally(vitest) {
   return t
 }
 
-/** One run of the src/data suite (benchmarks excluded: timing is not behaviour). */
+/** One run of the core's suite (benchmarks excluded: timing is not behaviour). */
 async function run(plugins, bail) {
   const vitest = await startVitest(
     'test',
-    ['src/data'],
+    ['src/data/core', 'src/data/__tests__'],
     { watch: false, bail, reporters: ['dot'], cliExclude: ['**/__tests__/bench/**'] },
     { plugins },
   )

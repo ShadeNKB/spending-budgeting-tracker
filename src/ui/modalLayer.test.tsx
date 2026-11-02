@@ -1,7 +1,7 @@
 import { StrictMode, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { holdScrollLock, pressedWhileOnTop, useModalLayer } from './modalLayer'
+import { handFocusBack, holdScrollLock, pressedWhileOnTop, useModalLayer } from './modalLayer'
 
 interface LayerProps {
   open: boolean
@@ -316,6 +316,85 @@ describe('useModalLayer: Tab stays inside the top layer', () => {
     expect(document.activeElement).toBe(document.body)
     press('Tab')
     expect(screen.getByRole('button', { name: 'First' })).toHaveFocus()
+  })
+
+  // The 30 s Undo of Delete all, an import or a category delete shows while Settings stays open.
+  describe('a toast’s Undo (borrowed stops)', () => {
+    function WithToasts({ undo = true }: { undo?: boolean }) {
+      return (
+        <>
+          <Three />
+          <div role="region" aria-label="Notifications" data-layer-exempt="">
+            <div data-toast="" data-layer-tab={undo ? '' : undefined}>
+              <button type="button">Undo</button>
+              <button type="button" aria-label="Dismiss">
+                x
+              </button>
+            </div>
+            <div data-toast="">
+              <button type="button" aria-label="Dismiss saved">
+                x
+              </button>
+            </div>
+          </div>
+        </>
+      )
+    }
+    const focusOn = (name: string) => {
+      act(() => {
+        screen.getByRole('button', { name }).focus()
+      })
+    }
+
+    it('comes after the last stop, then round to the first', () => {
+      render(<WithToasts />)
+      focusOn('Last')
+      expect(press('Tab')).toBe(false)
+      expect(screen.getByRole('button', { name: 'Undo' })).toHaveFocus()
+      expect(press('Tab')).toBe(false)
+      expect(screen.getByRole('button', { name: 'Dismiss' })).toHaveFocus()
+      expect(press('Tab')).toBe(false)
+      expect(screen.getByRole('button', { name: 'First' })).toHaveFocus()
+    })
+
+    it('runs the same cycle backwards with Shift+Tab', () => {
+      render(<WithToasts />)
+      focusOn('First')
+      expect(press('Tab', { shiftKey: true })).toBe(false)
+      expect(screen.getByRole('button', { name: 'Dismiss' })).toHaveFocus()
+      expect(press('Tab', { shiftKey: true })).toBe(false)
+      expect(screen.getByRole('button', { name: 'Undo' })).toHaveFocus()
+      expect(press('Tab', { shiftKey: true })).toBe(false)
+      expect(screen.getByRole('button', { name: 'Last' })).toHaveFocus()
+    })
+
+    it('leaves out toasts with nothing to act on, and the page behind', () => {
+      render(<WithToasts undo={false} />)
+      focusOn('Last')
+      press('Tab')
+      expect(screen.getByRole('button', { name: 'First' })).toHaveFocus()
+      expect(screen.getByRole('button', { name: 'Behind' })).not.toHaveFocus()
+    })
+
+    it('hands focus back to where it came from as the toast goes, else into the layer', () => {
+      render(<WithToasts />)
+      focusOn('Undo')
+      act(() => {
+        handFocusBack(screen.getByRole('button', { name: 'Middle' }))
+      })
+      expect(screen.getByRole('button', { name: 'Middle' })).toHaveFocus()
+      // where it came from is gone, or behind the layer: the layer takes it, where it last was
+      focusOn('Undo')
+      act(() => {
+        handFocusBack(screen.getByRole('button', { name: 'Behind' }))
+      })
+      expect(screen.getByRole('button', { name: 'Middle' })).toHaveFocus()
+      focusOn('Undo')
+      act(() => {
+        handFocusBack(null)
+      })
+      expect(screen.getByRole('button', { name: 'Middle' })).toHaveFocus()
+    })
   })
 
   it('keeps focus on the dialog when it has nothing to tab to', () => {

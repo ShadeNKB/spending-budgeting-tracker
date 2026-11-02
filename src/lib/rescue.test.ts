@@ -52,16 +52,31 @@ describe('SECRET_KEY_PATTERN', () => {
     'spendtrack:syncKey',
     'cryptoKey',
     'encryptionKey',
+    'st5:sync',
+    'st5:q:syncId:1760846400000',
+    'st5:q:st5:sync:1760846400000',
   ])('matches the secret-like key %s', (key) => {
     expect(SECRET_KEY_PATTERN.test(key)).toBe(true)
   })
 
-  it.each(['expenses', 'categories', 'spendtrack:theme', 'syncIdHistory', 'deletedExpenseIds'])(
-    'leaves the data key %s alone',
-    (key) => {
-      expect(SECRET_KEY_PATTERN.test(key)).toBe(false)
-    },
-  )
+  it.each([
+    'expenses',
+    'categories',
+    'spendtrack:theme',
+    'syncIdHistory',
+    'deletedExpenseIds',
+    'st5:db',
+    'st5:gen',
+    'st5:q',
+    'st5:q:expenses:1760846400000',
+    'st5:q:st5:db:1760846400000',
+    'st5:snaps',
+    'st5:snap:1760846400000',
+    'st5:journal',
+    'st5:dev',
+  ])('leaves the data key %s alone', (key) => {
+    expect(SECRET_KEY_PATTERN.test(key)).toBe(false)
+  })
 })
 
 describe('collectRawStorage', () => {
@@ -115,6 +130,20 @@ describe('collectRawStorage', () => {
       ]),
     )
     expect(Object.keys(raw)).toEqual(['expenses'])
+  })
+
+  it('keeps the v5 envelope and its copies but never the sync config or its quarantined copies', () => {
+    const raw = collectRawStorage(
+      new MapStorage([
+        ['st5:db', '5|abc|{"f":1}'],
+        ['st5:q:st5:db:1', '5|abc|{"f"'],
+        ['st5:sync', '{"kind":"plain","code":"invented-code"}'],
+        ['st5:q:st5:sync:1', '{"kind":"pla'],
+        ['st5:q:syncId:1', 'invented-code'],
+      ]),
+    )
+    expect(Object.keys(raw)).toEqual(['st5:db', 'st5:q:st5:db:1'])
+    expect(JSON.stringify(raw)).not.toContain('invented-code')
   })
 
   it('returns keys in a stable, sorted order', () => {

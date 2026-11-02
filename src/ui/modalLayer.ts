@@ -11,9 +11,12 @@ import { shieldGesture } from './pressShield'
  *
  * - Escape closes the top layer (not one a control already handled, nor one ending an IME
  *   composition).
- * - Tab and Shift+Tab cycle the top layer's tab stops.
+ * - Tab and Shift+Tab cycle the top layer's tab stops, and after its last one the controls it
+ *   borrows (`[data-layer-tab]` inside `[data-layer-exempt]`: a toast's Undo, which a sheet's
+ *   delete or import put up), so the keyboard reaches them as well as the pointer.
  * - Focus that lands outside the top layer is sent back inside it (`[data-layer-exempt]`, the
- *   toast region, may keep it).
+ *   toast region, may keep it). Focus on a borrowed control that goes away is handed back to
+ *   where it came from (handFocusBack), never left on <body>.
  * - On close, focus goes back to what opened the layer, captured while rendering, before an
  *   autoFocus child can take focus; else to `returnFocus()`; else to the screen heading, without
  *   scrolling to it (the page stays where the reader left it).
@@ -56,6 +59,9 @@ interface Layer {
 /** What can take focus in this app (it has no iframes, image maps or editable regions). */
 const FOCUSABLE =
   'a[href], button, input:not([type="hidden"]), select, textarea, summary, [tabindex]'
+
+/** Controls outside every layer that join the top layer's Tab cycle: a toast's Undo. */
+const BORROWED = '[data-layer-exempt] [data-layer-tab]'
 
 /** A press this recent names the control that opened a layer. */
 const PRESS_WINDOW_MS = 1000
@@ -141,6 +147,10 @@ function tabStops(root: HTMLElement): HTMLElement[] {
   )
 }
 
+/** The borrowed stops, in document order (the toast stack's own order). */
+const borrowedStops = (): HTMLElement[] =>
+  Array.from(document.querySelectorAll<HTMLElement>(BORROWED)).flatMap(tabStops)
+
 /** `a` comes before `b` in document order (an ancestor comes before what it contains). */
 const precedes = (a: Node, b: Node): boolean =>
   (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
@@ -202,6 +212,20 @@ function focusInside(layer: Layer): void {
   ;(tabStops(layer.element)[0] ?? layer.element).focus({ preventScroll: true })
 }
 
+/**
+ * Focus on a borrowed control that is going away (a toast leaving with its Undo focused): back
+ * to `from`, the control it came from, while that can still take it (inside the top layer, when
+ * one is open); else inside the top layer, where it last was; else, on the page, it stays put.
+ */
+export function handFocusBack(from: HTMLElement | null): void {
+  const top = stack.at(-1)
+  if (from && canTakeFocus(from) && (!top || top.element.contains(from))) {
+    from.focus({ preventScroll: true })
+  } else if (top) {
+    focusInside(top)
+  }
+}
+
 // ─── document listeners ───────────────────────────────────────────────────────
 
 function isComposingKey(event: KeyboardEvent): boolean {
@@ -216,21 +240,30 @@ function isComposingKey(event: KeyboardEvent): boolean {
 /**
  * Between stops the browser moves focus itself (selecting a field's text as only a real Tab
  * does), also from a focused element that is no stop (the dialog itself, a roving grid day).
- * Past the last stop, or before the first, focus wraps around instead of leaving the layer.
- * The wrap is a Tab, so it asks for the ring: WebKit draws none for this script focus when the
- * control focused before it was tapped.
+ * Past the last stop focus goes on to the borrowed stops (a toast's Undo and Dismiss), then
+ * wraps around to the first; Shift+Tab runs the same cycle backwards. It never leaves for the
+ * page. The move is a Tab, so it asks for the ring: WebKit draws none for this script focus when
+ * the control focused before it was tapped.
  */
 function trapTab(layer: Layer, event: KeyboardEvent): void {
   const stops = tabStops(layer.element)
+  const borrowed = borrowedStops()
+  const back = event.shiftKey
   const active = focusedElement()
+  let target: HTMLElement | undefined
   if (active && layer.element.contains(active)) {
-    const hasNext = event.shiftKey
+    const hasNext = back
       ? stops.some((el) => precedes(el, active))
       : stops.some((el) => precedes(active, el))
     if (hasNext) return
+    target = back ? (borrowed.at(-1) ?? stops.at(-1)) : (borrowed[0] ?? stops[0])
+  } else {
+    const at = active ? borrowed.indexOf(active) : -1
+    if (at === -1) target = back ? stops.at(-1) : stops[0]
+    else target = back ? (borrowed[at - 1] ?? stops.at(-1)) : (borrowed[at + 1] ?? stops[0])
   }
   event.preventDefault()
-  ;((event.shiftKey ? stops.at(-1) : stops[0]) ?? layer.element).focus({ focusVisible: true })
+  ;(target ?? layer.element).focus({ focusVisible: true })
 }
 
 function onKeyDown(event: KeyboardEvent): void {

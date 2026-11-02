@@ -10,8 +10,9 @@ const GUARD_KEY = 'spendtrack:chunk-reload-at'
 const AFTER_RELOAD = { timeout: 15_000 }
 const LEDGER_CHUNK = '**/assets/LedgerScreen-*.js'
 
-// Trailing comma: storage repairs it in memory on hydrate but leaves the stored text alone,
-// so the rescue file must carry it byte for byte. Dated `day` at local noon, as the app
+// Trailing comma: the text is not JSON. The v5 migration salvages its row and keeps the original
+// text byte for byte in a quarantine copy (st5:q:expenses:<time>) before the rollback copy
+// rewrites the v4 key, so the rescue file must carry it. Dated `day` at local noon, as the app
 // stores dates.
 const rawExpenses = (day: string) =>
   `[{"id":"e2e-1","itemName":"Kopi O","amount":1.8,"category":"Food","date":"${day}T12:00:00","createdAt":"${day}T12:00:00"},]`
@@ -182,7 +183,8 @@ test.describe('stale chunk after a deploy', () => {
     expect(text).not.toContain(SYNC_ID)
     const file = JSON.parse(text) as { kind: string; keys: Record<string, string> }
     expect(file.kind).toBe('raw-browser-backup')
-    expect(file.keys.expenses).toBe(storedExpenses)
+    const copies = Object.entries(file.keys).filter(([key]) => key.startsWith('st5:q:expenses:'))
+    expect(copies.map(([, value]) => value)).toEqual([storedExpenses])
     expect(file.keys['spendtrack:e2e-unknown']).toBe(RAW_UNKNOWN)
     expect(Object.keys(file.keys)).not.toContain('syncId')
     await expect(

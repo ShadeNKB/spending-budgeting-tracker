@@ -2,10 +2,26 @@ import { useEffect } from 'react'
 import { announce, useLiveRegions } from '../ui/announce'
 import { useUIStore, type Toast } from '../stores/useUIStore'
 
-/** "Added "kopi" · S$4.50. Undo available." */
+/** A mouse or trackpad: a laptop's keyboard is there, so its undo key is worth saying. */
+const hasKeyboard = (): boolean =>
+  typeof window.matchMedia === 'function' && window.matchMedia('(pointer: fine)').matches
+
+const undoKey = (): string => (/Mac|iPhone|iPad|iPod/.test(navigator.userAgent) ? '⌘Z' : 'Ctrl+Z')
+
+/** A sheet or the palette is open (a closing one has turned inert by the time this speaks). */
+const inLayer = (): boolean => document.querySelector('[aria-modal="true"]:not([inert])') !== null
+
+/**
+ * "Added "kopi" · S$4.50. Undo available." A toast that answers the undo stack (it has an
+ * `undoId`) and shows while a sheet is open also names the key, where there is a keyboard: the
+ * toast's Undo is then reached last in the sheet's Tab order, and the key works at once.
+ */
 function spoken(toast: Toast): string {
   if (!toast.action) return toast.message
-  return `${toast.message.replace(/\.$/, '')}. ${toast.action.label} available.`
+  const said = `${toast.message.replace(/\.$/, '')}. ${toast.action.label} available`
+  return toast.undoId !== undefined && inLayer() && hasKeyboard()
+    ? `${said}, or press ${undoKey()}.`
+    : `${said}.`
 }
 
 /**

@@ -1,9 +1,9 @@
 import { lazy, useCallback, useEffect } from 'react'
 import { Outlet } from 'react-router-dom'
-import { FlaskConical } from 'lucide-react'
 import { TopBar } from './TopBar'
 import { TabBar } from './TabBar'
 import { OfflineBanner } from './OfflineBanner'
+import { BootFailure, DataNotices, QUOTA_TOAST } from './DataNotices'
 import { OverlaySlot } from './OverlaySlot'
 import { dropToasts } from './dropToasts'
 import { useAppliedTheme } from './useAppliedTheme'
@@ -11,7 +11,12 @@ import { useLaunchActions } from './useLaunchActions'
 import { ToastAnnouncer } from './ToastAnnouncer'
 import { useRouteFocus } from './useRouteFocus'
 import { SAFE_GUTTER_X } from './safeArea'
-import { useExpenseStore, installPersistence, IS_DEMO } from '../stores/useExpenseStore'
+import {
+  installPersistence,
+  undoOutcomeMessage,
+  useExpenseStore,
+  whenHydrated,
+} from '../stores/useExpenseStore'
 import { installSync } from '../stores/useSyncStore'
 import { useUIStore } from '../stores/useUIStore'
 import { useHotkeys } from '../hooks/useHotkeys'
@@ -63,7 +68,8 @@ function bootstrap() {
   if (bootstrapped || typeof window === 'undefined') return
   bootstrapped = true
 
-  useExpenseStore.getState().hydrate()
+  // The engine chunk is already loading (main.tsx); the shell shows its status until it is in.
+  void useExpenseStore.getState().hydrate()
   installPersistence()
   // Local changes, lifecycle events (hide/resume/online) and realtime drive sync from here.
   installSync()
@@ -71,6 +77,7 @@ function bootstrap() {
 
 export function AppShell() {
   const hydrated = useExpenseStore((s) => s.hydrated)
+  const bootError = useExpenseStore((s) => s.bootError)
   const isOffline = useExpenseStore((s) => s.isOffline)
   const theme = useUIStore((s) => s.theme)
   const paletteOpen = useUIStore((s) => s.paletteOpen)
@@ -98,10 +105,13 @@ export function AppShell() {
   // Surface storage quota errors to the user — without this the app would
   // silently fail to persist, which is the worst possible UX for a finance
   // tracker. Listener fires once per session per quota incident.
+  // A quota hit while the data loads waits for the boot's outcome: a boot that ends memory-only
+  // says what to do in its own strip, and "clear old data" is the wrong advice there.
   useEffect(() => {
     const onQuota = () => {
-      toast.error('Storage is full — export a backup and clear old data to keep saving.', {
-        duration: 12000,
+      void whenHydrated().then(() => {
+        if (useExpenseStore.getState().local === 'memory-only') return
+        toast.error(QUOTA_TOAST, { duration: 12000 })
       })
     }
     window.addEventListener('spendtrack:quota-exceeded', onQuota)
@@ -118,9 +128,14 @@ export function AppShell() {
     '?': () => setHotkeysOpen(true),
     // Read the undo stack on demand: subscribing to it re-rendered the whole shell on every add.
     'mod+z': () => {
-      const { undoStack, consumeUndo } = useExpenseStore.getState()
-      const last = undoStack.at(-1)
-      if (last) consumeUndo(last.id)
+      const store = useExpenseStore.getState()
+      const last = store.undoStack.at(-1)
+      if (!last) return
+      // Said every time: unlike an Undo button, the key press has nothing on screen to answer it.
+      const outcome = store.consumeUndo(last.id)
+      if (outcome === null) return
+      if (outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
+      else toast.info(undoOutcomeMessage(outcome))
     },
     // No Escape here: each sheet, the palette and the date picker close on it themselves, top
     // layer first (ui/modalLayer.ts). Closing them all at once lost the entry under a picker.
@@ -151,19 +166,7 @@ export function AppShell() {
             it scroll away under it. */}
         <TopBar />
 
-        {IS_DEMO && (
-          <section
-            aria-label="Demo mode"
-            className="flex items-center justify-center gap-2 border-b border-accent/20 bg-accent/10 px-4 py-1.5 text-[12px] text-accent"
-          >
-            <FlaskConical size={12} aria-hidden />
-            <span>
-              Demo mode — sample data loaded.{' '}
-              <span className="text-accent/70">Data is stored locally on this device only.</span>{' '}
-              Clear it in Settings → Backup and use for your own expenses.
-            </span>
-          </section>
-        )}
+        <DataNotices />
         {isOffline && <OfflineBanner />}
 
         {/* Each screen names itself with its own h1 (tabIndex -1), where focus lands after a
@@ -174,7 +177,9 @@ export function AppShell() {
           onFocus={revealTextField}
           className={`mx-auto w-full max-w-[1200px] flex-1 py-5 pb-[calc(env(safe-area-inset-bottom,0px)+96px)] md:py-8 md:pb-10 ${SAFE_GUTTER_X}`}
         >
-          {!hydrated ? (
+          {bootError !== null ? (
+            <BootFailure />
+          ) : !hydrated ? (
             <div
               role="status"
               aria-live="polite"

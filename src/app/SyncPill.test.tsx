@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen } from '@testing-library/react'
 import { SyncPill } from './SyncPill'
-import { useExpenseStore } from '../stores/useExpenseStore'
+import { useExpenseStore, type LocalStatus } from '../stores/useExpenseStore'
 import { useUIStore } from '../stores/useUIStore'
 import {
   OLD_DEVICE_WAITING,
@@ -219,10 +219,50 @@ describe('SyncPill', () => {
   })
 
   it('puts a failed local save above everything', () => {
-    useExpenseStore.setState({ syncStatus: 'error' })
+    useExpenseStore.setState({ syncStatus: 'error', local: 'error-quota' })
     useSyncStore.setState({ ...connected, cloudStatus: 'synced' })
     render(<SyncPill />)
-    expect(pillText()).toBe('Save failed')
+    expect(pillText()).toBe('Not saved')
+    expect(pill()).toHaveAttribute('title', 'Storage on this device is full.')
+  })
+
+  // walk4: the boot-failure card on screen, and "✓ Saved" beside it in the top bar.
+  it('never says Saved when the data engine could not load', () => {
+    useExpenseStore.setState({ bootError: 'engine-load', syncStatus: 'idle' })
+    useSyncStore.setState({ ...connected, cloudStatus: 'synced' })
+    render(<SyncPill />)
+    expect(pillText()).toBe('Not loaded')
+    expect(pill()).toHaveAttribute(
+      'title',
+      "SpendTrack couldn't start. Your data is still saved on this device.",
+    )
+    // the card in place of the screen says it already: the pill is not a second voice
+    expect(announced()).toBe('')
+  })
+
+  it('says why nothing is saved for each local failure', () => {
+    const reasons: readonly (readonly [LocalStatus, string])[] = [
+      ['error-quota', 'Storage on this device is full.'],
+      ['error-storage', 'This browser is blocking storage.'],
+      ['memory-only', "Saved data couldn't be read, so nothing is written over it."],
+    ]
+    for (const [local, reason] of reasons) {
+      useExpenseStore.setState({ syncStatus: 'error', local })
+      render(<SyncPill />)
+      expect(pillText()).toBe('Not saved')
+      expect(pill()).toHaveAttribute('title', reason)
+      cleanup()
+    }
+  })
+
+  it('leaves a failed save to its strip (one voice), then says the save that ends it', () => {
+    useExpenseStore.setState({ syncStatus: 'saved', lastSavedAt: NOW, local: 'saved' })
+    render(<SyncPill />)
+    act(() => useExpenseStore.setState({ syncStatus: 'error', local: 'error-quota' }))
+    expect(pillText()).toBe('Not saved')
+    expect(announced()).toBe('')
+    act(() => useExpenseStore.setState({ syncStatus: 'saved', lastSavedAt: NOW, local: 'saved' }))
+    expect(announced()).toBe('Saved')
   })
 
   it('shows saving before a pending sync', () => {

@@ -41,6 +41,61 @@ function vendorChunk(id) {
   return Object.hasOwn(VENDOR_CHUNKS, pkg) ? VENDOR_CHUNKS[pkg] : undefined
 }
 
+// The data engine (src/data/local/engine.ts, the core with it) is a dynamic import that main.tsx
+// starts before React renders (P2-1). With no hint the browser finds it only once the entry chunk
+// has run, a round trip after vendor-react, and every boot waited for that serial fetch before
+// the data showed. This modulepreloads the engine chunk and its own static imports (in a relay
+// build, the core it shares with the sync engine) from index.html. They are marked data-boot:
+// they download beside the entry chunk but first paint does not need them, and
+// scripts/check-relay-weight.mjs counts them as the boot path, apart from what paints first.
+const ENGINE_MODULE = '/src/data/local/engine.ts'
+
+function preloadDataEngine() {
+  let base = '/'
+  return {
+    name: 'spendtrack:preload-data-engine',
+    apply: 'build',
+    configResolved(config) {
+      base = config.base
+    },
+    transformIndexHtml: {
+      order: 'post',
+      handler(html, ctx) {
+        const bundle = ctx.bundle
+        if (!bundle) return html
+        const chunks = Object.values(bundle).filter((c) => c.type === 'chunk')
+        const engine = chunks.find((c) =>
+          (c.facadeModuleId ?? '').replace(/\\/g, '/').endsWith(ENGINE_MODULE),
+        )
+        if (!engine) throw new Error(`No chunk for ${ENGINE_MODULE}: is it still a dynamic import?`)
+        const files = []
+        const visit = (chunk) => {
+          if (files.includes(chunk.fileName)) return
+          files.push(chunk.fileName)
+          for (const dep of chunk.imports) {
+            const next = bundle[dep]
+            if (next?.type === 'chunk') visit(next)
+          }
+        }
+        visit(engine)
+        // the entry chunk and its vendor chunks are in index.html already
+        return files
+          .filter((file) => !html.includes(file))
+          .map((file) => ({
+            tag: 'link',
+            attrs: {
+              rel: 'modulepreload',
+              crossorigin: true,
+              href: `${base}${file}`,
+              'data-boot': 'engine',
+            },
+            injectTo: 'head',
+          }))
+      },
+    },
+  }
+}
+
 // The release the app was built from, shown in Settings › Sync so the owner can check that every
 // device runs the same one.
 const APP_VERSION = JSON.parse(
@@ -67,6 +122,7 @@ export default defineConfig({
   },
   plugins: [
     react(),
+    preloadDataEngine(),
     VitePWA({
       // Prompt-style updates. A new deploy installs its worker and then WAITS: the running page
       // keeps its old precache (so lazy screens it has not opened yet still load) until the user

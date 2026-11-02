@@ -5,15 +5,18 @@ import { Sheet } from '../../ui/Sheet'
 import { Input } from '../../ui/Input'
 import { Button } from '../../ui/Button'
 import { InlineConfirm } from '../../ui/InlineConfirm'
-import { useExpenseStore } from '../../stores/useExpenseStore'
+import { undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
 import { useToast } from '../../hooks/useToast'
 import { useInlineConfirm } from '../../hooks/useInlineConfirm'
 import { useCurrencySymbol, useFormatMoney } from '../../hooks/useFormatMoney'
 import { useToday } from '../../hooks/useToday'
-import { addDays, dayKeyOfStored } from '../../lib/dates'
+import { addDays, type DayKey } from '../../lib/dates'
+import { entryDay } from '../../lib/ledgerIndex'
 import { DatePicker } from '../../ui/DatePicker'
 import {
+  actionErrorMessage,
   chosenChipFill,
+  deleteUndoId,
   firstInvalidField,
   validateExpenseForm,
   type ExpenseFormErrors,
@@ -25,19 +28,19 @@ interface EditForm {
   itemName: string
   amount: string
   category: string
-  /** The day; `''` while the stored date cannot be read and no day has been picked. */
-  date: string
+  /** The day, `yyyy-MM-dd`. */
+  date: DayKey
   notes: string
 }
 
-function formFrom(expense: Expense): EditForm {
+function formFrom(expense: Expense, today: DayKey): EditForm {
   return {
     itemName: expense.itemName,
     amount: expense.amount.toString(),
     category: expense.category,
-    // The row's own day, as every screen reads it. An unreadable date opens with no day
-    // chosen, so saving another field never silently moves the entry to today.
-    date: dayKeyOfStored(expense.date) ?? '',
+    // The day the Ledger lists it under. Every stored entry has one (the store sets aside any
+    // whose date can't be read), so `today` only fills in for a bare `Expense` handed in.
+    date: entryDay(expense) ?? today,
     notes: expense.notes ?? '',
   }
 }
@@ -55,7 +58,6 @@ export function EditExpenseSheet({
   /** Where focus goes on close if the control that opened the sheet is gone (see `Sheet`). */
   returnFocus?: () => HTMLElement | null
 }) {
-  const updateExpense = useExpenseStore((s) => s.updateExpense)
   const categories = useExpenseStore((s) => s.categories)
   const toast = useToast()
   const fmt = useFormatMoney()
@@ -63,7 +65,6 @@ export function EditExpenseSheet({
   const today = useToday()
   const categoryLabelId = useId()
   const dateLabelId = useId()
-  const dateHintId = useId()
   const notesId = useId()
   const fields: Record<ExpenseFormField, React.RefObject<HTMLInputElement | null>> = {
     itemName: useRef<HTMLInputElement>(null),
@@ -95,7 +96,7 @@ export function EditExpenseSheet({
   if (expense !== shown) {
     setShown(expense)
     if (expense) {
-      setForm(formFrom(expense))
+      setForm(formFrom(expense, today))
       setErrors({})
       setSession((n) => n + 1)
     }
@@ -118,14 +119,21 @@ export function EditExpenseSheet({
       fields[invalid].current?.focus()
       return
     }
-    updateExpense(expense.id, {
-      itemName: form.itemName.trim(),
-      amount: parseFloat(form.amount),
-      category: form.category,
-      // No day picked for an unreadable date: keep what is stored.
-      ...(form.date ? { date: new Date(form.date + 'T12:00:00').toISOString() } : {}),
-      notes: form.notes.trim() || undefined,
-    })
+    try {
+      // Fields sent back unchanged are no edit: an amount-only change keeps the stored date
+      // byte for byte, and a new day is stored as that day (P2-2). Empty notes clear them.
+      useExpenseStore.getState().updateExpense(expense.id, {
+        itemName: form.itemName.trim(),
+        amount: parseFloat(form.amount),
+        category: form.category,
+        day: form.date,
+        notes: form.notes.trim(),
+      })
+    } catch (err) {
+      // The sheet stays open with the edits, so the owner can fix what the message names.
+      toast.error(actionErrorMessage(err))
+      return
+    }
     toast.success('Expense updated')
     onClose()
   }
@@ -243,7 +251,6 @@ export function EditExpenseSheet({
             { label: '3d ago', val: addDays(today, -3) },
           ]
           const editIsPreset = editPresets.some((p) => p.val === form.date)
-          const dateUnknown = form.date === ''
           return (
             <div className="flex flex-col gap-2">
               <span
@@ -255,7 +262,6 @@ export function EditExpenseSheet({
               <div
                 role="group"
                 aria-labelledby={dateLabelId}
-                aria-describedby={dateUnknown ? dateHintId : undefined}
                 className="flex flex-wrap items-center gap-2"
               >
                 {editPresets.map((p) => (
@@ -282,15 +288,9 @@ export function EditExpenseSheet({
                   }}
                   max={today}
                   placeholder="Pick date"
-                  active={!editIsPreset && !dateUnknown}
+                  active={!editIsPreset}
                 />
               </div>
-              {dateUnknown && (
-                <p id={dateHintId} className="text-[12px] text-warning">
-                  This entry's date can't be read. Pick the day to fix it, or save to keep it under
-                  Unknown date.
-                </p>
-              )}
             </div>
           )
         })()}
@@ -329,7 +329,6 @@ export function EditExpenseSheet({
 
 /** "Delete expense", then the question in its place. Re-keyed on every opening of the sheet. */
 function DeleteExpense({ expense, onDeleted }: { expense: Expense; onDeleted: () => void }) {
-  const deleteExpense = useExpenseStore((s) => s.deleteExpense)
   const toast = useToast()
   const confirm = useInlineConfirm<'delete'>()
 
@@ -338,11 +337,25 @@ function DeleteExpense({ expense, onDeleted }: { expense: Expense; onDeleted: ()
       {confirm.pending === 'delete' ? (
         <InlineConfirm
           question={`Delete "${expense.itemName}"?`}
-          detail="This cannot be undone."
+          detail="You can undo it for a few seconds."
           confirmLabel="Delete"
           onConfirm={() => {
-            deleteExpense(expense.id)
-            toast.info(`Deleted "${expense.itemName}"`)
+            useExpenseStore.getState().deleteExpense(expense.id)
+            const undo = deleteUndoId(useExpenseStore.getState().undoStack, expense.id)
+            toast.info(`Deleted "${expense.itemName}"`, {
+              undoId: undo,
+              action:
+                undo === undefined
+                  ? undefined
+                  : {
+                      label: 'Undo',
+                      onClick: () => {
+                        const outcome = useExpenseStore.getState().consumeUndo(undo)
+                        if (outcome !== null && outcome.skipped > 0)
+                          toast.warning(undoOutcomeMessage(outcome))
+                      },
+                    },
+            })
             // The sheet closes and hands focus back itself (to the next row).
             confirm.close(null)
             onDeleted()

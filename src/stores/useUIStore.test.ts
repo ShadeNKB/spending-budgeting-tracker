@@ -131,6 +131,45 @@ describe('useUIStore persisted preferences', { timeout: 15_000 }, () => {
     expect(localStorage.getItem(CURRENCY_KEY)).toBe('JPY')
     expect((await loadStore()).currency).toBe('JPY')
   })
+
+  it('hands a currency switch to the synced register once the data engine runs (P2-11)', async () => {
+    vi.resetModules()
+    const mod = await import('./useUIStore')
+    const picks: string[] = []
+    mod.setCurrencyWriter((code) => {
+      picks.push(code)
+      return true
+    })
+    mod.useUIStore.getState().setCurrency('EUR')
+    expect(picks).toEqual(['EUR'])
+    expect(mod.useUIStore.getState().currency).toBe('EUR')
+    // the engine wrote the device key itself; the store did not write it a second time
+    expect(localStorage.getItem(CURRENCY_KEY)).not.toBe('EUR')
+    // not ready yet: the pick stays on this device
+    mod.setCurrencyWriter(() => false)
+    mod.useUIStore.getState().setCurrency('GBP')
+    expect(localStorage.getItem(CURRENCY_KEY)).toBe('GBP')
+  })
+
+  it('reads the device currency for the engine (stored choice, else the resolved default)', async () => {
+    stubDevice('Asia/Singapore', ['en-SG'])
+    vi.resetModules()
+    const mod = await import('./useUIStore')
+    expect(mod.readDeviceCurrency()).toBe('SGD')
+    localStorage.setItem(CURRENCY_KEY, 'AUD')
+    expect(mod.readDeviceCurrency()).toBe('AUD')
+  })
+})
+
+describe('settings focus', { timeout: 15_000 }, () => {
+  it('sends focus to the needs-attention card', async () => {
+    const store = await loadStore()
+    store.focusSettings('backup', 'backup-attention')
+    const { useUIStore } = await import('./useUIStore')
+    expect(useUIStore.getState().settingsTab).toBe('backup')
+    expect(useUIStore.getState().takeSettingsFocus('backup-attention')).toBe(true)
+    expect(useUIStore.getState().takeSettingsFocus('backup-attention')).toBe(false)
+  })
 })
 
 describe('toasts', { timeout: 15_000 }, () => {

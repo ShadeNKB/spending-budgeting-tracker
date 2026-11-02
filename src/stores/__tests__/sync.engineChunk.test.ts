@@ -3,7 +3,14 @@
 // typed) instead of failing. When it cannot reload, the code is kept, the failure is honest,
 // and the next Sync now (or resume, or `online`) sets up again.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { SYNC_CODE, expense, relayRows, resetRelay, stubRelayEnv } from '../../__tests__/fakeRelay'
+import {
+  SYNC_CODE,
+  expense,
+  relayRows,
+  resetRelay,
+  seedV4,
+  stubRelayEnv,
+} from '../../__tests__/fakeRelay'
 import { CHUNK_RELOAD_KEY, STUCK_HINT } from '../../lib/chunkReload'
 import { syncMessage } from '../useSyncStore'
 
@@ -11,6 +18,9 @@ vi.mock(
   '@supabase/supabase-js',
   async () => (await import('../../__tests__/fakeRelay')).supabaseModule,
 )
+
+// Each test boots a fresh local engine (a cold import of its chunk, slow in a busy worker).
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 })
 
 const chunk = vi.hoisted(() => ({ calls: 0, failures: 0 }))
 
@@ -45,8 +55,11 @@ beforeEach(async () => {
   stubRelayEnv()
   resetRelay()
   vi.resetModules()
+  // P2-14: a real local engine, booted from what 0.9.2 left in storage.
+  seedV4(localStorage, { expenses: [expense('e1')] })
   const { useExpenseStore } = await import('../useExpenseStore')
-  useExpenseStore.setState({ hydrated: true, expenses: [expense('e1')] })
+  await useExpenseStore.getState().hydrate()
+  chunk.calls = 0 // the local engine's own chunk loads through importWithReload too
   sync = await import('../useSyncStore')
   ui = await import('../useUIStore')
   controller = (await import('../../app/swUpdate')).getUpdateController()

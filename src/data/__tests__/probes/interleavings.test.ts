@@ -95,17 +95,19 @@ describe('§12.3 interleavings', () => {
   )
 
   it(
-    '4: L edits notes at T2, P edits amount at T1 < T2 concurrently → both survive',
+    '4: L edits notes at T2, P edits amount at T1 < T2 → both survive: P’s edit reaches the relay as an old stamped edit and L merges it per field',
     async () => {
       const w = await pair()
       const x = add(L(w), 'X')
       await w.settle()
+      const pushes = P(w).pushes
       P(w).updateExpense(x, { amount: 50 }) // T1
       await w.clock.run(500)
       L(w).op((doc, ctx) => updateExpense(doc, ctx, x, { notes: 'to camp' })) // T2
       await w.settle()
       const rec = must(L(w).doc.expenses.get(x))
       expect([rec.a.v, rec.o.v]).toEqual([50, 'to camp'])
+      expect(P(w).pushes).toBeGreaterThan(pushes)
       expect(P(w).s.expenses.find((e) => e.id === x)).toMatchObject({
         amount: 50,
         notes: 'to camp',
@@ -116,31 +118,31 @@ describe('§12.3 interleavings', () => {
   )
 
   it(
-    '5: as 4 but P edits at T3 > T2 before seeing L’s notes → both survive (rebase); a v0.8.4 straggler loses the notes and L journals it',
+    '5: as 4 but P edits at T3 > T2 before seeing L’s notes → 0.9.2 keeps its newer record WHOLE (no rebase): the amount sticks, the notes lose and L journals the replacement; a v0.8.4 straggler likewise',
     async () => {
-      const w = await pair('v085')
-      const x = add(L(w), 'X')
-      await w.settle()
-      L(w).op((doc, ctx) => updateExpense(doc, ctx, x, { notes: 'to camp' })) // T2
-      await w.clock.run(10)
-      P(w).updateExpense(x, { amount: 50 }) // T3, before L's push arrives
-      await w.settle()
-      const rec = must(L(w).doc.expenses.get(x))
-      expect([rec.a.v, rec.o.v]).toEqual([50, 'to camp'])
-      w.stop()
-
-      const s = await pair('v084', 2)
-      const y = add(L(s), 'Y')
-      await s.settle()
-      L(s).op((doc, ctx) => updateExpense(doc, ctx, y, { notes: 'to camp' }))
-      await s.clock.run(10)
-      P(s).updateExpense(y, { amount: 50 })
-      await s.settle()
-      const after = must(L(s).doc.expenses.get(y))
-      expect(after.a.v).toBe(50)
-      expect(after.o.v).toBeNull()
-      expect(L(s).journal.some((j) => j.kind === 'replaced' && j.ids.includes(y))).toBe(true)
-      s.stop()
+      // 0.9.2 merges whole records (P2-5): its unpushed edit at T3 beats L's T2 copy on P, and
+      // P's copy carries no notes. Recoverable on L (journal `replaced`), and gone once P runs
+      // 0.10.0 (per-field merge). Track spec §16 risk 4.
+      for (const [peer, seed] of [
+        ['v085', 1],
+        ['v084', 2],
+      ] as const) {
+        const w = await pair(peer, seed)
+        const x = add(L(w), 'X')
+        await w.settle()
+        L(w).op((doc, ctx) => updateExpense(doc, ctx, x, { notes: 'to camp' })) // T2
+        await w.clock.run(10)
+        P(w).updateExpense(x, { amount: 50 }) // T3, before L's push arrives
+        await w.settle()
+        const rec = must(L(w).doc.expenses.get(x))
+        expect([rec.a.v, rec.o.v], peer).toEqual([50, null])
+        expect(P(w).s.expenses.find((e) => e.id === x)?.amount, peer).toBe(50)
+        expect(
+          L(w).journal.some((j) => j.kind === 'replaced' && j.ids.includes(x)),
+          peer,
+        ).toBe(true)
+        w.stop()
+      }
     },
     SIM_TIMEOUT,
   )

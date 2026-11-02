@@ -11,7 +11,6 @@
 // - it keeps at most 1,000 tombstones.
 import { DEFAULT_CATEGORIES } from '../constants'
 import { isRecord, listOf, recordOf, isNumber, isString } from '../lib/backup'
-import { generateId } from '../utils/helpers'
 import type { Expense } from '../types'
 import { FakeClient, relay, type FakeChannel } from './fakeRelay'
 
@@ -30,6 +29,9 @@ export interface LegacyState {
 }
 
 const ts = (value: string | undefined): number => (value ? new Date(value).getTime() : 0)
+
+/** v0.8.4's id: the clock in base 36 plus random digits (src/utils/helpers.ts at 809140e). */
+const generateId = (): string => Date.now().toString(36) + Math.random().toString(36).slice(2)
 
 /** v0.8.4's keyword re-file, reduced to one rule (enough to tie with an unchanged stamp). */
 export function legacyRefile(e: Expense): Expense {
