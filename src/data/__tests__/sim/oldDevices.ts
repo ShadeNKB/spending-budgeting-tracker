@@ -4,7 +4,7 @@ import { V4_KEYS } from '../../core/constants'
 import { maxStampRec } from '../../core/record'
 import type { Doc, OutboxKey, Stamp, V4Key } from '../../core/types'
 import { decodeWire, fromV4Keys } from '../../core/wire'
-import { V084Client, type RelayPort, type StoragePort } from '../legacy/v084'
+import { V084Client, type StoragePort } from '../legacy/v084'
 import { V085Client } from '../legacy/v085'
 import type { Rng } from '../support/rng'
 import type { VirtualClock } from './clock'
@@ -24,13 +24,6 @@ export class MemStorage implements StoragePort {
 }
 
 export type OldKind = 'v084' | 'v085'
-
-function revOf(payload: unknown): string | null {
-  const wr: unknown =
-    typeof payload === 'object' && payload !== null ? Reflect.get(payload, 'wr') : undefined
-  const rev: unknown = typeof wr === 'object' && wr !== null ? Reflect.get(wr, 'rev') : undefined
-  return typeof rev === 'string' ? rev : null
-}
 
 /** Every record and register of a doc: the outbox of a freshly migrated device (§9.6.2 step 6). */
 export function fullOutbox(doc: Doc): Map<OutboxKey, Stamp> {
@@ -57,20 +50,10 @@ export class OldDevice {
     readonly kind: OldKind,
     readonly skew: number,
   ) {
-    const port: RelayPort =
-      kind === 'v084'
-        ? relay.legacyPort(name)
-        : {
-            ...relay.legacyPort(name),
-            subscribe: (_syncId, _cb) =>
-              relay.subscribe(name, (e) => {
-                if (this.client instanceof V085Client) this.client.onRemoteEvent(revOf(e.payload))
-              }),
-          }
     this.client =
       kind === 'v084'
-        ? new V084Client(clock.port(skew), rng.next, this.storage, port)
-        : new V085Client(clock.port(skew), rng.next, this.storage, port)
+        ? new V084Client(clock.port(skew), rng.next, this.storage, relay.legacyPort(name))
+        : new V085Client(clock.port(skew), rng.next, this.storage, relay.legacyPort085(name))
   }
 
   get pushes(): number {
@@ -79,7 +62,7 @@ export class OldDevice {
 
   start(syncId: string): Promise<void> {
     this.client.hydrate()
-    return this.client.setupSync(syncId)
+    return this.client.setupSync(syncId).then(() => undefined)
   }
 
   /** Reads the v4 keys as PR-2's migration will: each key parsed on its own. */

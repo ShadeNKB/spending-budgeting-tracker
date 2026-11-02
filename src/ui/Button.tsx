@@ -20,6 +20,9 @@ const button = cva(
         // White on negative.solid: 4.83:1 in both themes (index.css keeps the label white in
         // light mode). Hover darkens, so the label never drops under 4.5:1.
         dangerSolid: 'border border-transparent bg-negative-solid text-white hover:brightness-95',
+        // A confirm that is serious but not a delete everywhere (remove from this device): amber,
+        // so the one cyan accent keeps meaning a safe main action (Restore, Download).
+        warning: 'border border-warning/40 bg-warning/10 text-warning hover:bg-warning/[0.16]',
       },
       size: {
         sm: 'tap-target h-8 px-3 text-[13px]',

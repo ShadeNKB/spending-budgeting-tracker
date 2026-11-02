@@ -1,4 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test'
+import { storedExpenses } from './support/stored'
 
 // Quick add end to end (AC-19, AC-21, palette half of AC-15/F-020): phrases are typed into the real
 // quick-add bar on a Singapore device with a fixed clock, and what reaches storage is checked.
@@ -57,19 +58,19 @@ const quickAddFrame = (page: Page) => quickAdd(page).locator('xpath=../..')
 async function openPulse(page: Page) {
   await page.goto('/pulse')
   await expect(quickAdd(page)).toBeVisible()
+  // The bar takes text before the data has loaded (an add then waits for it); these cases count
+  // rows and read the ledger, so they start once it is there.
+  await expect(page.getByText('Loading local spending data')).toHaveCount(0, { timeout: 15_000 })
 }
 
-const storedExpenses = (page: Page): Promise<StoredExpense[]> =>
-  page.evaluate(() => JSON.parse(localStorage.getItem('expenses') ?? '[]') as StoredExpense[])
-
-/** Waits for the debounced save, then returns the newest `count` rows, oldest first. */
+/** Waits for the save, then returns the newest `count` rows, oldest first. */
 async function newestRows(page: Page, total: number, count: number): Promise<StoredExpense[]> {
   await expect.poll(async () => (await storedExpenses(page)).length).toBe(total)
   return (await storedExpenses(page)).slice(0, count).reverse()
 }
 
-/** How the app stores a calendar day: local noon in Singapore, as an ISO instant. */
-const singaporeNoon = (day: string) => new Date(`${day}T12:00:00+08:00`).toISOString()
+/** How the app stores a calendar day (P2-2): the day at local noon, with no zone. */
+const singaporeNoon = (day: string) => `${day}T12:00:00`
 
 /** A toast on screen (screen readers hear it from a live region of their own). */
 const toastText = (page: Page, text: string) =>
@@ -126,6 +127,19 @@ const OCT_18_CASES: Case[] = [
 
 test.describe('Quick add on a Singapore phone and laptop', () => {
   test.use({ timezoneId: 'Asia/Singapore', locale: 'en-US' })
+
+  // 0.9.4 hydrated at once. 0.10.0 loads its data engine after the shell, so on a laptop the top
+  // bar takes text first: that add waits for the data and lands, never "still loading".
+  test('an add typed the moment the app opens lands once the data has loaded', async ({ page }) => {
+    await seed(page, SUN_18_OCT_2026, history([4, 5, 6]))
+    await page.goto('/pulse')
+    await quickAdd(page).fill('kopi 1.80')
+    await quickAdd(page).press('Enter')
+    await expect(toastText(page, 'Added "kopi" · S$1.80')).toBeVisible({ timeout: 15_000 })
+    await expect(page.getByText(/still loading/)).toHaveCount(0)
+    const [row] = await newestRows(page, 4, 1)
+    expect(row).toMatchObject({ itemName: 'kopi', amount: 1.8, date: singaporeNoon('2026-10-18') })
+  })
 
   test('Singapore phrases keep their places, amounts and dates (Sun 18 Oct 2026)', async ({
     page,

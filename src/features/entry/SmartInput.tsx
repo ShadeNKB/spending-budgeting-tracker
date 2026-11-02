@@ -1,14 +1,19 @@
-import { lazy, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Sparkles, CornerDownLeft, X, CalendarDays, PenLine, AlertTriangle } from 'lucide-react'
 import clsx from 'clsx'
-import { parseExpense, quickAddDateLabel, quickAddStoredDate } from '../../utils/parseExpense'
+import { parseExpense, quickAddDateLabel } from '../../utils/parseExpense'
 import {
   CONFIRM_DELAY_MS,
   isAmountTooLarge,
   isUnusualAmount,
   type AmountConfirmation,
 } from '../../utils/amountGuard'
-import { useExpenseStore } from '../../stores/useExpenseStore'
+import {
+  NOT_STARTED,
+  undoOutcomeMessage,
+  useExpenseStore,
+  whenReady,
+} from '../../stores/useExpenseStore'
 import { useToast } from '../../hooks/useToast'
 import { useHaptic } from '../../hooks/useHaptic'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
@@ -18,6 +23,8 @@ import { Pill } from '../../ui/Pill'
 import { colorFromString } from '../../lib/analytics'
 import { importWithReload } from '../../lib/chunkReload'
 import { OverlaySlot } from '../../app/OverlaySlot'
+import { actionErrorMessage, confirmAdded } from './expenseForm'
+import type { ExpenseView } from '../../types'
 
 // SmartInput is on screen at boot (in the header and on Pulse), so its full-entry sheet only
 // mounts on the first tap: a lazy component rendered at boot would fetch the sheet and the
@@ -49,10 +56,8 @@ export function SmartInput({
   const inputRef = useRef<HTMLInputElement>(null)
   // Set by a commit, cleared by typing: a second Enter or tap before the text changes adds nothing.
   const committedRef = useRef(false)
-  const addExpense = useExpenseStore((s) => s.addExpense)
   const categoryMappings = useExpenseStore((s) => s.categoryMappings)
   const categories = useExpenseStore((s) => s.categories)
-  const consumeUndo = useExpenseStore((s) => s.consumeUndo)
   const toast = useToast()
   const vibrate = useHaptic()
   const fmt = useFormatMoney()
@@ -80,9 +85,31 @@ export function SmartInput({
     setValue(next)
   }
 
+  // An add made in the first moment of a cold start (the bar takes text before the data has
+  // loaded) is kept and runs as soon as the data is there, with what the bar says then and the
+  // owner's own category picks; a second Enter meanwhile adds nothing more.
+  const latestCommit = useRef<(at: number) => void>(() => undefined)
+  const waiting = useRef(false)
+  const commitWhenReady = (at: number) => {
+    if (waiting.current) return
+    waiting.current = true
+    void whenReady().then((ok) => {
+      // one task later: the bar has rendered with the loaded categories and mappings
+      setTimeout(() => {
+        waiting.current = false
+        if (ok) latestCommit.current(at)
+        else toast.error(NOT_STARTED)
+      }, 0)
+    })
+  }
+
   /** `at` is the triggering event's timeStamp, so a double tap cannot confirm its own warning. */
   const commit = (at: number) => {
     if (committedRef.current || !canCommit) return
+    if (!useExpenseStore.getState().hydrated) {
+      commitWhenReady(at)
+      return
+    }
     if (confirming) {
       if (at - flagged.at < CONFIRM_DELAY_MS) return
     } else if (isUnusualAmount(amount, useExpenseStore.getState().expenses)) {
@@ -90,36 +117,48 @@ export function SmartInput({
       vibrate([10, 60, 10])
       return
     }
-    const created = addExpense({
-      itemName: parsed.itemName,
-      amount,
-      category: parsed.suggestedCategory,
-      date: quickAddStoredDate(parsed.parsedDate),
-    })
+    let created: ExpenseView
+    try {
+      // No date in the text: the store files it under today's local day (P2-2).
+      created = useExpenseStore.getState().addExpense({
+        itemName: parsed.itemName,
+        amount,
+        category: parsed.suggestedCategory,
+        day: parsed.parsedDate,
+      })
+    } catch (err) {
+      // The text stays, so the owner can fix what the message names.
+      toast.error(actionErrorMessage(err))
+      return
+    }
     committedRef.current = true
     vibrate(10)
-    toast.success(
+    const undoId = `add-${created.id}`
+    confirmAdded(
+      toast,
       `Added "${created.itemName}" · ${fmt(created.amount)}${parsedDateLabel ? ` · ${parsedDateLabel}` : ''}`,
       {
+        undoId,
         action: {
           label: 'Undo',
           onClick: () => {
-            const entry = useExpenseStore
-              .getState()
-              .undoStack.find((u) => u.id === `add-${created.id}`)
-            if (entry) consumeUndo(entry.id)
+            const outcome = useExpenseStore.getState().consumeUndo(undoId)
+            if (outcome !== null && outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
           },
         },
       },
     )
     setTimeout(() => {
-      const entry = useExpenseStore.getState().undoStack.find((u) => u.id === `add-${created.id}`)
-      if (entry) useExpenseStore.getState().clearUndo(entry.id)
+      useExpenseStore.getState().clearUndo(undoId)
     }, 6000)
     setValue('')
     setFlagged(null)
     onCommit?.()
   }
+
+  useLayoutEffect(() => {
+    latestCommit.current = commit
+  })
 
   const status = confirming
     ? `Large amount, ${fmt(amount)}. Press Confirm to add it.`

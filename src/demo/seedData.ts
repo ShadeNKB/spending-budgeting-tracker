@@ -100,7 +100,9 @@ export const DEMO_EXPENSES: Expense[] = /*#__PURE__*/ RAW.map((r, i) => ({
   itemName: r.name,
   amount: r.amount,
   category: r.cat,
-  date: d(r.daysAgo),
+  // the day contract every v5 write follows (P2-2): the day, and its floating local noon
+  day: d(r.daysAgo),
+  date: ts(r.daysAgo),
   createdAt: ts(r.daysAgo),
   updatedAt: ts(r.daysAgo),
 }))

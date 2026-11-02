@@ -114,8 +114,16 @@ export function Sheet({
           )}
           {/* Scroll padding: a control tabbed to at the scroller's edge is scrolled clear of
               it, focus ring included (the scroller would cut the ring off). 24 px, as on the
-              page: WebKit brings a text field's caret line into view, not the field's box. */}
-          <div className="flex-1 scroll-py-6 overflow-y-auto pb-[env(safe-area-inset-bottom,0px)]">
+              page: WebKit brings a text field's caret line into view, not the field's box.
+              The bottom padding grows by what the toast stack covers (--toast-clearance, set
+              here by toastClearance.ts while the sheet is open), so the last controls can
+              always scroll up out from under a toast. It never transitions (reduced motion
+              gives every property a 10 µs one): the scroll to reveal a control needs the room
+              laid out at once, or it stops short at the old end. */}
+          <div
+            data-toast-room=""
+            className="flex-1 scroll-py-6 overflow-y-auto pb-[calc(env(safe-area-inset-bottom,0px)+var(--toast-clearance,0px))] transition-none"
+          >
             {content}
           </div>
           <LayerAnnouncer />

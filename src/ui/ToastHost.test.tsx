@@ -132,6 +132,67 @@ describe('ToastHost semantics', () => {
     expect(container.querySelector('[aria-live]')).toBeNull()
   })
 
+  // An open sheet's Tab cycle takes in the toasts that have something to act on (modalLayer).
+  it('offers a toast with an action to the open sheet’s Tab order, and only that one', () => {
+    render(<ToastHost />)
+    push('Saved')
+    act(() => {
+      useUIStore.getState().pushToast({
+        kind: 'info',
+        message: 'All entries deleted',
+        action: { label: 'Undo', onClick: () => {} },
+      })
+    })
+    expect(boxOf('All entries deleted')).toHaveAttribute('data-layer-tab')
+    expect(boxOf('Saved')).not.toHaveAttribute('data-layer-tab')
+  })
+
+  it('hands focus back to where it came from when the toast it was in goes, never to <body>', () => {
+    render(
+      <>
+        <button type="button">Delete all entries</button>
+        <ToastHost />
+      </>,
+    )
+    const trigger = screen.getByRole('button', { name: 'Delete all entries' })
+    act(() => {
+      trigger.focus()
+      useUIStore.getState().pushToast({
+        kind: 'info',
+        message: 'All entries deleted',
+        action: { label: 'Undo', onClick: () => {} },
+      })
+    })
+    const undo = screen.getByRole('button', { name: 'Undo' })
+    act(() => {
+      undo.focus()
+    })
+    // Enter on the focused Undo (a key: detail 0) undoes and dismisses; the toast goes at once
+    // here (no animations in jsdom), and focus is back on the trigger, not on <body>
+    fireEvent.click(undo, { detail: 0 })
+    expect(messages()).toEqual([])
+    expect(trigger).toHaveFocus()
+  })
+
+  it('leaves focus alone when a toast goes that never had it', () => {
+    render(
+      <>
+        <button type="button">Elsewhere</button>
+        <ToastHost />
+      </>,
+    )
+    push('Saved', 1000)
+    const elsewhere = screen.getByRole('button', { name: 'Elsewhere' })
+    act(() => {
+      elsewhere.focus()
+    })
+    act(() => {
+      vi.advanceTimersByTime(1000)
+    })
+    expect(messages()).toEqual([])
+    expect(elsewhere).toHaveFocus()
+  })
+
   it('gives Undo and Dismiss 44 px hit areas on touch screens', () => {
     render(<ToastHost />)
     act(() => {

@@ -454,15 +454,21 @@ test.describe('Service worker build', () => {
 
 test.describe('Chunk graph', () => {
   // T5b: overlays and the ledger swipe move with CSS transitions and the Web Animations API.
+  // 0.10.0: the data engine is preloaded too, marked as the boot path's (data-boot), so it
+  // downloads beside the entry instead of a round trip after it; first paint does not need it.
   test('no animation library ships, the entry preloads only React and the utils, React lives in vendor-react', async ({
     request,
   }) => {
     const { html, entry, chunk } = await builtShell(request)
     expect(html + entry).not.toMatch(/vendor-motion/)
-    const preloads = [...html.matchAll(/modulepreload[^>]*href="\/assets\/([\w-]+)-[\w-]{8}\.js"/g)]
-      .map((m) => m[1] ?? '')
+    const links = [...html.matchAll(/<link\b[^>]*rel="modulepreload"[^>]*>/g)].map((m) => m[0])
+    const name = (tag: string) => /href="\/assets\/([\w-]+)-[\w-]{8}\.js"/.exec(tag)?.[1] ?? ''
+    const preloads = links
+      .filter((tag) => !tag.includes('data-boot'))
+      .map(name)
       .sort()
     expect(preloads).toEqual(['vendor-react', 'vendor-utils'])
+    expect(links.filter((tag) => tag.includes('data-boot="engine"')).map(name)).toEqual(['engine'])
     const staticImports = [
       ...entry.matchAll(/(?:^|;)\s*import\s*(?:[^'"]*?from\s*)?["']([^"']+)["']/g),
     ].map((m) => m[1] ?? '')

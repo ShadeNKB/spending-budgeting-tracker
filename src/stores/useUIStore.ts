@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { isSupportedCurrency, resolveDefaultCurrency, type SupportedCurrency } from '../lib/format'
+import { safeSet } from '../services/storage'
 
 export interface Toast {
   id: string
@@ -7,6 +8,11 @@ export interface Toast {
   message: string
   action?: { label: string; onClick: () => void }
   duration?: number
+  /**
+   * The undo entry this toast's Undo answers: once that entry is used up (Ctrl+Z, another
+   * toast) the toast goes too, so it never offers an Undo that does nothing.
+   */
+  undoId?: string
 }
 
 const CURRENCY_KEY = 'spendtrack:currency'
@@ -16,12 +22,12 @@ export type Theme = 'dark' | 'light' | 'system'
 
 export type SettingsTab = 'categories' | 'budgets' | 'backup' | 'sync'
 /** A control in Settings that another panel can send focus to. */
-export type SettingsControl = 'backup-download'
+export type SettingsControl = 'backup-download' | 'backup-attention'
 
 // Preferences are best-effort: if storage is unavailable they last for this session only.
 function persistPreference(key: string, value: string): void {
   try {
-    localStorage.setItem(key, value)
+    safeSet(key, value)
   } catch {
     // Session-only preference.
   }
@@ -66,6 +72,22 @@ function readCurrency(): SupportedCurrency {
   const resolved = detectDefaultCurrency()
   persistPreference(CURRENCY_KEY, resolved)
   return resolved
+}
+
+/** This device's own currency choice (`spendtrack:currency`), or its resolved default. */
+export function readDeviceCurrency(): SupportedCurrency {
+  return readCurrency()
+}
+
+/**
+ * P2-11: once the data engine runs, a currency pick is the synced register; the expense store
+ * registers the writer that sets it (and this device's key). It returns false while the engine is
+ * not ready, and the pick is then kept on this device only.
+ */
+let currencyWriter: ((code: SupportedCurrency) => boolean) | null = null
+
+export function setCurrencyWriter(write: (code: SupportedCurrency) => boolean): void {
+  currencyWriter = write
 }
 
 interface UIState {
@@ -140,7 +162,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   setHotkeysOpen: (v) => set({ hotkeysOpen: v }),
   setSmartInputFocused: (v) => set({ smartInputFocused: v }),
   setCurrency: (v) => {
-    persistPreference(CURRENCY_KEY, v)
+    if (currencyWriter?.(v) !== true) persistPreference(CURRENCY_KEY, v)
     set({ currency: v })
   },
   setTheme: (v) => {

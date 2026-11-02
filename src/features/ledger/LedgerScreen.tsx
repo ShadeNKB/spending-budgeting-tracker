@@ -5,7 +5,7 @@ import { downloadCSV } from '../../lib/download'
 import { expensesToCsv } from '../../lib/csv'
 import { DatePicker } from '../../ui/DatePicker'
 import { format } from 'date-fns'
-import { useExpenseStore } from '../../stores/useExpenseStore'
+import { undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
 import { Segmented } from '../../ui/Segmented'
 import { Input } from '../../ui/Input'
 import { Select } from '../../ui/Select'
@@ -16,6 +16,7 @@ import { useToday } from '../../hooks/useToday'
 import { ledgerRange, ledgerRangeLabel, shortDateYear } from '../../lib/dates'
 import { getLedgerIndex, rowsInRange, rowsToExpenses } from '../../lib/ledgerIndex'
 import { SmartInput } from '../entry/SmartInput'
+import { deleteUndoId } from '../entry/expenseForm'
 import { LedgerRow } from './LedgerRow'
 import { VirtualLedgerList } from './VirtualLedgerList'
 import { filterLedgerRows, groupLedgerRows } from './ledgerFlatten'
@@ -77,8 +78,6 @@ function firstRowButton(ids: readonly string[]): HTMLElement | null {
 export function LedgerScreen() {
   const expenses = useExpenseStore((s) => s.expenses)
   const categories = useExpenseStore((s) => s.categories)
-  const deleteExpense = useExpenseStore((s) => s.deleteExpense)
-  const consumeUndo = useExpenseStore((s) => s.consumeUndo)
   const toast = useToast()
   const fmt = useFormatMoney()
   const today = useToday()
@@ -244,20 +243,24 @@ export function LedgerScreen() {
       const focused = document.activeElement
       const focusedRow = focused instanceof HTMLElement ? focused.closest<HTMLElement>(ROW) : null
       if (focusedRow?.dataset.ledgerRow === id) refocusAfterDelete.current = neighboursOf(id)
-      deleteExpense(id)
+      useExpenseStore.getState().deleteExpense(id)
+      const undo = deleteUndoId(useExpenseStore.getState().undoStack, id)
       toast.info(`Deleted "${expense.itemName}"`, {
-        action: {
-          label: 'Undo',
-          onClick: () => {
-            const entry = useExpenseStore
-              .getState()
-              .undoStack.find((u) => u.id.startsWith(`del-${id}`))
-            if (entry) consumeUndo(entry.id)
-          },
-        },
+        undoId: undo,
+        action:
+          undo === undefined
+            ? undefined
+            : {
+                label: 'Undo',
+                onClick: () => {
+                  const outcome = useExpenseStore.getState().consumeUndo(undo)
+                  if (outcome !== null && outcome.skipped > 0)
+                    toast.warning(undoOutcomeMessage(outcome))
+                },
+              },
       })
     },
-    [deleteExpense, consumeUndo, toast],
+    [toast],
   )
 
   // After the commit that removed the row: the next row, else the previous, else the heading.

@@ -1,4 +1,4 @@
-import { readStored, type DayKey, type DayRange } from './dates'
+import { dayKeyOfStored, keyToLocalNoon, readStored, type DayKey, type DayRange } from './dates'
 import type { Expense } from '../types'
 
 /**
@@ -14,7 +14,7 @@ export interface DayTotal {
 
 export interface LedgerIndex {
   readonly expenses: readonly Expense[]
-  /** Per row: its local day, `null` when the stored date cannot be read. */
+  /** Per row: its day (`entryDay`), `null` when it has none that can be read. */
   readonly dayKeys: readonly (DayKey | null)[]
   /** Per row: the amount in integer cents (non-finite amounts count 0). */
   readonly cents: Float64Array
@@ -40,6 +40,20 @@ export const itemKey = (name: string): string => name.toLowerCase().trim().repla
 /** Unreadable dates sort as the oldest possible time (subtracting two of them gives 0). */
 const OLDEST = -Number.MAX_VALUE
 
+/** `day` when it is a real `yyyy-MM-dd` day, else `fallback` (the stored date's local day). */
+function dayOr(day: unknown, fallback: DayKey | null): DayKey | null {
+  if (day === undefined || day === fallback) return fallback
+  return typeof day === 'string' && dayKeyOfStored(day) === day ? day : fallback
+}
+
+/**
+ * The day an entry belongs to, the one every screen, export and backup agrees on (P2-2). An
+ * engine view always carries it as `day`, so legacy dates (a Z instant, a raw quick-add time) keep
+ * the day they were shown on when they were read; a plain `Expense` without a day falls back to
+ * the local day of its stored date. `null` when neither can be read.
+ */
+export const entryDay = (e: Expense): DayKey | null => dayOr(e.day, readStored(e.date).key)
+
 /** `yyyy-MM-dd` → yyyyMMdd as a number, read digit by digit (keys are always 10 ASCII chars). */
 function keyNumber(key: DayKey): number {
   let n = 0
@@ -63,24 +77,26 @@ function buildIndex(expenses: readonly Expense[]): LedgerIndex {
     const e = expenses[i]
     if (!e) continue
     const stored = readStored(e.date)
+    const key = dayOr(e.day, stored.key)
     const c = toCents(e.amount)
-    dayKeys[i] = stored.key
+    dayKeys[i] = key
     cents[i] = c
     totalCents += c
-    if (stored.key === null) {
+    if (key === null) {
       dayNums[i] = -1
       times[i] = OLDEST
       continue
     }
     validCount++
-    dayNums[i] = keyNumber(stored.key)
-    times[i] = stored.time
-    const bucket = byDay.get(stored.key)
+    dayNums[i] = keyNumber(key)
+    // In-day order follows the stored time; a day whose date cannot be read sits at its noon.
+    times[i] = stored.key === null ? keyToLocalNoon(key).getTime() : stored.time
+    const bucket = byDay.get(key)
     if (bucket) {
       bucket.cents += c
       bucket.count += 1
     } else {
-      byDay.set(stored.key, { cents: c, count: 1 })
+      byDay.set(key, { cents: c, count: 1 })
     }
   }
 

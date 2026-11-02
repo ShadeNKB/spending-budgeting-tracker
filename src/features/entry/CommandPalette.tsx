@@ -17,11 +17,11 @@ import {
 import clsx from 'clsx'
 import Fuse from 'fuse.js'
 import { useUIStore } from '../../stores/useUIStore'
-import { useExpenseStore } from '../../stores/useExpenseStore'
+import { undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { downloadJSON } from '../../lib/download'
-import { format as fmtDate, isValid, parseISO } from 'date-fns'
-import { parseExpense, quickAddDateLabel, quickAddStoredDate } from '../../utils/parseExpense'
+import { format as fmtDate } from 'date-fns'
+import { parseExpense, quickAddDateLabel } from '../../utils/parseExpense'
 import {
   CONFIRM_DELAY_MS,
   MAX_AMOUNT,
@@ -32,12 +32,13 @@ import {
 import { useToast } from '../../hooks/useToast'
 import { useHaptic } from '../../hooks/useHaptic'
 import { useToday } from '../../hooks/useToday'
-import { keyToLocalNoon } from '../../lib/dates'
+import { formatKey, keyToLocalNoon } from '../../lib/dates'
 import { holdScrollLock, useModalLayer } from '../../ui/modalLayer'
 import { LayerAnnouncer } from '../../ui/LayerAnnouncer'
 import { useHeldWhileClosing, usePresence } from '../../ui/usePresence'
 import { announce, retract } from '../../ui/announce'
-import type { Expense } from '../../types'
+import { actionErrorMessage, confirmAdded } from './expenseForm'
+import type { ExpenseView } from '../../types'
 
 type Action = {
   id: string
@@ -62,7 +63,7 @@ const OPTION =
   'relative flex min-h-11 w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-left text-sm transition before:absolute before:inset-y-1.5 before:left-0 before:hidden before:w-[3px] before:rounded-r-full before:bg-[var(--focus-ring)] aria-selected:before:block'
 
 interface ExpenseIndex {
-  readonly fuse: Fuse<Expense>
+  readonly fuse: Fuse<ExpenseView>
   /** Row positions of each indexed entry, ascending (the store keeps the newest first). */
   readonly rows: readonly (readonly number[])[]
 }
@@ -71,12 +72,12 @@ interface ExpenseIndex {
 // searches a ready index instead of rebuilding it per keystroke. Rows that read the same to the
 // search (name, category, notes) are indexed once, so the cost follows the number of distinct
 // entries rather than the length of the history.
-const expenseIndexCache = new WeakMap<readonly Expense[], ExpenseIndex>()
+const expenseIndexCache = new WeakMap<readonly ExpenseView[], ExpenseIndex>()
 
-function expenseIndex(expenses: readonly Expense[]): ExpenseIndex {
+function expenseIndex(expenses: readonly ExpenseView[]): ExpenseIndex {
   const cached = expenseIndexCache.get(expenses)
   if (cached) return cached
-  const groups = new Map<string, { first: Expense; rows: number[] }>()
+  const groups = new Map<string, { first: ExpenseView; rows: number[] }>()
   expenses.forEach((expense, i) => {
     const key = [expense.itemName, expense.category, expense.notes ?? ''].join('\u0000')
     const group = groups.get(key)
@@ -100,7 +101,11 @@ function expenseIndex(expenses: readonly Expense[]): ExpenseIndex {
  * gives (score, then list position, newest first): rows of entries that tie on score are merged by
  * position.
  */
-function searchExpenses(expenses: readonly Expense[], query: string, limit: number): Expense[] {
+function searchExpenses(
+  expenses: readonly ExpenseView[],
+  query: string,
+  limit: number,
+): ExpenseView[] {
   const { fuse, rows } = expenseIndex(expenses)
   const picked: number[] = []
   let tied: number[] = []
@@ -125,12 +130,6 @@ function searchExpenses(expenses: readonly Expense[], query: string, limit: numb
   })
 }
 
-/** A stored date in `pattern`, or null for a row whose date cannot be read. */
-function formatStoredDate(date: string, pattern: string): string | null {
-  const parsed = parseISO(date)
-  return isValid(parsed) ? fmtDate(parsed, pattern) : null
-}
-
 export function CommandPalette() {
   const open = useUIStore((s) => s.paletteOpen)
   const setOpen = useUIStore((s) => s.setPaletteOpen)
@@ -140,8 +139,6 @@ export function CommandPalette() {
   const expenses = useExpenseStore((s) => s.expenses)
   const categoryMappings = useExpenseStore((s) => s.categoryMappings)
   const categories = useExpenseStore((s) => s.categories)
-  const addExpense = useExpenseStore((s) => s.addExpense)
-  const exportBackup = useExpenseStore((s) => s.exportBackup)
   const toast = useToast()
   const vibrate = useHaptic()
   const fmt = useFormatMoney()
@@ -227,16 +224,37 @@ export function CommandPalette() {
       onRun: (at) => {
         // A double tap cannot confirm its own warning.
         if (addedRef.current || (confirming && at - flagged.at < CONFIRM_DELAY_MS)) return
-        const created = addExpense({
-          itemName,
-          amount: quickAddAmount,
-          category: suggestedCategory,
-          date: quickAddStoredDate(parsedDate),
-        })
+        let created: ExpenseView
+        try {
+          // No date in the text: the store files it under today's local day (P2-2).
+          created = useExpenseStore.getState().addExpense({
+            itemName,
+            amount: quickAddAmount,
+            category: suggestedCategory,
+            day: parsedDate,
+          })
+        } catch (err) {
+          // The palette stays open on the query, so the owner can fix what the message names.
+          toast.error(actionErrorMessage(err))
+          return
+        }
         addedRef.current = true
         vibrate(10)
-        toast.success(
+        const undoId = `add-${created.id}`
+        confirmAdded(
+          toast,
           `Added "${created.itemName}" · ${fmt(created.amount)}${dateLabel ? ` · ${dateLabel}` : ''}`,
+          {
+            undoId,
+            action: {
+              label: 'Undo',
+              onClick: () => {
+                const outcome = useExpenseStore.getState().consumeUndo(undoId)
+                if (outcome !== null && outcome.skipped > 0)
+                  toast.warning(undoOutcomeMessage(outcome))
+              },
+            },
+          },
         )
         setQuery('')
         setFlagged(null)
@@ -244,7 +262,6 @@ export function CommandPalette() {
       },
     }
   }, [
-    addExpense,
     confirming,
     flagged,
     fmt,
@@ -294,12 +311,13 @@ export function CommandPalette() {
         onRun: () => {
           downloadJSON(
             `spendtrack-backup-${fmtDate(new Date(), 'yyyy-MM-dd')}.json`,
-            exportBackup(),
+            useExpenseStore.getState().exportBackup(),
           )
+          useExpenseStore.getState().markBackedUp()
         },
       },
     ],
-    [navigate, setSettingsOpen, setAddSheetOpen, exportBackup],
+    [navigate, setSettingsOpen, setAddSheetOpen],
   )
 
   const expenseHits = useMemo(
@@ -367,9 +385,7 @@ export function CommandPalette() {
     } else {
       const exp = expenseHits[idx - filteredActions.length]
       if (exp) {
-        const day = formatStoredDate(exp.date, 'yyyy-MM-dd')
-        const search = `q=${encodeURIComponent(exp.itemName)}`
-        void navigate(day ? `/ledger?date=${day}&${search}` : `/ledger?${search}`)
+        void navigate(`/ledger?date=${exp.day}&q=${encodeURIComponent(exp.itemName)}`)
       }
     }
     setOpen(false)
@@ -545,7 +561,7 @@ export function CommandPalette() {
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-white">{e.itemName}</div>
                       <div className="text-[11px] text-[var(--text-tertiary)]">
-                        {e.category} / {formatStoredDate(e.date, 'MMM d') ?? 'Unknown date'}
+                        {e.category} / {formatKey(e.day, 'MMM d')}
                       </div>
                     </div>
                     <span className="font-mono text-[13px] tabular-nums text-white">

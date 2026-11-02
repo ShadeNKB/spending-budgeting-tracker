@@ -1,9 +1,15 @@
+import { startEngineLoad } from './stores/useExpenseStore'
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'
 import './index.css'
 import { installPreloadErrorRecovery } from './lib/chunkReload'
 import { getUpdateController } from './app/swUpdate'
+
+// The data engine is its own chunk (with the data core): start fetching it before anything else,
+// so it downloads and evaluates while React does (P2-1). The shell shows "Loading local spending
+// data" until it has booted.
+startEngineLoad()
 
 // A lazy chunk, or the CSS it needs, that fails to load (stale after a deploy) reloads the
 // page once. Loads cancelled by leaving the page never trigger it.

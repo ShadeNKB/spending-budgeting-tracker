@@ -36,6 +36,7 @@ import {
   type SyncFailure,
   type SyncResult,
 } from '../../stores/useSyncStore'
+import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useUIStore } from '../../stores/useUIStore'
 import { syncEnabled } from '../../services/syncConfig'
 import { useTick } from '../../hooks/useTick'
@@ -231,7 +232,7 @@ function setupFailure(
 }
 
 /** Controls that take focus after a view swap (see `focusNext`). */
-type FocusTarget = 'sync-now' | 'generate' | 'disconnect'
+type FocusTarget = 'sync-now' | 'generate' | 'connect' | 'disconnect'
 
 const BANNER_TONE: Record<BannerTone, string> = {
   error: 'border-negative/20 bg-negative/10 text-negative',
@@ -416,6 +417,9 @@ function SyncContent() {
   const [connecting, setConnecting] = useState(false)
   const [manualSyncing, setManualSyncing] = useState(false)
   const [confirmDisconnect, setConfirmDisconnect] = useState(false)
+  // Generate or Connect asked while the demo's sample rows are here (P2-22): they never sync,
+  // so the owner decides first whether to keep them on this device.
+  const [askDemo, setAskDemo] = useState<SetupRequest | null>(null)
   const copyResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   // Each request this panel starts takes a number, and Disconnect moves past it: a request
   // still on the wire then (a hung first sync) keeps no button busy and reports nothing.
@@ -489,9 +493,7 @@ function SyncContent() {
   /** Held back for an old device: saved here, but the relay does not hold this copy. */
   const heldBack = () => useSyncStore.getState().waitingForOld
 
-  const handleGenerate = async () => {
-    // aria-disabled, not disabled, while setting up: the button keeps keyboard focus.
-    if (connecting) return
+  const generate = async () => {
     focusNext.current = 'sync-now'
     const code = crypto.randomUUID()
     generatedCode = code
@@ -509,20 +511,13 @@ function SyncContent() {
     dropFocusRequest('sync-now')
   }
 
-  const handleConnect = async () => {
-    const trimmed = codeInput.trim().toLowerCase()
-    if (!trimmed || connecting) return
-    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-    if (!uuidRegex.test(trimmed)) {
-      toast.error('Invalid sync code — paste the full code from your other device')
-      return
-    }
+  const connect = async (code: string) => {
     // The code is saved either way; a failed first sync keeps retrying in the background.
     focusNext.current = 'sync-now'
     const before = failureBanner(useSyncStore.getState().lastError)
     await runRequest(
       setConnecting,
-      () => setupSync(trimmed),
+      () => setupSync(code),
       (result) => {
         if (!result.ok)
           reportFailure(result, setupFailure('connected', result, bannerNowSays(before)))
@@ -532,6 +527,62 @@ function SyncContent() {
     )
     dropFocusRequest('sync-now')
     setCodeInput('')
+  }
+
+  const run = (request: SetupRequest) => {
+    void (request.kind === 'generate' ? generate() : connect(request.code))
+  }
+
+  /** Sets up now, or first asks about the demo's sample rows while they are here. */
+  const setUp = (request: SetupRequest) => {
+    if (useExpenseStore.getState().demo !== 'sample') {
+      run(request)
+      return
+    }
+    // The question takes the pressed control's place: a double tap's second tap must not
+    // answer it.
+    shieldGesture()
+    setAskDemo(request)
+  }
+
+  const answerDemo = (remove: boolean) => {
+    const request = askDemo
+    if (request === null) return
+    setAskDemo(null)
+    // The question's place goes back to the control that asked it until the linked view mounts.
+    focusNext.current = request.kind
+    if (remove) {
+      try {
+        useExpenseStore.getState().clearSampleData()
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : "Couldn't remove the sample data.")
+        return
+      }
+    }
+    run(request)
+  }
+
+  const backOutOfDemo = () => {
+    if (askDemo === null) return
+    focusNext.current = askDemo.kind
+    setAskDemo(null)
+  }
+
+  const handleGenerate = () => {
+    // aria-disabled, not disabled, while setting up: the button keeps keyboard focus.
+    if (connecting) return
+    setUp({ kind: 'generate' })
+  }
+
+  const handleConnect = () => {
+    const trimmed = codeInput.trim().toLowerCase()
+    if (!trimmed || connecting) return
+    const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+    if (!uuidRegex.test(trimmed)) {
+      toast.error('Invalid sync code — paste the full code from your other device')
+      return
+    }
+    setUp({ kind: 'connect', code: trimmed })
   }
 
   const handleCopy = async () => {
@@ -630,16 +681,20 @@ function SyncContent() {
           </div>
         </div>
 
-        <Button
-          ref={focusWhenShown('generate')}
-          onClick={handleGenerate}
-          variant="primary"
-          aria-disabled={connecting}
-          className={ARIA_DISABLED}
-        >
-          {connecting ? <Loader2 size={14} className="animate-spin" /> : <Cloud size={14} />}
-          {connecting ? 'Setting up…' : 'Generate sync code for this device'}
-        </Button>
+        {askDemo?.kind === 'generate' ? (
+          <DemoQuestion onAnswer={answerDemo} onBackOut={backOutOfDemo} />
+        ) : (
+          <Button
+            ref={focusWhenShown('generate')}
+            onClick={handleGenerate}
+            variant="primary"
+            aria-disabled={connecting}
+            className={ARIA_DISABLED}
+          >
+            {connecting ? <Loader2 size={14} className="animate-spin" /> : <Cloud size={14} />}
+            {connecting ? 'Setting up…' : 'Generate sync code for this device'}
+          </Button>
+        )}
 
         <div className="flex items-center gap-3">
           <div className="h-px flex-1 bg-white/[0.06]" />
@@ -647,34 +702,39 @@ function SyncContent() {
           <div className="h-px flex-1 bg-white/[0.06]" />
         </div>
 
-        <div className="flex gap-2">
-          {/* min-w-0 lets the field shrink, so Connect stays on screen at 320 px. */}
-          <div className="min-w-0 flex-1">
-            <Input
-              label="Sync code"
-              placeholder="Paste sync code from another device"
-              value={codeInput}
-              onChange={(e) => setCodeInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key !== 'Enter') return
-                // Without this, the Enter's own activation (keypress) lands on Sync now, which
-                // the connected view focuses as it mounts, and runs a second cycle.
-                e.preventDefault()
-                void handleConnect()
-              }}
-              className="min-w-0"
-            />
+        {askDemo?.kind === 'connect' ? (
+          <DemoQuestion onAnswer={answerDemo} onBackOut={backOutOfDemo} />
+        ) : (
+          <div className="flex gap-2">
+            {/* min-w-0 lets the field shrink, so Connect stays on screen at 320 px. */}
+            <div className="min-w-0 flex-1">
+              <Input
+                label="Sync code"
+                placeholder="Paste sync code from another device"
+                value={codeInput}
+                onChange={(e) => setCodeInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key !== 'Enter') return
+                  // Without this, the Enter's own activation (keypress) lands on Sync now, which
+                  // the connected view focuses as it mounts, and runs a second cycle.
+                  e.preventDefault()
+                  handleConnect()
+                }}
+                className="min-w-0"
+              />
+            </div>
+            <Button
+              ref={focusWhenShown('connect')}
+              onClick={handleConnect}
+              disabled={!codeInput.trim()}
+              aria-disabled={connecting}
+              className={clsx('mt-0 shrink-0 self-end', ARIA_DISABLED)}
+            >
+              {connecting ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
+              Connect
+            </Button>
           </div>
-          <Button
-            onClick={handleConnect}
-            disabled={!codeInput.trim()}
-            aria-disabled={connecting}
-            className={clsx('mt-0 shrink-0 self-end', ARIA_DISABLED)}
-          >
-            {connecting ? <Loader2 size={14} className="animate-spin" /> : <Link2 size={14} />}
-            Connect
-          </Button>
-        </div>
+        )}
 
         <div className="flex items-start gap-2 pt-1 text-[11px] leading-relaxed text-[var(--text-tertiary)]">
           <ShieldCheck size={12} className="mt-0.5 shrink-0 text-positive/70" />
@@ -824,6 +884,48 @@ function SyncContent() {
         )}
       </div>
       <AppVersion />
+    </div>
+  )
+}
+
+type SetupRequest = { kind: 'generate' } | { kind: 'connect'; code: string }
+
+/**
+ * "Remove the sample data first?" before this device links up (P2-22). The sample rows never
+ * reach the relay either way, so both answers set up; Escape backs out of setting up instead.
+ */
+function DemoQuestion({
+  onAnswer,
+  onBackOut,
+}: {
+  onAnswer: (remove: boolean) => void
+  onBackOut: () => void
+}) {
+  return (
+    <div
+      // Both answers are long: on a phone they take a row each instead of running past the card
+      // (InlineConfirm's button row does not wrap; its buttons keep their labels on one line).
+      className="[&_[role=group]>div:last-child]:flex-wrap"
+      onKeyDownCapture={(e) => {
+        if (e.key !== 'Escape' || e.repeat || e.nativeEvent.isComposing) return
+        e.preventDefault()
+        e.stopPropagation()
+        onBackOut()
+      }}
+    >
+      <InlineConfirm
+        tone="warning"
+        question="Remove the sample data first?"
+        detail="Sample entries stay on this device and never sync. Remove them to start with your own."
+        confirmLabel="Remove and connect"
+        cancelLabel="Keep it on this device"
+        onConfirm={() => {
+          onAnswer(true)
+        }}
+        onCancel={() => {
+          onAnswer(false)
+        }}
+      />
     </div>
   )
 }

@@ -11,6 +11,7 @@ import {
   type SyncFailure,
   type SyncResult,
 } from '../../stores/useSyncStore'
+import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useUIStore } from '../../stores/useUIStore'
 
 // A build with sync configured; the store's actions are replaced per test, so no request is made.
@@ -58,6 +59,7 @@ function statusRow(): HTMLElement {
 
 const initialSync = useSyncStore.getState()
 const initialUI = useUIStore.getState()
+const initialExpenses = useExpenseStore.getState()
 
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true })
@@ -68,6 +70,7 @@ afterEach(() => {
   cleanup()
   useSyncStore.setState(initialSync, true)
   useUIStore.setState(initialUI, true)
+  useExpenseStore.setState(initialExpenses, true)
   vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
@@ -893,5 +896,135 @@ describe('tap targets on phones', () => {
     connectedPanel()
     expect(screen.getByRole('button', { name: 'Copy' })).toHaveClass('min-h-11', 'md:min-h-0')
     expect(screen.getByTitle('Tap to copy')).toHaveClass('min-h-11', 'md:min-h-0')
+  })
+})
+
+describe("the demo's sample data (P2-22)", () => {
+  const QUESTION = 'Remove the sample data first?'
+  const question = () => screen.queryByRole('group', { name: QUESTION })
+
+  /** A demo build with its sample rows here; Clear sample data ends the sample state. */
+  function withSample(clear: () => void = () => undefined) {
+    const clearSampleData = vi.fn(() => {
+      clear()
+      useExpenseStore.setState({ demo: 'none' })
+    })
+    useExpenseStore.setState({ demo: 'sample', clearSampleData })
+    const setupSync = vi.fn(() => Promise.resolve(OK))
+    useSyncStore.setState({ setupSync })
+    render(<SyncPanel />)
+    return { clearSampleData, setupSync }
+  }
+
+  const typeCode = () => {
+    fireEvent.change(screen.getByPlaceholderText('Paste sync code from another device'), {
+      target: { value: CODE },
+    })
+  }
+
+  it('Generate asks first, in place of the button, with the safe answer focused', () => {
+    const { setupSync, clearSampleData } = withSample()
+    fireEvent.click(screen.getByRole('button', { name: /Generate sync code/ }))
+    const group = question()
+    expect(group).toBeInTheDocument()
+    expect(group).toHaveAccessibleDescription(
+      'Sample entries stay on this device and never sync. Remove them to start with your own.',
+    )
+    expect(screen.queryByRole('button', { name: /Generate sync code/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Keep it on this device' })).toHaveFocus()
+    expect(setupSync).not.toHaveBeenCalled()
+    expect(clearSampleData).not.toHaveBeenCalled()
+  })
+
+  it('Remove and connect removes the sample rows, then sets up', async () => {
+    const order: string[] = []
+    const { setupSync, clearSampleData } = withSample(() => order.push('clear'))
+    setupSync.mockImplementation(() => {
+      order.push('setup')
+      return Promise.resolve(OK)
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Generate sync code/ }))
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Remove and connect' }))
+      await Promise.resolve()
+    })
+    expect(clearSampleData).toHaveBeenCalledTimes(1)
+    expect(setupSync).toHaveBeenCalledTimes(1)
+    expect(order).toEqual(['clear', 'setup'])
+    expect(question()).not.toBeInTheDocument()
+  })
+
+  it('Keep it on this device connects with the code and keeps the sample rows', async () => {
+    const { setupSync, clearSampleData } = withSample()
+    typeCode()
+    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    expect(question()).toBeInTheDocument()
+    expect(setupSync).not.toHaveBeenCalled()
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Keep it on this device' }))
+      await Promise.resolve()
+    })
+    expect(setupSync).toHaveBeenCalledWith(CODE)
+    expect(clearSampleData).not.toHaveBeenCalled()
+    expect(toasts()).toEqual([['success', 'Connected — data synced']])
+  })
+
+  it.each(['Generate', 'Connect'] as const)(
+    'Escape after %s backs out: nothing removed, nothing set up, focus back where it was',
+    (action) => {
+      const { setupSync, clearSampleData } = withSample()
+      if (action === 'Connect') typeCode()
+      fireEvent.click(
+        screen.getByRole('button', { name: action === 'Connect' ? 'Connect' : /Generate/ }),
+      )
+      fireEvent.keyDown(screen.getByRole('button', { name: 'Keep it on this device' }), {
+        key: 'Escape',
+      })
+      expect(question()).not.toBeInTheDocument()
+      expect(setupSync).not.toHaveBeenCalled()
+      expect(clearSampleData).not.toHaveBeenCalled()
+      expect(
+        screen.getByRole('button', { name: action === 'Connect' ? 'Connect' : /Generate/ }),
+      ).toHaveFocus()
+    },
+  )
+
+  it("a double click's second press does not answer the question it raised", () => {
+    const { setupSync, clearSampleData } = withSample()
+    fireEvent.click(screen.getByRole('button', { name: /Generate sync code/ }), { detail: 1 })
+    fireEvent.click(screen.getByRole('button', { name: 'Remove and connect' }), { detail: 2 })
+    expect(question()).toBeInTheDocument()
+    expect(clearSampleData).not.toHaveBeenCalled()
+    expect(setupSync).not.toHaveBeenCalled()
+  })
+
+  it('a removal that fails says so and sets nothing up', async () => {
+    const clearSampleData = vi.fn(() => {
+      throw new Error('SpendTrack is still loading your data.')
+    })
+    useExpenseStore.setState({ demo: 'sample', clearSampleData })
+    const setupSync = vi.fn(() => Promise.resolve(OK))
+    useSyncStore.setState({ setupSync })
+    render(<SyncPanel />)
+    fireEvent.click(screen.getByRole('button', { name: /Generate sync code/ }))
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Remove and connect' }))
+      await Promise.resolve()
+    })
+    expect(setupSync).not.toHaveBeenCalled()
+    expect(toasts()).toEqual([['error', 'SpendTrack is still loading your data.']])
+    expect(screen.getByRole('button', { name: /Generate sync code/ })).toHaveFocus()
+  })
+
+  it('asks nothing when there is no sample data', async () => {
+    const setupSync = vi.fn(() => Promise.resolve(OK))
+    useSyncStore.setState({ setupSync })
+    render(<SyncPanel />)
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: /Generate sync code/ }))
+      await Promise.resolve()
+    })
+    expect(question()).not.toBeInTheDocument()
+    expect(setupSync).toHaveBeenCalledTimes(1)
   })
 })

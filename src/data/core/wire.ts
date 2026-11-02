@@ -43,6 +43,7 @@ import { iso, ps, vs } from './stamp'
 import type {
   BackupFileV5,
   BudgetReg,
+  BudgetTexts,
   DeviceInfo,
   Doc,
   ExpenseRec,
@@ -56,6 +57,7 @@ import type {
   SanitizeResult,
   SizeClass,
   Stamp,
+  V085View,
   V4Key,
   WireDevice,
   WireDocV5,
@@ -233,6 +235,8 @@ interface Item {
   readonly rec: ExpenseRec
   /** The sanitised raw record; null when a reused record's own wire copy came in. */
   readonly clean: CleanExpense | null
+  /** The record as it came in (what a v0.8.5 writer holds, P2-4). */
+  readonly raw: Readonly<Record<string, unknown>>
 }
 
 /** The canonical wire object of an item: built only when a duplicate id needs it (§7.9). */
@@ -256,7 +260,7 @@ function decodeExpenses(
       if (prev !== undefined) {
         const enc = encodeRecord(prev)
         if ((Object.hasOwn(enc, 'h') || srcRank === 1) && sameAsOurs(raw, enc)) {
-          items.push({ rec: prev, clean: null })
+          items.push({ rec: prev, clean: null, raw })
           continue
         }
       }
@@ -270,7 +274,8 @@ function decodeExpenses(
       acc.repaired++
       keepOriginal(acc, `repaired:${r.notes.join(',')}`, raw)
     }
-    items.push({ rec: decodeRecord(r.rec, srcRank), clean: r.rec })
+    if (!isPlainObject(raw)) continue
+    items.push({ rec: decodeRecord(r.rec, srcRank), clean: r.rec, raw })
   }
   for (let i = n; i < list.length; i++) {
     acc.quarantined.push({ at: acc.at, origin, reason: 'cap', raw: rawText(list[i]) })
@@ -383,6 +388,12 @@ function decodeMappings(
   for (const [k, v] of entriesOf(x5, 'mts', 'x5.mts', acc)) {
     if (typeof v === 'number') stamps.set(k, vs(v))
     else drop(acc, `x5.mts.${k}`, [k, v])
+  }
+  // v0.8.5 keeps its stamps top-level and drops x5 on every push (P2-3): the later stamp wins,
+  // so a pick made beside it stays last-writer-wins whichever device wrote the relay last
+  for (const [k, v] of entriesOf(raw, 'mappingUpdatedAt', 'mappingUpdatedAt', acc)) {
+    if (typeof v === 'string') stamps.set(k, Math.max(stamps.get(k) ?? 0, ps(v)))
+    else drop(acc, `mappingUpdatedAt.${k}`, [k, v])
   }
   const out = new Map<string, MapReg>()
   for (const [k, v] of entriesOf(raw, 'categoryMappings', 'categoryMappings', acc)) {
@@ -640,10 +651,17 @@ function decodeUnsafe(raw: unknown, origin: Origin, opts: DecodeOptions): Saniti
   }
 
   const legacyTs = new Map<string, number>()
-  if (!local && (writer === 'v084' || writer === 'v085') && Array.isArray(list)) {
+  if (!local && writer === 'v084' && Array.isArray(list)) {
     for (const el of list) {
       const id = isPlainObject(el) ? own(el, 'id') : undefined
       if (typeof id === 'string' && !legacyTs.has(id)) legacyTs.set(id, v08ts(el))
+    }
+  }
+  const view = !local && writer === 'v085' ? v085View(raw, items) : undefined
+  if (view !== undefined) {
+    for (const [id, el] of view.rows) {
+      const rec = view.ours.get(id)
+      legacyTs.set(id, rec === undefined ? stamp085(el) : stamp085Rec(rec))
     }
   }
   const rev = x5 === null ? null : own(x5, 'rev')
@@ -663,6 +681,7 @@ function decodeUnsafe(raw: unknown, origin: Origin, opts: DecodeOptions): Saniti
     report: report(acc),
     legacyTs,
     rev: typeof rev === 'string' ? rev : null,
+    ...(view === undefined ? {} : { v085: view }),
   }
 }
 
@@ -798,7 +817,10 @@ const tombPieces = (t: ReadonlyMap<string, Stamp>): TombPieces =>
 
 interface MappingPieces {
   readonly values: Piece<Readonly<Record<string, string>>>
+  /** x5.mts */
   readonly stamps: Piece<Readonly<Record<string, Stamp>>>
+  /** The top-level `mappingUpdatedAt` v0.8.5 reads and keeps (P2-3). */
+  readonly isoStamps: Piece<Readonly<Record<string, string>>>
 }
 const mapCache = new WeakMap<ReadonlyMap<string, MapReg>, MappingPieces>()
 const mappingPieces = (m: ReadonlyMap<string, MapReg>): MappingPieces =>
@@ -808,6 +830,7 @@ const mappingPieces = (m: ReadonlyMap<string, MapReg>): MappingPieces =>
     return {
       values: piece(objectOf([...m].map(([k, g]) => [k, g.v] as const))),
       stamps: piece(objectOf(stamps)),
+      isoStamps: piece(objectOf(stamps.map(([k, t]) => [k, iso(t)] as const))),
     }
   })
 
@@ -965,6 +988,7 @@ export function encodeWire(doc: Doc, opts: EncodeOptions = {}): WireDocV5 {
     expenses: liveRecords(doc, opts.omitIds).map(encodeRecord),
     categories: doc.categories,
     categoryMappings: p.mappings.values.obj,
+    mappingUpdatedAt: p.mappings.isoStamps.obj,
     budgets: p.budgets.budgets.obj,
     budgetUpdatedAt: p.budgets.budgetUpdatedAt.obj,
     budgetDeletedAt: p.budgets.budgetDeletedAt.obj,
@@ -981,6 +1005,7 @@ export function wireString(doc: Doc, opts: EncodeOptions = {}): string {
     `,"expenses":${recordsJson(doc, opts.omitIds)}` +
     `,"categories":${categoriesJson(doc.categories)}` +
     `,"categoryMappings":${p.mappings.values.json}` +
+    `,"mappingUpdatedAt":${p.mappings.isoStamps.json}` +
     `,"budgets":${p.budgets.budgets.json}` +
     `,"budgetUpdatedAt":${p.budgets.budgetUpdatedAt.json}` +
     `,"budgetDeletedAt":${p.budgets.budgetDeletedAt.json}` +
@@ -1002,6 +1027,7 @@ export function encodeBackupFile(
     expenses: liveRecords(doc, opts.omitIds).map(encodeRecord),
     categories: doc.categories,
     categoryMappings: p.mappings.values.obj,
+    mappingUpdatedAt: p.mappings.isoStamps.obj,
     budgets: p.budgets.budgets.obj,
     budgetUpdatedAt: p.budgets.budgetUpdatedAt.obj,
     budgetDeletedAt: p.budgets.budgetDeletedAt.obj,
@@ -1030,22 +1056,30 @@ export function movedMarker(why: 'private' | 'rotated' | 'stopped', atIso: strin
 
 // ── v4 keys: the mirror (§9.10) and the way back in (P-22) ──────────────────────────────────
 
-/** The v4 projection of the doc, as the seven key strings. Write them in MIRROR_ORDER. */
+/**
+ * The v4 projection of the doc, as the eight key strings. Write them in MIRROR_ORDER. A mapping is
+ * listed under its resolved live target, with its stamp when it has one (P2-3), so a rolled-back
+ * v0.8.5 keeps its item picks last-writer-wins.
+ */
 export function toV4Mirror(
   doc: Doc,
   opts: Pick<EncodeOptions, 'omitIds'> = {},
 ): Readonly<Record<V4Key, string>> {
   const res = resolver(doc.renames)
   const mappings: [string, string][] = []
+  const stamps: [string, string][] = []
   for (const [k, g] of doc.mappings) {
     const target = res(g.v)
-    if (res(target) === target) mappings.push([k, target])
+    if (res(target) !== target) continue
+    mappings.push([k, target])
+    if (g.s > 0) stamps.push([k, iso(g.s)])
   }
   const b = budgetPieces(doc.budgets)
   return {
     categoryBudgetDeletedAt: b.budgetDeletedAt.json,
     categoryBudgets: b.budgets.json,
     categoryBudgetUpdatedAt: b.budgetUpdatedAt.json,
+    categoryMappingUpdatedAt: JSON.stringify(objectOf(stamps)),
     categoryMappings: JSON.stringify(objectOf(mappings)),
     categories: JSON.stringify(displayList(doc)),
     deletedExpenseIds: tombPieces(doc.tombs).ids.json,
@@ -1053,7 +1087,7 @@ export function toV4Mirror(
   }
 }
 
-/** fnv36 of the seven strings joined in MIRROR_ORDER (a missing key counts as NUL). */
+/** fnv36 of the eight strings joined in MIRROR_ORDER (a missing key counts as NUL). */
 export function mirrorSum(strings: Readonly<Partial<Record<V4Key, string | null>>>): string {
   return fnv36(MIRROR_ORDER.map((k) => strings[k] ?? '\u0000').join('\n'))
 }
@@ -1067,6 +1101,7 @@ export function fromV4Keys(
     expenses: parsed.expenses ?? [],
     categories: parsed.categories,
     categoryMappings: parsed.categoryMappings,
+    mappingUpdatedAt: parsed.categoryMappingUpdatedAt,
     budgets: parsed.categoryBudgets,
     budgetUpdatedAt: parsed.categoryBudgetUpdatedAt,
     budgetDeletedAt: parsed.categoryBudgetDeletedAt,
@@ -1074,7 +1109,7 @@ export function fromV4Keys(
   }
 }
 
-// ── old-writer news (§11.4, P-11) ───────────────────────────────────────────────────────────
+// ── old-writer news (§11.4, P-11, P2-4) ─────────────────────────────────────────────────────
 
 type Outcome = number | null
 
@@ -1092,11 +1127,8 @@ function v4BudgetOutcome(local: BudgetReg | undefined, remote: BudgetReg | undef
   return shown(local) ?? shown(remote)
 }
 
-/**
- * Would a v0.8 client holding the relay doc `relay` keep anything from our merged doc `m`?
- * Mimics its mergeBackups exactly (local = the relay copy, remote = our push).
- */
-export function adoptableNews(m: Doc, relay: SanitizeResult): boolean {
+/** v0.8.4 (P-11): `new Date()` stamps, the local copy wins ties, mappings are local-wins. */
+function adoptable084(m: Doc, relay: SanitizeResult): boolean {
   const r = relay.doc
   for (const [id, rec] of m.expenses) {
     const theirs = r.expenses.get(id)
@@ -1118,4 +1150,171 @@ export function adoptableNews(m: Doc, relay: SanitizeResult): boolean {
   for (const n of m.categories) if (!listed.has(n)) return true
   for (const k of m.mappings.keys()) if (!r.mappings.has(k)) return true
   return false
+}
+
+/** v0.8.5's `stampMs(updatedAt ?? createdAt)`: the fixed-window stamp of the text, else 0. */
+function stamp085(raw: Readonly<Record<string, unknown>>): Stamp {
+  const at = own(raw, 'updatedAt') ?? own(raw, 'createdAt')
+  return typeof at === 'string' ? ps(at) : 0
+}
+
+/** stamp085 of our own encoding of a record, parsed once per record object (boot and every pull). */
+const ownStamp085 = new WeakMap<ExpenseRec, Stamp>()
+function stamp085Rec(rec: ExpenseRec): Stamp {
+  let t = ownStamp085.get(rec)
+  if (t === undefined) {
+    t = stamp085(encodeRecord(rec))
+    ownStamp085.set(rec, t)
+  }
+  return t
+}
+
+const strings = (v: unknown): readonly string[] =>
+  Array.isArray(v) ? v.filter((x: unknown): x is string => typeof x === 'string') : []
+const isText = (x: unknown): x is string => typeof x === 'string'
+const isNum = (x: unknown): x is number => typeof x === 'number'
+
+/** Own entries of a raw object whose values pass `keep` (v0.8.5's recordOf). */
+function rawEntries<T>(
+  raw: Readonly<Record<string, unknown>>,
+  key: string,
+  keep: (x: unknown) => x is T,
+): Map<string, T> {
+  const out = new Map<string, T>()
+  for (const [k, v] of ownEntries(own(raw, key)) ?? []) if (keep(v)) out.set(k, v)
+  return out
+}
+
+/** What a v0.8.5 client holds of the payload it wrote (P2-4): read from the raw payload. */
+function v085View(raw: Readonly<Record<string, unknown>>, items: readonly Item[]): V085View {
+  const rows = new Map<string, WireRecord>()
+  const ours = new Map<string, ExpenseRec>()
+  for (const it of items) {
+    rows.set(it.rec.id, it.raw)
+    // the last copy decides, as in its merge: exactly our own encoding, or anything else
+    if (it.clean === null) ours.set(it.rec.id, it.rec)
+    else ours.delete(it.rec.id)
+  }
+  const values = rawEntries(raw, 'categoryMappings', isText)
+  const at = rawEntries(raw, 'mappingUpdatedAt', isText)
+  const mappings = new Map<string, readonly [string, string | undefined]>()
+  for (const [k, v] of values) mappings.set(k, [v, at.get(k)])
+  const b = rawEntries(raw, 'budgets', isNum)
+  const u = rawEntries(raw, 'budgetUpdatedAt', isText)
+  const d = rawEntries(raw, 'budgetDeletedAt', isText)
+  const budgets = new Map<string, BudgetTexts>()
+  for (const k of new Set([...b.keys(), ...u.keys(), ...d.keys()])) {
+    budgets.set(k, { value: b.get(k), setAt: u.get(k), delAt: d.get(k) })
+  }
+  return {
+    rows,
+    ours,
+    tombs: new Set(strings(own(raw, 'deletedIds'))),
+    categories: new Set(strings(own(raw, 'categories'))),
+    mappings,
+    budgets,
+  }
+}
+
+/** One key of v0.8.5's mergeBudgets: its budgetSide. */
+interface Side085 {
+  readonly value: number | undefined
+  readonly set: number
+  readonly setAt: string | undefined
+  readonly del: number
+  readonly delAt: string | undefined
+}
+
+function side085(t: BudgetTexts | undefined): Side085 {
+  const value = t?.value !== undefined && Number.isFinite(t.value) ? t.value : undefined
+  return {
+    value,
+    set: value === undefined ? -1 : ps(t?.setAt),
+    setAt: t?.setAt,
+    del: t?.delAt === undefined ? -1 : ps(t.delAt),
+    delAt: t?.delAt,
+  }
+}
+
+/** The budget texts our wire carries for one register (budgetPieces' projection). */
+function wireBudget(g: BudgetReg | undefined): BudgetTexts | undefined {
+  if (g === undefined) return undefined
+  const stamped = g.value !== null || g.set > 0
+  return {
+    value: g.value !== null && isBudgetShown(g) ? g.value : undefined,
+    setAt: stamped ? (g.set > 0 ? iso(g.set) : LEGACY_EPOCH_ISO) : undefined,
+    delAt: g.del > 0 ? iso(g.del) : undefined,
+  }
+}
+
+const largerText = (a: string, b: string): string => (a >= b ? a : b)
+
+/** What v0.8.5's mergeBudgets keeps for one key (local `l`, remote `r`), as one comparable text. */
+function budgetOutcome085(l: Side085, r: Side085): string {
+  const maxDel = Math.max(l.del, r.del)
+  const maxSet = Math.max(l.set, r.set)
+  if (maxDel > 0 && maxDel >= maxSet) {
+    const at = [l, r].filter((x) => x.del === maxDel).map((x) => x.delAt ?? '')
+    return `d:${at.reduce(largerText)}`
+  }
+  let winner: Side085 | null = null
+  for (const x of [l, r]) {
+    if (x.value === undefined || x.set !== maxSet) continue
+    if (
+      winner?.value === undefined ||
+      x.value > winner.value ||
+      (x.value === winner.value && (x.setAt ?? '') > (winner.setAt ?? ''))
+    ) {
+      winner = x
+    }
+  }
+  if (winner?.value === undefined) return ''
+  const setAt = maxSet > 0 && winner.setAt !== undefined ? winner.setAt : LEGACY_EPOCH_ISO
+  return `v:${String(winner.value)}:${setAt}`
+}
+
+/**
+ * v0.8.5 (app 0.9.2, P2-4): whole records by window stamp, the larger canonical JSON on a tie (the
+ * local copy when equal); tombstones and category names unioned; item picks per key by
+ * mappingUpdatedAt, then the larger value, then the larger stamp text; budgets by its
+ * mergeBudgets. Exactly "its state changes when it merges our push" (props/adoptable.test.ts).
+ */
+function adoptable085(m: Doc, v: V085View, ts: ReadonlyMap<string, number>): boolean {
+  for (const [id, rec] of m.expenses) {
+    // it holds exactly our encoding of this very record: equal stamps, equal text, nothing to keep
+    if (v.ours.get(id) === rec || v.tombs.has(id)) continue
+    const theirs = v.rows.get(id)
+    if (theirs === undefined) return true
+    const ours = encodeRecord(rec)
+    const a = stamp085Rec(rec)
+    const b = ts.get(id) ?? stamp085(theirs)
+    if (a !== b ? a > b : canon(ours) > canon(theirs)) return true
+  }
+  for (const id of m.tombs.keys()) if (!v.tombs.has(id)) return true
+  for (const n of m.categories) if (!v.categories.has(n)) return true
+  for (const [k, g] of m.mappings) {
+    const theirs = v.mappings.get(k)
+    if (theirs === undefined) return true
+    const [value, at] = theirs
+    const t = ps(at)
+    const ourAt = g.s > 0 ? iso(g.s) : undefined
+    if (g.s !== t ? g.s > t : g.v !== value ? g.v > value : (ourAt ?? '') > (at ?? '')) return true
+  }
+  for (const k of new Set([...m.budgets.keys(), ...v.budgets.keys()])) {
+    const theirs = side085(v.budgets.get(k))
+    const outcome = budgetOutcome085(theirs, side085(wireBudget(m.budgets.get(k))))
+    if (outcome !== budgetOutcome085(theirs, theirs)) return true
+  }
+  return false
+}
+
+/**
+ * Would the old client that wrote the relay keep anything of our merged doc `m` (§11.4)? It mimics
+ * that client's own merge, with the relay copy as its local state and our push as the remote:
+ * v0.8.4's (P-11) or v0.8.5's (P2-4). Pushing exactly what it keeps is what stops ping-pong.
+ */
+export function adoptableNews(m: Doc, relay: SanitizeResult): boolean {
+  return relay.writer === 'v085' && relay.v085 !== undefined
+    ? adoptable085(m, relay.v085, relay.legacyTs)
+    : adoptable084(m, relay)
 }

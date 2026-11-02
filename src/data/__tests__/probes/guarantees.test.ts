@@ -61,6 +61,9 @@ describe('old-client guarantees (§12.1)', () => {
   it(
     'G3: v5 never makes an old client lose its writes',
     async () => {
+      // Its own writes, on its own merge's terms: 0.9.2 keeps the newer copy of a record WHOLE (no
+      // rebase, P2-5), so a v5 edit older than an unpushed 0.9.2 edit of the same record loses to
+      // it, journaled on v5 (§12.3 row 5, track spec §16 risk 4). The reverse never happens.
       const w = new World({ seed: 2, devices: [{ kind: 'v5' }, { kind: 'v085' }], net: CALM })
       await w.setup()
       const v5 = must(w.v5[0])

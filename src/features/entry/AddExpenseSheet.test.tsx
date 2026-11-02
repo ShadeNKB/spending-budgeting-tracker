@@ -1,11 +1,19 @@
 import { Suspense, lazy, useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { fireEvent, render, screen, within } from '@testing-library/react'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AddExpenseSheet } from './AddExpenseSheet'
+import { undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
 import { useUIStore } from '../../stores/useUIStore'
-import { addDays, shortDateYear, todayKey } from '../../lib/dates'
+import { addDays, shortDate, shortDateYear, todayKey } from '../../lib/dates'
+
+// The first hydrate loads the engine chunk, the data core with it. Under a full parallel run on a
+// busy machine that load alone ran past the 5 s default, and the timed-out boot then landed in
+// the next test. Load it once here, with room: every boot after it is quick.
+beforeAll(async () => {
+  await useExpenseStore.getState().hydrate()
+}, 60_000)
 
 const WHAT = /coffee, grab, spotify/i
 
@@ -133,6 +141,26 @@ describe('AddExpenseSheet focus', () => {
     render(<Harness />)
     fireEvent.click(screen.getByRole('button', { name: 'open' }))
     expect(screen.getByPlaceholderText(WHAT)).toHaveFocus()
+  })
+})
+
+// The data engine did not load: the + still opens the sheet, which says so before anything is
+// typed (on Save it was too late: the Reload it asks for throws the form away).
+describe('AddExpenseSheet when SpendTrack could not start', () => {
+  it('says nothing can be added, with Reload, and offers no form to fill in', () => {
+    const before = useExpenseStore.getState().bootError
+    useExpenseStore.setState({ bootError: 'engine-load' })
+    try {
+      render(<AddExpenseSheet open onClose={() => {}} />)
+      const dialog = screen.getByRole('dialog', { name: 'Add expense' })
+      expect(within(dialog).getByText("SpendTrack couldn't start")).toBeInTheDocument()
+      expect(within(dialog).getByText(/Nothing can be added until it does/)).toBeInTheDocument()
+      expect(within(dialog).getByRole('button', { name: 'Reload' })).toBeInTheDocument()
+      expect(within(dialog).queryByPlaceholderText(WHAT)).toBeNull()
+      expect(within(dialog).queryByRole('button', { name: /^Add/ })).toBeNull()
+    } finally {
+      useExpenseStore.setState({ bootError: before })
+    }
   })
 })
 
@@ -271,5 +299,95 @@ describe('AddExpenseSheet selected states', () => {
     expect(pickDate).toHaveFocus()
     expect(scrollIntoView.mock.contexts[0]).toBe(pickDate)
     expect(scrollIntoView).toHaveBeenCalledWith({ block: 'nearest', inline: 'nearest' })
+  })
+})
+
+// P2-2: the sheet stores the picked day as the entry's day. P2-13: what the store refuses is said,
+// and the sheet stays open with everything typed. Run in Asia/Singapore, Pacific/Honolulu and
+// Pacific/Kiritimati (PowerShell $env:TZ).
+describe('AddExpenseSheet saving', () => {
+  beforeEach(async () => {
+    // P2-14: an empty device, booted for real (whatever the last test left pending first).
+    await useExpenseStore.getState().hydrate()
+    localStorage.clear()
+    await useExpenseStore.getState().hydrate()
+    useUIStore.setState({ toasts: [], currency: 'SGD' })
+  })
+
+  async function fill(user: ReturnType<typeof userEvent.setup>, what: string, amount: string) {
+    await user.type(screen.getByPlaceholderText(WHAT), what)
+    await user.type(screen.getByPlaceholderText('0.00'), amount)
+  }
+
+  it("stores today's entry on today's day, at local noon with no zone", async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(<AddExpenseSheet open onClose={onClose} />)
+    await fill(user, 'Kopi O', '1.80')
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    const today = todayKey()
+    expect(useExpenseStore.getState().expenses).toMatchObject([
+      { itemName: 'Kopi O', amount: 1.8, day: today, date: `${today}T12:00:00` },
+    ])
+    expect(useExpenseStore.getState().expenses[0]?.notes).toBeUndefined()
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('stores a back-dated entry on the picked day, and says which', async () => {
+    const user = userEvent.setup()
+    render(<AddExpenseSheet open onClose={() => {}} />)
+    await user.click(screen.getByRole('button', { name: 'Yesterday' }))
+    await fill(user, 'Teh', '1.20')
+    const yesterday = addDays(todayKey(), -1)
+    // On 1 Jan, yesterday is in another year and says so.
+    const label =
+      yesterday.slice(0, 4) === todayKey().slice(0, 4)
+        ? shortDate(yesterday)
+        : shortDateYear(yesterday)
+    await user.click(screen.getByRole('button', { name: `Add for ${label}` }))
+    expect(useExpenseStore.getState().expenses[0]).toMatchObject({
+      day: yesterday,
+      date: `${yesterday}T12:00:00`,
+    })
+    expect(useUIStore.getState().toasts.at(-1)?.message).toBe(`Added "Teh" · S$1.20 · ${label}`)
+  })
+
+  it('shows why the store refused it, and stays open with what was typed', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(<AddExpenseSheet open onClose={onClose} />)
+    await fill(user, 'Kopi O', '1.80')
+    fireEvent.change(screen.getByRole('textbox', { name: 'Notes (optional)' }), {
+      target: { value: 'n'.repeat(501) },
+    })
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    expect(useExpenseStore.getState().expenses).toEqual([])
+    expect(useUIStore.getState().toasts.at(-1)).toMatchObject({
+      kind: 'error',
+      message: 'Notes are at most 500 characters.',
+    })
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByPlaceholderText(WHAT)).toHaveValue('Kopi O')
+  })
+
+  it('Undo takes it back out, and says what it had to leave', async () => {
+    const user = userEvent.setup()
+    render(<AddExpenseSheet open onClose={() => {}} />)
+    await fill(user, 'Kopi O', '1.80')
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    const added = useExpenseStore.getState().expenses[0]
+    if (!added) throw new Error('nothing added')
+    const toast = useUIStore.getState().toasts.at(-1)
+    act(() => {
+      useExpenseStore.getState().updateExpense(added.id, { notes: 'with kaya toast' })
+    })
+    act(() => {
+      toast?.action?.onClick()
+    })
+    expect(useExpenseStore.getState().expenses).toHaveLength(1)
+    expect(useUIStore.getState().toasts.at(-1)).toMatchObject({
+      kind: 'warning',
+      message: undoOutcomeMessage({ applied: 0, skipped: 1 }),
+    })
   })
 })

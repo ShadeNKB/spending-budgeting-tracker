@@ -37,8 +37,10 @@ const SEED = [
   },
   {
     id: 'csv-5',
+    // Amounts are above zero (a refund is not an entry 0.10.0 can read); the formula-like note
+    // still has to come out as text.
     itemName: 'Shoe refund',
-    amount: -12.5,
+    amount: 12.5,
     category: 'Shopping',
     date: '2026-03-15',
     notes: '-2+3',
@@ -65,7 +67,7 @@ const EXPECTED: Record<string, string[]> = {
   [`'${HYPERLINK}`]: ['2026-03-13', `'${HYPERLINK}`, 'Shopping', '25', ''],
   [`'${CMD}`]: ['2026-03-12', `'${CMD}`, 'Transport', '14.2', ''],
   'Gift card': ['2026-03-11', 'Gift card', "'@SUM(1+1)", '50', ''],
-  'Shoe refund': ['2026-03-15', 'Shoe refund', 'Shopping', '-12.5', "'-2+3"],
+  'Shoe refund': ['2026-03-15', 'Shoe refund', 'Shopping', '12.5', "'-2+3"],
   鸡饭: ['2026-03-10', '鸡饭', 'Food', '4.5', 'line one\n"quoted" line two'],
 }
 

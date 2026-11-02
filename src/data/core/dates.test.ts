@@ -1,7 +1,9 @@
 // @vitest-environment node
 import { isValid, parseISO } from 'date-fns'
 import { describe, expect, it } from 'vitest'
+import { readStored } from '../../lib/dates'
 import { extrasOf } from '../__tests__/support/gen'
+import { must } from '../__tests__/support/must'
 import { HEAVY, envVar, makeRng } from '../__tests__/support/rng'
 import {
   dayOf,
@@ -123,12 +125,27 @@ describe('localDay / localNoonIso / todayDay (§7.10, T-096-1 core half)', HEAVY
     if (want !== undefined) expect(got).toBe(want)
   })
 
-  it('localNoonIso is byte-identical to the shipped `new Date(day + "T12:00:00").toISOString()`', () => {
-    for (const day of ['2026-10-18', '2026-03-08', '2026-11-01', '2026-03-29', '2026-10-25']) {
-      expect(localNoonIso(day)).toBe(new Date(day + 'T12:00:00').toISOString())
-    }
-    if (zone === 'Asia/Singapore') {
-      expect(localNoonIso('2026-10-18')).toBe('2026-10-18T04:00:00.000Z')
+  it('localNoonIso is the floating local noon `${day}T12:00:00`: no zone, no Z (P2-2)', () => {
+    for (const day of [
+      '2026-10-18',
+      '2026-03-08',
+      '2026-11-01',
+      '2026-03-29',
+      '2026-10-25',
+      '1970-01-01',
+      '2099-12-31',
+      '2028-02-29',
+    ]) {
+      const noon = localNoonIso(day)
+      expect(noon).toBe(`${day}T12:00:00`)
+      expect(noon).not.toMatch(/Z$|[+-]\d{2}:?\d{2}$/)
+      // every reader agrees on its day in every zone: the text is the day, and Date, parseISO
+      // and the screens' readStored all read a zone-less date-time as local wall time
+      expect(noon.slice(0, 10)).toBe(day)
+      expect(localDay(noon)).toBe(day)
+      expect(readStored(noon).key).toBe(day)
+      expect(intlDay(Date.parse(noon))).toBe(day)
+      expect(must(parseDateLike(noon)).getHours()).toBe(12)
     }
   })
 
@@ -179,9 +196,113 @@ describe('localDay / localNoonIso / todayDay (§7.10, T-096-1 core half)', HEAVY
       expect(todayDay(lastMs)).toBe(before)
       expect(todayDay(lastMs + 1)).toBe(after)
       expect(todayDay(new Date(y, m, d, 0, 0, 0, 0).getTime())).toBe(before)
+      expect(todayDay(new Date(y, m, d, 0, 30).getTime())).toBe(before)
+      expect(todayDay(new Date(y, m, d, 23, 59).getTime())).toBe(before)
+    }
+  })
+
+  it('a quick add at 00:30 in Kiritimati and at 23:59 on 31 Dec in Honolulu files under that local day', () => {
+    // instants, so the expectation is zone-keyed: each is the edge case of its own zone
+    const kiritimati0030 = Date.parse('2026-10-17T10:30:00.000Z') // 00:30 on 18 Oct at UTC+14
+    const honolulu2359 = Date.parse('2027-01-01T09:59:00.000Z') // 23:59 on 31 Dec at UTC−10
+    const table: Readonly<Record<string, readonly [string, string]>> = {
+      'Pacific/Kiritimati': ['2026-10-18', '2027-01-01'],
+      'Pacific/Honolulu': ['2026-10-17', '2026-12-31'],
+      'Asia/Singapore': ['2026-10-17', '2027-01-01'],
+      'America/New_York': ['2026-10-17', '2027-01-01'],
+    }
+    const got = [todayDay(kiritimati0030), todayDay(honolulu2359)]
+    expect(got).toEqual([intlDay(kiritimati0030), intlDay(honolulu2359)])
+    const want = table[zone]
+    if (want !== undefined) expect(got).toEqual(want)
+    // and the stored date of that day is its floating noon, which reads back as the same day
+    for (const day of got) expect(localDay(localNoonIso(day))).toBe(day)
+  })
+})
+
+describe('the zone-less fast path is exactly date-fns parseISO (P2-2, boot budget)', HEAVY, () => {
+  const p2 = (n: number): string => String(n).padStart(2, '0')
+  const refDate = (s: string): Date | null => {
+    const d = parseISO(s)
+    return isValid(d) ? d : null
+  }
+  const refDay = (s: string): string | null => {
+    const d = refDate(s)
+    return d === null
+      ? null
+      : `${String(d.getFullYear()).padStart(4, '0')}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`
+  }
+
+  /** A zone-less wall time, biased to the days and hours where zones jump. */
+  function wallText(rng: ReturnType<typeof makeRng>): string {
+    const y = rng.chance(0.3)
+      ? rng.pick([1970, 1994, 1995, 2011, 2026, 2027, 2099])
+      : rng.between(1970, 2099)
+    const mo = rng.chance(0.4) ? rng.pick([1, 3, 10, 11, 12]) : rng.between(1, 12)
+    const last = new Date(Date.UTC(y, mo, 0)).getUTCDate()
+    const d = rng.chance(0.3) ? rng.pick([1, 8, 25, 29, 30, 31, last]) : rng.between(1, last)
+    const h = rng.chance(0.4) ? rng.pick([0, 1, 2, 3, 12, 23]) : rng.int(24)
+    return `${y}-${p2(mo)}-${p2(Math.min(d, last))}T${p2(h)}:${p2(rng.int(60))}:${p2(rng.int(60))}`
+  }
+
+  it('parseDateLike, isDateText and localDay agree with parseISO on 20,000 zone-less wall times', () => {
+    const rng = makeRng(98)
+    for (let i = 0; i < 20_000; i++) {
+      const s = wallText(rng)
+      const want = refDate(s)
+      expect(parseDateLike(s)?.getTime() ?? null, s).toBe(want?.getTime() ?? null)
+      expect(isDateText(s), s).toBe(want !== null)
+      expect(localDay(s), s).toBe(refDay(s))
+    }
+  })
+
+  it('pins the zone jumps: a DST gap and overlap in New York, the skipped day in Kiritimati', () => {
+    for (const s of [
+      '2026-03-08T02:30:00',
+      '2026-11-01T01:30:00',
+      '1994-12-31T12:00:00',
+      '1995-01-01T00:00:00',
+      '2011-12-30T12:00:00',
+      '2026-10-18T24:00:00',
+      '2026-02-30T12:00:00',
+      '2026-10-18T12:60:00',
+    ]) {
+      expect(parseDateLike(s)?.getTime() ?? null, s).toBe(refDate(s)?.getTime() ?? null)
+      expect(localDay(s), s).toBe(refDay(s))
     }
   })
 })
+
+describe(
+  'the core and the screens agree on the day of every stored date form (P2-2)',
+  HEAVY,
+  () => {
+    it('localDay equals lib/dates readStored on 20,000 Z, floating, bare and offset texts', () => {
+      const rng = makeRng(99)
+      const p2 = (n: number): string => String(n).padStart(2, '0')
+      for (let i = 0; i < 20_000; i++) {
+        const t =
+          Date.UTC(1970, 0, 2) +
+          Math.floor(rng.next() * (Date.UTC(2099, 11, 30) - Date.UTC(1970, 0, 2)))
+        const z = new Date(t).toISOString()
+        const local = new Date(t)
+        const floating = `${local.getFullYear()}-${p2(local.getMonth() + 1)}-${p2(local.getDate())}T${p2(local.getHours())}:${p2(local.getMinutes())}:${p2(local.getSeconds())}`
+        const form = rng.pick(['z', 'floating', 'bare', 'offset', 'noon'] as const)
+        const s =
+          form === 'z'
+            ? z
+            : form === 'floating'
+              ? floating
+              : form === 'bare'
+                ? floating.slice(0, 10)
+                : form === 'noon'
+                  ? localNoonIso(floating.slice(0, 10))
+                  : `${z.slice(0, 19)}${rng.pick(['+08:00', '-10:00', '+14:00', '+05:30'])}`
+        expect(localDay(s), s).toBe(readStored(s).key)
+      }
+    })
+  },
+)
 
 describe('fast paths are exactly date-fns parseISO (boot budget, §9.12)', HEAVY, () => {
   /** The reference the fast paths must reproduce: literal year 1970–2099, then parseISO. */

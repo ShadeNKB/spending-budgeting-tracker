@@ -8,6 +8,7 @@ import {
   dialog,
   enterState,
   expectGone,
+  focusUnderToasts,
   isPhone,
   manyRows,
   obscuredWalk,
@@ -1279,7 +1280,7 @@ test.describe('Forms and confirmations', () => {
     const trigger = sheet.getByRole('button', { name: 'Delete expense' })
     await activate(page, trigger)
     const question = sheet.getByRole('group', { name: `Delete "${doomed}"?` })
-    await expect(question).toHaveAccessibleDescription('This cannot be undone.')
+    await expect(question).toHaveAccessibleDescription('You can undo it for a few seconds.')
     const cancel = question.getByRole('button', { name: 'Cancel' })
     await expect(cancel).toBeFocused()
     await page.keyboard.press('Enter')
@@ -1299,7 +1300,13 @@ test.describe('Forms and confirmations', () => {
     await page.waitForTimeout(600)
     await expect(focused(page)).toHaveAttribute('aria-label', new RegExp(`^Edit ${next},`))
 
-    // A double tap on Delete deletes one expense too (the second tap lands behind the sheet).
+    // A double tap on Delete deletes one expense too (the second tap lands behind the sheet). The
+    // "Deleted … · Undo" toast leaves first: a press where a toast has just gone was aimed at the
+    // toast and confirms nothing (T6's press shield), which is not what this part tests.
+    await expect(page.locator('[role="region"][aria-label="Notifications"] > *')).toHaveCount(0, {
+      timeout: 10_000,
+    })
+    await page.waitForTimeout(500)
     await activate(page, rows.nth(4))
     await sheet.getByRole('button', { name: 'Delete expense' }).click()
     await sheet.getByRole('button', { name: 'Delete', exact: true }).dblclick()
@@ -1337,14 +1344,14 @@ test.describe('Forms and confirmations', () => {
     ).toBeFocused()
   })
 
-  test('AC-C2: clear-all and import confirmations', async ({ page }) => {
+  test('AC-C2: delete-all and import confirmations', async ({ page }) => {
     await load(page, '/pulse')
     const sheet = await openSettings(page, 'Backup')
 
-    const clear = sheet.getByRole('button', { name: 'Clear all expenses' })
+    const clear = sheet.getByRole('button', { name: 'Delete all entries', exact: true })
     await activate(page, clear)
     const question = sheet.getByRole('group', {
-      name: `Delete all ${String(RICH.length)} expenses?`,
+      name: `Delete all ${String(RICH.length)} entries?`,
     })
     const cancel = question.getByRole('button', { name: 'Cancel' })
     await expect(cancel).toBeFocused()
@@ -1357,13 +1364,15 @@ test.describe('Forms and confirmations', () => {
     await activate(page, clear)
     await expect(cancel).toBeFocused()
     await page.keyboard.press('Shift+Tab')
-    await expect(question.getByRole('button', { name: 'Yes, delete all' })).toBeFocused()
+    await expect(question.getByRole('button', { name: 'Delete all', exact: true })).toBeFocused()
     await page.keyboard.press('Enter')
     await expect.poll(async () => (await storedExpenses(page)).length).toBe(0)
     await expect(clear).toBeFocused()
     await expect(
-      page.getByRole('region', { name: 'Notifications' }).getByText('All expenses cleared'),
+      page.getByRole('region', { name: 'Notifications' }).getByText('All entries deleted'),
     ).toHaveCount(1)
+    // The 30 s toast sits where the end of the sheet is on a phone: focus is never under it.
+    await expect.poll(() => focusUnderToasts(page)).toEqual([])
 
     const backup = {
       version: '4.0',
@@ -1389,19 +1398,78 @@ test.describe('Forms and confirmations', () => {
       mimeType: 'application/json',
       buffer: Buffer.from(JSON.stringify(backup)),
     }
+    // The preview takes the Import button's place with Restore focused; Escape takes it back
+    // (not the sheet), and focus returns to the button.
     const importButton = sheet.getByRole('button', { name: 'Import JSON backup' })
     await importButton.focus()
     await sheet.locator('input[type="file"]').setInputFiles(file)
-    const ask = sheet.getByRole('group', { name: 'Import 2 expenses?' })
-    await expect(ask.getByRole('button', { name: 'Cancel' })).toBeFocused()
-    await page.keyboard.press('Enter')
-    await expect(ask).toHaveCount(0)
+    const preview = sheet.getByRole('region', { name: 'Import spendtrack-backup.json?' })
+    const restore = preview.getByRole('button', { name: 'Restore', exact: true })
+    await expect(restore).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(preview).toHaveCount(0)
+    await expect(sheet).toBeVisible()
     await expect(importButton).toBeFocused()
 
     await sheet.locator('input[type="file"]').setInputFiles(file)
-    await activate(page, ask.getByRole('button', { name: 'Confirm import' }))
+    await expect(restore).toBeFocused()
+    await page.keyboard.press('Enter')
     await expect(importButton).toBeFocused()
     await expect.poll(async () => (await storedExpenses(page)).length).toBe(2)
+    await expect.poll(() => focusUnderToasts(page)).toEqual([])
+  })
+
+  // The 30 s Undo of a delete in Settings shows in the toast stack, outside the sheet: Tab reaches
+  // it after the sheet's last stop (and Shift+Tab before its first), and focus comes back into
+  // the sheet once it has done its work, never onto <body>.
+  test('AC-C2: the Undo of Delete all is in the sheet’s Tab order, and focus comes back', async ({
+    page,
+  }) => {
+    await load(page, '/pulse')
+    const sheet = await openSettings(page, 'Backup')
+    const clear = sheet.getByRole('button', { name: 'Delete all entries', exact: true })
+    await activate(page, clear)
+    await page.keyboard.press('Shift+Tab')
+    await page.keyboard.press('Enter')
+    await expect.poll(async () => (await storedExpenses(page)).length).toBe(0)
+    await expect(clear).toBeFocused()
+
+    const toasts = page.getByRole('region', { name: 'Notifications' })
+    const undo = toasts.getByRole('button', { name: 'Undo' })
+    await expect(undo).toHaveCount(1)
+    // a screen reader, which aria-modal keeps inside the sheet, has the same Undo there, out of
+    // the Tab order
+    const inSheet = sheet.getByRole('button', { name: 'Undo: All entries deleted', exact: true })
+    await expect(inSheet).toHaveCount(1)
+    await expect(inSheet).toHaveAttribute('tabindex', '-1')
+    let reached = false
+    for (let i = 0; i < 60 && !reached; i++) {
+      await page.keyboard.press('Tab')
+      reached = await undo.evaluate((el) => el === document.activeElement)
+    }
+    expect(reached, 'Tab reaches the Undo').toBe(true)
+    // its own Dismiss next, then round to the sheet's first stop
+    await page.keyboard.press('Tab')
+    await expect(toasts.getByRole('button', { name: 'Dismiss' })).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(sheet.getByRole('button', { name: 'Close' })).toBeFocused()
+    await page.keyboard.press('Shift+Tab')
+    await page.keyboard.press('Shift+Tab')
+    await expect(undo).toBeFocused()
+
+    await page.keyboard.press('Enter')
+    await expect.poll(async () => (await storedExpenses(page)).length).toBe(RICH.length)
+    await expect(toasts.getByText(`Restored ${RICH.length.toLocaleString()} entries`)).toHaveCount(
+      1,
+    )
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const el = document.activeElement
+          return el !== null && el !== document.body && el.closest('[role="dialog"]') !== null
+        }),
+      )
+      .toBe(true)
   })
 
   test('AC-C4: Settings sections are a tablist with one tab stop and arrow keys', async ({

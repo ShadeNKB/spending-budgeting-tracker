@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import {
   CHOSEN_CHIP_LIGHTNESS,
+  actionErrorMessage,
   chosenChipFill,
+  deleteUndoId,
   firstInvalidField,
   validateExpenseForm,
 } from './expenseForm'
@@ -135,5 +137,47 @@ describe('chosen category chip', () => {
       const dot = colorFromString(category)
       expect(chosenChipFill(category)).toBe(dot.replace('62%)', '68%)'))
     }
+  })
+})
+
+describe('actionErrorMessage', () => {
+  it("says the store's own reason for refusing", () => {
+    expect(actionErrorMessage(new Error('Notes are at most 500 characters.'))).toBe(
+      'Notes are at most 500 characters.',
+    )
+  })
+
+  it.each([
+    ['an error with no message', new Error('')],
+    ['an error of spaces', new Error('   ')],
+    ['a thrown string', 'quota'],
+    ['undefined', undefined],
+  ])('falls back to a plain retry line for %s', (_, err) => {
+    expect(actionErrorMessage(err)).toBe("That couldn't be saved. Try again.")
+  })
+})
+
+describe('deleteUndoId', () => {
+  const stack = (...ids: string[]) => ids.map((id) => ({ id }))
+
+  it("finds a delete's undo, named `del-<id>-<n>` by the store", () => {
+    expect(deleteUndoId(stack('add-x', 'del-k1-1760000000000'), 'k1')).toBe('del-k1-1760000000000')
+  })
+
+  it('takes the latest when the same id was deleted twice', () => {
+    expect(deleteUndoId(stack('del-k1-5', 'del-k1-6'), 'k1')).toBe('del-k1-6')
+  })
+
+  it('never takes the undo of an id that only starts the same way', () => {
+    // "ab-1" deleted after "ab": its undo also starts with `del-ab-`.
+    expect(deleteUndoId(stack('del-ab-7', 'del-ab-1-8'), 'ab')).toBe('del-ab-7')
+    expect(deleteUndoId(stack('del-ab-1-8'), 'ab')).toBeUndefined()
+    expect(deleteUndoId(stack('del-abc-8'), 'ab')).toBeUndefined()
+    expect(deleteUndoId(stack('del-ab-'), 'ab')).toBeUndefined()
+  })
+
+  it('is undefined when nothing on the stack undoes that delete', () => {
+    expect(deleteUndoId([], 'k1')).toBeUndefined()
+    expect(deleteUndoId(stack('update-k1-5', 'add-k1'), 'k1')).toBeUndefined()
   })
 })

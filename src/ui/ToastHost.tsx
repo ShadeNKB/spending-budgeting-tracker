@@ -5,6 +5,8 @@ import { useUIStore, type Toast } from '../stores/useUIStore'
 import { changingNow, noteToastLeft, type Change } from './pressShield'
 import { canAnimate, cssMs, cssToken, prefersReducedMotion } from './motion'
 import { mergeLeaving, usePresence, type PresentItem } from './usePresence'
+import { clearClearance, publishClearance } from './toastClearance'
+import { handFocusBack } from './modalLayer'
 
 const iconFor = (k: Toast['kind']) =>
   k === 'success' ? CheckCircle2 : k === 'error' ? XCircle : k === 'warning' ? AlertTriangle : Info
@@ -80,6 +82,9 @@ function ToastItem({
     <div
       ref={box}
       data-toast=""
+      // An action joins an open sheet's Tab cycle (modalLayer.ts): Undo after Delete all, an
+      // import or a category delete is reachable by keyboard while Settings stays open.
+      data-layer-tab={action ? '' : undefined}
       data-state={state}
       className={clsx(
         'toast-box pointer-events-auto relative flex w-full min-w-0 max-w-[380px] items-start gap-3 overflow-hidden rounded-xl border bg-surface-1/95 px-4 py-3 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.6)] backdrop-blur-md motion-reduce:!transform-none',
@@ -185,7 +190,8 @@ function layoutTops(region: HTMLElement, leaving: HTMLElement | null): Map<HTMLE
 /**
  * The visible toasts. Screen readers hear them through ToastAnnouncer's persistent regions
  * (inserting a toast together with its text is often not announced), so this is a plain named
- * region. It is exempt from the modal focus guard: Undo stays usable while a sheet is open.
+ * region. It is exempt from the modal focus guard: Undo stays usable while a sheet is open. It
+ * never hides the focused control (toastClearance.ts): a sheet scrolls it clear of the stack.
  *
  * A dismissed toast stays where it was while it plays its exit (still pressable), then leaves,
  * and the toasts above it slide down into place. Toasts already there when the host first
@@ -203,9 +209,13 @@ export function ToastHost() {
   }
 
   const regionRef = useRef<HTMLDivElement>(null)
+  /** Where focus was before it came into the stack (Tab from a sheet, a click on Undo). */
+  const cameFrom = useRef<HTMLElement | null>(null)
   /** Layout tops of the staying toasts, taken as one finished leaving, before it is dropped. */
   const before = useRef<Map<HTMLElement, number> | null>(null)
   const onLeft = useCallback((id: string, box: HTMLElement | null) => {
+    // Its Undo (or ×) had focus: focus goes back to where it came from, never to <body>.
+    if (box?.contains(document.activeElement)) handFocusBack(cameFrom.current)
     const region = regionRef.current
     if (region && canAnimate() && !prefersReducedMotion()) {
       // Two leaving in one go: the first reading stands (nothing has moved since).
@@ -221,7 +231,27 @@ export function ToastHost() {
     const region = regionRef.current
     before.current = null
     if (tops && region) slideIntoPlace(region, tops)
+    if (region) publishClearance(region)
   }, [shown])
+
+  // Focus that arrives under the stack (handed back to a trigger after its question, tabbed to)
+  // is scrolled clear as it lands; a toast that wraps to more lines, or a rotated phone, changes
+  // how much the stack covers.
+  useEffect(() => {
+    const region = regionRef.current
+    if (!region) return undefined
+    const update = () => {
+      publishClearance(region)
+    }
+    document.addEventListener('focusin', update)
+    const observer = typeof ResizeObserver === 'function' ? new ResizeObserver(update) : null
+    observer?.observe(region)
+    return () => {
+      document.removeEventListener('focusin', update)
+      observer?.disconnect()
+      clearClearance()
+    }
+  }, [])
 
   return (
     <div
@@ -229,6 +259,10 @@ export function ToastHost() {
       role="region"
       aria-label="Notifications"
       data-layer-exempt=""
+      onFocus={(e) => {
+        const from = e.relatedTarget
+        if (from instanceof HTMLElement && !e.currentTarget.contains(from)) cameFrom.current = from
+      }}
       className="pointer-events-none fixed bottom-[calc(env(safe-area-inset-bottom,0px)+88px)] left-4 right-4 z-[100] flex flex-col-reverse gap-2 sm:bottom-6 sm:left-auto sm:right-6 sm:max-w-sm"
     >
       {shown.map(({ item, present, appear }) => (

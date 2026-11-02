@@ -1,4 +1,5 @@
-// "Download my data" for the error screens.
+// "Download my data" for the error screens, and the raw export of the data engine
+// (exportRawBackup, DATA-ENGINE-SPEC §2.2): it works without the engine chunk.
 //
 // It has to work when the data itself is what crashed the app, so it never parses, migrates
 // or validates anything: every localStorage value is copied as the raw string it is, and
@@ -8,9 +9,13 @@
 import { format } from 'date-fns'
 import { downloadJSON } from './download'
 
-/** Keys left out of the dump. Name any new secret key so it matches this. */
+/**
+ * Keys left out of the dump. Name any new secret key so it matches this. The sync code lives in
+ * `syncId` (the 0.9.x key, kept as the rollback mirror) and in `st5:sync`; a corrupt copy of either
+ * is quarantined as `st5:q:syncId:<ts>` / `st5:q:st5:sync:<ts>`, and those stay behind too.
+ */
 export const SECRET_KEY_PATTERN =
-  /^syncId$|secret|token|passphrase|synckey|cryptokey|encryptionkey/i
+  /^syncId$|^st5:sync$|^st5:q:syncId:|^st5:q:st5:sync:|secret|token|passphrase|synckey|cryptokey|encryptionkey/i
 
 export type RawStorage = Pick<Storage, 'length' | 'key' | 'getItem'>
 

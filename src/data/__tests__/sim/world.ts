@@ -45,6 +45,10 @@ export interface WorldOptions {
   readonly net?: NetOptions
   /** Negative control (M1): every v5 device snapshots before its pull await. */
   readonly readBeforeAwait?: boolean
+  /** The v5 devices' cycle: 'pr3' (CAS + polling, default) or the PR-2 bridge (§9). */
+  readonly mode?: 'pr3' | 'pr2'
+  /** pr2 only: absorb foreign event payloads (P2-10); false is the crossing-push control. */
+  readonly absorbNews?: boolean
 }
 
 const SYNC_ID = '6f1d1c1e-0000-4000-8000-00000000c0de'
@@ -128,6 +132,8 @@ export class World implements Observer {
       skew,
       established,
       readBeforeAwait: this.opts.readBeforeAwait ?? false,
+      mode: this.opts.mode ?? 'pr3',
+      absorbNews: this.opts.absorbNews ?? true,
       ...(doc === undefined ? {} : { doc }),
       ...(outbox === undefined ? {} : { outbox }),
     })
@@ -414,8 +420,9 @@ export async function standardRun(
   seed: number,
   net: NetOptions,
   measureAdd = false,
+  mode: 'pr3' | 'pr2' = 'pr3',
 ): Promise<RunReport> {
-  const w = new World({ seed, devices, net })
+  const w = new World({ seed, devices, net, mode })
   await w.setup()
   await w.runOps(60 + w.rng.int(61))
   await w.clock.run(15_000)

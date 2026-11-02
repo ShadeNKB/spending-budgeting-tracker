@@ -1,29 +1,33 @@
-// Whole-record last-writer-wins on the v4 wire (contract §12.3, as amended for PR-0):
+// Last-writer-wins per field on the v5 wire (contract §5, §12.3):
 // - an edit made after seeing the other device's copy always wins, whatever the clocks say
-//   (forward stamps), and a stale copy on the relay never reverts it;
+//   (hybrid logical clock), and a stale copy on the relay never reverts it;
 // - edits of different records never interfere, however they overlap;
-// - two devices editing the SAME record before either has seen the other's edit keep only the
-//   later record (known v4 limit: one stamp per record; v5 merges per field);
-// - undo is a forward write (F-011), v5 records pass through untouched (§10.2), and a save that
+// - two devices editing the SAME record before either has seen the other's edit keep both
+//   fields (v5 merges per field; PR-0's whole-record limit is gone); the same field keeps the
+//   later value;
+// - undo is a forward write (F-011, T-011-1), unknown record fields ride along, and a save that
 //   changes nothing is no edit (AC-12 to AC-16).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { format, parseISO, subDays } from 'date-fns'
-import type { Expense } from '../../types'
-import { contentKey } from '../../services/syncService'
+import type { ExpensePatch } from '../../data/core/types'
+import type { ExpenseView } from '../../types'
 import {
   SYNC_CODE,
   advance,
+  MemoryStorage,
   bootDevice,
   connect,
   expense,
   loadDevice,
   payloadOf,
   relay,
+  relayDeleted,
   relayRows,
   resetRelay,
   retireDevices,
   rowPayload,
   seedRow,
+  seedV4,
   setClientOffline,
   stubRelayEnv,
   writeAsLegacy,
@@ -60,7 +64,7 @@ afterEach(() => {
 })
 
 const S = (d: Device) => d.expense.useExpenseStore.getState()
-const rowOf = (device: Device, id: string): Expense | undefined =>
+const rowOf = (device: Device, id: string): ExpenseView | undefined =>
   S(device).expenses.find((e) => e.id === id)
 
 const isRow = (r: unknown): r is Record<string, unknown> => typeof r === 'object' && r !== null
@@ -85,9 +89,24 @@ function withClock(skew: number, write: () => void): void {
   }
 }
 
+/** What the owner sees of an entry, and what the relay holds of it. */
+const shown = (r: unknown) =>
+  isRow(r)
+    ? [r.id, r.itemName, r.amount, r.category, r.notes ?? null]
+        .map((v) => JSON.stringify(v))
+        .join('|')
+    : 'unreadable'
+
+/** Every device shows exactly the relay's entries and categories. */
 function expectConverged(...devices: Device[]): void {
-  const key = contentKey(rowPayload(SYNC_CODE))
-  for (const d of devices) expect(contentKey(S(d).exportBackup())).toBe(key)
+  const relayed = relayRows().map(shown).sort()
+  const payload = rowPayload(SYNC_CODE)
+  const listed: unknown = isRow(payload) ? payload.categories : undefined
+  const categories: readonly unknown[] = Array.isArray(listed) ? listed : []
+  for (const d of devices) {
+    expect(S(d).expenses.map(shown).sort()).toEqual(relayed)
+    expect([...S(d).categories].sort()).toEqual([...categories].sort())
+  }
 }
 
 async function expectQuiet(ms = 10 * MINUTE): Promise<void> {
@@ -96,18 +115,17 @@ async function expectQuiet(ms = 10 * MINUTE): Promise<void> {
   expect(relay().upserts).toBe(upserts)
 }
 
-/** What EditExpenseSheet sends on save: every field, and the shown day as local noon. */
+/** What EditExpenseSheet sends on save: every field, and the shown day. */
 function sheetPatch(
-  e: Expense,
+  e: { itemName: string; amount: number; category: string; date: string; notes?: string },
   change: { day?: string; notes?: string; amount?: number } = {},
-): Partial<Expense> {
-  const day = change.day ?? format(parseISO(e.date), 'yyyy-MM-dd')
+): ExpensePatch {
   return {
     itemName: e.itemName.trim(),
     amount: change.amount ?? e.amount,
     category: e.category,
-    date: new Date(`${day}T12:00:00`).toISOString(),
-    notes: (change.notes ?? e.notes ?? '').trim() || undefined,
+    day: change.day ?? format(parseISO(e.date), 'yyyy-MM-dd'),
+    notes: (change.notes ?? e.notes ?? '').trim(),
   }
 }
 
@@ -243,7 +261,9 @@ describe('an edit made after seeing the other copy always wins', () => {
     await advance(15_000)
     expect(relayRow('x')).toMatchObject({ notes: 'N1' })
 
-    writeAsOther(SYNC_CODE, { ...(isRow(stale) ? stale : {}), ...v085('r-stale') })
+    // 0.9.2 strips x5 and stamps its own push with wr.
+    const { x5: _dropped, ...v4 } = isRow(stale) ? stale : {}
+    writeAsOther(SYNC_CODE, { ...v4, ...v085('r-stale') })
     await advance(MINUTE)
 
     expect(rowOf(phone, 'x')).toMatchObject({ notes: 'N1' })
@@ -268,22 +288,24 @@ describe('an edit made after seeing the other copy always wins', () => {
     const x = expense('x', { notes: 'N0', amount: 1 })
     // The laptop's notes edit reached the relay a minute ago; this device has not seen it.
     seedRow(SYNC_CODE, payloadOf([{ ...x, notes: 'N1', updatedAt: iso(NOW - MINUTE) }]))
-    const phone = await loadDevice()
-    phone.expense.useExpenseStore.setState({ hydrated: true, expenses: [x] })
-    localStorage.setItem('syncId', SYNC_CODE)
+    const storage = new MemoryStorage()
+    seedV4(storage, { expenses: [x] })
+    storage.setItem('syncId', SYNC_CODE)
+    const phone = await loadDevice(storage)
+    await phone.expense.useExpenseStore.getState().hydrate()
     // The owner edits before sync starts with the saved code (the engine loads).
     S(phone).updateExpense('x', { amount: 2 })
     phone.sync.installSync()
     await advance(10_000)
 
-    // Its record is the later one: it wins whole (the laptop's notes were concurrent).
-    expect(rowOf(phone, 'x')).toMatchObject({ amount: 2, notes: 'N0' })
-    expect(relayRow('x')).toMatchObject({ amount: 2, notes: 'N0' })
+    // v5 merges per field: the laptop's newer notes and this device's newer amount both stay.
+    expect(rowOf(phone, 'x')).toMatchObject({ amount: 2, notes: 'N1' })
+    expect(relayRow('x')).toMatchObject({ amount: 2, notes: 'N1' })
   })
 })
 
-describe('concurrent edits of the same record keep the later record (known v4 limit)', () => {
-  it('different fields: the later record wins whole, on both devices, then quiet', async () => {
+describe('concurrent edits of the same record merge per field', () => {
+  it('different fields: both edits survive, on both devices, then quiet', async () => {
     const { phone, laptop } = await pair()
     S(phone).updateExpense('e1', { amount: 45 })
     await advance(10) // before either has pulled the other's edit
@@ -291,7 +313,7 @@ describe('concurrent edits of the same record keep the later record (known v4 li
     await advance(MINUTE)
 
     for (const d of [phone, laptop]) {
-      expect(rowOf(d, 'e1')).toMatchObject({ amount: 4.5, notes: 'with Wei Jie' })
+      expect(rowOf(d, 'e1')).toMatchObject({ amount: 45, notes: 'with Wei Jie' })
     }
     expectConverged(phone, laptop)
     await expectQuiet()
@@ -310,14 +332,14 @@ describe('concurrent edits of the same record keep the later record (known v4 li
     await expectQuiet()
   })
 
-  it('a tie on equal stamps goes to the same copy on both devices', async () => {
+  it('a tie on equal stamps goes to the same value on both devices', async () => {
     const { phone, laptop } = await pair()
     S(phone).updateExpense('e1', { amount: 45 })
     S(laptop).updateExpense('e1', { amount: 46 }) // the same millisecond
-    expect(rowOf(phone, 'e1')?.updatedAt).toBe(rowOf(laptop, 'e1')?.updatedAt)
     await advance(MINUTE)
 
-    expect(rowOf(phone, 'e1')).toEqual(rowOf(laptop, 'e1'))
+    expect([45, 46]).toContain(rowOf(phone, 'e1')?.amount)
+    expect(rowOf(phone, 'e1')?.amount).toBe(rowOf(laptop, 'e1')?.amount)
     expectConverged(phone, laptop)
     await expectQuiet()
   })
@@ -337,12 +359,13 @@ function webkitDateParse(text: string): number {
   return new Date(text).getTime()
 }
 
+// The core reads stamps with its own grammar (core/stamp.ts), never Date.parse, so the engines'
+// different Date.parse cannot split two devices. Here the phone runs with WebKit's Date.parse.
 describe('a laptop (Chromium) and a phone (WebKit) order every stamp alike', () => {
   afterEach(() => {
-    vi.doUnmock('../../lib/stamps')
+    vi.restoreAllMocks()
   })
 
-  /** The laptop runs as is; the phone's whole module graph reads stamps under WebKit's Date.parse. */
   async function laptopAndPhone() {
     const start = () => [
       expense('x1', { amount: 5, updatedAt: '2026-10-10T00:00:00.000Z' }),
@@ -351,20 +374,7 @@ describe('a laptop (Chromium) and a phone (WebKit) order every stamp alike', () 
     relay().latency = { pull: 200, push: 300, realtime: 100 }
     const laptop = await bootDevice({ expenses: start() })
     await connect(laptop)
-    vi.doMock('../../lib/stamps', async (importOriginal) => {
-      const real = await importOriginal<typeof import('../../lib/stamps')>()
-      return {
-        ...real,
-        stampMs: (value: unknown) => {
-          const parse = vi.spyOn(Date, 'parse').mockImplementation(webkitDateParse)
-          try {
-            return real.stampMs(value)
-          } finally {
-            parse.mockRestore()
-          }
-        },
-      }
-    })
+    vi.spyOn(Date, 'parse').mockImplementation(webkitDateParse)
     const phoneClient = relay().nextClient
     const phone = await bootDevice({ expenses: start() })
     await connect(phone)
@@ -404,13 +414,11 @@ describe('a laptop (Chromium) and a phone (WebKit) order every stamp alike', () 
   )
 })
 
-describe('v5 records keep their fields through a v0.8.5 merge and push (AC-12)', () => {
-  it('round-trips day, fs, h and unknown fields, and never emits x5', async () => {
+describe('unknown record fields ride along through a merge and a push (AC-12)', () => {
+  it('keeps the day and a future field, and every push carries x5', async () => {
     const v5row = {
       ...expense('v1', { itemName: 'Chicken rice', amount: 4.5 }),
       day: '2026-10-01',
-      fs: [1792345600000, 0, 0],
-      h: 'k3f9x2',
       kind: 'future-field',
     }
     seedRow(
@@ -419,18 +427,15 @@ describe('v5 records keep their fields through a v0.8.5 merge and push (AC-12)',
     )
     const phone = await bootDevice()
     await connect(phone)
-    expect(rowOf(phone, 'v1')).toMatchObject({
-      day: '2026-10-01',
-      fs: [1792345600000, 0, 0],
-      h: 'k3f9x2',
-      kind: 'future-field',
-    })
+    expect(rowOf(phone, 'v1')).toMatchObject({ day: '2026-10-01', amount: 4.5 })
 
     S(phone).addExpense({ itemName: 'Kopi', amount: 1.5 })
     await advance(5000)
     expect(relayRows()).toHaveLength(2)
-    expect(relayRow('v1')).toEqual(v5row)
-    expect(rowPayload(SYNC_CODE)).not.toHaveProperty('x5')
+    // The unknown field rides along verbatim; an unsealed `day` is not kept (§5.3), the day is
+    // read from the unchanged date instead.
+    expect(relayRow('v1')).toMatchObject({ date: v5row.date, kind: 'future-field' })
+    expect(rowPayload(SYNC_CODE)).toHaveProperty('x5')
   })
 })
 
@@ -451,7 +456,13 @@ describe('undo is a forward write and sticks (AC-13, AC-14)', () => {
       expect(revived).toHaveLength(1)
       expect(revived[0]?.id).not.toBe('e1')
       expect(revived[0]?.createdAt).toBe(original?.createdAt)
-      expect(S(device).deletedIds).toContain('e1')
+      expect(S(device).expenses.map((e) => e.id)).not.toContain('e1')
+    }
+    expect(relayDeleted()).toContain('e1')
+    // It sticks: nothing that syncs later brings the delete back.
+    await advance(10 * MINUTE)
+    for (const device of [phone, laptop]) {
+      expect(S(device).expenses.filter((e) => e.itemName === 'Lunch')).toHaveLength(1)
     }
   })
 
@@ -483,7 +494,6 @@ describe('edits stamp forward (AC-15)', () => {
       itemName: 'Lunch',
       amount: 4.5,
       category: 'Other',
-      notes: undefined,
     })
     await advance(10_000)
     expect(rowOf(phone, 'e1')).toBe(e1)
@@ -497,22 +507,21 @@ describe('edits stamp forward (AC-15)', () => {
     const phone = await bootDevice({ expenses: [quick] })
     await connect(phone)
     const before = { pulls: relay().pulls, upserts: relay().upserts }
+    const row = rowOf(phone, 'q')
     S(phone).updateExpense('q', sheetPatch(quick))
     await advance(10_000)
-    expect(rowOf(phone, 'q')).toBe(quick)
+    expect(rowOf(phone, 'q')).toBe(row)
+    expect(rowOf(phone, 'q')?.date).toBe(quick.date) // byte-identical
     expect(S(phone).undoStack).toEqual([])
     expect({ pulls: relay().pulls, upserts: relay().upserts }).toEqual(before)
   })
 
-  it('a date moved to another day through the sheet is an edit, stored as local noon', async () => {
+  it('a date moved to another day through the sheet is an edit, stored as local noon (P2-2)', async () => {
     const quick = expense('q', { date: '2026-10-19T01:13:00.000Z' })
     const phone = await bootDevice({ expenses: [quick] })
     const dayBefore = format(subDays(parseISO(quick.date), 1), 'yyyy-MM-dd')
     S(phone).updateExpense('q', sheetPatch(quick, { day: dayBefore }))
-    expect(rowOf(phone, 'q')).toMatchObject({
-      date: new Date(`${dayBefore}T12:00:00`).toISOString(),
-      updatedAt: iso(NOW),
-    })
+    expect(rowOf(phone, 'q')).toMatchObject({ day: dayBefore, date: `${dayBefore}T12:00:00` })
   })
 
   it('stamps an edit strictly after a copy whose stamp is ahead of this clock', async () => {

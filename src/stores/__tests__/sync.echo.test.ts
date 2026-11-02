@@ -1,5 +1,5 @@
 // F-002: sync goes quiet. Ports the auditors' s2 echo loop (one and two devices), plus the
-// old-writer rules: claim stamp, memo and banner evidence (§10.3, §11.4 on the v4 wire).
+// old-writer rules on the v5 wire: the refresh push, the memo and the banner (§11.4, P2-9).
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Expense } from '../../types'
 import { isRecord } from '../../lib/backup'
@@ -71,7 +71,7 @@ describe('F-002: one device with realtime self-echo (T-002-1, s2)', () => {
     const before = counts()
 
     phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
-    await advance(4000) // the debounced push
+    await advance(4000) // the debounced push (1.5 s quiet)
     expect(since(before).upserts).toBe(1)
 
     const idle = counts()
@@ -134,8 +134,9 @@ describe('no-op cycles change nothing (AC-6)', () => {
     expect(store.getState().expenses).toBe(rows)
   })
 
-  it('holds at 5,000 rows, and the cycle takes under a second', async () => {
-    const many: Expense[] = Array.from({ length: 5000 }, (_, i) =>
+  // 4,000 rows: about 770 KB on the wire, under the 900,000-char push limit (WIRE_PUSH_MAX).
+  it('holds at 4,000 rows, and the cycle takes under a second', async () => {
+    const many: Expense[] = Array.from({ length: 4000 }, (_, i) =>
       expense(`e${String(i)}`, {
         itemName: `Expense number ${String(i)}`,
         amount: (i % 97) + 0.5,
@@ -314,13 +315,15 @@ describe('old writers (v0.8.4 and earlier) on the relay', () => {
   // The old device's copy of e1: same stamp, different content (it re-files categories).
   const theirs = [expense('e1', { category: 'Food', updatedAt: '2026-10-10T00:00:00.000Z' })]
 
-  it('claims an equal legacy row with exactly one push carrying wr, and shows no banner (AC-9)', async () => {
-    seedRow(SYNC_CODE, payloadOf(ours)) // written by v0.8.4: no wr
+  it('claims an equal legacy row with exactly one push carrying x5, and shows no banner (AC-9)', async () => {
+    seedRow(SYNC_CODE, payloadOf(ours)) // written by v0.8.4: no wr, no x5
     const phone = await bootDevice({ expenses: ours })
     await connect(phone)
     expect(relay().upserts).toBe(1)
     const row = rowPayload(SYNC_CODE)
-    expect(row).toMatchObject({ wr: { app: '0.8.5' } })
+    // The v5 wire: the v4 payload 0.9.2 reads, plus x5 (min 4: every client may still push).
+    expect(row).toMatchObject({ version: '4.0', x5: { min: 4 } })
+    expect(isRecord(row) && 'wr' in row).toBe(false)
     expect(phone.sync.useSyncStore.getState().legacyWriterAt).toBeNull()
     await advance(MINUTE)
     expect(relay().upserts).toBe(1)
@@ -330,8 +333,11 @@ describe('old writers (v0.8.4 and earlier) on the relay', () => {
     seedRow(SYNC_CODE, payloadOf(ours))
     const phone = await bootDevice({ expenses: ours })
     await connect(phone)
+    // An edit the old device will never keep: it pushes its own stale copy over everything.
+    phone.expense.useExpenseStore.getState().updateExpense('e1', { notes: 'kept here' })
+    await advance(4000)
     const claim = relay().upserts
-    expect(claim).toBe(1)
+    expect(claim).toBe(2)
 
     // The v0.8.4 device: keeps its own copy and re-pushes every 600 ms, for 30 minutes.
     const chatter = setInterval(() => writeAsLegacy(SYNC_CODE, payloadOf(theirs)), 600)
@@ -345,19 +351,25 @@ describe('old writers (v0.8.4 and earlier) on the relay', () => {
 
     await advance(29 * MINUTE)
     clearInterval(chatter)
-    expect(ourPushes() + claim).toBeLessThanOrEqual(4)
+    // At most one push per 10 minutes over the same old copy (the memo).
+    expect(ourPushes()).toBeLessThanOrEqual(3)
     // Our data is intact meanwhile.
-    expect(phone.expense.useExpenseStore.getState().expenses[0]?.category).toBe('Zzz')
+    expect(phone.expense.useExpenseStore.getState().expenses[0]).toMatchObject({
+      category: 'Zzz',
+      notes: 'kept here',
+    })
   })
 
-  // Our push over an old device's copy is compared without item-pick stamps (it drops them), so
-  // its echo must be recognised the same way, or every such push costs a second cycle.
+  // Our push over an old device's copy carries what it dropped (item-pick stamps): its echo is
+  // still ours, by rev and digest, or every such push costs a second cycle.
   it('knows its own push over an old device copy as its echo, item-pick stamps and all', async () => {
     const mine = [expense('e1'), expense('e2')]
-    const phone = await bootDevice({ expenses: mine })
-    phone.expense.useExpenseStore.setState({
-      categoryMappings: { kopi: 'Meals' },
-      mappingUpdatedAt: { kopi: '2026-10-18T08:00:00.000Z' },
+    const phone = await bootDevice({
+      expenses: mine,
+      v4: {
+        categoryMappings: { kopi: 'Meals' },
+        categoryMappingUpdatedAt: { kopi: '2026-10-18T08:00:00.000Z' },
+      },
     })
     await connect(phone)
     await advance(MINUTE)
@@ -378,6 +390,7 @@ describe('old writers (v0.8.4 and earlier) on the relay', () => {
     seedRow(SYNC_CODE, payloadOf(ours))
     const phone = await bootDevice({ expenses: ours })
     await connect(phone)
+    phone.expense.useExpenseStore.getState().updateExpense('e1', { notes: 'kept here' })
     const chatter = setInterval(() => writeAsLegacy(SYNC_CODE, payloadOf(theirs)), 600)
     await advance(MINUTE)
     expect(phone.sync.useSyncStore.getState().waitingForOld).toBe(true)

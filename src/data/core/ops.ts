@@ -23,7 +23,7 @@ import {
   UNDO_MS,
   isReserved,
 } from './constants'
-import { dayOf, isDateText, localNoonIso, todayDay, validDay } from './dates'
+import { dayOf, todayDay, validDay } from './dates'
 import { EMPTY_DOC, deriveExpenses, joinRename, keyUnion, mergeDoc } from './doc'
 import { canon } from './hash'
 import { contentKey, dedupeRoot, newId, newRev, reviveId, rootKey } from './ids'
@@ -120,12 +120,11 @@ function checkCategory(doc: Doc, raw: string): string {
 }
 
 /**
- * A real day whose stored instant (its local noon) the sanitiser accepts too: in the zones farthest
- * from UTC, local noon of 1970-01-01 or 2099-12-31 is an instant outside 1970–2099, and such a record
- * would be quarantined on its next read and push on every cycle.
+ * A real calendar day 1970–2099. Its stored date is its floating noon (P2-2), whose text carries the
+ * day's own year, so the sanitiser accepts it in every zone.
  */
 function checkDay(day: string): string {
-  if (!validDay(day) || !isDateText(localNoonIso(day))) {
+  if (!validDay(day)) {
     throw new OpError('day', 'Choose a real date between 1970 and 2099.')
   }
   return day

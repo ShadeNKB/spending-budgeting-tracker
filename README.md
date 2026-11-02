@@ -81,7 +81,7 @@ Most personal-finance apps are built around syncing, subscriptions, and dashboar
 | -------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------ |
 | **▶ Demo**           | [spendtrack-demo.vercel.app](https://spendtrack-demo.vercel.app) | Pre-loaded with realistic data — your changes stay on your device  |
 | **📱 Install**       | Open the demo on your phone → Share → **Add to Home Screen**     | Behaves exactly like a native app, fully offline                   |
-| **🧹 Make it yours** | Settings → Backup → **Clear all expenses**                       | Wipes the demo seed; categories and budgets remain                 |
+| **🧹 Make it yours** | Settings → Backup → **Clear sample data**                        | Removes the sample entries for good; they never come back          |
 | **💻 Self-host**     | [Quick start ↓](#quick-start)                                    | Clone & run in under a minute — full ownership, zero third-parties |
 
 ---
@@ -137,6 +137,9 @@ npm run preview    # Preview production build locally
 npm run lint       # ESLint
 npm run typecheck  # tsc --noEmit (strict)
 npm run test:run   # Vitest, single run
+npm run verify     # every gate: typecheck, lint, format, tests, build, bundle size, smoke
+npm run e2e        # Playwright (Chromium + iPhone WebKit), incl. the accessibility gate
+npm run e2e:data   # data-engine release gate: this build beside 0.9.2 on a fake relay
 ```
 
 ---
@@ -145,39 +148,42 @@ npm run test:run   # Vitest, single run
 
 ### Local-first by default
 
-On load, the app hydrates from `localStorage`. Every action — adding an expense, changing a budget, renaming a category — writes back immediately. There is no server in the hot path; latency is zero.
+On load, the data engine boots from `localStorage`. Every action — adding an expense, changing a budget, renaming a category — is validated and written through at once: one digest-checked envelope (`st5:db`) per change, a rollback copy in the 0.9.x keys, snapshots before destructive changes, and anything unreadable set aside (never deleted). Two tabs merge rather than overwrite each other. There is no server in the hot path; latency is zero.
 
 ```
-┌──────────────────────────────────────────────────┐
-│  React app (Pulse / Ledger / Insights)           │
-│       │                                          │
-│       ▼                                          │
-│  Zustand stores (expense, sync, ui)              │
-│       │                                          │
-│       ▼                                          │
-│  storage.ts  →  localStorage  (always available) │
-│       │                                          │
-│       ▼                                          │
-│  syncService.ts  ⇆  Supabase (optional relay)    │
-└──────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────┐
+│  React app (Pulse / Ledger / Insights / Settings)        │
+│       │                                                  │
+│       ▼                                                  │
+│  Zustand stores (expense facade, sync, ui)               │
+│       │                                                  │
+│       ▼                                                  │
+│  data engine (lazy chunk): src/data/core + src/data/local│
+│       │   validated ops, merge, undo, migration, journal │
+│       ▼                                                  │
+│  localStorage: st5:db envelope + v4 rollback mirror      │
+│       │                                                  │
+│       ▼                                                  │
+│  syncEngine.ts  ⇆  Supabase (optional relay)             │
+└──────────────────────────────────────────────────────────┘
 ```
 
 ### Cross-device sync (opt-in)
 
 When sync is configured (Supabase env vars + a UUID sync code paired between devices):
 
-- **localStorage is still the source of truth.** Cloud is a stateless relay.
-- **Per-expense Last-Write-Wins merge** using `updatedAt ?? createdAt`.
-- **Per-budget Last-Write-Wins merge** using category-level set/delete timestamps.
-- **Tombstone sets** unioned across devices — deleted expenses and removed budgets stay deleted unless a newer set wins.
-- **3 s debounced push** on local changes; **Supabase Realtime subscription** for instant pull on remote changes.
-- **Single in-flight Promise lock** prevents push-during-pull races.
-- **Exponential backoff** on push failure (1.5 s × 2ⁿ, cap 2 min); resets on success.
+- **Each device keeps a full copy.** Cloud is a relay between them.
+- **Per-field merge** (v5 wire, additive over the v4 payload so 0.9.2 devices still read it): each field of an entry, each budget, item pick and category rename converges on its newest change; deletions are dated, so Undo and Restore travel too.
+- **Pushes only when the relay lacks something** (digest compare, echo filter): two devices go quiet after one exchange, and beside a 0.9.2 device there is no ping-pong.
+- **1.5 s quiet push** on local changes (5 s at most); **Supabase Realtime subscription** for instant pull on remote changes; a pending outbox survives reloads.
+- **Mass-removal guard**: a large removal from another device is snapshotted first and offered back with Undo.
+- **Single in-flight cycle** (with a cross-tab lock) prevents push-during-pull races.
+- **Exponential backoff** on push failure (2 s × 2ⁿ, cap 60 s); resets on success.
 - **Realtime auto-reconnect** on `CLOSED / CHANNEL_ERROR / TIMED_OUT`.
-- **Payload guard** rejects writes >1 MB (Supabase row limit) with a clear error.
+- **Payload guard** pauses sync before a push passes 1 MB (Supabase row limit), with a clear message.
 - **No accounts.** The 122-bit UUID is the practical security boundary for a personal Supabase relay. Because the anon key is public and this table grants broad anon access, do not treat this model as hardened multi-user SaaS security.
 
-See [`src/services/syncService.ts`](src/services/syncService.ts) for the merge logic.
+See [`src/data/core`](src/data/core) for the merge logic and [`src/stores/syncEngine.ts`](src/stores/syncEngine.ts) for the cycle.
 
 ### Performance
 
@@ -196,8 +202,8 @@ See [`src/services/syncService.ts`](src/services/syncService.ts) for the merge l
 - Passing Vitest unit suite across core parsing, analytics, storage, and sync logic
 - Ledger virtualizes beyond 150 rows (`@tanstack/react-virtual`) — scales to thousands of entries without dropping frames
 - CI smoke test boots `vite preview` and asserts all 4 routes + service worker + manifest
-- Storage quota errors are caught and surfaced as a user toast (never silent data loss)
-- JSON import: 8 MB file cap, deep schema validation, hostile-data-safe
+- Storage quota errors are caught and shown as "Not saved: storage is full" (never silent data loss); a damaged key or row is set aside under Needs attention, never deleted
+- JSON import: 8 MB file cap, every row validated, a preview with exact counts, Restore (never deletes) or a typed Replace, 30 s Undo
 - Rapid-navigation stress-tested across mobile / desktop / production / 4× CPU-throttled — 290 iterations, 0 blank renders
 
 ---
@@ -248,7 +254,7 @@ Device A                                    Device B
   │  add expense "Coffee 4.50"                 │
   ├──────────► localStorage (instant)          │
   │                                            │
-  │  3 s debounce ──► Supabase ──── push       │
+  │  1.5 s quiet ──► Supabase ──── push        │
   │                       │                    │
   │                       │   Realtime         │
   │                       └──────────► pull ───┤
@@ -256,19 +262,18 @@ Device A                                    Device B
   │                                  add expense "Lunch 12"
   │                                            ├──► localStorage
   │                                            │
-  │  Realtime ◄──── push ◄──── Supabase ◄──── 3 s debounce
+  │  Realtime ◄──── push ◄──── Supabase ◄──── 1.5 s quiet
   ├──────────► merge + apply                   │
-  │  (Last-Write-Wins per expense)             │
+  │  (newest change wins, per field)           │
 ```
 
-- **localStorage is always the source of truth.** Cloud is a stateless relay.
-- **Per-expense Last-Write-Wins** using `updatedAt ?? createdAt`.
-- **Per-budget Last-Write-Wins** using category-level set/delete timestamps, so stale tabs cannot revert newer budget edits.
-- **Tombstone sets** are unioned across devices — deleted expenses and removed budgets stay deleted unless a newer set wins.
-- **Single in-flight Promise lock** prevents push-during-pull races.
-- **Exponential backoff** on push failure (1.5 s × 2ⁿ, cap 2 min).
+- **Each device keeps a full copy.** Cloud is a relay between them.
+- **Per-field merge**: an amount edited on the phone and a category changed on the laptop both survive; budgets, item picks, renames and the currency merge the same way, so a stale device cannot revert a newer change.
+- **Dated deletions**: deleted entries stay deleted, and an Undo or a Restore brings them back on every device.
+- **Single in-flight cycle** prevents push-during-pull races.
+- **Exponential backoff** on push failure (2 s × 2ⁿ, cap 60 s).
 - **Realtime auto-reconnect** on `CLOSED / CHANNEL_ERROR / TIMED_OUT`.
-- **Payload guard** rejects writes >1 MB (Supabase row limit).
+- **Payload guard** pauses sync before a push passes 1 MB (Supabase row limit).
 - **No accounts.** The 122-bit UUID is the practical security boundary for a personal Supabase relay, not a hardened multi-user SaaS boundary.
 
 Full architecture: [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) · [`src/services/syncService.ts`](src/services/syncService.ts).
@@ -322,7 +327,7 @@ Yes. One codebase, every platform. The PWA is installable from any modern browse
 <details>
 <summary><b>How do I move my data to a new browser without sync?</b></summary>
 <br/>
-Settings → Backup → <b>Download JSON backup</b>. On the new browser, Settings → Backup → <b>Import JSON backup</b>. Categories, budgets, and expenses transfer in full.
+Settings → Backup → <b>Download JSON backup</b>. On the new browser, Settings → Backup → <b>Import JSON backup</b>, check the preview, then <b>Restore</b>. Categories, budgets, item picks and expenses transfer in full, and Restore never deletes anything already there.
 </details>
 
 <details>
@@ -357,9 +362,9 @@ The pill in the top bar is tappable when sync fails. Tap it to retry. Local data
 </details>
 
 <details>
-<summary><b>"Storage is full — export a backup and clear old data"</b></summary>
+<summary><b>"Not saved: storage is full · Download a backup"</b></summary>
 <br/>
-Browser <code>localStorage</code> caps around 5–10 MB. SpendTrack catches the quota error and shows this toast. Export a JSON backup, then either clear old expenses (Settings → Backup → Clear all expenses) or move to a different browser profile.
+Browser <code>localStorage</code> caps around 5–10 MB. SpendTrack catches the quota error, never shows "Saved" for a change it could not keep, and retries. Download a JSON backup first; then delete entries you no longer need in the Ledger, or move to a different browser profile and import the backup there.
 </details>
 
 <details>

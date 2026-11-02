@@ -1,23 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { format } from 'date-fns'
+import { useCallback, useEffect, useState } from 'react'
 import {
   Plus,
   Trash2,
-  Download,
-  Upload,
-  FileDown,
   Wallet,
   Tags,
   Database,
   Cloud,
   Check,
   X,
-  Smartphone,
   Monitor,
   Moon,
   Sun,
   ChevronDown,
-  AlertTriangle,
+  Lock,
 } from 'lucide-react'
 import { Sheet } from '../../ui/Sheet'
 import { Segmented } from '../../ui/Segmented'
@@ -28,16 +23,15 @@ import { InlineConfirm } from '../../ui/InlineConfirm'
 import { useInlineConfirm } from '../../hooks/useInlineConfirm'
 import { useUIStore, type Theme } from '../../stores/useUIStore'
 import { CURRENCIES, isSupportedCurrency } from '../../lib/format'
-import { useExpenseStore } from '../../stores/useExpenseStore'
+import { undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
+import { useSyncStore } from '../../stores/useSyncStore'
+import { DataUnavailable } from '../../app/DataNotices'
+import { BackupPanel } from './BackupPanel'
 import { SyncPanel } from './SyncPanel'
 import { syncEnabled } from '../../services/syncConfig'
 import { useToast } from '../../hooks/useToast'
 import { useCurrencySymbol, useFormatMoney } from '../../hooks/useFormatMoney'
-import { downloadJSON, downloadCSV } from '../../lib/download'
-import { expensesToCsv } from '../../lib/csv'
 import { colorFromString } from '../../lib/analytics'
-import { BackupTooLargeError, parseBackup } from '../../lib/backup'
-import type { BackupData } from '../../types'
 
 const SECTIONS = [
   ['categories', Tags, 'Categories'],
@@ -52,6 +46,8 @@ type Section = (typeof SECTIONS)[number][0]
 const tabId = (section: Section) => `settings-tab-${section}`
 const panelId = (section: Section) => `settings-panel-${section}`
 const ADD_CATEGORY_ID = 'settings-add-category'
+/** Where a deleted category's entries go: it can be neither renamed nor deleted. */
+const OTHER = 'Other'
 
 /** Arrow keys move along the tabs (wrapping), Home and End jump to the ends. */
 function sectionAfterKey(key: string, index: number): number | null {
@@ -72,6 +68,8 @@ export function SettingsDrawer() {
   const setCurrency = useUIStore((s) => s.setCurrency)
   const theme = useUIStore((s) => s.theme)
   const setTheme = useUIStore((s) => s.setTheme)
+  // The currency is one setting for every synced device (P2-11).
+  const synced = useSyncStore((s) => s.syncId !== null)
   const [isMobile, setIsMobile] = useState(false)
   // Stable: Sheet re-runs its opening focus when onClose changes, which sent focus to the close
   // button on every tab switch (and away from a control another panel asked to focus).
@@ -88,7 +86,15 @@ export function SettingsDrawer() {
   // Tab from the tabs lands in the chosen section: on its first control, or on the panel itself
   // when the section is text only (Sync without a relay, Budgets without categories).
   const noCategories = useExpenseStore((s) => s.categories.length === 0)
-  const panelIsText = (tab === 'sync' && !syncEnabled) || (tab === 'budgets' && noCategories)
+  // The data tabs need the data: until it has loaded (or when it never will) they say so.
+  const data = useExpenseStore((s) =>
+    s.bootError !== null ? 'failed' : s.hydrated ? 'ready' : 'loading',
+  )
+  const dataTab = tab !== 'sync'
+  const panelIsText =
+    (tab === 'sync' && !syncEnabled) ||
+    (tab === 'budgets' && noCategories) ||
+    (dataTab && data === 'loading')
 
   // Tabs with automatic activation: the arrow keys switch the section as they move focus. With a
   // modifier the key is the browser's or the system's (Alt+Left is Back).
@@ -178,6 +184,7 @@ export function SettingsDrawer() {
           </div>
           <p id="currency-hint" className="text-[12px] text-[var(--text-tertiary)]">
             Changes the symbol only — amounts aren't converted.
+            {synced && ' Applies on all your synced devices.'}
           </p>
         </div>
         {/* Icons only on a phone, so each tab is named by aria-label. 36 px tall inside the 4 px
@@ -228,10 +235,16 @@ export function SettingsDrawer() {
         }}
         className="focus-inset p-5"
       >
-        {tab === 'categories' && <CategoriesPanel />}
-        {tab === 'budgets' && <BudgetsPanel />}
-        {tab === 'backup' && <BackupPanel />}
-        {tab === 'sync' && <SyncPanel />}
+        {dataTab && data !== 'ready' ? (
+          <DataUnavailable failed={data === 'failed'} />
+        ) : (
+          <>
+            {tab === 'categories' && <CategoriesPanel />}
+            {tab === 'budgets' && <BudgetsPanel />}
+            {tab === 'backup' && <BackupPanel />}
+            {tab === 'sync' && <SyncPanel />}
+          </>
+        )}
       </div>
     </Sheet>
   )
@@ -240,18 +253,85 @@ export function SettingsDrawer() {
 function CategoriesPanel() {
   const categories = useExpenseStore((s) => s.categories)
   const expenses = useExpenseStore((s) => s.expenses)
-  const add = useExpenseStore((s) => s.addCategory)
-  const rename = useExpenseStore((s) => s.renameCategory)
-  const remove = useExpenseStore((s) => s.removeCategory)
   const budgets = useExpenseStore((s) => s.budgets)
   const toast = useToast()
   const [newCat, setNewCat] = useState('')
   const confirm = useInlineConfirm<string>()
 
+  // A name the store refuses (reserved, too long) is said, never dropped in silence; a name it
+  // already lists changes nothing, and is said too (the text stays, to be changed).
+  const addNew = () => {
+    const name = newCat.trim()
+    if (!name) return
+    const before = useExpenseStore.getState().categories
+    try {
+      useExpenseStore.getState().addCategory(name)
+    } catch (err) {
+      toast.error(errorMessage(err))
+      return
+    }
+    if (useExpenseStore.getState().categories === before) {
+      toast.info(`"${name}" is already a category`)
+      return
+    }
+    setNewCat('')
+    toast.success('Category added')
+  }
+
+  /** The toast of a category change, with the Undo of the entry it just put on the stack. */
+  const changedToast = (message: string) => {
+    const entry = useExpenseStore.getState().undoStack.at(-1)
+    const undoId = entry?.id.startsWith('cat-') === true ? entry.id : null
+    toast.info(message, {
+      undoId: undoId ?? undefined,
+      action:
+        undoId === null
+          ? undefined
+          : {
+              label: 'Undo',
+              onClick: () => {
+                const outcome = useExpenseStore.getState().consumeUndo(undoId)
+                if (outcome !== null && outcome.skipped > 0) {
+                  toast.warning(undoOutcomeMessage(outcome))
+                }
+              },
+            },
+    })
+  }
+
+  // A rename onto a name that is listed already merges the two (its entries, budget and item
+  // picks move): a blur can do that by accident, so it says so, with an Undo like a delete's.
+  const renameTo = (field: HTMLInputElement, from: string) => {
+    const to = field.value.trim()
+    if (!to || to === from) return
+    const merging = useExpenseStore.getState().categories.includes(to)
+    try {
+      useExpenseStore.getState().renameCategory(from, to)
+    } catch (err) {
+      field.value = from
+      toast.error(errorMessage(err))
+      return
+    }
+    changedToast(merging ? `Merged "${from}" into "${to}"` : 'Renamed')
+  }
+
+  const removeOne = (name: string) => {
+    try {
+      useExpenseStore.getState().removeCategory(name)
+    } catch (err) {
+      toast.error(errorMessage(err))
+      return false
+    }
+    changedToast('Category deleted')
+    return true
+  }
+
   // A Map: a category may be named "__proto__" or "constructor".
   const counts = new Map(
     categories.map((c) => [c, expenses.filter((e) => e.category === c).length]),
   )
+  // Focus after a delete moves along the rows that can be deleted (Other cannot).
+  const deletable = categories.filter((c) => c !== OTHER)
 
   return (
     <div className="flex flex-col gap-3">
@@ -266,30 +346,17 @@ function CategoriesPanel() {
             value={newCat}
             onChange={(e) => setNewCat(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && newCat.trim()) {
-                add(newCat.trim())
-                setNewCat('')
-                toast.success('Category added')
-              }
+              if (e.key === 'Enter') addNew()
             }}
           />
         </div>
-        <Button
-          className="shrink-0"
-          onClick={() => {
-            if (newCat.trim()) {
-              add(newCat.trim())
-              setNewCat('')
-              toast.success('Category added')
-            }
-          }}
-        >
+        <Button className="shrink-0" onClick={addNew}>
           <Plus size={14} /> Add
         </Button>
       </div>
 
       <ul className="flex flex-col gap-1.5">
-        {categories.map((c, index) => {
+        {categories.map((c) => {
           const count = counts.get(c) ?? 0
           const one = count === 1
           const noun = one ? 'expense' : 'expenses'
@@ -308,12 +375,10 @@ function CategoriesPanel() {
                   layout="row"
                   question={`Delete ${c}?`}
                   detail={
-                    // Its expenses are refiled to Other (deleting Other itself leaves them be).
+                    // Its expenses are refiled to Other.
                     (count === 0
                       ? 'No expenses use it'
-                      : c === 'Other'
-                        ? `${count} ${noun} ${one ? 'stays' : 'stay'} in Other`
-                        : `${count} ${noun} ${one ? 'moves' : 'move'} to Other`) +
+                      : `${count.toLocaleString()} ${noun} ${one ? 'moves' : 'move'} to Other`) +
                     (Object.hasOwn(budgets, c) ? ' · its budget goes too' : '')
                   }
                   confirmLabel={<Check size={14} aria-hidden />}
@@ -322,24 +387,42 @@ function CategoriesPanel() {
                   cancelName={`Keep ${c}`}
                   onConfirm={() => {
                     // Focus moves on to the row that takes this one's place.
-                    const next = categories[index + 1] ?? categories[index - 1]
-                    remove(c)
-                    toast.info('Category deleted')
+                    const at = deletable.indexOf(c)
+                    const next = deletable[at + 1] ?? deletable[at - 1]
+                    if (!removeOne(c)) {
+                      confirm.close()
+                      return
+                    }
                     confirm.close(next === undefined ? ADD_CATEGORY_ID : confirm.triggerId(next))
                   }}
                   onCancel={() => confirm.close()}
                 />
+              ) : c === OTHER ? (
+                <>
+                  {/* As tall as a rename field, so every row lines up. */}
+                  <span className="flex h-9 min-w-0 flex-1 items-center text-[13px] text-white [@media(pointer:coarse)]:h-11">
+                    {c}
+                    <span className="sr-only">: deleted categories' entries go here</span>
+                  </span>
+                  <Pill tone="default">
+                    {count}
+                    <span className="sr-only"> {noun}</span>
+                  </Pill>
+                  <span
+                    aria-hidden
+                    title="Other holds the entries of deleted categories, so it stays"
+                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center text-[var(--text-tertiary)]"
+                  >
+                    <Lock size={12} />
+                  </span>
+                </>
               ) : (
                 <>
                   <input
                     aria-label={`Rename category ${c}`}
                     defaultValue={c}
                     onBlur={(e) => {
-                      const v = e.target.value.trim()
-                      if (v && v !== c) {
-                        rename(c, v)
-                        toast.success('Renamed')
-                      }
+                      renameTo(e.target, c)
                     }}
                     className="-mx-1 h-9 min-w-0 flex-1 rounded-md bg-transparent px-1 text-[13px] text-white [@media(pointer:coarse)]:h-11"
                   />
@@ -370,8 +453,6 @@ function CategoriesPanel() {
 function BudgetsPanel() {
   const categories = useExpenseStore((s) => s.categories)
   const budgets = useExpenseStore((s) => s.budgets)
-  const setBudget = useExpenseStore((s) => s.setBudget)
-  const removeBudget = useExpenseStore((s) => s.removeBudget)
   const toast = useToast()
   const fmt = useFormatMoney()
   const symbol = useCurrencySymbol()
@@ -409,15 +490,27 @@ function BudgetsPanel() {
                   // (index.css, against iOS focus zoom): 9 characters (123456.78) still fit.
                   className="h-8 w-24 rounded-md border border-white/[0.06] bg-surface-2 px-2 text-right font-mono text-[13px] tabular-nums text-white [color-scheme:dark] [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-28"
                   onBlur={(e) => {
-                    const v = parseFloat(e.target.value)
-                    // Leaving the field unchanged is no edit (and no toast).
-                    if (v === current) return
-                    if (Number.isFinite(v) && v > 0) {
-                      setBudget(c, v)
+                    const field = e.target
+                    const raw = field.value.trim()
+                    const store = useExpenseStore.getState()
+                    try {
+                      if (raw === '') {
+                        // An empty field clears the budget; leaving it empty is no edit.
+                        if (current === undefined) return
+                        store.removeBudget(c)
+                        toast.info('Budget cleared')
+                        return
+                      }
+                      const v = Number(raw)
+                      // Leaving the field unchanged is no edit (and no toast).
+                      if (v === current) return
+                      // 0, a negative or a too-large cap is refused by the store, with its reason.
+                      store.setBudget(c, v)
                       toast.success(`${c}: ${fmt(v)} budget set`)
-                    } else if (e.target.value === '' && current != null) {
-                      removeBudget(c)
-                      toast.info(`Budget cleared`)
+                    } catch (err) {
+                      // The store kept the budget it had: so does the field.
+                      field.value = current === undefined ? '' : String(current)
+                      toast.error(errorMessage(err))
                     }
                   }}
                   onKeyDown={(e) => {
@@ -433,179 +526,7 @@ function BudgetsPanel() {
   )
 }
 
-function BackupPanel() {
-  const expenses = useExpenseStore((s) => s.expenses)
-  const exportBackup = useExpenseStore((s) => s.exportBackup)
-  const importBackup = useExpenseStore((s) => s.importBackup)
-  const clearAllExpenses = useExpenseStore((s) => s.clearAllExpenses)
-  const fileRef = useRef<HTMLInputElement>(null)
-  const toast = useToast()
-  // Sync's "Export backup" sends focus here.
-  const takeFocus = useCallback((button: HTMLButtonElement | null) => {
-    if (button && useUIStore.getState().takeSettingsFocus('backup-download')) button.focus()
-  }, [])
-  const [pendingImport, setPendingImport] = useState<{ data: BackupData; count: number } | null>(
-    null,
-  )
-  const clearConfirm = useInlineConfirm<true>()
-  /** Focus for the import question; the backup itself waits in `pendingImport`. */
-  const importConfirm = useInlineConfirm<true>()
-
-  const exportJson = () => {
-    downloadJSON(`spendtrack-backup-${format(new Date(), 'yyyy-MM-dd')}.json`, exportBackup())
-    toast.success('Backup downloaded')
-  }
-
-  const exportCsv = () => {
-    downloadCSV(`spendtrack-${format(new Date(), 'yyyy-MM-dd')}.csv`, expensesToCsv(expenses))
-    toast.success('CSV exported')
-  }
-
-  const MAX_IMPORT_BYTES = 8 * 1024 * 1024 // 8 MB safety cap
-
-  const onFile = (f: File) => {
-    if (f.size > MAX_IMPORT_BYTES) {
-      toast.error(`File too large (${(f.size / 1024 / 1024).toFixed(1)} MB). Max 8 MB.`)
-      return
-    }
-    const reader = new FileReader()
-    reader.onload = () => {
-      try {
-        if (typeof reader.result !== 'string') throw new Error('unreadable file')
-        const data = parseBackup(JSON.parse(reader.result))
-        setPendingImport({ data, count: data.expenses.length })
-        importConfirm.ask(true)
-      } catch (err) {
-        if (err instanceof BackupTooLargeError) {
-          toast.error(err.message)
-          return
-        }
-        const msg = err instanceof Error ? err.message : 'parse error'
-        toast.error(`Invalid backup file — ${msg}`)
-      }
-    }
-    reader.onerror = () => toast.error('Could not read the file')
-    reader.readAsText(f)
-  }
-
-  const confirmImport = () => {
-    if (!pendingImport) return
-    importBackup(pendingImport.data)
-    toast.success(`Imported ${expenseCount(pendingImport.count)}`)
-    setPendingImport(null)
-    importConfirm.close()
-  }
-
-  return (
-    <div className="flex flex-col gap-3">
-      <div className="flex flex-col gap-2 rounded-lg border border-white/[0.06] bg-surface-1 p-4">
-        <div className="text-[13px] font-semibold text-white">
-          {expenses.length} expenses stored locally
-        </div>
-        <div className="text-[12px] leading-relaxed text-[var(--text-tertiary)]">
-          All data lives in <strong className="text-white/70">this browser on this device</strong>.
-          No account, no cloud, no sharing across devices automatically.
-        </div>
-        <div className="mt-1 flex flex-col gap-2">
-          <div className="flex items-start gap-2 text-[12px] text-[var(--text-tertiary)]">
-            <Monitor size={12} className="mt-0.5 shrink-0 text-accent/60" />
-            <span>
-              <strong className="text-white/70">Laptop:</strong> Use in browser, or run locally for
-              full offline ownership.
-            </span>
-          </div>
-          <div className="flex items-start gap-2 text-[12px] text-[var(--text-tertiary)]">
-            <Smartphone size={12} className="mt-0.5 shrink-0 text-accent/60" />
-            <span>
-              <strong className="text-white/70">Phone:</strong> Open the URL in mobile browser → tap
-              Share → Add to Home Screen to install as an app.
-            </span>
-          </div>
-          <div className="flex items-start gap-2 text-[12px] text-[var(--text-tertiary)]">
-            <Database size={12} className="mt-0.5 shrink-0 text-accent/60" />
-            <span>
-              <strong className="text-white/70">Multiple devices:</strong> Export a JSON backup
-              here, then import it on the other device.
-            </span>
-          </div>
-        </div>
-      </div>
-
-      {pendingImport && (
-        <InlineConfirm
-          tone="warning"
-          question={`Import ${expenseCount(pendingImport.count)}?`}
-          detail="This will replace all current data. This cannot be undone."
-          confirmLabel="Confirm import"
-          onConfirm={confirmImport}
-          onCancel={() => {
-            setPendingImport(null)
-            importConfirm.close()
-          }}
-        />
-      )}
-
-      <Button ref={takeFocus} onClick={exportJson} variant="primary">
-        <Download size={14} /> Download JSON backup
-      </Button>
-      <Button onClick={exportCsv} variant="ghost">
-        <FileDown size={14} /> Export to CSV
-      </Button>
-      <input
-        ref={fileRef}
-        type="file"
-        accept="application/json"
-        hidden
-        onChange={(e) => {
-          const f = e.target.files?.[0]
-          if (f) onFile(f)
-          e.target.value = ''
-        }}
-      />
-      <Button
-        id={importConfirm.triggerId()}
-        onClick={() => fileRef.current?.click()}
-        variant="ghost"
-      >
-        <Upload size={14} /> Import JSON backup
-      </Button>
-
-      <div className="mt-1 border-t border-white/[0.06] pt-3">
-        {clearConfirm.pending ? (
-          <InlineConfirm
-            icon={<AlertTriangle size={14} aria-hidden className="mt-0.5 shrink-0 text-negative" />}
-            question={`Delete all ${expenseCount(expenses.length)}?`}
-            detail={
-              <>
-                This permanently removes all locally stored expense data. Your categories, budgets,
-                and settings are kept.{' '}
-                <strong className="text-white/60">This cannot be undone.</strong>
-              </>
-            }
-            confirmLabel="Yes, delete all"
-            onConfirm={() => {
-              clearAllExpenses()
-              toast.info('All expenses cleared')
-              clearConfirm.close()
-            }}
-            onCancel={() => clearConfirm.close()}
-          />
-        ) : (
-          <Button
-            id={clearConfirm.triggerId()}
-            onClick={() => clearConfirm.ask(true)}
-            variant="ghost"
-            className="w-full text-negative/70 hover:!border-negative/30 hover:!bg-negative/10 hover:text-negative"
-          >
-            <Trash2 size={14} /> Clear all expenses
-          </Button>
-        )}
-      </div>
-    </div>
-  )
-}
-
-/** "1 expense", "12 expenses". */
-function expenseCount(n: number): string {
-  return `${n} ${n === 1 ? 'expense' : 'expenses'}`
+/** What an action that refused its input said (P2-13). */
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : "That didn't work. Nothing was changed."
 }

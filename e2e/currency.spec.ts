@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test'
+import { storedExpenses } from './support/stored'
 
 // Currency end to end (AC-15): the default comes from the device, a stored choice wins, and
 // every amount on screen carries the selected symbol. Invented data, fixed clock.
@@ -165,7 +166,7 @@ test.describe('Currency on a Singapore device', () => {
     ).toBeVisible()
     await sheet.getByRole('button', { name: 'Cancel' }).click()
     await expect(sheet).toBeHidden()
-    expect(await page.evaluate(() => localStorage.getItem('expenses'))).not.toContain('typo')
+    expect((await storedExpenses(page)).map((e) => e.itemName)).not.toContain('typo')
 
     sheet = await openAddSheet(page)
     await sheet.getByRole('button', { name: 'Yesterday' }).click()
@@ -222,7 +223,8 @@ test.describe('Currency on a Singapore device', () => {
     await seed(page)
     await page.goto('/pulse')
     await waitForApp(page)
-    const before = await page.evaluate(() => localStorage.getItem('expenses'))
+    const amounts = async () => (await storedExpenses(page)).map((e) => [e.id, e.amount])
+    const before = await amounts()
 
     const drawer = await openSettings(page)
     await drawer.getByLabel('Currency').selectOption('JPY')
@@ -239,7 +241,7 @@ test.describe('Currency on a Singapore device', () => {
     await expect(sheet.getByText('¥', { exact: true })).toBeVisible()
     await page.keyboard.press('Escape')
 
-    expect(await page.evaluate(() => localStorage.getItem('expenses'))).toBe(before)
+    expect(await amounts()).toEqual(before)
   })
 
   test('a stored USD choice is kept', async ({ page }) => {

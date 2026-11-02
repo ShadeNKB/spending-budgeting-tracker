@@ -1,5 +1,7 @@
 import { colorFromString } from '../../lib/analytics'
 import { MAX_AMOUNT, isAmountTooLarge } from '../../utils/amountGuard'
+import type { useToast } from '../../hooks/useToast'
+import { useExpenseStore, type LocalStatus } from '../../stores/useExpenseStore'
 
 /** The two fields both expense sheets check before saving, as typed. */
 export interface ExpenseFormValues {
@@ -32,6 +34,63 @@ export function validateExpenseForm(
     errors.amount = `Amount too large — the limit is ${fmt(MAX_AMOUNT)}`
   }
   return errors
+}
+
+/**
+ * What to tell the owner when a store action refuses its input (P2-13). Its message is written
+ * for them ("Notes are at most 500 characters."); anything without one gets a plain retry line.
+ */
+export function actionErrorMessage(err: unknown): string {
+  return err instanceof Error && err.message.trim() !== ''
+    ? err.message
+    : "That couldn't be saved. Try again."
+}
+
+/** What an add's confirmation adds while this device is not keeping it; null while it is. */
+export function unsavedNote(local: LocalStatus): string | null {
+  switch (local) {
+    case 'saved':
+      return null
+    case 'memory-only':
+      return 'Kept only until you close SpendTrack'
+    case 'error-quota':
+    case 'error-storage':
+      return 'Not saved on this device yet'
+  }
+}
+
+type ToastApi = ReturnType<typeof useToast>
+
+/**
+ * An add's confirmation, honest about storage (§6.5): while this device cannot keep the entry
+ * (memory only, or a save that failed) it is a warning that says so, never a tick. The add's
+ * write is made first (it would run on the next microtask), so the tone is that of its own save,
+ * also for the first entry storage refuses.
+ */
+export function confirmAdded(
+  toast: ToastApi,
+  message: string,
+  opts: NonNullable<Parameters<ToastApi['success']>[1]>,
+): void {
+  const note = unsavedNote(useExpenseStore.getState().saveNow())
+  if (note === null) toast.success(message, opts)
+  else toast.warning(`${message} · ${note}`, opts)
+}
+
+/**
+ * The undo of the latest delete of `id` on the store's stack, which names it `del-<id>-<n>`
+ * (P2-12). Matched exactly, so the Undo for "ab" never brings back "ab-1" instead.
+ */
+export function deleteUndoId(
+  stack: readonly { readonly id: string }[],
+  id: string,
+): string | undefined {
+  const prefix = `del-${id}-`
+  for (let i = stack.length - 1; i >= 0; i--) {
+    const undo = stack[i]?.id
+    if (undo?.startsWith(prefix) && /^\d+$/.test(undo.slice(prefix.length))) return undo
+  }
+  return undefined
 }
 
 /** The field to focus after a failed save, in form order; null when every field is valid. */

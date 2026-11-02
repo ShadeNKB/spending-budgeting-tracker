@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { Check, Cloud, Loader2, WifiOff, AlertCircle, Info, type LucideIcon } from 'lucide-react'
 import clsx from 'clsx'
-import { useExpenseStore } from '../stores/useExpenseStore'
+import { useExpenseStore, type LocalStatus } from '../stores/useExpenseStore'
 import {
   OLD_DEVICE_WAITING,
   clockTime,
@@ -26,6 +26,14 @@ function timeAgo(ts: number): string {
 }
 
 type Tone = 'neutral' | 'info' | 'saved' | 'accent' | 'warn' | 'error'
+
+/** Why nothing is being saved, in the tooltip. */
+const NOT_SAVED: Record<LocalStatus, string | undefined> = {
+  saved: undefined,
+  'error-quota': 'Storage on this device is full.',
+  'error-storage': 'This browser is blocking storage.',
+  'memory-only': "Saved data couldn't be read, so nothing is written over it.",
+}
 
 // In the light theme the global amber-700 and green-700 text measured under 4.5:1 on these
 // tinted pills; the 800s clear it.
@@ -59,6 +67,8 @@ interface PillView {
  */
 function usePillView(): PillView {
   const localStatus = useExpenseStore((s) => s.syncStatus)
+  const local = useExpenseStore((s) => s.local)
+  const bootError = useExpenseStore((s) => s.bootError)
   const lastSavedAt = useExpenseStore((s) => s.lastSavedAt)
   const isOffline = useExpenseStore((s) => s.isOffline)
   const syncId = useSyncStore((s) => s.syncId)
@@ -69,8 +79,25 @@ function usePillView(): PillView {
   const configured = syncEnabled && syncId !== null
   const cloudError = configured ? lastError : null
 
+  // The data engine never loaded: nothing was read, so nothing can be called saved (the screen
+  // says so itself, so the pill is not announced).
+  if (bootError !== null) {
+    return {
+      state: 'not-loaded',
+      tone: 'error',
+      icon: AlertCircle,
+      label: 'Not loaded',
+      reason: "SpendTrack couldn't start. Your data is still saved on this device.",
+    }
+  }
   if (localStatus === 'error') {
-    return { state: 'save-failed', tone: 'error', icon: AlertCircle, label: 'Save failed' }
+    return {
+      state: 'save-failed',
+      tone: 'error',
+      icon: AlertCircle,
+      label: 'Not saved',
+      reason: NOT_SAVED[local],
+    }
   }
   if (cloudError && isPaused(cloudError.kind)) {
     return {
@@ -231,7 +258,9 @@ export function SyncPill() {
   const toasted = useUIStore(
     (s) => view.news !== undefined && s.toasts.some((t) => t.message === view.news),
   )
-  const announcement = useAnnouncement(view, muted, toasted)
+  // A failed save is said by its strip under the top bar (DataNotices), on every screen size;
+  // this pill is hidden on phones. The region still says the save that ends it.
+  const announcement = useAnnouncement(view, muted, toasted || view.state === 'save-failed')
   // Re-render every 15 s so the relative times stay current and a failure turns red on time.
   useTick(15_000)
 

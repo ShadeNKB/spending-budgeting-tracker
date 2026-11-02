@@ -13,6 +13,7 @@ import {
   relay,
   relayRows,
   resetRelay,
+  MemoryStorage,
   retireDevices,
   seedRow,
   setVisibility,
@@ -47,6 +48,7 @@ afterEach(() => {
   vi.clearAllTimers()
   vi.useRealTimers()
   vi.unstubAllEnvs()
+  vi.restoreAllMocks()
 })
 
 /** A phone with e1 and e2 on the relay, in sync; the relay is slow from now on. */
@@ -83,16 +85,47 @@ describe('pendingLocal follows what the relay holds', () => {
     expect(relayRows()).toHaveLength(4)
   })
 
-  it('clears on a cycle that finds the relay already equal (a change undone before sync)', async () => {
+  // v5: every write is a stamped fact (an add then a remove of a category leaves the removal for
+  // other devices to learn), so "undone before sync" no longer exists. What clears the outbox
+  // without a push is a relay that already holds it: here our own push, whose answer was lost.
+  it('clears on a cycle that finds the relay already equal (a push whose answer was lost)', async () => {
     const phone = await syncedPhone()
+    failNext('push', { ghost: 100 }) // it lands, and the answer never comes back
+    phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
+    await advance(1500 + PULL_MS + 15_000) // the push timer, the pull, the 15 s deadline
+    expect(phone.sync.useSyncStore.getState()).toMatchObject({ pendingLocal: true })
+    expect(relay().ghostsLanded).toBe(1)
     const upserts = relay().upserts
-    phone.expense.useExpenseStore.getState().addCategory('Groceries')
-    phone.expense.useExpenseStore.getState().removeCategory('Groceries')
-    expect(phone.sync.useSyncStore.getState().pendingLocal).toBe(true)
 
-    await advance(5000) // the push timer runs a cycle: nothing to send
+    await advance(2000 + PULL_MS + 100) // the 2 s retry pulls our own landed push
     expect(relay().upserts).toBe(upserts)
     expect(phone.sync.useSyncStore.getState()).toMatchObject({
+      cloudStatus: 'synced',
+      pendingLocal: false,
+      lastError: null,
+    })
+  })
+
+  it('a change still in the outbox when the app closes syncs at the next start (AC-20)', async () => {
+    const storage = new MemoryStorage()
+    const phone = await bootDevice({ expenses: [expense('e1')], storage, savedCode: SYNC_CODE })
+    await advance(5000)
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
+    window.dispatchEvent(new Event('offline'))
+    const added = phone.expense.useExpenseStore
+      .getState()
+      .addExpense({ itemName: 'Kopi', amount: 1.5 })
+    await advance(5000)
+    expect(relayIds()).not.toContain(added.id)
+    retireDevices() // the app is closed
+
+    // The next start, online again: the durable outbox drives a boot cycle.
+    vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true)
+    const again = await bootDevice({ storage, savedCode: SYNC_CODE })
+    expect(again.sync.useSyncStore.getState().pendingLocal).toBe(true)
+    await advance(5000)
+    expect(relayIds()).toContain(added.id)
+    expect(again.sync.useSyncStore.getState()).toMatchObject({
       cloudStatus: 'synced',
       pendingLocal: false,
     })
@@ -158,7 +191,7 @@ describe('Disconnect, reconnect and another code', () => {
 
 describe('unreadable relay rows', () => {
   it('a deleted one is not put back on the relay', async () => {
-    // A row v0.8 cannot read (a later version wrote it) that another device has since deleted.
+    // A row this version cannot read that another device has since deleted.
     const unreadable = { ...expense('v5row'), date: 'last tuesday' }
     seedRow(SYNC_CODE, payloadOf([unreadable, expense('g1')], { deletedIds: ['v5row'] }))
     const phone = await bootDevice({ expenses: [expense('e1')] })

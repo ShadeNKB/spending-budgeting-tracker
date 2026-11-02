@@ -20,7 +20,7 @@ import {
   updateExpense,
 } from './ops'
 import { maxStampRec } from './record'
-import type { Doc, Hlc, OpCtx, OpResult } from './types'
+import type { Doc, Hlc, OpCtx } from './types'
 import { decodeWire, fromV4Keys, wireString } from './wire'
 
 const mk = (wall = T0, clock: Hlc = { last: 0 }, seed = 1, demoBuild = false): OpCtx => ({
@@ -74,14 +74,23 @@ describe('addExpense (§7.1, T-049-1, T-096-1 core half)', () => {
     expect(new OpError('amount', 'm')).toBeInstanceOf(Error)
   })
 
-  it('a quick add without a day stores today and local noon (byte-identical T12:00:00 form)', () => {
+  it('a quick add without a day stores today and its floating noon `day + T12:00:00` (P2-2)', () => {
     const wall = new Date(2026, 9, 18, 21, 40, 20).getTime()
     const r = addExpense(EMPTY_DOC, mk(wall), { itemName: 'novena clinic', amount: 25 })
     const rec = must(r.created)
     expect(rec.d.v.day).toBe(todayDay(wall))
     expect(rec.d.v.day).toBe('2026-10-18')
     expect(rec.d.v.date).toBe(localNoonIso('2026-10-18'))
-    expect(rec.d.v.date).toBe(new Date('2026-10-18T12:00:00').toISOString())
+    expect(rec.d.v.date).toBe('2026-10-18T12:00:00')
+    for (const [h, m] of [
+      [0, 30],
+      [23, 59],
+    ] as const) {
+      const edge = new Date(2026, 11, 31, h, m).getTime()
+      expect(
+        must(addExpense(EMPTY_DOC, mk(edge), { itemName: 'x', amount: 1 }).created).d.v,
+      ).toEqual({ date: '2026-12-31T12:00:00', day: '2026-12-31' })
+    }
     expect(r.touched).toContainEqual([`ex:${rec.id}`, rec.C])
     expect(r.undo?.label).toBe('Added "novena clinic"')
     expect(r.undo?.expiresAt).toBe(wall + 5000)
@@ -142,7 +151,7 @@ describe('addExpense (§7.1, T-049-1, T-096-1 core half)', () => {
   })
 })
 
-describe('the stored instant of a day stays inside 1970–2099 in every zone (§7.10, §8.1)', () => {
+describe('every real day 1970–2099 is stored readable in every zone (§7.10, §8.1, P2-2)', () => {
   /** Runs `f` with the process time zone switched to `zone` (Node re-reads TZ when it is set). */
   function inZone(zone: string, f: () => void): void {
     const proc: unknown = Reflect.get(globalThis, 'process')
@@ -160,51 +169,39 @@ describe('the stored instant of a day stays inside 1970–2099 in every zone (§
     }
   }
 
-  const EDGES = ['1970-01-01', '1970-01-02', '2099-12-30', '2099-12-31']
+  const EDGES = ['1970-01-01', '1970-01-02', '2099-12-30', '2099-12-31', '1994-12-31']
 
-  /** Each edge day is refused (OpError 'day') or stored readable: never quarantined later. */
-  function refusedEdges(): string[] {
-    const refused: string[] = []
+  /**
+   * Each edge day is accepted and its record round-trips readable, with the day and the floating
+   * noon it was written with. (PR-1 stored an instant: in the zones farthest from UTC the noon of
+   * 1970-01-01 or 2099-12-31 left the window, so those days had to be refused.)
+   */
+  function edgesStoreReadable(): void {
     for (const day of EDGES) {
-      let r: OpResult
-      try {
-        r = addExpense(EMPTY_DOC, mk(), { itemName: 'old receipt', amount: 30, day })
-      } catch (e) {
-        expect(e instanceof OpError ? e.code : e).toBe('day')
-        refused.push(day)
-        continue
-      }
+      const r = addExpense(EMPTY_DOC, mk(), { itemName: 'old receipt', amount: 30, day })
+      const rec = must(r.created)
+      expect(rec.d.v, day).toEqual({ date: `${day}T12:00:00`, day })
       const back = decodeWire(parseJson(wireString(r.doc)), 'remote')
       expect(back.report.quarantined, day).toEqual([])
-      expect(back.doc.expenses.size, day).toBe(1)
+      expect(back.report.repaired, day).toBe(0)
+      expect(must(back.doc.expenses.get(rec.id)).d.v, day).toEqual(rec.d.v)
+      expect(dayOf(must(back.doc.expenses.get(rec.id))), day).toBe(day)
     }
-    return refused
   }
 
-  it('in the process zone: a day at the edge is refused or round-trips readable', () => {
-    expect(refusedEdges().length).toBeLessThanOrEqual(2)
+  it('in the process zone', () => {
+    edgesStoreReadable()
   })
 
-  it('in the zones farthest from UTC: exactly the days whose local noon leaves the window', () => {
-    inZone('Etc/GMT+12', () => {
-      expect(localNoonIso('2099-12-31')).toBe('2100-01-01T00:00:00.000Z')
-      expect(refusedEdges()).toEqual(['2099-12-31'])
-    })
-    inZone('Pacific/Tongatapu', () => {
-      expect(localNoonIso('1970-01-01').startsWith('1969-12-31')).toBe(true)
-      expect(refusedEdges()).toEqual(['1970-01-01'])
-    })
-    inZone('Pacific/Kiritimati', () => {
-      expect(refusedEdges()).toEqual([])
-    })
-  })
-
-  it('a device clock outside the window cannot add a record for "today" (it would be unreadable)', () => {
-    const wall = Date.UTC(1969, 11, 30, 12)
-    expect(code(() => addExpense(EMPTY_DOC, mk(wall), { itemName: 'kopi', amount: 1 }))).toBe('day')
-    // with a day picked, the add works (stamps are clamped into the window)
-    const r = addExpense(EMPTY_DOC, mk(wall), { itemName: 'kopi', amount: 1, day: '2026-10-19' })
-    expect(must(r.created).d.v.day).toBe('2026-10-19')
+  it('in the zones farthest from UTC (−12, +13, +14) and across Kiritimati’s skipped day', () => {
+    for (const zone of [
+      'Etc/GMT+12',
+      'Pacific/Tongatapu',
+      'Pacific/Kiritimati',
+      'Pacific/Honolulu',
+    ]) {
+      inZone(zone, edgesStoreReadable)
+    }
   })
 })
 
@@ -248,6 +245,48 @@ describe('updateExpense', () => {
       updateExpense(d, mk(T0 + 1, c), id, { day: '2026-01-31' }).doc.expenses.get(id),
     )
     expect(moved.d.v).toEqual({ date: localNoonIso('2026-01-31'), day: '2026-01-31' })
+  })
+
+  it('an edit that keeps the day leaves the stored date byte-identical, in every stored form (P2-2)', () => {
+    for (const date of [
+      '2026-10-18T04:00:00.000Z', // 0.9.x add sheet: the instant of local noon
+      '2026-10-18T13:35:30.774Z', // 0.9.x quick add: the raw instant
+      '2026-10-18T12:00:00', // floating noon (v5, the demo and e2e seeds)
+      '2026-10-18', // a bare day
+    ]) {
+      const d = decodeWire(
+        fromV4Keys({
+          expenses: [
+            {
+              id: 'e1',
+              itemName: 'kopi',
+              amount: 1.8,
+              category: 'Food',
+              date,
+              createdAt: '2026-10-18T04:00:00.000Z',
+            },
+          ],
+        }),
+        'local-v4',
+        { legacyRank: 1 },
+      ).doc
+      const rec = must(d.expenses.get('e1'))
+      const day = dayOf(rec)
+      const amountOnly = must(
+        updateExpense(d, mk(T0 + DAY), 'e1', { amount: 2.2 }).doc.expenses.get('e1'),
+      )
+      expect(amountOnly.d, date).toBe(rec.d)
+      expect(amountOnly.d.v.date, date).toBe(date)
+      expect(updateExpense(d, mk(T0 + DAY), 'e1', { day }).doc, date).toBe(d)
+      const withDay = must(
+        updateExpense(d, mk(T0 + DAY), 'e1', { amount: 3, day }).doc.expenses.get('e1'),
+      )
+      expect(withDay.d, date).toBe(rec.d)
+      const moved = must(
+        updateExpense(d, mk(T0 + DAY), 'e1', { day: '2026-10-10' }).doc.expenses.get('e1'),
+      )
+      expect(moved.d.v, date).toEqual({ date: '2026-10-10T12:00:00', day: '2026-10-10' })
+    }
   })
 
   it('a longer v0.8 name, category or note sent back unchanged never blocks an edit of another field', () => {

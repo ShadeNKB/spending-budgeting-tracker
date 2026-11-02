@@ -1,5 +1,172 @@
 # Changelog
 
+## 0.10.0 — 2026-11-02
+
+PR-2 of the data-engine overhaul: the local engine. Your entries now live in one safety-checked copy on the device, written the moment you add or change anything. SpendTrack never deletes anything it can't read. It sets it aside, and you can download it. Undo, a restored backup and a category rename now hold through sync. Every delete says exactly what it reaches, and a large removal made on your other device can be undone.
+
+The first time 0.10.0 opens, it upgrades your data once and says so ("Your data was upgraded: N entries"). Every entry, category, budget and item pick shows as before, on the same day. It also keeps a copy in the 0.9.x format, so an older version opened on this device still finds everything.
+
+A device still on 0.9.x keeps syncing with this one, both ways, so the phone and the laptop can update in either order. One difference stays until both run 0.10.0: if the same entry is changed on both devices before either syncs, the change saved later is kept whole, as on 0.9.x.
+
+### Fixed
+
+- **An entry is saved the moment you add it.** The save used to wait up to 400 ms. It is now written straight away, and flushed again when the app is hidden. An app the phone kills, or a tab that crashes 200 ms after Enter, keeps the entry. (F-017)
+- **A save is all or nothing.** Each change is one write, where 0.9.x wrote seven separate keys. A phone that runs out of space mid-save can no longer leave half a save behind (entries from one moment, deletions from another). When storage is full, the pill and a strip under the top bar say "Not saved: storage is full · Download a backup", never "Saved", and SpendTrack keeps retrying. (F-097)
+- **Two open tabs or windows no longer erase each other.** Each save merges with what the other tab wrote, so adds, deletes, undos and renames from both are kept. A tab still running 0.9.x is folded in too, and it can no longer remove anything this version holds. (F-003)
+- **Damaged data never blanks the app, and is never deleted.**
+  - A row or a whole stored key that can't be read is set aside under Settings › Backup › **Needs attention**, untouched, with **Download them**. Everything else loads.
+  - A toast says "N entries couldn't be read · Review", once per start.
+  - If the main copy itself is damaged, it is rebuilt from the rollback copy and the snapshots, with "We couldn't read part of your saved data. We recovered N entries from backup copies."
+  - If there isn't even room to set the damaged copy aside, SpendTrack writes nothing over it and says so.
+  - Before, a corrupt key started an empty app, and the next entry overwrote the only copy. (F-005, F-014)
+- **If the data engine can't load** (a stale file after a deploy, a blocked script), the app says "SpendTrack couldn't start." with **Reload** and **Download my data**. The download saves every raw value and works without the engine. (F-005)
+- **Undo never overwrites a newer change.** Undo of an add, an edit, a delete or a delete-all is a new change, so every device keeps it after the next sync, also beside a 0.9.2 device. If an entry was changed on another device since, Undo leaves it alone and says "Undone, except N entries changed on another device". (F-011)
+- **Restoring a backup sticks.** Restore only adds and brings back. The next sync keeps what it restored on every device, including entries that had been deleted. Before, the deletions already synced undid the restore. (F-004)
+- **Category renames and deletes are safe across devices.** A rename travels as a rename:
+  - offline edits made in that category on another device follow it;
+  - a budget is never doubled;
+  - a renamed-away name no longer comes back in the list;
+  - a new entry is never filed into a category that is gone.
+
+  (F-012)
+
+- **Deleted entries stay deleted, however many.** This device keeps every deletion, with no cap. A 1,500-entry clear stays cleared, even beside a 0.8.4 device that remembers only 1,000. (F-013)
+- **Every entry keeps its day, in every time zone.**
+  - New and edited entries store their calendar day and that day's local noon (`2026-10-19T12:00:00`, no time zone). Every screen, the CSV, backups and 0.9.x read that form the same way.
+  - Quick add without a date stores today's local day, also at 00:30 in Kiritimati and at 23:59 on 31 December in Honolulu.
+  - An edit that keeps the day leaves the stored date exactly as it was.
+  - Entries saved by 0.9.x keep the day 0.9.4 showed. The Ledger, Pulse, Insights, recurring charges, the CSV and the palette all group by that day. (F-096)
+- **Bad input is refused with the reason, never saved.** This covers:
+  - an amount that isn't a number, is 0 or less, or is over 10,000,000;
+  - a budget that isn't a number;
+  - a category name over 60 characters, or a reserved one such as `constructor`.
+
+  The field or a toast says why ("Amount must be greater than 0 and at most 10,000,000."), and what you typed stays there to fix. The forms already refused these; now the store refuses them too, so no path can save NaN or a negative amount, and a budget can no longer be Infinity. Nothing that changes nothing raises an error. (F-049)
+
+- **Names like `constructor`, `__proto__` or `toString` can't break a screen.** As item names they work like any other. As category names they are refused. No screen ever shows a built-in value for them. (F-010)
+- **A backup with the same entry twice imports it once.** Deleting it no longer removes two rows at a time. (F-047)
+- **The demo seeds once, ever.** **Clear sample data** removes the sample entries for good, and the demo banner goes with them. 0.9.x seeded them again after Clear all and a reload. Sample entries never reach the relay or the rollback copy. (F-027)
+- **An entry from a 0.9.x or 0.8.4 device is no longer stranded when two uploads cross.** It reaches the relay with this device's next sync, with no further change on the old device. This closes 0.9.2's known limit.
+- **Undo brings back the entry you deleted.** Undo of the Ledger's delete toast, or of the Edit sheet's Delete, could bring back a different entry: one whose id began with the deleted one's ("ab" and "ab-1").
+- **An Undo button no longer stays on a toast after it stops working.** When Ctrl+Z (⌘Z) used that undo, or newer undos pushed it out, the toast that offered it now goes away. Before, it stayed on screen with an Undo that did nothing.
+
+### Changed
+
+- **Settings › Backup says where your data lives**, in words that depend on sync. Without sync: "Your data is stored only on this device. Download a backup regularly." With sync: "Synced through your relay: every linked device has a full copy. The relay copy isn't encrypted yet, so anyone with this app's public key could read it." (F-026)
+- **Import shows what a file would do before anything changes.**
+  - The preview counts: "N in the file", then only the parts that aren't zero: "N new", "N restored (they were deleted)", "N updated", "N already here", "N can't be read".
+  - **Restore** is the default. It removes nothing on this device or your other devices.
+  - **Replace instead…** makes the file the whole truth. It says how many entries it deletes on every linked device, and you type REPLACE to confirm.
+  - Both keep a snapshot first and offer Undo for 30 seconds.
+  - A file from a newer SpendTrack is refused ("This backup is from a newer SpendTrack."), and so is a file with more than 50,000 entries. (F-004, F-047)
+- **Each delete action is named for what it reaches.** (F-004, F-026)
+  - Without sync, there is one action: **Delete all entries**. It keeps a copy and offers Undo for 30 seconds.
+  - With sync on, **Delete all N entries everywhere** removes them on every linked device. You type DELETE to confirm, and it keeps a copy and offers Undo for 30 seconds.
+  - **Remove SpendTrack from this device only** forgets this device's data and sync code and starts fresh. It sends no deletions: the relay and your other devices keep everything. The backup download is ticked and comes first, as its own tap. While changes here haven't synced yet, the backup is required.
+  - If a safety copy can't be stored, nothing is deleted and a backup download is offered instead.
+- **Sync merges each field.** Between 0.10.0 devices, an amount changed on the phone and a note changed on the laptop both survive. Budgets, item picks, renames and the currency merge the same way. Item picks stay last-writer-wins beside a 0.9.2 device, both ways.
+- **The currency syncs.** A currency picked on one 0.10.0 device shows on the other after the next sync. A device that never picked one keeps its own until then. The picker says "Applies on all your synced devices." when sync is on.
+- **A large removal from your other device can be undone.** A removal is large at 10 entries or more, and at least 50 entries or a tenth of everything. This device takes a snapshot, applies the removal and says "Your other device removed N entries" with Undo for 30 seconds. Undo brings the entries back on every device. If there is no room for the copy, nothing is removed and the message says so. A flood of deletions from a damaged relay copy is caught the same way. (F-006, integrity part)
+- **A damaged synced copy is repaired from this device**, at most once every 10 minutes, with "The sync copy was damaged. Restored it from this device." Rows on the relay that can't be read are set aside under Needs attention; 0.9.2 passed them along unread. (F-005, F-006)
+- **Sync uploads 1.5 s after you stop** (at most 5 s while you keep going). It used to wait 3 s.
+  - A change waiting to upload survives a reload and goes out at the next start.
+  - "Synced" shows only when nothing is waiting.
+  - Two tabs never run a sync at the same moment.
+  - Two 0.10.0 devices go quiet after one exchange: an add costs at most two uploads, then none. Beside an idle 0.9.2 device, this version uploads at most once every 10 minutes. (F-002, F-016)
+- **The pill says "Not saved" with the reason** ("Storage on this device is full.", "This browser is blocking storage."), where it said "Save failed". It says "Not loaded" when SpendTrack couldn't start.
+- **Linking a device with the sample data still there asks first:** "Remove the sample data first?", with **Remove and connect** and **Keep it on this device**. (F-027)
+- **Categories.**
+  - Renaming onto a name that is already listed merges the two, with a toast and Undo.
+  - Deleting a category has Undo, which brings back its entries and its budget.
+  - **Other** can no longer be renamed or deleted (0.9.4 let you delete it).
+  - Adding a name that is already listed says so.
+- **Budgets.** Emptying the field clears the budget ("Budget cleared"). A refused amount keeps the budget you had.
+- **Undo everywhere.** Quick add from the command palette now offers Undo, as the top bar does. The Edit sheet's Delete does too. Ctrl+Z (⌘Z) says "Undone", or names what it had to skip.
+- **An add typed while the app is still loading** is kept and saved once the data has loaded. Settings' data tabs say they are loading, instead of showing empty lists beside live delete buttons.
+- **Storage is protected where the browser allows it.** SpendTrack asks the browser once, after your first entry, not to clear its storage automatically. Backup shows whether it agreed, and when you last downloaded a backup. "Last backup" counts only a download that reached the browser. (F-050)
+
+### Added
+
+- **Needs attention** in Settings › Backup: "N entries couldn't be read. They're kept on this device, untouched.", with **Download them**. **Review** on the toast takes you there. (F-005, F-014)
+- **Notices under the top bar:** recovered data (with **Download damaged data** and **Dismiss**), memory only (with **Download raw data**), "Storage on this device is nearly full · Download a backup" (from 80 % of the space SpendTrack plans for), the sticky "Not saved", and the demo banner with **Clear sample data**.
+- **An upgrade report**, once: "Your data was upgraded: N entries", plus "· N need attention" and **Review** when some rows couldn't be listed.
+- **Snapshots before every big change** (delete all, an import, a large removal from another device, and the upgrade itself), and a journal of what sync changed, both kept on the device. A screen to list them comes with PR-4. (F-014, F-050)
+- **A rollback copy in the 0.9.x format.** 0.9.2 opens on this device with every entry, item pick and budget, and 0.10.0 folds 0.9.2's changes back in afterwards. When storage is tight, this copy is the first thing dropped, never a save. Backup then says "Rollback copy: off (storage full)", and the copy returns at a later start with room.
+- **How to install, in Backup:** iPhone (Safari, Share, Add to Home Screen), Android or a computer (Install app), and how another device gets the data.
+- **A toast's Undo works from inside Settings.**
+  - Tab reaches it after the sheet's own controls, and focus comes back where it was.
+  - A screen reader inside the sheet can use it, and hears "or press Ctrl+Z" where there is a keyboard.
+  - A toast never covers the focused control in a sheet: the sheet scrolls it clear (WCAG 2.2 SC 2.4.11).
+  - The amber confirm (Remove from this device, Disconnect) meets contrast in the light theme.
+
+### Known limits
+
+- **Beside a 0.9.x device, the same entry changed on both devices before either syncs keeps the later whole copy.** Per-field merging starts once both run 0.10.0. Next to 0.9.2, budget deletions cause at most one extra upload every 10 minutes.
+- **The old-device warning in Settings › Sync names only 0.8.4 or earlier.** A 0.9.x device syncs without a warning. A 0.8.4 device still drops item-pick times.
+- **The relay copy is still plain text** to anyone with the app's public key (F-006, confidentiality part). Private sync is PR-5 and PR-6. Backup says so.
+- **Snapshots and the journal are kept but not listed yet.** Once the 30-second Undo has gone, getting back a delete-all or a large removal needs PR-4's recovery screen; the copy is kept until then. Needs attention offers Download only, with no fix or discard yet.
+- **Rows with an amount of 0 or less, or an unreadable date, leave the Ledger and the totals at the upgrade.** 0.9.4 already refused such amounts when typed or imported, so only rows from much older versions can be affected. They are kept under Needs attention, and the upgrade toast counts them. Refunds come with T8 as their own kind of entry.
+- **The first start after the update takes longer, once.** On a laptop with its CPU slowed 4×, it takes about 0.35 s more at 2,000 entries. Later starts at that size are about 0.3 s faster than on 0.9.4, but they hold the page busy longer in one go.
+- **SpendTrack takes more of the browser's storage.** At 700 entries it uses about 2.6 times what 0.9.x did once the snapshots are compressed (18 % of the space it plans for), and 4.2 times just after the upgrade.
+- **Sync pauses as "too large" a little sooner:** at 900,000 characters (it was 1 MB).
+
+### Changed (engineering)
+
+- **The local engine (`src/data/local/*`), on PR-1's core.**
+  - **Envelope.** One digest-checked envelope, `st5:db` (`5|digest|body`), plus `st5:gen`. It is written on a microtask after each commit and flushed synchronously on hide, pagehide, freeze and beforeunload.
+  - **Migration.** A lossless, synchronous migration from the v4 keys, with per-key salvage and quarantine. Its write order is quarantine copies → pre-v5 snapshot → envelope → mirror (P2-16).
+  - **Rollback mirror.** A crash-ordered v4 mirror across 8 keys: `categoryMappingUpdatedAt` joins, `mirrorSum` is written first, the mirror is shed under quota and re-enabled at a later boot with room. It is marked `spendtrack:app = '5'`, with the rank rule P2-6.
+  - **Quarantine.** `st5:q` and `st5:q:<key>:<ts>`, deduped by origin and hash, a 512 KiB log and 3 raw copies per key.
+  - **Recovery ladder.** Envelope → mirror → snapshots → memory-only.
+  - **Snapshots and journal.** A snapshot ring (3 daily, 5 pre-destructive, 1 MB) stored as `z0` and compressed with CompressionStream 35 s later or at the next boot, and `st5:journal`.
+  - **Cross-tab.** Read-merge-write on every flush, `storage` events, an old-tab `legacyFold` per P2-17, and another tab's Remove-from-device reloads this tab.
+  - **Also:** `navigator.storage.persist()`, `lastBackupAt`, the raw export, and an 80 % "nearly full" mark on a 2,000,000-character budget.
+  - `removeItem` runs on no read or parse failure.
+- **Engine chunk (P2-1).** Core and local engine form the lazy `engine` chunk. `main.tsx` starts loading it first, and a small Vite plugin modulepreloads it from `index.html` (`data-boot`). A static test fails any runtime import of `src/data/**` from outside it and `syncEngine.ts`. A failed load sets `bootError: 'engine-load'`.
+- **`useExpenseStore` is a facade.** It keeps the same selectors and actions as before. Views are null-prototype and keep their identity while unchanged. Actions throw `OpError` messages (P2-13), and undo ids keep their scheme (P2-12), with `consumeUndo` returning `{applied, skipped}`. The SyncPort serves the bridge, and `hydrate()` can run again (P2-14).
+  - `services/storage.ts` keeps `safeSet`, `getSyncId`, `saveSyncId` and `getDeviceId`, now over `st5:sync`, with `syncId` kept for rollback (P2-7).
+  - `lib/backup`'s `parseBackup` is gone, and `lib/rescue` leaves the `st5:sync` secrets out of its download.
+- **Core changes (P2-2 to P2-5).**
+  - **Floating local noon.** `localNoonIso` returns `` `${day}T12:00:00` ``, with a char-code fast path proven equal to `parseISO`.
+  - **Item-pick times on the wire.** The top-level `mappingUpdatedAt` is read and written in `encodeWire`, `wireString`, `encodeBackupFile` and the mirror. Decode takes the later of it and `x5.mts`.
+  - **0.9.2-aware merge.** `adoptableNews` follows the writer's rules, including 0.9.2's real ties, so this version uploads exactly what 0.9.2 will keep.
+  - **Frozen 0.9.2 model.** `v085.ts` is re-frozen from merged PR-0 (`ab32588`), with golden digests taken from the shipped code in 5 time zones.
+  - **Sync simulator.** It gains a `pr2` bridge mode and the crossing-push seed.
+- **Sync bridge (`stores/syncEngine.ts`).**
+  - **Cycle.** PR-0's cycle runs on the core: `decodeWire`, `mergeDoc` through the port, `decidePush`, and plain upserts of `encodeWire(min 4)`, with no CAS and no RPC.
+  - **Rules.** Writer classes per P2-8, a repair push at most once every 10 minutes, the echo filter on `x5.rev` + digest + answered-or-latest (P2-9), and news payloads merged at the start of the next cycle (P2-10).
+  - **Timing and limits.** `navigator.locks` with a 35 s give-up, a 1.5 s quiet push capped at 5 s, and `WIRE_PUSH_MAX` 900,000.
+  - The wire keeps `version: '4.0'` with an additive `x5`.
+  - `syncService.ts` is transport only. `applySync.ts`, `lib/canon.ts`, `lib/stamps.ts`, `utils/helpers.ts` and `ValidationResult` are deleted.
+- **Tests.** Unit tests number 2,975 in 152 files (2,665 on 0.9.4), green in Singapore, Honolulu and Kiritimati time. They include:
+  - an invented owner-shaped v4 fixture (700 entries, 150 picks with times, 120 tombstones, budgets with both times), migrated losslessly and idempotently;
+  - a torn mirror at each of the 8 keys against frozen 0.9.2 and 0.8.4 hydrates;
+  - two engines over one fake storage;
+  - mixed-version and crossing-push suites beside frozen 0.9.2 and 0.8.4 peers;
+  - storage footprint and benches.
+
+  `scripts/mutate-core.mjs` kills all 18 of its mutations (M13 to M17 are new).
+
+- **E2E.** In e2e, 540 tests run on Chromium and iPhone WebKit: 496 pass and 44 skip by project. New are two tabs, a renderer crash after Enter, corrupt storage, a poisoned import and row, an engine that fails to load, three time zones, and gate states for every new dialog and banner. `npm run e2e:data` (10 tests) builds `git archive v0.9.2` and this build against a `node:http` fake relay on ports 4219 to 4223. It runs a 60 s mixed-version soak, the rollback proof, and delete everywhere then Undo across two devices. It is a local release gate, not in CI yet.
+- **Bundle.** JS is 707,620 B, 691.0 KB of the 700 KB budget (591,801 B on 0.9.4: +115,819 B).
+  - The entry chunk is 129,229 B (+1,527, within the 134,870 B line).
+  - `engine` is new: 94,056 B, lazy and preloaded on every start.
+  - SettingsDrawer is 32,986 B (+17,179). toastClearance is new at 1,990 B. ToastHost +545 B, AddExpenseSheet +390 B and CommandPalette +76 B.
+  - Rollup regrouped two shared chunks: `expenseForm` (7,485 B) is now `DatePicker` (7,092 B), and `LayerAnnouncer` with `usePresence` went from 8,962 B to 9,521 B together.
+  - vendor-utils is −213 B, and vendor-react is unchanged.
+  - CSS is 62,889 B (+1,640). Eager sync code in the relay build is 3.2 KB of 4.0 KB, and the new boot-path check reads 7.9 KB of 12.0 KB.
+  - The PWA precache is 34 entries, 934.2 KiB (32 entries, 819.4 KiB on 0.9.4).
+  - No runtime or dev dependency was added.
+- **Performance.** Measured with Chromium at 4× CPU, 2,000 invented rows, medians of 3 runs, two rounds:
+  - first start (the upgrade): 1,313–1,359 → 1,684–1,708 ms;
+  - later starts: 1,302–1,347 → 1,013–1,016 ms, with blocking time 72–87 → 257–269 ms;
+  - saving an edit: 1,102–1,118 → 646–651 ms;
+  - quick add to toast: 189–191 → 185–213 ms;
+  - delete: 254–276 → 287–289 ms;
+  - storage: 340,505 → 807,621 characters.
+
+  Delete key to the next paint on iPhone WebKit holds a median of 62 ms.
+
 ## 0.9.4 — 2026-10-31
 
 Track 5b of the overhaul: motion without an animation library. Sheets, the command palette, toasts and the ledger's swipe move as they did before, on the same springs, distances and thresholds. They now use the browser's own CSS transitions and Web Animations instead of framer-motion. The app ships 118 KB (17 %) less JavaScript, so the budget has room again for the tracks to come. There is nothing to do on your devices: the update installs as usual.

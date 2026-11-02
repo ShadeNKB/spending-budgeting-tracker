@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { SettingsDrawer } from './SettingsDrawer'
 import { useExpenseStore } from '../../stores/useExpenseStore'
@@ -13,14 +13,30 @@ vi.mock('../../services/syncConfig', async (importOriginal) => ({
 
 const CODE = '11111111-1111-4111-8111-111111111111'
 const NOW = Date.UTC(2026, 9, 19, 8, 0, 0)
+const T1 = '2026-10-01T04:00:00.000Z'
 
 const initialExpense = useExpenseStore.getState()
 const initialSync = useSyncStore.getState()
 const initialUI = useUIStore.getState()
 
+/**
+ * The store booted from v4 keys (the public format, P2-14): its actions then run on real data.
+ * Invented data.
+ */
+async function hydrateFrom(keys: Record<string, unknown>) {
+  for (const [key, value] of Object.entries(keys)) localStorage.setItem(key, JSON.stringify(value))
+  await act(async () => {
+    await useExpenseStore.getState().hydrate()
+  })
+}
+
+// The engine is a lazy chunk; its first import (transform included) is slow on a loaded machine.
+beforeAll(async () => {
+  await import('../../data/local/engine')
+}, 60_000)
+
 beforeEach(() => {
-  vi.useFakeTimers()
-  vi.setSystemTime(NOW)
+  localStorage.clear()
   vi.stubGlobal('matchMedia', () => ({
     matches: false,
     addEventListener: () => undefined,
@@ -37,6 +53,7 @@ afterEach(() => {
   useUIStore.setState(initialUI, true)
   vi.useRealTimers()
   vi.unstubAllGlobals()
+  localStorage.clear()
 })
 
 /** The drawer open on `tab`, after the sheet's opening focus has run. */
@@ -49,6 +66,13 @@ function openOn(tab: 'sync' | 'backup' | 'budgets' | 'categories') {
 }
 
 describe('SettingsDrawer focus', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+    // render tests: the views of a loaded store (P2-14)
+    useExpenseStore.setState({ hydrated: true })
+  })
+
   it("Sync's Export backup lands on the Download JSON backup button, and focus stays there", () => {
     useSyncStore.setState({
       syncId: CODE,
@@ -77,35 +101,139 @@ describe('SettingsDrawer focus', () => {
     // The sheet's own opening focus does not run again on a tab switch either.
     expect(backupTab).toHaveFocus()
   })
+
+  it('"Review" on the needs-attention toast lands on the Needs attention card', () => {
+    useExpenseStore.setState({
+      attention: { quarantined: 2, copies: 0, unseen: 2, full: false },
+      markAttentionSeen: vi.fn(),
+    })
+    useUIStore.setState({ settingsFocus: 'backup-attention' })
+    openOn('backup')
+    expect(screen.getByRole('region', { name: 'Needs attention' })).toHaveFocus()
+  })
+})
+
+// walk5: with the engine chunk failed, Categories listed the defaults at "0" each with live
+// delete buttons, and Backup said "0 entries": it read as data that was gone.
+describe('the data tabs without data', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+  })
+
+  it.each(['categories', 'budgets', 'backup'] as const)(
+    '%s says the data is loading, never empty lists',
+    (tab) => {
+      openOn(tab)
+      const panel = screen.getByRole('tabpanel')
+      expect(panel).toHaveTextContent('Loading your data…')
+      expect(screen.queryByRole('button', { name: /Delete|Download JSON backup/ })).toBeNull()
+    },
+  )
+
+  it.each(['categories', 'budgets', 'backup'] as const)(
+    '%s says SpendTrack could not start, with Reload and the raw download',
+    (tab) => {
+      useExpenseStore.setState({ bootError: 'engine-load' })
+      openOn(tab)
+      const note = screen.getByRole('group', { name: "SpendTrack couldn't start" })
+      expect(note).toHaveTextContent(
+        "Your data can't be shown here. It's still saved on this device.",
+      )
+      expect(screen.getByRole('button', { name: 'Reload' })).toBeEnabled()
+      expect(screen.getByRole('button', { name: 'Download my data' })).toBeEnabled()
+      expect(screen.queryByText(/\b0 entries\b/)).toBeNull()
+    },
+  )
+
+  it('Sync keeps working: it needs no local data', () => {
+    useExpenseStore.setState({ bootError: 'engine-load' })
+    openOn('sync')
+    expect(screen.queryByRole('group', { name: "SpendTrack couldn't start" })).toBeNull()
+  })
+})
+
+describe('Currency hint', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(NOW)
+  })
+
+  it('says the currency applies on every synced device only when a sync code is set', () => {
+    openOn('categories')
+    expect(screen.getByText(/^Changes the symbol only/)).toHaveTextContent(
+      "Changes the symbol only — amounts aren't converted.",
+    )
+    cleanup()
+    useSyncStore.setState({ syncId: CODE })
+    openOn('categories')
+    expect(screen.getByText(/^Changes the symbol only/)).toHaveTextContent(
+      "Changes the symbol only — amounts aren't converted. Applies on all your synced devices.",
+    )
+  })
 })
 
 describe('Budgets', () => {
-  const T1 = '2026-10-01T04:00:00.000Z'
-
-  it('leaving a budget field unchanged writes nothing and says nothing', () => {
-    useExpenseStore.setState({
+  it('leaving a budget field unchanged writes nothing and says nothing', async () => {
+    await hydrateFrom({
       categories: ['Other', 'Meals'],
-      budgets: { Meals: 200 },
-      budgetUpdatedAt: { Meals: T1 },
+      categoryBudgets: { Meals: 200 },
+      categoryBudgetUpdatedAt: { Meals: T1 },
     })
+    vi.useFakeTimers()
     openOn('budgets')
-    const before = useExpenseStore.getState()
+    const before = useExpenseStore.getState().budgets
     const field = screen.getByRole('spinbutton', { name: 'Monthly budget for Meals' })
     fireEvent.focus(field)
     fireEvent.blur(field)
-    expect(useExpenseStore.getState().budgetUpdatedAt).toBe(before.budgetUpdatedAt)
+    expect(useExpenseStore.getState().budgets).toBe(before)
     expect(useUIStore.getState().toasts).toEqual([])
 
     fireEvent.change(field, { target: { value: '250' } })
     fireEvent.blur(field)
-    expect(useExpenseStore.getState().budgets).toEqual({ Meals: 250 })
+    expect({ ...useExpenseStore.getState().budgets }).toEqual({ Meals: 250 })
     expect(useUIStore.getState().toasts).toHaveLength(1)
   })
 
-  it('shows categories named "constructor" and "__proto__" with no budget and their real counts', () => {
-    useExpenseStore.setState({
+  it('a budget the store refuses is said, and the field shows the budget kept', async () => {
+    await hydrateFrom({ categories: ['Other', 'Meals'], categoryBudgets: { Meals: 200 } })
+    vi.useFakeTimers()
+    openOn('budgets')
+    const field = screen.getByRole('spinbutton', { name: 'Monthly budget for Meals' })
+    fireEvent.change(field, { target: { value: '20000000' } })
+    fireEvent.blur(field)
+    expect({ ...useExpenseStore.getState().budgets }).toEqual({ Meals: 200 })
+    const [toast] = useUIStore.getState().toasts
+    expect(toast?.kind).toBe('error')
+    expect(toast?.message).not.toBe('')
+    expect(field).toHaveValue(200)
+  })
+
+  it('a zero or negative cap is refused with the reason, not dropped in silence', async () => {
+    await hydrateFrom({ categories: ['Other', 'Meals'], categoryBudgets: { Meals: 200 } })
+    vi.useFakeTimers()
+    openOn('budgets')
+    const field = screen.getByRole('spinbutton', { name: 'Monthly budget for Meals' })
+    for (const typed of ['0', '-5']) {
+      fireEvent.change(field, { target: { value: typed } })
+      fireEvent.blur(field)
+      expect({ ...useExpenseStore.getState().budgets }).toEqual({ Meals: 200 })
+      expect(useUIStore.getState().toasts.at(-1)).toMatchObject({
+        kind: 'error',
+        message: 'Amount must be greater than 0 and at most 10,000,000.',
+      })
+      expect(field).toHaveValue(200)
+    }
+    // Emptying the field clears the budget.
+    fireEvent.change(field, { target: { value: '' } })
+    fireEvent.blur(field)
+    expect({ ...useExpenseStore.getState().budgets }).toEqual({})
+    expect(useUIStore.getState().toasts.at(-1)?.message).toBe('Budget cleared')
+  })
+
+  it('never makes "constructor" or "__proto__" a category, nor shows a prototype value', async () => {
+    await hydrateFrom({
       categories: ['Other', 'constructor', '__proto__'],
-      budgets: {},
       expenses: [
         {
           id: 'e1',
@@ -117,17 +245,139 @@ describe('Budgets', () => {
         },
       ],
     })
+    vi.useFakeTimers()
     openOn('budgets')
     for (const name of ['constructor', '__proto__']) {
-      expect(screen.getByRole('spinbutton', { name: `Monthly budget for ${name}` })).toHaveValue(
-        null,
-      )
+      expect(screen.queryByRole('spinbutton', { name: `Monthly budget for ${name}` })).toBeNull()
     }
+    expect(screen.getByRole('spinbutton', { name: 'Monthly budget for Other' })).toHaveValue(null)
     cleanup()
+    // The entry filed under "__proto__" stays readable, in Other.
     openOn('categories')
-    const row = (name: string) =>
-      screen.getByRole('textbox', { name: `Rename category ${name}` }).closest('li')
-    expect(row('__proto__')).toHaveTextContent(/^1 expense$/)
-    expect(row('constructor')).toHaveTextContent(/^0 expenses$/)
+    const row = screen.getByText(/^Other/).closest('li')
+    expect(row).toHaveTextContent(/1 expense$/)
+    // Typing one is refused with a message, and nothing is added.
+    const field = screen.getByRole('textbox', { name: 'Add category' })
+    fireEvent.change(field, { target: { value: 'constructor' } })
+    fireEvent.keyDown(field, { key: 'Enter' })
+    expect(useExpenseStore.getState().categories).not.toContain('constructor')
+    expect(useUIStore.getState().toasts.at(-1)?.kind).toBe('error')
+  })
+})
+
+describe('Categories', () => {
+  it('a name the store refuses is said and the field keeps it for a fix', async () => {
+    await hydrateFrom({ categories: ['Other', 'Meals'] })
+    vi.useFakeTimers()
+    openOn('categories')
+    const field = screen.getByRole('textbox', { name: 'Add category' })
+    const long = 'x'.repeat(200)
+    fireEvent.change(field, { target: { value: long } })
+    fireEvent.keyDown(field, { key: 'Enter' })
+    expect(useExpenseStore.getState().categories).not.toContain(long)
+    expect(useUIStore.getState().toasts.at(-1)?.kind).toBe('error')
+    expect(field).toHaveValue(long)
+  })
+
+  it('a refused rename is said and the row shows the name kept', async () => {
+    await hydrateFrom({ categories: ['Other', 'Meals'] })
+    vi.useFakeTimers()
+    openOn('categories')
+    const field = screen.getByRole('textbox', { name: 'Rename category Meals' })
+    fireEvent.change(field, { target: { value: 'y'.repeat(200) } })
+    fireEvent.blur(field)
+    expect(useExpenseStore.getState().categories).toContain('Meals')
+    expect(useUIStore.getState().toasts.at(-1)?.kind).toBe('error')
+    expect(field).toHaveValue('Meals')
+  })
+
+  it('adding a name that is listed already says so, keeps the text, and adds nothing', async () => {
+    await hydrateFrom({ categories: ['Other', 'Food & Dining'] })
+    vi.useFakeTimers()
+    openOn('categories')
+    const before = useExpenseStore.getState().categories
+    const field = screen.getByRole('textbox', { name: 'Add category' })
+    fireEvent.change(field, { target: { value: ' Food & Dining ' } })
+    fireEvent.keyDown(field, { key: 'Enter' })
+    expect(useExpenseStore.getState().categories).toEqual(before)
+    expect(useUIStore.getState().toasts.at(-1)).toMatchObject({
+      kind: 'info',
+      message: '"Food & Dining" is already a category',
+    })
+    expect(useUIStore.getState().toasts.map((t) => t.message)).not.toContain('Category added')
+    expect(field).toHaveValue(' Food & Dining ')
+  })
+
+  it('a rename onto a listed name says it merged them, and Undo takes the merge back', async () => {
+    await hydrateFrom({
+      categories: ['Other', 'Gaming', 'Shopping'],
+      expenses: [
+        {
+          id: 'g1',
+          itemName: 'Controller',
+          amount: 89,
+          category: 'Gaming',
+          date: '2026-10-01T12:00:00',
+          createdAt: T1,
+        },
+      ],
+    })
+    vi.useFakeTimers()
+    openOn('categories')
+    const field = screen.getByRole('textbox', { name: 'Rename category Gaming' })
+    fireEvent.change(field, { target: { value: 'Shopping' } })
+    fireEvent.blur(field)
+    expect(useExpenseStore.getState().categories).not.toContain('Gaming')
+    expect(useExpenseStore.getState().expenses[0]?.category).toBe('Shopping')
+    const toast = useUIStore.getState().toasts.at(-1)
+    expect(toast?.message).toBe('Merged "Gaming" into "Shopping"')
+    expect(toast?.action?.label).toBe('Undo')
+    act(() => {
+      toast?.action?.onClick()
+    })
+    expect(useExpenseStore.getState().categories).toContain('Gaming')
+    expect(useExpenseStore.getState().expenses[0]?.category).toBe('Gaming')
+  })
+
+  it('a plain rename offers Undo too', async () => {
+    await hydrateFrom({ categories: ['Other', 'Meals'] })
+    vi.useFakeTimers()
+    openOn('categories')
+    const field = screen.getByRole('textbox', { name: 'Rename category Meals' })
+    fireEvent.change(field, { target: { value: 'Food' } })
+    fireEvent.blur(field)
+    const toast = useUIStore.getState().toasts.at(-1)
+    expect(toast).toMatchObject({ kind: 'info', message: 'Renamed' })
+    expect(toast?.action?.label).toBe('Undo')
+  })
+
+  it('deleting a category offers Undo, and Undo brings it back with its entries', async () => {
+    await hydrateFrom({
+      categories: ['Other', 'Meals'],
+      expenses: [
+        {
+          id: 'm1',
+          itemName: 'Laksa',
+          amount: 6,
+          category: 'Meals',
+          date: '2026-10-01T12:00:00',
+          createdAt: T1,
+        },
+      ],
+    })
+    vi.useFakeTimers()
+    openOn('categories')
+    fireEvent.click(screen.getByRole('button', { name: 'Delete category Meals' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete category Meals' }), { detail: 1 })
+    expect(useExpenseStore.getState().categories).not.toContain('Meals')
+    expect(useExpenseStore.getState().expenses[0]?.category).toBe('Other')
+    const toast = useUIStore.getState().toasts.at(-1)
+    expect(toast?.message).toBe('Category deleted')
+    expect(toast?.action?.label).toBe('Undo')
+    act(() => {
+      toast?.action?.onClick()
+    })
+    expect(useExpenseStore.getState().categories).toContain('Meals')
+    expect(useExpenseStore.getState().expenses[0]?.category).toBe('Meals')
   })
 })

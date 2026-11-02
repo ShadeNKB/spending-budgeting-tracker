@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { DEMO_EXPENSES } from './seedData'
 import source from './seedData.ts?raw'
 
 // Only demo builds (VITE_DEMO_MODE) read the seed. Its top-level computations are marked pure,
@@ -16,5 +17,16 @@ describe('demo seed data', () => {
         /^(export )?const \w+[^=]*= (?!\/\*#__PURE__\*\/)(new |[\w.]+\()/.test(line),
       )
     expect(unmarked).toEqual([])
+  })
+})
+
+describe('demo rows', () => {
+  it('carry their day and its floating local noon (P2-2), under demo-N ids', () => {
+    expect(DEMO_EXPENSES.length).toBeGreaterThan(20)
+    DEMO_EXPENSES.forEach((e, i) => {
+      expect(e.id).toBe(`demo-${String(i + 1)}`)
+      expect(e.day).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+      expect(e.date).toBe(`${e.day ?? ''}T12:00:00`)
+    })
   })
 })

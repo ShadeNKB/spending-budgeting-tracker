@@ -3,7 +3,14 @@
 // from decode to encode, CAS with a forced write after 3 conflicts (≤ 6 attempts), the memo
 // committed only after a push lands, outbox acknowledgement, echo filter, 300 ms coalescing and the
 // 1.5 s / 5 s push debounce. `readBeforeAwait` is the test-only F-001 negative control (M1).
+//
+// mode 'pr2' is the PR-2 sync bridge instead (track spec §9, P2-8…P2-10): PR-0's cycle shape on the
+// core codec with a PLAIN upsert (no CAS, no head()/polling: PR-0's triggers only), PR-0's remote
+// coalescing (300 ms, 2 s apart), the echo filter of P2-9, news absorption (P2-10), the writer
+// classes of P2-8 (moved/e2e pause, newer merges only, invalid repaired at most once per 10 min) and
+// create-on-missing. `absorbNews: false` is its negative control for the crossing-push residual.
 import {
+  MEMO_WINDOW,
   CAS_FORCE_AFTER,
   CYCLE_ATTEMPTS_MAX,
   PUSH_MAX_WAIT,
@@ -11,9 +18,10 @@ import {
   REMOTE_COALESCE,
   POLL_VISIBLE,
 } from '../../core/constants'
-import { EMPTY_DOC, maxStampDoc, mergeDoc } from '../../core/doc'
+import { EMPTY_DOC, digestDoc, maxStampDoc, mergeDoc } from '../../core/doc'
 import { newRev } from '../../core/ids'
 import { NEW_MEMO, ackOutbox, commitPush, decidePush, guardTrips } from '../../core/push'
+import { isPlainObject } from '../../core/sanitize'
 import { observe } from '../../core/stamp'
 import type {
   CycleReason,
@@ -23,6 +31,7 @@ import type {
   MemoState,
   MergeResult,
   OpCtx,
+  PushDecision,
   OpResult,
   OutboxKey,
   SanitizeResult,
@@ -49,7 +58,38 @@ export interface V5Options {
   readonly readBeforeAwait?: boolean
   readonly doc?: Doc
   readonly outbox?: ReadonlyMap<OutboxKey, Stamp>
+  /** 'pr3' (default): the §11.3 cycle with CAS and polling. 'pr2': the PR-2 bridge (§9). */
+  readonly mode?: 'pr3' | 'pr2'
+  /** pr2 only (default true): merge foreign event payloads into the next cycle (P2-10). */
+  readonly absorbNews?: boolean
 }
+
+/** The bridge's echo memory (P2-9): our last pushes by rev, with the digest each one carried. */
+interface SentPush {
+  readonly rev: string
+  readonly digest: string
+  answered: boolean
+}
+const ECHO_MEMORY = 8
+const NEWS_MEMORY = 4
+const REMOTE_MIN_GAP = 2000
+
+/** The bridge's stand-in for a missing row: decidePush is given `pulled: null` (create). */
+const NO_ROW: SanitizeResult = {
+  doc: EMPTY_DOC,
+  writer: 'v5',
+  report: {
+    quarantined: [],
+    repaired: 0,
+    repairs: [],
+    deduped: 0,
+    liveAndDeleted: 0,
+    droppedKeys: [],
+  },
+  legacyTs: new Map(),
+  rev: null,
+}
+const NONE = (why: PushDecision['why']): PushDecision => ({ kind: 'none', why, memoKey: null })
 
 export interface JournalEntry {
   readonly kind: 'removed' | 'replaced' | 'edit-after-delete' | 'mass'
@@ -76,6 +116,16 @@ export class V5Device {
   readonly errors: string[] = []
   readonly snapshots: Doc[] = []
   readonly readBeforeAwait: boolean
+  readonly mode: 'pr3' | 'pr2'
+  readonly absorbNews: boolean
+  /** pr2: foreign event payloads waiting for the next cycle, newest last (P2-10). */
+  readonly news: unknown[] = []
+  /** pr2: news payloads merged so far (the crossing-push test reads it). */
+  absorbed = 0
+  /** pr2: when the last repair of an invalid relay copy was pushed (P2-8, meta.sync.repairAt). */
+  repairAt = 0
+  private readonly sentPushes: SentPush[] = []
+  private lastRemoteCycleAt = Number.NEGATIVE_INFINITY
   private running = false
   private again = false
   private waiters: (() => void)[] = []
@@ -98,6 +148,8 @@ export class V5Device {
     this.skew = opts.skew
     this.established = opts.established
     this.readBeforeAwait = opts.readBeforeAwait ?? false
+    this.mode = opts.mode ?? 'pr3'
+    this.absorbNews = opts.absorbNews ?? true
     this.doc = opts.doc ?? EMPTY_DOC
     this.outbox = opts.outbox ?? new Map()
     this.hlc.last = Math.min(maxStampDoc(this.doc), this.wall() + 86_400_000)
@@ -114,9 +166,10 @@ export class V5Device {
   /** Start realtime + polling (a visible tab with a sync code). */
   start(): void {
     this.unsubscribe = this.relay.subscribe(this.name, (e) => {
-      this.onEvent(e)
+      if (this.mode === 'pr2') this.onEventPr2(e)
+      else this.onEvent(e)
     })
-    this.schedulePoll()
+    if (this.mode === 'pr3') this.schedulePoll()
   }
 
   stop(): void {
@@ -191,6 +244,35 @@ export class V5Device {
     }, REMOTE_COALESCE)
   }
 
+  /**
+   * P2-9: our own echo iff its x5.rev is one of our last 8 pushes, that push was answered or is the
+   * latest, and the digest of what came back is the digest we sent. Anything else is foreign: its
+   * payload is kept for the next cycle (P2-10), and remote cycles start 300 ms later, 2 s apart.
+   */
+  private onEventPr2(e: RowEvent): void {
+    const x5: unknown = isPlainObject(e.payload) ? Reflect.get(e.payload, 'x5') : undefined
+    const rev: unknown = isPlainObject(x5) ? Reflect.get(x5, 'rev') : undefined
+    const sent = this.sentPushes.find((p) => p.rev === rev)
+    if (
+      sent !== undefined &&
+      (sent.answered || sent === this.sentPushes.at(-1)) &&
+      digestDoc(decodeWire(e.payload, 'remote').doc) === sent.digest
+    ) {
+      return
+    }
+    if (this.absorbNews && isPlainObject(e.payload)) {
+      this.news.push(e.payload)
+      if (this.news.length > NEWS_MEMORY) this.news.shift()
+    }
+    if (this.coalesceTimer !== null) return
+    const wait = Math.max(REMOTE_COALESCE, this.lastRemoteCycleAt + REMOTE_MIN_GAP - this.clock.now)
+    this.coalesceTimer = this.clock.setTimeout(() => {
+      this.coalesceTimer = null
+      this.lastRemoteCycleAt = this.clock.now
+      void this.triggerSync('remote')
+    }, wait)
+  }
+
   /** Resolves after the NEXT completed cycle; a call during a cycle sets `again`. */
   triggerSync(reason: CycleReason): Promise<void> {
     const done = new Promise<void>((resolve) => this.waiters.push(resolve))
@@ -238,7 +320,8 @@ export class V5Device {
   private async runCycle(reason: CycleReason): Promise<void> {
     if (this.paused !== null) return
     try {
-      await this.cycle(reason)
+      if (this.mode === 'pr2') await this.cyclePr2(reason)
+      else await this.cycle(reason)
       this.retries = 0
     } catch (e) {
       // the network fails; the core never may (I8)
@@ -246,6 +329,94 @@ export class V5Device {
         this.errors.push(e instanceof Error ? (e.stack ?? e.message) : String(e))
       this.retryLater()
     }
+  }
+
+  /** Merge a decoded remote doc into the CURRENT doc, with the guard and the journal. */
+  private applyRemote(dec: SanitizeResult): void {
+    const local = this.doc
+    const m = mergeDoc(local, dec.doc)
+    this.observer.onMerge(this, local, m)
+    if (guardTrips(m.removed, local)) {
+      this.snapshots.push(local)
+      this.journal.push({ kind: 'mass', ids: m.removed.map((r) => r.id) })
+    } else if (m.removed.length > 0)
+      this.journal.push({ kind: 'removed', ids: m.removed.map((r) => r.id) })
+    if (m.replaced.length > 0)
+      this.journal.push({ kind: 'replaced', ids: m.replaced.map((r) => r.before.id) })
+    if (m.editAfterDelete.length > 0) {
+      this.journal.push({
+        kind: 'edit-after-delete',
+        ids: m.editAfterDelete.map((r: ExpenseRec) => r.id),
+      })
+    }
+    if (m.doc !== this.doc) this.adopt(m.doc)
+    observe(this.hlc, this.wall(), maxStampDoc(dec.doc))
+  }
+
+  /** The PR-2 bridge cycle (track spec §9): one pull, one synchronous section, one plain upsert. */
+  private async cyclePr2(reason: CycleReason): Promise<void> {
+    const pulled = await this.relay.pull() // AWAIT 1
+    // ── synchronous section: no await until the payload is built ──
+    const at = this.wall()
+    for (const p of this.news.splice(0)) {
+      const d = decodeWire(p, 'remote', { reuse: this.doc, at })
+      if (d.writer === 'v5' || d.writer === 'v085' || d.writer === 'v084') {
+        this.applyRemote(d)
+        this.absorbed++
+      }
+    }
+    const dec =
+      pulled === null ? NO_ROW : decodeWire(pulled.payload, 'remote', { reuse: this.doc, at })
+    if (dec.writer === 'moved') {
+      this.paused = 'moved'
+      return
+    }
+    if (dec.writer === 'e2e') {
+      this.paused = 'update-required'
+      return
+    }
+    const snapRev = this.localRev
+    const sent = [...this.outbox]
+    const mergeable = dec.writer !== 'invalid'
+    if (pulled !== null && mergeable) this.applyRemote(dec)
+    const repair = dec.writer === 'invalid' && at - this.repairAt > MEMO_WINDOW
+    const decision =
+      dec.writer === 'newer'
+        ? NONE('newer')
+        : dec.writer === 'invalid'
+          ? repair
+            ? ({ kind: 'push', why: 'repair', memoKey: null } as const)
+            : NONE('old-quiet')
+          : decidePush(this.doc, dec, pulled === null ? null : { etag: '' }, reason, this.memo, at)
+    if (dec.writer === 'newer') this.paused = 'update-required'
+    if (decision.kind !== 'push') {
+      const ack = ackOutbox(this.outbox, sent, dec, decision)
+      this.outbox = ack.outbox
+      this.waitingForOld = ack.waitingForOld
+      this.observer.trace(`${this.name} ${reason} ${decision.why}`)
+      if (this.localRev !== snapRev) this.again = true
+      return
+    }
+    const rev = newRev(this.rng.next)
+    const wire = encodeWire(this.doc, { dev: this.name, rev, min: 4 })
+    const entry: SentPush = { rev, digest: digestDoc(this.doc), answered: false }
+    this.sentPushes.push(entry)
+    if (this.sentPushes.length > ECHO_MEMORY) this.sentPushes.shift()
+    // ── end of the synchronous section ──
+    const etag = await this.relay.upsert(this.name, wire) // AWAIT 2
+    entry.answered = true
+    this.lastEtag = etag
+    this.lastRev = rev
+    this.memo = commitPush(this.memo, decision, at)
+    if (repair) this.repairAt = at
+    const ack = ackOutbox(this.outbox, sent, dec, 'pushed')
+    this.outbox = ack.outbox
+    this.waitingForOld = 0
+    this.established = true
+    this.pushes++
+    this.pushWhy.push(decision.why)
+    this.observer.trace(`${this.name} pushed ${decision.why} ${etag}`)
+    if (this.localRev !== snapRev) this.again = true
   }
 
   private async cycle(reason: CycleReason): Promise<void> {

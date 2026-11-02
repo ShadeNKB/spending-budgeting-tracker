@@ -1,12 +1,12 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { SettingsDrawer } from './SettingsDrawer'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useUIStore } from '../../stores/useUIStore'
 import type { Expense } from '../../types'
 
-// Invented data.
+// Invented data, booted through the real engine from the v4 keys (P2-14), so the actions run.
 const day = (id: string, itemName: string, category: string): Expense => ({
   id,
   itemName,
@@ -24,7 +24,21 @@ const EXPENSES = [
 // jsdom does not lay out, so it has no scrollIntoView; record the calls instead.
 const scrollIntoView = vi.fn()
 
-beforeEach(() => {
+/** Storage holds `keys` (v4, the public format); the store boots from it. */
+async function hydrateFrom(keys: Record<string, unknown>) {
+  localStorage.clear()
+  for (const [key, value] of Object.entries(keys)) localStorage.setItem(key, JSON.stringify(value))
+  await act(async () => {
+    await useExpenseStore.getState().hydrate()
+  })
+}
+
+// The engine is a lazy chunk; its first import (transform included) is slow on a loaded machine.
+beforeAll(async () => {
+  await import('../../data/local/engine')
+}, 60_000)
+
+beforeEach(async () => {
   vi.stubGlobal('matchMedia', (media: string) =>
     Object.assign(new EventTarget(), { media, matches: false }),
   )
@@ -32,17 +46,14 @@ beforeEach(() => {
     value: scrollIntoView,
     configurable: true,
   })
-  useExpenseStore.setState({
-    expenses: EXPENSES,
-    categories: ['Food', 'Transport', 'Gifts'],
-    hydrated: true,
-  })
+  await hydrateFrom({ expenses: EXPENSES, categories: ['Food', 'Transport', 'Gifts'] })
   useUIStore.setState({ settingsOpen: true, settingsTab: 'categories', toasts: [] })
 })
 afterEach(() => {
   vi.unstubAllGlobals()
   Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
   scrollIntoView.mockClear()
+  localStorage.clear()
 })
 
 /**
@@ -154,6 +165,7 @@ describe('Settings sections', () => {
 
   it('makes a panel with no control a tab stop of its own', async () => {
     const user = userEvent.setup()
+    // A view with no categories (render only).
     useExpenseStore.setState({ categories: [] })
     useUIStore.setState({ settingsTab: 'budgets' })
     render(<SettingsDrawer />)
@@ -197,7 +209,11 @@ describe('Settings category delete', () => {
 
   it('says what happens to the expenses and the budget, in plain English', async () => {
     const user = userEvent.setup()
-    useExpenseStore.setState({ budgets: { Food: 120 } })
+    await hydrateFrom({
+      expenses: EXPENSES,
+      categories: ['Food', 'Transport', 'Gifts'],
+      categoryBudgets: { Food: 120 },
+    })
     render(<SettingsDrawer />)
     await user.click(screen.getByRole('button', { name: 'Delete category Food' }))
     expect(screen.getByRole('group', { name: 'Delete Food?' })).toHaveAccessibleDescription(
@@ -210,35 +226,39 @@ describe('Settings category delete', () => {
     )
   })
 
-  // Deleting Other itself leaves its expenses where they are (the store refiles to Other).
-  it('does not claim that Other moves into itself', async () => {
-    const user = userEvent.setup()
-    useExpenseStore.setState({
+  // Other is where a deleted category's entries go: the store refuses to rename or delete it, so
+  // the row offers neither, and says why to a screen reader.
+  it('keeps Other: no rename field and no delete button, with its count', async () => {
+    await hydrateFrom({
       categories: ['Food', 'Other'],
       expenses: [day('o1', 'Misc', 'Other'), day('o2', 'Stuff', 'Other')],
     })
     render(<SettingsDrawer />)
-    await user.click(screen.getByRole('button', { name: 'Delete category Other' }))
-    expect(screen.getByRole('group', { name: 'Delete Other?' })).toHaveAccessibleDescription(
-      '2 expenses stay in Other',
-    )
+    expect(screen.queryByRole('textbox', { name: 'Rename category Other' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Delete category Other' })).toBeNull()
+    const row = screen.getByText(/^Other/).closest('li')
+    expect(row).toHaveTextContent("Other: deleted categories' entries go here2 expenses")
+    expect(screen.getByRole('textbox', { name: 'Rename category Food' })).toBeInTheDocument()
   })
 
   it('after a delete, focuses the next row, else the previous, else Add category', async () => {
     const user = userEvent.setup()
+    // No entries; the store keeps Other (where a deleted category's entries would go) last.
+    await hydrateFrom({ expenses: [], categories: ['Food', 'Transport', 'Gifts'] })
     render(<SettingsDrawer />)
     await user.click(screen.getByRole('button', { name: 'Delete category Transport' }))
     await user.click(screen.getByRole('button', { name: 'Delete category Transport' }))
-    expect(useExpenseStore.getState().categories).toEqual(['Food', 'Gifts'])
+    expect(useExpenseStore.getState().categories).toEqual(['Food', 'Gifts', 'Other'])
     expect(screen.getByRole('button', { name: 'Delete category Gifts' })).toHaveFocus()
 
+    // Other cannot be deleted, so the next row to focus is the one before.
     await user.click(screen.getByRole('button', { name: 'Delete category Gifts' }))
     await user.click(screen.getByRole('button', { name: 'Delete category Gifts' }))
     expect(screen.getByRole('button', { name: 'Delete category Food' })).toHaveFocus()
 
     await user.click(screen.getByRole('button', { name: 'Delete category Food' }))
     await user.click(screen.getByRole('button', { name: 'Delete category Food' }))
-    expect(useExpenseStore.getState().categories).toEqual([])
+    expect(useExpenseStore.getState().categories).toEqual(['Other'])
     expect(screen.getByRole('textbox', { name: 'Add category' })).toHaveFocus()
   })
 
@@ -255,22 +275,37 @@ describe('Settings backup confirmations', () => {
     useUIStore.setState({ settingsTab: 'backup' })
   })
 
-  it('Clear all: focuses Cancel, and focus returns to the trigger after either choice', async () => {
+  it('Delete all: focuses Cancel, and focus returns to the trigger after either choice', async () => {
     const user = userEvent.setup()
     render(<SettingsDrawer />)
-    await user.click(screen.getByRole('button', { name: 'Clear all expenses' }))
-    const group = screen.getByRole('group', { name: 'Delete all 3 expenses?' })
+    const trigger = () => screen.getByRole('button', { name: 'Delete all entries' })
+    await user.click(trigger())
+    const group = screen.getByRole('group', { name: 'Delete all 3 entries?' })
     expect(within(group).getByRole('button', { name: 'Cancel' })).toHaveFocus()
     await user.keyboard('{Enter}')
-    expect(screen.getByRole('button', { name: 'Clear all expenses' })).toHaveFocus()
+    expect(trigger()).toHaveFocus()
     expect(useExpenseStore.getState().expenses).toHaveLength(3)
 
-    await user.click(screen.getByRole('button', { name: 'Clear all expenses' }))
-    const confirm = screen.getByRole('button', { name: 'Yes, delete all' })
+    await user.click(trigger())
+    const confirm = screen.getByRole('button', { name: 'Delete all' })
     expect(confirm.className).toMatch(/bg-negative/)
     await user.dblClick(confirm)
     expect(useExpenseStore.getState().expenses).toEqual([])
-    expect(screen.getByRole('button', { name: 'Clear all expenses' })).toHaveFocus()
+    expect(trigger()).toHaveFocus()
+
+    // Its 30 s Undo brings every entry back.
+    const toast = useUIStore.getState().toasts.find((t) => t.message === 'All entries deleted')
+    expect(toast?.action?.label).toBe('Undo')
+    act(() => {
+      toast?.action?.onClick()
+    })
+    // Brought back as new copies (a forward write that syncs), the same entries.
+    expect(
+      useExpenseStore
+        .getState()
+        .expenses.map((e) => e.itemName)
+        .sort(),
+    ).toEqual(['Bus', 'Grab', 'Kopi O'])
   })
 
   async function chooseBackupFile() {
@@ -280,26 +315,39 @@ describe('Settings backup confirmations', () => {
     if (!input) throw new Error('no file input')
     screen.getByRole('button', { name: 'Import JSON backup' }).focus()
     fireEvent.change(input, { target: { files: [file] } })
-    return waitFor(() => screen.getByRole('group', { name: 'Import 1 expense?' }))
+    return screen.findByRole('region', { name: 'Import backup.json?' })
   }
 
-  it('Import: focuses Cancel; Cancel returns focus to "Import JSON backup"', async () => {
+  it('Import: the preview focuses Restore; Cancel returns focus to "Import JSON backup"', async () => {
     const user = userEvent.setup()
     render(<SettingsDrawer />)
-    const group = await chooseBackupFile()
-    expect(group).toHaveAccessibleDescription(/replace all current data/)
-    expect(within(group).getByRole('button', { name: 'Cancel' })).toHaveFocus()
-    await user.keyboard('{Enter}')
+    const preview = await chooseBackupFile()
+    expect(preview).toHaveAccessibleDescription(
+      'Nothing on this device or your other devices will be removed.',
+    )
+    expect(within(preview).getByRole('button', { name: 'Restore' })).toHaveFocus()
+    await user.click(within(preview).getByRole('button', { name: 'Cancel' }))
     expect(screen.getByRole('button', { name: 'Import JSON backup' })).toHaveFocus()
     expect(useExpenseStore.getState().expenses).toHaveLength(3)
   })
 
-  it('Import: confirming replaces the data once and returns focus to the trigger', async () => {
+  it('Import: Restore adds the file once, keeps everything here, and returns focus', async () => {
     const user = userEvent.setup()
     render(<SettingsDrawer />)
-    const group = await chooseBackupFile()
-    await user.dblClick(within(group).getByRole('button', { name: 'Confirm import' }))
-    expect(useExpenseStore.getState().expenses.map((e) => e.id)).toEqual(['z'])
+    const preview = await chooseBackupFile()
+    expect(
+      within(preview)
+        .getAllByRole('listitem')
+        .map((li) => li.textContent),
+    ).toEqual(['1 in the file', '1 new'])
+    await user.dblClick(within(preview).getByRole('button', { name: 'Restore' }))
+    expect(
+      useExpenseStore
+        .getState()
+        .expenses.map((e) => e.id)
+        .sort(),
+    ).toEqual(['a', 'b', 'c', 'z'])
     expect(screen.getByRole('button', { name: 'Import JSON backup' })).toHaveFocus()
+    expect(useUIStore.getState().toasts.at(-1)?.message).toBe('Imported · 1 added')
   })
 })

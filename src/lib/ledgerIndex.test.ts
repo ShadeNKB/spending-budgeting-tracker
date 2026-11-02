@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { format, parseISO } from 'date-fns'
-import { getLedgerIndex, rowsInRange, sumRange, toCents } from './ledgerIndex'
+import { entryDay, getLedgerIndex, rowsInRange, sumRange, toCents } from './ledgerIndex'
 import type { Expense } from '../types'
+
+function must<T>(value: T | undefined): T {
+  if (value === undefined) throw new Error('missing value')
+  return value
+}
 
 let seq = 0
 const row = (over: Partial<Expense> & { date: string }): Expense => ({
@@ -102,6 +107,99 @@ describe('getLedgerIndex', () => {
     expect(empty.validCount).toBe(0)
     expect(rowsInRange(empty, { start: '2026-01-01', end: '2026-12-31' })).toEqual([])
     expect(sumRange(empty, null)).toEqual({ cents: 0, count: 0 })
+  })
+})
+
+// P2-2: every reader buckets an entry on its `day`. Run in Asia/Singapore, Pacific/Honolulu and
+// Pacific/Kiritimati (PowerShell $env:TZ): each legacy form is built from a local wall time, so
+// the day it must keep is the one 0.9.4 showed in that zone.
+describe('the day contract (P2-2)', () => {
+  /** A local wall time as 0.9.x stored it: the instant, in UTC with a Z. */
+  const instant = (y: number, m: number, d: number, h: number, min = 0) =>
+    new Date(y, m - 1, d, h, min).toISOString()
+
+  it('buckets a row on its day, not on whatever its date reads as here', () => {
+    // A date that reads as another day in every zone: the day wins.
+    const expenses = [row({ id: 'v', day: '2026-10-17', date: '2026-10-19T12:00:00' })]
+    const index = getLedgerIndex(expenses)
+    expect(index.dayKeys).toEqual(['2026-10-17'])
+    expect(index.byDay.get('2026-10-17')).toEqual({ cents: 500, count: 1 })
+    expect(index.byDay.has('2026-10-19')).toBe(false)
+    expect(rowsInRange(index, { start: '2026-10-17', end: '2026-10-17' })).toEqual([0])
+    expect(entryDay(must(expenses[0]))).toBe('2026-10-17')
+  })
+
+  it('keeps the day 0.9.4 showed for Z-noon, raw-instant, floating and bare-day rows', () => {
+    const expenses = [
+      row({ id: 'z-noon', date: instant(2026, 10, 17, 12) }),
+      row({ id: 'raw', date: instant(2026, 10, 17, 0, 30) }),
+      row({ id: 'late', date: instant(2026, 10, 17, 23, 59) }),
+      row({ id: 'floating', date: '2026-10-17T12:00:00' }),
+      row({ id: 'bare', date: '2026-10-17' }),
+    ]
+    const index = getLedgerIndex(expenses)
+    expect(index.dayKeys).toEqual(Array<string>(5).fill('2026-10-17'))
+    for (const e of expenses) expect(entryDay(e)).toBe('2026-10-17')
+    // A view of the same rows (the engine derives each day the same way) lands identically.
+    const views = expenses.map((e) => ({ ...e, day: '2026-10-17' }))
+    expect(getLedgerIndex(views).dayKeys).toEqual(index.dayKeys)
+  })
+
+  it('keeps 31 Dec 23:59 in the old year and 1 Jan 00:00 in the new one', () => {
+    const expenses = [
+      row({ id: 'eve', date: instant(2025, 12, 31, 23, 59) }),
+      row({ id: 'new', date: instant(2026, 1, 1, 0, 0) }),
+      row({ id: 'eve-v5', day: '2025-12-31', date: '2025-12-31T12:00:00' }),
+      row({ id: 'new-v5', day: '2026-01-01', date: '2026-01-01T12:00:00' }),
+    ]
+    const index = getLedgerIndex(expenses)
+    expect(index.dayKeys).toEqual(['2025-12-31', '2026-01-01', '2025-12-31', '2026-01-01'])
+    expect(sumRange(index, { start: '2025-12-01', end: '2025-12-31' }).count).toBe(2)
+    expect(sumRange(index, { start: '2026-01-01', end: '2026-01-31' }).count).toBe(2)
+  })
+
+  it('orders a day by stored time, then createdAt, whatever form each date has', () => {
+    const expenses = [
+      row({ id: 'noon', day: '2026-10-17', date: '2026-10-17T12:00:00' }),
+      row({ id: 'raw-evening', day: '2026-10-17', date: instant(2026, 10, 17, 21) }),
+      row({ id: 'raw-morning', day: '2026-10-17', date: instant(2026, 10, 17, 7) }),
+      row({ id: 'next', day: '2026-10-18', date: '2026-10-18T12:00:00' }),
+    ]
+    const index = getLedgerIndex(expenses)
+    expect(ids(expenses, Array.from(index.order))).toEqual([
+      'next',
+      'raw-evening',
+      'noon',
+      'raw-morning',
+    ])
+  })
+
+  it('falls back to the stored date when a day is missing or not a real day', () => {
+    const expenses = [
+      row({ id: 'feb30', day: '2026-02-30', date: '2026-02-27T12:00:00' }),
+      row({ id: 'junk', day: 'yesterday', date: '2026-02-26' }),
+      row({ id: 'none', date: '2026-02-25T12:00:00' }),
+    ]
+    expect(getLedgerIndex(expenses).dayKeys).toEqual(['2026-02-27', '2026-02-26', '2026-02-25'])
+  })
+
+  it('files a row with a real day and an unreadable date on its day, at noon', () => {
+    const expenses = [
+      row({ id: 'unreadable', day: '2026-10-17', date: 'last tuesday' }),
+      row({ id: 'morning', day: '2026-10-17', date: instant(2026, 10, 17, 9) }),
+      row({ id: 'evening', day: '2026-10-17', date: instant(2026, 10, 17, 18) }),
+      row({ id: 'lost', date: 'last tuesday' }),
+    ]
+    const index = getLedgerIndex(expenses)
+    expect(index.dayKeys).toEqual(['2026-10-17', '2026-10-17', '2026-10-17', null])
+    expect(index.validCount).toBe(3)
+    expect(ids(expenses, Array.from(index.order))).toEqual([
+      'evening',
+      'unreadable',
+      'morning',
+      'lost',
+    ])
+    expect(entryDay(must(expenses[3]))).toBeNull()
   })
 })
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { csvDate, expensesToCsv, toCsvCell } from './csv'
+import { csvDay, expensesToCsv, toCsvCell } from './csv'
 import type { Expense } from '../types'
 
 const expense = (overrides: Partial<Expense> = {}): Expense => ({
@@ -89,7 +89,25 @@ describe('toCsvCell', () => {
   })
 })
 
-describe('csvDate', () => {
+/** The Date cell of an entry stored with `date` and no day (a plain `Expense`). */
+const csvDate = (date: string) => csvDay(expense({ date }))
+
+describe('csvDay', () => {
+  it("writes an entry's day, whatever its stored date reads as here (P2-2)", () => {
+    expect(csvDay(expense({ day: '2026-03-13', date: '2026-03-14T12:00:00' }))).toBe('2026-03-13')
+    expect(csvDay(expense({ day: '2026-12-31', date: 'garbage' }))).toBe('2026-12-31')
+    // Not a real day: the stored date decides, as for a row without one.
+    expect(csvDay(expense({ day: '2026-02-30', date: '2026-03-14T12:00:00' }))).toBe('2026-03-14')
+  })
+
+  it('keeps the day 0.9.4 showed for a quick add stored as a raw instant', () => {
+    // Built from local wall time, so each zone (Singapore, Honolulu, Kiritimati) checks its own.
+    expect(csvDate(new Date(2026, 11, 31, 23, 59).toISOString())).toBe('2026-12-31')
+    expect(csvDate(new Date(2027, 0, 1, 0, 0).toISOString())).toBe('2027-01-01')
+    expect(csvDate(new Date(2026, 2, 14, 0, 30).toISOString())).toBe('2026-03-14')
+    expect(csvDate(new Date(2026, 2, 14, 12).toISOString())).toBe('2026-03-14')
+  })
+
   it('keeps a noon-stored date on its calendar day', () => {
     expect(csvDate('2026-01-01T12:00:00')).toBe('2026-01-01')
     expect(csvDate('2026-12-31T12:00:00')).toBe('2026-12-31')

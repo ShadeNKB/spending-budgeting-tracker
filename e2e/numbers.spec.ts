@@ -1,4 +1,5 @@
 import { test, expect, type Locator, type Page } from '@playwright/test'
+import { storedExpenses } from './support/stored'
 
 // Correct numbers end to end (T3): one definition of "today", "last 7 days", "month" and
 // "year" behind Pulse, Ledger and Insights, measured in a real browser at a fixed Singapore
@@ -570,36 +571,26 @@ test.describe('Ledger state', () => {
     await expect(ledgerSummary(page)).toContainText('2 entries')
   })
 
-  test('an entry whose date cannot be read keeps it when another field is saved', async ({
+  test('an entry whose date cannot be read is kept for attention, untouched, never listed', async ({
     page,
   }) => {
     const broken = { ...row('2026-10-12', 7.5, 'mystery kopi'), date: 'garbage' }
     await seed(page, { expenses: [...expenses, broken], now: SGT('2026-10-18T10:00:00') })
     await page.goto('/ledger?range=all')
     await waitForApp(page)
-    const unknown = page.locator('section').filter({ hasText: /^Unknown date/ })
-    await unknown.getByRole('button', { name: /^Edit mystery kopi, / }).click()
+    await expect(ledgerSummary(page)).toContainText(`${String(expenses.length)} entries`)
+    await expect(page.getByRole('button', { name: /^Edit mystery kopi, / })).toHaveCount(0)
 
-    const sheet = page.getByRole('dialog', { name: 'Edit expense' })
-    await expect(sheet).toContainText("This entry's date can't be read")
-    // No day is chosen for it: no preset is pressed and no date is picked.
-    const dates = sheet.getByRole('group', { name: 'Date' })
-    await expect(dates.locator('[aria-pressed]')).toHaveCount(4)
-    await expect(dates.locator('[aria-pressed="true"]')).toHaveCount(0)
-    await expect(dates.getByRole('button', { name: 'Pick date', exact: true })).toBeVisible()
-    await sheet.getByLabel('Item', { exact: true }).fill('mystery kopi o')
-    await sheet.getByRole('button', { name: 'Save changes' }).click()
-    await expect(sheet).toHaveCount(0)
-
-    await expect(unknown.getByRole('button', { name: /^Edit mystery kopi o, / })).toBeVisible()
-    const stored = async () => {
-      const all = JSON.parse(
-        await page.evaluate(() => localStorage.getItem('expenses') ?? '[]'),
-      ) as SeedExpense[]
-      return all.find((e) => e.id === broken.id)
-    }
-    await expect.poll(async () => (await stored())?.itemName).toBe('mystery kopi o')
-    expect((await stored())?.date).toBe('garbage')
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    const sheet = page.getByRole('dialog', { name: 'Settings' })
+    await sheet.getByRole('tab', { name: 'Backup', exact: true }).click()
+    await expect(sheet.getByRole('region', { name: 'Needs attention' })).toContainText(
+      "1 entry couldn't be read. It's kept on this device, untouched.",
+    )
+    // Kept as it was read: the quarantine holds the row, date and all.
+    const kept = await page.evaluate(() => localStorage.getItem('st5:q') ?? '')
+    expect(kept).toContain('mystery kopi')
+    expect(kept).toContain('garbage')
   })
 
   test('AC-14: palette navigation to an expense shows its search text', async ({ page }) => {
@@ -662,8 +653,7 @@ test.describe('Ledger state', () => {
     await page.mouse.click(x, y)
     await page.waitForTimeout(300)
     await expect(ledgerSummary(page)).toContainText('299 entries')
-    const stored = () => page.evaluate(() => localStorage.getItem('expenses') ?? '[]')
-    await expect.poll(async () => (JSON.parse(await stored()) as unknown[]).length).toBe(299)
-    expect(await stored()).not.toContain(`"${name}"`)
+    await expect.poll(async () => (await storedExpenses(page)).length).toBe(299)
+    expect((await storedExpenses(page)).map((e) => e.itemName)).not.toContain(name)
   })
 })

@@ -26,7 +26,10 @@ export interface Reg<T> {
   readonly r: Rank
 }
 
-/** `day` is the owner's calendar day ('yyyy-MM-dd'); `date` the v4 instant. They move together. */
+/**
+ * `day` is the owner's calendar day ('yyyy-MM-dd'); `date` the v4 date text: `day + 'T12:00:00'`
+ * for every v5 write (P2-2), an older text kept as written. They move together.
+ */
 export interface DateValue {
   readonly date: string
   readonly day?: string
@@ -240,15 +243,48 @@ export interface SanitizeReport {
   readonly droppedKeys: readonly string[]
 }
 
+/** The raw budget texts of one key, as a v0.8.5 client reads them (P2-4). */
+export interface BudgetTexts {
+  readonly value: number | undefined
+  readonly setAt: string | undefined
+  readonly delAt: string | undefined
+}
+
+/**
+ * What a v0.8.5 client (app 0.9.2) holds of a relay copy it wrote, read from the RAW payload: its
+ * merge compares raw text (canonical JSON of whole records, stamp strings), which the decoded doc
+ * no longer carries (P2-4).
+ */
+export interface V085View {
+  /** The raw readable records by id; the last copy of an id, as its merge keys them. */
+  readonly rows: ReadonlyMap<string, WireRecord>
+  /**
+   * The ids whose last copy is exactly our own encoding of the record we hold (decode's reuse,
+   * P-21), with that record: what it holds of them is what we would push.
+   */
+  readonly ours: ReadonlyMap<string, ExpenseRec>
+  readonly tombs: ReadonlySet<string>
+  readonly categories: ReadonlySet<string>
+  /** item → [category, raw mappingUpdatedAt text]. */
+  readonly mappings: ReadonlyMap<string, readonly [string, string | undefined]>
+  readonly budgets: ReadonlyMap<string, BudgetTexts>
+}
+
 export interface SanitizeResult {
   /** Always a valid Doc (possibly empty). */
   readonly doc: Doc
   readonly writer: WriterClass
   readonly report: SanitizeReport
-  /** v0.8's ts(updatedAt ?? createdAt) of each raw record of an old-writer payload (P-11). */
+  /**
+   * The ordering stamp the old writer's own merge gives each raw record of its payload (P-11,
+   * P2-4): v0.8.4's `new Date(updatedAt ?? createdAt).getTime()` (first copy, NaN kept), v0.8.5's
+   * window stamp of the same text (last copy).
+   */
   readonly legacyTs: ReadonlyMap<string, number>
   /** x5.rev of a v5 payload (echo filter, lost-response detection). */
   readonly rev: string | null
+  /** A remote payload v0.8.5 wrote, as that client holds it (P2-4); absent for every other writer. */
+  readonly v085?: V085View
 }
 
 export interface MergeReplaced {
@@ -331,11 +367,12 @@ export interface ImportPlan {
   readonly replaceDeletes: number
 }
 
-/** The seven v4 storage keys (§9.2). */
+/** The eight v4 storage keys (§9.2; `categoryMappingUpdatedAt` since v0.8.5, P2-3). */
 export type V4Key =
   | 'expenses'
   | 'categories'
   | 'categoryMappings'
+  | 'categoryMappingUpdatedAt'
   | 'categoryBudgets'
   | 'categoryBudgetUpdatedAt'
   | 'categoryBudgetDeletedAt'
@@ -377,6 +414,8 @@ export interface WireDocV5 {
   readonly expenses: readonly WireRecord[]
   readonly categories: readonly string[]
   readonly categoryMappings: Readonly<Record<string, string>>
+  /** v0.8.5's per-key mapping stamps (P2-3): what keeps item picks last-writer-wins beside it. */
+  readonly mappingUpdatedAt: Readonly<Record<string, string>>
   readonly budgets: Readonly<Record<string, number>>
   readonly budgetUpdatedAt: Readonly<Record<string, string>>
   readonly budgetDeletedAt: Readonly<Record<string, string>>

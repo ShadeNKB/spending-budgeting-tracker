@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { Sheet } from './Sheet'
 import { DatePicker } from './DatePicker'
+import { useUIStore } from '../stores/useUIStore'
 import {
   installFakeAnimations,
   setReducedMotion,
@@ -243,6 +244,45 @@ describe('Sheet semantics', () => {
     const dialog = screen.getByRole('dialog')
     expect(dialog.querySelector('[role="status"]')).toBeEmptyDOMElement()
     expect(dialog.querySelector('[role="alert"]')).toBeEmptyDOMElement()
+  })
+
+  // aria-modal hides the toast stack (outside the dialog) from a screen reader: a touch screen
+  // reader would hear "Undo available" for an Undo it cannot reach while Settings is open.
+  it('offers the toasts’ actions inside the dialog to a screen reader, out of the Tab order', () => {
+    const undo = vi.fn()
+    render(
+      <Sheet open onClose={() => {}} title="Settings">
+        <button type="button">Delete all entries</button>
+      </Sheet>,
+    )
+    act(() => {
+      useUIStore.getState().pushToast({ kind: 'success', message: 'Saved' })
+      useUIStore.getState().pushToast({
+        kind: 'info',
+        message: 'All entries deleted',
+        undoId: 'all-x1',
+        action: { label: 'Undo', onClick: undo },
+      })
+    })
+    const dialog = screen.getByRole('dialog', { name: 'Settings' })
+    const inside = within(dialog).getByRole('button', { name: 'Undo: All entries deleted' })
+    expect(inside).toHaveAttribute('tabindex', '-1')
+    expect(inside.closest('.sr-only')).not.toBeNull()
+    // named, not worded: the dialog's own text never repeats the toast's
+    expect(dialog).not.toHaveTextContent('All entries deleted')
+    // a toast with nothing to act on has no button here
+    expect(
+      within(dialog)
+        .getAllByRole('button')
+        .map((b) => b.getAttribute('aria-label') ?? b.textContent),
+    ).toEqual(['Close', 'Delete all entries', 'Undo: All entries deleted'])
+    fireEvent.click(inside)
+    expect(undo).toHaveBeenCalledOnce()
+    expect(useUIStore.getState().toasts.map((t) => t.message)).toEqual(['Saved'])
+    expect(within(dialog).queryByRole('button', { name: /^Undo/ })).toBeNull()
+    act(() => {
+      useUIStore.setState({ toasts: [] })
+    })
   })
 
   it('scrolls a focused control clear of its scroller’s edges, ring included', () => {

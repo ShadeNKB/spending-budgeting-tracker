@@ -9,7 +9,8 @@
 // response arrives at the full latency, and every subscribed channel (the writer's own
 // too, unless self-echo is off) receives the change `latency.realtime` after the write.
 // State lives on globalThis, so device module graphs loaded with vi.resetModules() share
-// one relay. Works against the v0.8.4 code too (it ignores the event argument).
+// one relay; every device boots on its own storage (MemoryStorage). Works against the v0.8.4
+// code too (it ignores the event argument).
 import { vi } from 'vitest'
 import type { Expense } from '../types'
 
@@ -496,43 +497,107 @@ type ExpenseModule = typeof import('../stores/useExpenseStore')
 type SyncModule = typeof import('../stores/useSyncStore')
 type UIModule = typeof import('../stores/useUIStore')
 
+/** The parts of `Storage` SpendTrack uses. */
+export type StorageArea = Pick<
+  Storage,
+  'getItem' | 'setItem' | 'removeItem' | 'key' | 'length' | 'clear'
+>
+
+/**
+ * A device's own localStorage. Two devices in one jsdom must not share one: the local engine
+ * reads what another tab wrote (cross-tab safety), which would carry data between "devices"
+ * without the relay. The engine keeps the storage it booted on, so a device boots with its own
+ * stubbed in as `localStorage`. Values are copied strings, as in a browser.
+ */
+export class MemoryStorage implements StorageArea {
+  private readonly items = new Map<string, string>()
+  /**
+   * Keys whose writes fail with a quota error: one key, a prefix ending in '*' ('st5:q:relay:*'),
+   * or all of them ('*').
+   */
+  readonly refuse = new Set<string>()
+  /** Every key written, in order (what a test may assert about writes). */
+  readonly writes: string[] = []
+
+  get length(): number {
+    return this.items.size
+  }
+
+  key(index: number): string | null {
+    return [...this.items.keys()][index] ?? null
+  }
+
+  getItem(key: string): string | null {
+    return this.items.get(key) ?? null
+  }
+
+  setItem(key: string, value: string): void {
+    const refused = [...this.refuse].some((r) =>
+      r.endsWith('*') ? key.startsWith(r.slice(0, -1)) : r === key,
+    )
+    if (refused) {
+      throw new DOMException(`The quota has been exceeded (${key}).`, 'QuotaExceededError')
+    }
+    this.items.set(key, value)
+    this.writes.push(key)
+  }
+
+  removeItem(key: string): void {
+    this.items.delete(key)
+  }
+
+  clear(): void {
+    this.items.clear()
+  }
+}
+
 export interface Device {
   expense: ExpenseModule
   sync: SyncModule
   ui: UIModule
+  /** The storage this device's local engine boots on. */
+  storage: StorageArea
 }
 
 export const SYNC_CODE = '11111111-1111-4111-8111-111111111111'
 
 const loaded: Device[] = []
 
+/** Makes `storage` this jsdom's `localStorage` (what a device boots on and what tests read). */
+export function installStorage(storage: StorageArea): void {
+  vi.stubGlobal('localStorage', storage)
+}
+
 /**
- * Loads a device's stores in their own module graph (call after vi.stubEnv for the relay).
+ * Loads a device's stores in their own module graph (call after vi.stubEnv for the relay), on
+ * `storage` when given (it becomes `localStorage`), else on the current `localStorage`.
  * With a relay configured it also loads the device's sync engine now, inside the same graph:
  * the engine is a lazy chunk, and a later first load would resolve against whichever device's
  * modules were loaded last (and in real time, which fake timers do not wait for).
  */
-export async function loadDevice(): Promise<Device> {
+export async function loadDevice(storage?: StorageArea): Promise<Device> {
+  if (storage !== undefined) installStorage(storage)
+  const area: StorageArea = storage ?? localStorage
   vi.resetModules()
   const expense = await import('../stores/useExpenseStore')
   const sync = await import('../stores/useSyncStore')
   const ui = await import('../stores/useUIStore')
   const { syncEnabled } = await import('../services/syncConfig')
   if (syncEnabled) await sync.loadSyncEngine()
-  const device = { expense, sync, ui }
+  const device = { expense, sync, ui, storage: area }
   loaded.push(device)
   return device
 }
 
 /**
  * Stops every device loaded so far. Their listeners stay on the shared jsdom document and
- * window, so a later test's lifecycle events must find them disconnected and unhydrated.
+ * window, so a later test's lifecycle events must find them disconnected.
  */
 export function retireDevices(): void {
   for (const device of loaded.splice(0)) {
     device.sync.useSyncStore.getState().disconnectSync()
-    device.expense.useExpenseStore.setState({ hydrated: false })
   }
+  vi.unstubAllGlobals()
 }
 
 /** The relay's expense rows right now (a copy), or [] when the row has none. */
@@ -541,6 +606,14 @@ export function relayRows(syncId = SYNC_CODE): unknown[] {
   if (typeof payload !== 'object' || payload === null || !('expenses' in payload)) return []
   const rows: unknown = payload.expenses
   return Array.isArray(rows) ? rows : []
+}
+
+/** The relay's tombstones right now (a copy), or [] when the row has none. */
+export function relayDeleted(syncId = SYNC_CODE): unknown[] {
+  const payload = rowPayload(syncId)
+  if (typeof payload !== 'object' || payload === null || !('deletedIds' in payload)) return []
+  const ids: unknown = payload.deletedIds
+  return Array.isArray(ids) ? ids : []
 }
 
 /** Sets `document.visibilityState` and fires `visibilitychange`, as a mobile OS does. */
@@ -625,44 +698,91 @@ export function payloadOf(
   }
 }
 
-export interface BootOptions {
-  expenses?: Expense[]
-  /** Hydrate from localStorage and install persistence, as AppShell does. */
-  persist?: boolean
-  /** Raw rows in localStorage before hydrate (overrides `expenses`; may hold unreadable rows). */
-  storedRows?: readonly unknown[]
-  /** A sync code saved by an earlier session (initSync connects with it on boot). */
-  savedCode?: string
+/** The local v4 keys a 0.9.x device leaves behind (what the first v5 boot migrates). */
+export interface V4Seed {
+  expenses?: readonly unknown[]
+  categories?: readonly string[]
+  categoryMappings?: Readonly<Record<string, string>>
+  categoryMappingUpdatedAt?: Readonly<Record<string, string>>
+  categoryBudgets?: Readonly<Record<string, number>>
+  categoryBudgetUpdatedAt?: Readonly<Record<string, string>>
+  categoryBudgetDeletedAt?: Readonly<Record<string, string>>
+  deletedExpenseIds?: readonly string[]
 }
 
-/** A device booted the way AppShell boots it: local data, persistence, then sync wiring. */
-export async function bootDevice(opts: BootOptions = {}): Promise<Device> {
-  const device = await loadDevice()
-  const store = device.expense.useExpenseStore
-  const expenses = opts.expenses ?? []
-  if (opts.persist) {
-    localStorage.setItem('expenses', JSON.stringify(opts.storedRows ?? expenses))
-    store.getState().hydrate()
-    device.expense.installPersistence()
-  } else {
-    store.setState({
-      hydrated: true,
-      expenses,
-      categories: ['Other', 'Meals'],
-      categoryMappings: {},
-      budgets: {},
-      budgetUpdatedAt: {},
-      budgetDeletedAt: {},
-      deletedIds: [],
-    })
+/**
+ * Writes `seed` as a 0.9.2 device stores it (P2-14: the public format, migrated on hydrate):
+ * every v4 key, `spendtrack:app = '0.8.5'` (so its writes rank as stamped), its device id.
+ */
+export function seedV4(storage: StorageArea, seed: V4Seed = {}, dev = 'dev001'): void {
+  const keys: Required<V4Seed> = {
+    expenses: [],
+    categories: ['Other', 'Meals'],
+    categoryMappings: {},
+    categoryMappingUpdatedAt: {},
+    categoryBudgets: {},
+    categoryBudgetUpdatedAt: {},
+    categoryBudgetDeletedAt: {},
+    deletedExpenseIds: [],
+    ...seed,
   }
-  if (opts.savedCode === undefined) localStorage.removeItem('syncId')
-  else localStorage.setItem('syncId', opts.savedCode)
+  for (const [key, value] of Object.entries(keys)) storage.setItem(key, JSON.stringify(value))
+  storage.setItem('spendtrack:app', '0.8.5')
+  storage.setItem('spendtrack:dev', dev)
+}
+
+export interface BootOptions {
+  expenses?: readonly Expense[]
+  /** Raw rows in storage before hydrate (overrides `expenses`; may hold unreadable rows). */
+  storedRows?: readonly unknown[]
+  /** Any other v4 key the device had before this version (categories, mappings, budgets…). */
+  v4?: Omit<V4Seed, 'expenses'>
+  /** A sync code saved by an earlier session (initSync connects with it on boot). */
+  savedCode?: string
+  /** Install the lifecycle and storage listeners, as AppShell does. */
+  persist?: boolean
+  /** The storage to boot on (a fresh one by default: every device has its own). */
+  storage?: StorageArea
+  /** Its device id (6 base36 chars). */
+  dev?: string
+}
+
+let devices = 0
+
+/**
+ * A device booted the way the app boots it (P2-14): its storage holds what 0.9.2 left (v4 keys),
+ * the local engine hydrates (migrating them), then sync is wired.
+ */
+export async function bootDevice(opts: BootOptions = {}): Promise<Device> {
+  const storage = opts.storage ?? new MemoryStorage()
+  devices++
+  seedV4(
+    storage,
+    { ...opts.v4, expenses: opts.storedRows ?? opts.expenses ?? [] },
+    opts.dev ?? `dev${String(devices).padStart(3, '0')}`,
+  )
+  if (opts.savedCode !== undefined) storage.setItem('syncId', opts.savedCode)
+  const device = await loadDevice(storage)
+  await device.expense.useExpenseStore.getState().hydrate()
+  if (opts.persist) device.expense.installPersistence()
   device.sync.installSync()
   return device
+}
+
+/** Makes `device`'s storage `localStorage` again (before re-hydrating it, or reading it). */
+export function onDevice(device: Device): void {
+  installStorage(device.storage)
 }
 
 /** Connects a device to the shared code and lets the first cycles run out. */
 export async function connect(device: Device, ms = 5000): Promise<unknown> {
   return settle(device.sync.useSyncStore.getState().setupSync(SYNC_CODE), ms)
+}
+
+/** A device's live entries, by id. */
+export function liveIds(device: Device): string[] {
+  return device.expense.useExpenseStore
+    .getState()
+    .expenses.map((e) => e.id)
+    .sort()
 }

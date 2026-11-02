@@ -1391,6 +1391,11 @@
   [data-theme='light'] .bg-negative-solid.text-white {
     color: #fff;
   }
+  /* The amber confirm (Button warning: remove from this device, disconnect) on its 10 % tint
+     inside the amber question card: amber-700 measured 4.4:1 there, amber-800 clears 6:1. */
+  [data-theme='light'] .bg-warning\/10.text-warning {
+    color: #92400e;
+  }
   /* Dark mode: the saturated negative red (#ef4444) as small text only reaches
      ~4.06:1 on the dark cards — under AA. Brighten the text usage to red-400
      (bars/fills keep the saturated token). */

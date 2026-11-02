@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { format } from 'date-fns'
 import Fuse from 'fuse.js'
 import { DEFAULT_CATEGORIES } from '../constants'
-import { parseExpense, quickAddDateLabel, quickAddStoredDate } from './parseExpense'
+import { parseExpense, quickAddDateLabel } from './parseExpense'
 
 describe('parseExpense', () => {
   afterEach(() => {
@@ -145,12 +145,22 @@ describe('parseExpense — day and month without a year', () => {
 })
 
 describe('quick-add dates', () => {
-  it('stores an undated quick add on today at local noon, like the entry sheets', () => {
-    expect(quickAddStoredDate(undefined, NOW)).toBe(new Date(2026, 9, 18, 12).toISOString())
+  const parse = (input: string, now: Date) => parseExpense(input, {}, { now })
+
+  // The quick add stores `parsedDate` as the entry's day (P2-2); undefined means today, which
+  // the store fills in from the device clock.
+  it('gives the day to store as yyyy-MM-dd, and nothing for an undated entry', () => {
+    expect(parse('kopi 1.8', NOW).parsedDate).toBeUndefined()
+    expect(parse('kopi 1.8 yesterday', NOW).parsedDate).toBe('2026-10-17')
+    expect(parse('kopi 1.8 31 dec', NOW).parsedDate).toBe('2025-12-31')
   })
 
-  it('stores a parsed day at local noon', () => {
-    expect(quickAddStoredDate('2025-12-31', NOW)).toBe(new Date(2025, 11, 31, 12).toISOString())
+  it('reads relative days from local midnight, at the turn of the year too', () => {
+    const newYear = new Date(2026, 0, 1, 0, 30)
+    expect(parse('kopi 1.8 yesterday', newYear).parsedDate).toBe('2025-12-31')
+    expect(parse('kopi 1.8 today', newYear).parsedDate).toBe('2026-01-01')
+    const eve = new Date(2025, 11, 31, 23, 59)
+    expect(parse('kopi 1.8 yesterday', eve).parsedDate).toBe('2025-12-30')
   })
 
   it('labels only a day other than today, with the year when it differs', () => {

@@ -1,11 +1,9 @@
-// Cross-device sync layer (v4 wire).
-// - Local-first: localStorage is the source of truth, Supabase is a stateless relay.
-// - Per-expense last-writer-wins by `updatedAt ?? createdAt` (whole records), ties broken by
-//   content, so every device resolves a merge the same way whatever the order (no ping-pong).
-// - Tombstones (`deletedIds`) are unioned across devices and always win.
-// - Category names are unioned. Item mappings: per-key last-writer-wins via `mappingUpdatedAt`.
-// - Budgets: per-key last-writer-wins via `budgetUpdatedAt` / `budgetDeletedAt`.
-// - Pulled payloads are read leniently: unreadable rows are kept on the relay, never merged.
+// Cross-device sync transport: the relay row (pull, upsert, realtime) and nothing else.
+// - Local-first: the device's own storage is the source of truth, Supabase is a stateless relay.
+// - What a payload means, how it merges and whether to push it is the sync engine's business
+//   (src/stores/syncEngine.ts, on the v5 core codec): this module never reads a payload.
+// - Every request has a 15 s deadline and no SDK retry, so the engine's classified backoff is
+//   the only retry policy and a hung request can never wedge the single-flight loop.
 // - Only the lazy sync engine imports this module, and the Supabase JS SDK is loaded lazily
 //   again from here, so users who never sync pay for neither.
 
@@ -14,19 +12,13 @@ import type {
   RealtimeChannel,
   SupabaseClient,
 } from '@supabase/supabase-js'
-import { isValid, parseISO } from 'date-fns'
-import type { BackupData, Expense } from '../types'
-import { DEFAULT_CATEGORIES } from '../constants'
-import { isNumber, isRecord, isString, listOf, recordOf } from '../lib/backup'
-import { canon, canonRow, nestsWithin } from '../lib/canon'
-import { LEGACY_STAMP_ISO, stampMs } from '../lib/stamps'
+import { isRecord } from '../lib/backup'
 import { SUPABASE_ANON_KEY, SUPABASE_URL } from './syncConfig'
 
 const TABLE = 'sync_buckets'
 const PAYLOAD_WARN_BYTES = 800 * 1024 // 800 KB — below Supabase free-tier 1 MB row limit
+// The last line of defence: the engine pauses at its own, lower push limit before sending.
 const PAYLOAD_MAX_CHARS = 1024 * 1024
-// Tombstones are ~22 B each; a high cap only exists to bound a pathological payload.
-const TOMBSTONE_CAP = 20_000
 const REALTIME_RECONNECT_DELAY = 2000
 const REQUEST_TIMEOUT_MS = 15_000
 // Channel states that mean the realtime subscription dropped and must be re-armed.
@@ -37,35 +29,6 @@ const RECONNECT_STATES: ReadonlySet<`${REALTIME_SUBSCRIBE_STATES}`> = new Set([
   'TIMED_OUT',
 ])
 const JOINED_STATES: ReadonlySet<`${REALTIME_SUBSCRIBE_STATES}`> = new Set(['SUBSCRIBED'])
-
-/** Who last wrote the relay row: a v5 client (`x5`), v0.8.5 (`wr`), or v0.8.4 and older. */
-export type WriterClass = 'v5' | 'v085' | 'legacy'
-
-export interface WriterStamp {
-  app: string
-  dev: string
-  /** This push: its realtime echo is recognised by it. */
-  rev: string
-  at: string
-}
-
-/** What a v0.8.5 push sends: the v4 payload plus `wr`. Rows we could not read ride along as-is. */
-export type SyncPayload = Omit<BackupData, 'expenses'> & {
-  expenses: readonly unknown[]
-  wr: WriterStamp
-}
-
-export type RemoteRead =
-  | { kind: 'empty' }
-  | { kind: 'moved' }
-  | { kind: 'update-required' }
-  | { kind: 'invalid'; reason: string }
-  | {
-      kind: 'ok'
-      data: BackupData
-      passthrough: unknown[]
-      writer: WriterClass
-    }
 
 export class PayloadTooLargeError extends Error {
   constructor(public bytes: number) {
@@ -138,322 +101,6 @@ async function connect(): Promise<SupabaseClient> {
 }
 
 // ---------------------------------------------------------------------------
-// Reading pulled payloads (lenient, with pass-through)
-// ---------------------------------------------------------------------------
-
-const optionalText = (value: unknown): boolean =>
-  value === undefined || value === null || typeof value === 'string'
-
-// A v5 row nests 2 levels (`fs.amount` is an array); anything far deeper is not a row.
-const ROW_MAX_NESTING = 16
-
-/**
- * A row v0.8 can merge and render: string id, name and category, a finite amount above zero
- * (what add and import accept) and a parseable date. Unknown extra fields (v5 `day`, `fs`, `h`,
- * …) are allowed and kept, unless they nest absurdly deep: such a row (only a hostile writer
- * makes one) could not even be saved here, so it rides along unread like any unreadable row.
- */
-export function isSyncableExpense(row: unknown): row is Expense {
-  if (!isRecord(row)) return false
-  const { id, itemName, amount, date, category } = row
-  return (
-    typeof id === 'string' &&
-    id !== '' &&
-    typeof itemName === 'string' &&
-    typeof amount === 'number' &&
-    Number.isFinite(amount) &&
-    amount > 0 &&
-    typeof date === 'string' &&
-    isValid(parseISO(date)) &&
-    typeof category === 'string' &&
-    optionalText(row.notes) &&
-    (row.createdAt === undefined || typeof row.createdAt === 'string') &&
-    (row.updatedAt === undefined || typeof row.updatedAt === 'string') &&
-    nestsWithin(row, ROW_MAX_NESTING)
-  )
-}
-
-function writerOf(raw: Record<string, unknown>): WriterClass {
-  if (isRecord(raw.x5)) return 'v5'
-  if (isRecord(raw.wr)) return 'v085'
-  return 'legacy'
-}
-
-/** Classifies and reads a pulled payload. Never throws. */
-export function readRemote(raw: unknown): RemoteRead {
-  if (raw === null || raw === undefined) return { kind: 'empty' }
-  if (!isRecord(raw)) return { kind: 'invalid', reason: 'the synced copy is not an object' }
-  if (raw.expenses === 'moved') return { kind: 'moved' }
-  const x5 = raw.x5
-  if (isRecord(x5) && typeof x5.min === 'number' && x5.min > 4) return { kind: 'update-required' }
-  const rows = raw.expenses
-  if (!Array.isArray(rows))
-    return { kind: 'invalid', reason: 'the synced copy has no expense list' }
-
-  const items: readonly unknown[] = rows
-  const writer = writerOf(raw)
-  const expenses: Expense[] = []
-  const passthrough: unknown[] = []
-  for (const item of items) {
-    if (isSyncableExpense(item)) expenses.push(item)
-    else passthrough.push(item)
-  }
-  return {
-    kind: 'ok',
-    data: {
-      expenses,
-      categories: listOf(raw.categories, isString),
-      categoryMappings: recordOf(raw.categoryMappings, isString),
-      mappingUpdatedAt: recordOf(raw.mappingUpdatedAt, isString),
-      budgets: recordOf(raw.budgets, isNumber),
-      budgetUpdatedAt: recordOf(raw.budgetUpdatedAt, isString),
-      budgetDeletedAt: recordOf(raw.budgetDeletedAt, isString),
-      deletedIds: listOf(raw.deletedIds, isString),
-      exportDate: typeof raw.exportDate === 'string' ? raw.exportDate : '',
-      version: '4.0',
-    },
-    passthrough,
-    writer,
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Content key: equal keys mean "the relay already holds this".
-// ---------------------------------------------------------------------------
-
-function sortedList(value: unknown, item: (x: unknown) => string): unknown {
-  if (!Array.isArray(value)) return value
-  const items: readonly unknown[] = value
-  return items.map(item).sort()
-}
-
-function sortedSet(value: unknown): unknown {
-  if (!Array.isArray(value)) return value
-  const items: readonly unknown[] = value
-  return [...new Set(items.map(canon))].sort()
-}
-
-/**
- * Canonical content of a payload. Ignores `exportDate`, `version`, `wr`, `x5`, key order and
- * the order of expenses, categories and tombstones. Non-array collections are kept raw, so a
- * damaged relay copy never equals a clean one (our next push repairs it).
- *
- * `mappingStamps: false` also ignores `mappingUpdatedAt`: a v0.8.4 writer drops it on every
- * push, so against its copy only the mappings themselves can be compared.
- */
-export function contentKey(payload: unknown, opts: { mappingStamps?: boolean } = {}): string {
-  const p = isRecord(payload) ? payload : {}
-  return canon({
-    expenses: sortedList(p.expenses, canonRow),
-    categories: sortedSet(p.categories),
-    categoryMappings: p.categoryMappings,
-    mappingUpdatedAt: opts.mappingStamps === false ? {} : (p.mappingUpdatedAt ?? {}),
-    budgets: p.budgets,
-    budgetUpdatedAt: p.budgetUpdatedAt,
-    budgetDeletedAt: p.budgetDeletedAt ?? {},
-    deletedIds: sortedSet(p.deletedIds),
-  })
-}
-
-// ---------------------------------------------------------------------------
-// Merge (a join: commutative, associative and idempotent by content)
-// ---------------------------------------------------------------------------
-
-const ownEntries = <T>(record: Record<string, T> | undefined): [string, T][] =>
-  record ? Object.entries(record) : []
-
-const expenseStamp = (e: Expense): number => stampMs(e.updatedAt ?? e.createdAt)
-
-/** The newer copy; on equal stamps the larger canonical JSON (the local copy when identical). */
-function pickExpense(l: Expense, r: Expense): Expense {
-  const lt = expenseStamp(l)
-  const rt = expenseStamp(r)
-  if (lt !== rt) return lt > rt ? l : r
-  return canonRow(l) >= canonRow(r) ? l : r
-}
-
-const larger = (a: string, b: string): string => (a >= b ? a : b)
-
-interface MappingSide {
-  value: string
-  /** The stamp as written (kept verbatim), or undefined. */
-  at: string | undefined
-  /** Its order: 0 when absent or outside the stamp window. */
-  t: number
-}
-
-function mappingSide(
-  values: Map<string, string>,
-  stamps: Map<string, string>,
-  key: string,
-): MappingSide | null {
-  const value = values.get(key)
-  if (value === undefined) return null
-  const at = stamps.get(key)
-  return { value, at, t: stampMs(at) }
-}
-
-/** The newer pick; on equal stamps the larger value, then the larger stamp text. */
-function pickMapping(l: MappingSide, r: MappingSide): MappingSide {
-  if (l.t !== r.t) return l.t > r.t ? l : r
-  if (l.value !== r.value) return l.value > r.value ? l : r
-  return (l.at ?? '') >= (r.at ?? '') ? l : r
-}
-
-/**
- * Item mappings, per key last-writer-wins by `mappingUpdatedAt`. A key without a stamp (written
- * before 0.8.5, or dropped by a v0.8.4 push) orders as 0, so equal-stamp conflicts go to the
- * larger value on every device alike. Only stamps inside the window are kept.
- */
-function mergeMappings(
-  local: BackupData,
-  remote: BackupData,
-): Pick<BackupData, 'categoryMappings' | 'mappingUpdatedAt'> {
-  const lv = new Map(ownEntries(local.categoryMappings))
-  const rv = new Map(ownEntries(remote.categoryMappings))
-  const ls = new Map(ownEntries(local.mappingUpdatedAt))
-  const rs = new Map(ownEntries(remote.mappingUpdatedAt))
-  const mappings: [string, string][] = []
-  const stamps: [string, string][] = []
-  for (const key of new Set([...lv.keys(), ...rv.keys()])) {
-    const l = mappingSide(lv, ls, key)
-    const r = mappingSide(rv, rs, key)
-    const winner = l && r ? pickMapping(l, r) : (l ?? r)
-    if (!winner) continue
-    mappings.push([key, winner.value])
-    if (winner.t > 0 && winner.at !== undefined) stamps.push([key, winner.at])
-  }
-  return {
-    categoryMappings: Object.fromEntries(mappings),
-    mappingUpdatedAt: Object.fromEntries(stamps),
-  }
-}
-
-interface BudgetSide {
-  value: number | undefined
-  set: number
-  setAt: string | undefined
-  del: number
-  delAt: string | undefined
-}
-
-function budgetSide(
-  budgets: Map<string, number>,
-  updatedAt: Map<string, string>,
-  deletedAt: Map<string, string>,
-  key: string,
-): BudgetSide {
-  const raw = budgets.get(key)
-  const value = raw !== undefined && Number.isFinite(raw) ? raw : undefined
-  const setAt = updatedAt.get(key)
-  const delAt = deletedAt.get(key)
-  return {
-    value,
-    set: value === undefined ? -1 : stampMs(setAt),
-    setAt,
-    del: delAt === undefined ? -1 : stampMs(delAt),
-    delAt,
-  }
-}
-
-function mergeBudgets(local: BackupData, remote: BackupData) {
-  const lb = new Map(ownEntries(local.budgets))
-  const rb = new Map(ownEntries(remote.budgets))
-  const lu = new Map(ownEntries(local.budgetUpdatedAt))
-  const ru = new Map(ownEntries(remote.budgetUpdatedAt))
-  const ld = new Map(ownEntries(local.budgetDeletedAt))
-  const rd = new Map(ownEntries(remote.budgetDeletedAt))
-  const keys = new Set([
-    ...lb.keys(),
-    ...rb.keys(),
-    ...lu.keys(),
-    ...ru.keys(),
-    ...ld.keys(),
-    ...rd.keys(),
-  ])
-
-  const budgets: [string, number][] = []
-  const updatedAt: [string, string][] = []
-  const deletedAt: [string, string][] = []
-
-  for (const key of keys) {
-    const l = budgetSide(lb, lu, ld, key)
-    const r = budgetSide(rb, ru, rd, key)
-    const maxDel = Math.max(l.del, r.del)
-    const maxSet = Math.max(l.set, r.set)
-
-    if (maxDel > 0 && maxDel >= maxSet) {
-      // Deletion wins: the key is absent from budgets.
-      const stamps = [l, r].filter((s) => s.del === maxDel).map((s) => s.delAt ?? '')
-      deletedAt.push([key, stamps.reduce(larger)])
-      continue
-    }
-    if (maxSet >= 0) {
-      let winner: BudgetSide | null = null
-      for (const side of [l, r]) {
-        if (side.value === undefined || side.set !== maxSet) continue
-        if (
-          winner?.value === undefined ||
-          side.value > winner.value ||
-          (side.value === winner.value && (side.setAt ?? '') > (winner.setAt ?? ''))
-        ) {
-          winner = side
-        }
-      }
-      if (winner?.value !== undefined) {
-        budgets.push([key, winner.value])
-        updatedAt.push([
-          key,
-          maxSet > 0 && winner.setAt !== undefined ? winner.setAt : LEGACY_STAMP_ISO,
-        ])
-      }
-    }
-  }
-
-  return {
-    budgets: Object.fromEntries(budgets),
-    budgetUpdatedAt: Object.fromEntries(updatedAt),
-    budgetDeletedAt: Object.fromEntries(deletedAt),
-  }
-}
-
-export function mergeBackups(local: BackupData, remote: BackupData): BackupData {
-  const localMap = new Map<string, Expense>(local.expenses.map((e) => [e.id, e]))
-  const remoteMap = new Map<string, Expense>(remote.expenses.map((e) => [e.id, e]))
-
-  // Union tombstones — once an ID is deleted on any device it stays deleted.
-  const tombstones = new Set<string>([...(local.deletedIds ?? []), ...(remote.deletedIds ?? [])])
-
-  const merged: Expense[] = []
-  for (const id of new Set([...localMap.keys(), ...remoteMap.keys()])) {
-    if (tombstones.has(id)) continue
-    const l = localMap.get(id)
-    const r = remoteMap.get(id)
-    if (l && r) merged.push(pickExpense(l, r))
-    else if (l) merged.push(l)
-    else if (r) merged.push(r)
-  }
-
-  // Keep the store consistently sorted by date desc.
-  const time = new Map(merged.map((e) => [e, new Date(e.date).getTime()]))
-  merged.sort((a, b) => (time.get(b) ?? 0) - (time.get(a) ?? 0))
-
-  // Categories: union, deduped, preserving local order first.
-  const categories = [...new Set([...local.categories, ...remote.categories])]
-  if (!categories.length) categories.push(...DEFAULT_CATEGORIES)
-
-  return {
-    expenses: merged,
-    categories,
-    ...mergeMappings(local, remote),
-    ...mergeBudgets(local, remote),
-    deletedIds: [...tombstones].slice(-TOMBSTONE_CAP),
-    exportDate: new Date().toISOString(),
-    version: '4.0',
-  }
-}
-
-// ---------------------------------------------------------------------------
 // Remote operations
 // ---------------------------------------------------------------------------
 
@@ -499,10 +146,7 @@ async function withDeadline<T>(request: (signal: AbortSignal) => PromiseLike<T>)
 }
 
 /** Uploads the payload. Resolves with the `updated_at` sent (the realtime echo carries it). */
-export async function pushSync(
-  syncId: string,
-  payload: SyncPayload,
-): Promise<{ updatedAt: string }> {
+export async function pushSync(syncId: string, payload: unknown): Promise<{ updatedAt: string }> {
   // Pre-flight payload size check — Supabase free tier caps rows at ~1 MB.
   const serialized = JSON.stringify(payload)
   if (serialized.length > PAYLOAD_WARN_BYTES) {
