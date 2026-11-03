@@ -2,6 +2,7 @@
 // facade in the entry chunk re-exports these without pulling the engine in.
 import type {
   BackupFileV5,
+  DeviceInfo,
   Doc,
   ExpensePatch,
   ImportCounts,
@@ -128,9 +129,19 @@ export interface SyncMeta {
   readonly lastRev: string | null
   /** core push.ts; persisted in envelope meta.sync. */
   readonly memo: MemoState
-  readonly legacySeen: { readonly v084?: number; readonly v085?: number }
+  /** When an old writer's payload was last pulled (§11.10); v5pre = a 0.10.0 writer (P3-8). */
+  readonly legacySeen: { readonly v084?: number; readonly v085?: number; readonly v5pre?: number }
+  /** The device that wrote as 0.10.0 when `legacySeen.v5pre` was stamped (it never registers). */
+  readonly v5preDev: string | null
   /** P2-8: the last repair push of an invalid relay copy. */
   readonly repairAt: number
+  /** The relay row's `updated_at` as PostgREST returned it, once this device holds that copy (P3-3). */
+  readonly lastEtag: string | null
+  /** fnv36 of the code `lastEtag` belongs to (the code itself is never stored here). */
+  readonly etagFor: string | null
+  /** Detected relay mode (pin 'auto' only); null = not probed yet. */
+  readonly transport: 'table' | 'rpc' | null
+  readonly probedAt: number
 }
 
 export interface RemoteApplied {
@@ -164,6 +175,11 @@ export interface SyncPort {
   deviceId(): string
   /** Demo rows on a demo build. */
   omitIds(): ((id: string) => boolean) | undefined
+  /**
+   * Commits devices[id] := info: no outbox entry, no localRev bump, the same `expenses` Map (so
+   * the digest reuses its record hashes); written with the next flush (P3-7).
+   */
+  register(id: string, info: DeviceInfo): void
   /** Returns how many were new. */
   quarantine(entries: readonly QEntry[]): number
   /**

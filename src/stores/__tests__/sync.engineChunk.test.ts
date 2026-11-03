@@ -12,7 +12,7 @@ import {
   stubRelayEnv,
 } from '../../__tests__/fakeRelay'
 import { CHUNK_RELOAD_KEY, STUCK_HINT } from '../../lib/chunkReload'
-import { syncMessage } from '../useSyncStore'
+import { SYNC_RELOAD_MESSAGE } from '../useSyncStore'
 
 vi.mock(
   '@supabase/supabase-js',
@@ -93,9 +93,9 @@ describe('the sync engine chunk', () => {
     chunk.failures = 1
     const failed = await sync.useSyncStore.getState().setupSync(SYNC_CODE)
 
-    expect(failed).toMatchObject({ ok: false, error: 'reload', message: syncMessage('reload') })
-    expect(syncMessage('reload')).toContain('Reload SpendTrack to sync')
-    expect(syncMessage('reload')).not.toContain(STUCK_HINT) // no reload has failed yet
+    expect(failed).toMatchObject({ ok: false, error: 'reload', message: SYNC_RELOAD_MESSAGE })
+    expect(SYNC_RELOAD_MESSAGE).toContain('Reload SpendTrack to sync')
+    expect(SYNC_RELOAD_MESSAGE).not.toContain(STUCK_HINT) // no reload has failed yet
     expect(sync.useSyncStore.getState()).toMatchObject({
       syncId: SYNC_CODE,
       cloudStatus: 'paused',
@@ -127,7 +127,7 @@ describe('the sync engine chunk', () => {
     expect(failed).toEqual({
       ok: false,
       error: 'reload',
-      message: `${syncMessage('reload')} ${STUCK_HINT}`,
+      message: `${SYNC_RELOAD_MESSAGE} ${STUCK_HINT}`,
     })
     expect(sync.useSyncStore.getState().lastError?.message).toBe(failed.ok ? '' : failed.message)
   })
@@ -156,7 +156,7 @@ describe('the sync engine chunk', () => {
     expect(toasts()).toEqual([
       expect.objectContaining({
         kind: 'warning',
-        message: syncMessage('reload'),
+        message: SYNC_RELOAD_MESSAGE,
         action: expect.objectContaining({ label: 'Reload' }) as unknown,
       }),
     ])

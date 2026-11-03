@@ -53,6 +53,7 @@ describe('SECRET_KEY_PATTERN', () => {
     'cryptoKey',
     'encryptionKey',
     'st5:sync',
+    'st5:synckey:prev',
     'st5:q:syncId:1760846400000',
     'st5:q:st5:sync:1760846400000',
   ])('matches the secret-like key %s', (key) => {
@@ -74,6 +75,8 @@ describe('SECRET_KEY_PATTERN', () => {
     'st5:snap:1760846400000',
     'st5:journal',
     'st5:dev',
+    'st5:sync:previous',
+    'st5:synced',
   ])('leaves the data key %s alone', (key) => {
     expect(SECRET_KEY_PATTERN.test(key)).toBe(false)
   })
@@ -132,12 +135,13 @@ describe('collectRawStorage', () => {
     expect(Object.keys(raw)).toEqual(['expenses'])
   })
 
-  it('keeps the v5 envelope and its copies but never the sync config or its quarantined copies', () => {
+  it('AC-U10: keeps the v5 envelope and its copies but never the sync config, the Reconnect slot or their quarantined copies', () => {
     const raw = collectRawStorage(
       new MapStorage([
         ['st5:db', '5|abc|{"f":1}'],
         ['st5:q:st5:db:1', '5|abc|{"f"'],
         ['st5:sync', '{"kind":"plain","code":"invented-code"}'],
+        ['st5:synckey:prev', '{"code":"invented-code","until":1}'],
         ['st5:q:st5:sync:1', '{"kind":"pla'],
         ['st5:q:syncId:1', 'invented-code'],
       ]),

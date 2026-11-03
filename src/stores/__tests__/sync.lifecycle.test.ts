@@ -20,7 +20,18 @@ import {
   stubRelayEnv,
   type Device,
   type Failure,
+  steadyRandom,
 } from '../../__tests__/fakeRelay'
+
+const isObject = (v: unknown): v is Record<string, unknown> =>
+  typeof v === 'object' && v !== null && !Array.isArray(v)
+const isFetch = (v: unknown): v is typeof fetch => typeof v === 'function'
+
+/** Channels that subscribe (an announce on a channel opened just for it has no binding). */
+const subscribed = () => relay().created.filter((c) => c.broadcastEvents)
+/** Requests that read the relay: a HEAD or a pull. */
+const looks = () => relay().heads + relay().pulls
+import { syncMessage } from '../syncEngine'
 
 vi.mock(
   '@supabase/supabase-js',
@@ -37,6 +48,7 @@ beforeEach(() => {
   localStorage.clear()
   stubRelayEnv()
   resetRelay()
+  steadyRandom() // the backoff jitter is asserted elsewhere (sync.status)
   Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
 })
 
@@ -93,6 +105,31 @@ describe('hide syncs what is pending (AC-24)', () => {
     expect(relay().pulls).toBe(pulls + 1) // the push timer did not fire a second cycle
   })
 
+  it('sends the hide push with keepalive on pagehide, even while the page still reads visible', async () => {
+    const phone = await connected()
+    relay().latency = { pull: 0, push: 1000, realtime: 0 }
+    phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
+    // the SDK's fetch (relayFetch): what it does to a request sent while this push is in flight
+    const options: unknown = relay().clientOptions.at(-1)
+    const global = isObject(options) && isObject(options.global) ? options.global : {}
+    const sdkFetch: unknown = global.fetch
+    if (!isFetch(sdkFetch)) throw new Error('no relay fetch')
+    const sent: (RequestInit | undefined)[] = []
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((_input: unknown, init?: RequestInit) => {
+        sent.push(init)
+        return Promise.resolve(new Response('[]'))
+      }),
+    )
+    window.dispatchEvent(new Event('pagehide')) // Safari may not say 'hidden' first
+    await advance(100)
+    await sdkFetch('http://relay.test/rest/v1/sync_buckets', { method: 'POST', body: '{}' })
+    expect(sent.at(-1)?.keepalive).toBe(true)
+    await advance(2000)
+    vi.unstubAllGlobals()
+  })
+
   it('runs no cycle when nothing is pending', async () => {
     await connected()
     const before = { pulls: relay().pulls, upserts: relay().upserts }
@@ -103,48 +140,58 @@ describe('hide syncs what is pending (AC-24)', () => {
 })
 
 describe('resume, online and offline (AC-25)', () => {
-  it('syncs on becoming visible more than 30 s after the last sync, and not within 30 s', async () => {
-    await connected()
-    const pulls = relay().pulls
+  // PR-3 (P3-15): a resume is a HEAD, so it may run 5 s after the last cycle (was 30 s).
+  it('resumes with one HEAD on becoming visible more than 5 s after the last cycle, not within 5 s', async () => {
+    const phone = await connected()
+    await settle(phone.sync.useSyncStore.getState().triggerSync()) // the last cycle: now
+    const before = { heads: relay().heads, pulls: relay().pulls }
     setVisibility('hidden')
-    await advance(20_000)
+    await advance(3000)
     setVisibility('visible')
     await advance(100)
-    expect(relay().pulls).toBe(pulls)
+    expect(relay().heads).toBe(before.heads)
 
     setVisibility('hidden')
-    await advance(31_000)
+    await advance(6000)
     setVisibility('visible')
     await advance(100)
-    expect(relay().pulls).toBe(pulls + 1)
+    expect({ heads: relay().heads, pulls: relay().pulls }).toEqual({
+      heads: before.heads + 1,
+      pulls: before.pulls,
+    })
   })
 
   it('resets the backoff on resume', async () => {
     const phone = await connected()
-    failNext('pull', ...Array.from({ length: 6 }, (): Failure => ({ status: 503 })))
+    // The relay is down for five pulls and two HEADs.
+    failNext('pull', ...Array.from({ length: 5 }, (): Failure => ({ status: 503 })))
+    failNext('head', { status: 503 }, { status: 503 })
     await settle(phone.sync.useSyncStore.getState().triggerSync())
     await advance(2000 + 4000 + 8000 + 16_000) // four retries fail; the next would wait 32 s
-    const pulls = relay().pulls
+    const tries = looks()
     setVisibility('hidden')
     setVisibility('visible')
     await advance(100)
-    expect(relay().pulls).toBe(pulls + 1) // the sixth failure; the retry now waits 2 s
+    expect(looks()).toBe(tries + 1) // at once (a HEAD, failing); the retry now waits 2 s
     await advance(2000)
-    expect(relay().pulls).toBe(pulls + 2)
+    expect(looks()).toBe(tries + 2) // failing again: the next waits 4 s
+    await advance(4000)
+    expect(looks()).toBe(tries + 3)
     expect(phone.sync.useSyncStore.getState().cloudStatus).toBe('synced')
   })
 
   it("syncs at once on 'online', and the next failure waits 2 s", async () => {
     const phone = await connected()
-    failNext('pull', ...Array.from({ length: 4 }, (): Failure => ({ status: 503 })))
+    failNext('pull', ...Array.from({ length: 3 }, (): Failure => ({ status: 503 })))
+    failNext('head', { status: 503 })
     await settle(phone.sync.useSyncStore.getState().triggerSync())
     await advance(2000 + 4000) // two retries fail; the next would wait 8 s
-    const pulls = relay().pulls
+    const tries = looks()
     goOnline()
     await advance(100)
-    expect(relay().pulls).toBe(pulls + 1) // the fourth failure; the retry now waits 2 s
+    expect(looks()).toBe(tries + 1) // at once, failing; the retry now waits 2 s
     await advance(2000)
-    expect(relay().pulls).toBe(pulls + 2)
+    expect(looks()).toBe(tries + 2)
     expect(phone.sync.useSyncStore.getState().cloudStatus).toBe('synced')
   })
 
@@ -176,7 +223,7 @@ describe('resume, online and offline (AC-25)', () => {
     goOffline()
     expect(phone.sync.useSyncStore.getState()).toMatchObject({
       cloudStatus: 'offline',
-      lastError: { kind: 'offline', message: phone.sync.syncMessage('offline') },
+      lastError: { kind: 'offline', message: syncMessage('offline') },
     })
   })
 
@@ -204,12 +251,12 @@ describe('resume, online and offline (AC-25)', () => {
     await advance(5000)
     setVisibility('hidden') // backgrounded while offline
     await advance(60_000)
-    expect(relay().created).toHaveLength(0)
+    expect(subscribed()).toHaveLength(0)
     // The network came back while the app was frozen: the page never saw 'online'.
     vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(true)
     setVisibility('visible')
     await advance(1000)
-    expect(relay().created).toHaveLength(1)
+    expect(subscribed()).toHaveLength(1)
     expect(relay().channels.size).toBe(1)
     expect(phone.sync.useSyncStore.getState().cloudStatus).toBe('synced')
   })
@@ -237,15 +284,18 @@ describe('backoff (AC-26)', () => {
 
 describe('realtime re-subscribe catches up (AC-27)', () => {
   it.each(['CHANNEL_ERROR', 'TIMED_OUT', 'CLOSED'])(
-    'runs one cycle when SUBSCRIBED follows %s',
+    'runs one cycle when SUBSCRIBED follows %s (a HEAD: nothing changed meanwhile)',
     async (status) => {
       await connected()
-      const channel = relay().created.at(-1)
-      const pulls = relay().pulls
+      const channel = subscribed().at(-1)
+      const before = { heads: relay().heads, pulls: relay().pulls }
       channel?.emit(status)
       await advance(2000 + 10 + 100) // reconnect delay, then SUBSCRIBED
-      expect(relay().created.length).toBeGreaterThan(1)
-      expect(relay().pulls).toBe(pulls + 1)
+      expect(subscribed().length).toBeGreaterThan(1)
+      expect({ heads: relay().heads, pulls: relay().pulls }).toEqual({
+        heads: before.heads + 1,
+        pulls: before.pulls,
+      })
     },
   )
 
@@ -253,12 +303,12 @@ describe('realtime re-subscribe catches up (AC-27)', () => {
     vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false)
     const phone = await bootDevice({ expenses: [expense('e1')], savedCode: SYNC_CODE })
     await advance(5000)
-    expect(relay().created).toHaveLength(0)
+    expect(subscribed()).toHaveLength(0)
     expect(phone.sync.useSyncStore.getState().cloudStatus).toBe('offline')
 
     goOnline()
     await advance(1000)
-    expect(relay().created).toHaveLength(1)
+    expect(subscribed()).toHaveLength(1)
     expect(relay().channels.size).toBe(1)
     expect(phone.sync.useSyncStore.getState().cloudStatus).toBe('synced')
     expect(relayRows()).toContainEqual(expect.objectContaining({ id: 'e1' }))

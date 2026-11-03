@@ -108,7 +108,15 @@ describe('F-004', HEAVY, () => {
       await w.clock.run(3000)
     }
     await w.settle()
+    // v5 holds all 8 at once, whatever the old client does …
+    expect(v5.doc.expenses.size).toBe(8)
+    // … but v0.8.4 can drop a row again (its own F-001), and v5 then waits out the 10-minute memo
+    // before pushing the same news again (§11.4): the old client gets the memo window's time and
+    // one poll, never more (0.11.0 beside 0.8.4 converges in at most that; 0.10.0 settled first)
+    await w.clock.run(11 * 60_000)
     const old = must(w.old[0]).client
+    expect(old.s.expenses).toHaveLength(8)
+    await w.settle()
     expect(old.s.expenses).toHaveLength(8)
     const file = decodeWire(parseJson(JSON.stringify(encodeBackupFile(v5.doc))), 'file')
     v5.op((doc, ctx) => deleteAllEverywhere(doc, ctx))

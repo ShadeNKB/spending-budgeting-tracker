@@ -1,16 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { format } from 'date-fns'
 import { SyncPanel } from './SyncPanel'
+import { PREV_KEY, keepPrevious } from './previousCode'
+import { storage } from '../../services/storage'
 import { getUpdateController } from '../../app/swUpdate'
 import {
   OLD_DEVICE_WAITING,
+  SYNC_OFF_MESSAGE,
+  SYNC_RELOAD_MESSAGE,
   clockTime,
   failingSinceMessage,
-  syncMessage,
   useSyncStore,
+  type DeviceRow,
   type SyncFailure,
   type SyncResult,
+  type SyncView,
 } from '../../stores/useSyncStore'
+import { previewJoin, type JoinPreview } from '../../stores/syncEngine'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useUIStore } from '../../stores/useUIStore'
 
@@ -19,23 +26,90 @@ vi.mock('../../services/syncConfig', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../services/syncConfig')>()),
   syncEnabled: true,
 }))
+// The engine is stubbed: the panel reaches it only through loadSyncEngine() (Join's preview).
+vi.mock('../../stores/syncEngine', () => ({ previewJoin: vi.fn() }))
+vi.mock('../../stores/useSyncStore', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../stores/useSyncStore')>()),
+  loadSyncEngine: vi.fn(() => import('../../stores/syncEngine')),
+}))
 
-const CODE = '11111111-1111-4111-8111-111111111111'
+const CODE = '11111111-1111-4111-8111-11111111a1b2'
 const NOW = Date.UTC(2026, 9, 19, 8, 0, 0)
+const DAY = 24 * 60 * 60_000
 const TEN_MINUTES = 10 * 60_000
+
+/** The engine's words (syncEngine.ts owns them): the panel shows lastError.message as it is. */
+const MSG: Record<SyncFailure['kind'], string> = {
+  offline:
+    "You're offline. Changes are saved on this device and will sync when you're back online.",
+  network: "Couldn't reach the sync server. Your changes are saved on this device.",
+  server: 'The sync server had a problem. Your changes are saved on this device.',
+  permission: 'The sync server refused access. Your data is safe on this device.',
+  invalid:
+    "The synced copy couldn't be read, so nothing was merged. Your data is safe on this device.",
+  busy: 'Your devices kept syncing at the same moment. Your changes are saved on this device.',
+  'too-large':
+    "Sync paused: your data (1365 KB) is too large for the sync server. It's still saved here — export a backup.",
+  moved: 'Sync moved to a newer version. Reload SpendTrack to update.',
+  'update-required': 'Sync moved to a newer version. Reload SpendTrack to update.',
+  reload: SYNC_RELOAD_MESSAGE,
+  'not-found': 'No synced data found for this code. Check it on your other device.',
+  denied: 'Sync paused: the sync server refused access. Your data is safe on this device.',
+}
+const NEWER_CONFIG =
+  'Sync on this device was set up by a newer SpendTrack. Reload SpendTrack to update. Your data is safe here.'
+
 const OK: SyncResult = { ok: true, pushed: true, changedLocal: false }
-const NETWORK: SyncResult = { ok: false, error: 'network', message: syncMessage('network') }
-const OFF: SyncResult = { ok: false, error: 'off', message: syncMessage('off') }
-const failed = (error: Exclude<SyncFailure['kind'], 'too-large'>): SyncResult => ({
+const OFF: SyncResult = { ok: false, error: 'off', message: SYNC_OFF_MESSAGE }
+const failed = (error: SyncFailure['kind']): SyncResult => ({
   ok: false,
   error,
-  message: syncMessage(error),
+  message: MSG[error],
 })
-const failure = (kind: SyncFailure['kind']): SyncFailure => ({
+const NETWORK = failed('network')
+const failure = (kind: SyncFailure['kind'], extra: Partial<SyncFailure> = {}): SyncFailure => ({
   kind,
-  message: syncMessage(kind, 1365),
+  message: MSG[kind],
   since: NOW,
+  ...extra,
 })
+const FOUND: JoinPreview = {
+  kind: 'found',
+  here: 2,
+  synced: 5,
+  after: 7,
+  removed: 0,
+  unreadable: 0,
+}
+
+const device = (over: Partial<DeviceRow>): DeviceRow => ({
+  id: 'me',
+  name: 'Windows · Chrome',
+  app: __APP_VERSION__,
+  mode: 'table',
+  me: true,
+  seen: NOW,
+  rpcSince: 0,
+  stale: false,
+  older: false,
+  legacy: false,
+  ...over,
+})
+const view = (over: Partial<SyncView> = {}): SyncView => ({
+  codeMasked: '••••-…-a1b2',
+  transport: 'table',
+  live: 'on',
+  devices: [
+    device({}),
+    device({ id: 'phone', name: 'iPhone · Safari', me: false, seen: NOW - 5 * 60_000 }),
+  ],
+  legacy: { v084At: null, v085At: null, v5preAt: null },
+  sizePct: 12,
+  allCurrent: true,
+  lockdown: null,
+  ...over,
+})
+
 /**
  * The banner box the eye sees showing `text`. Its words are hidden from screen readers, which
  * hear them from the panel's one live region instead.
@@ -57,6 +131,13 @@ function statusRow(): HTMLElement {
   return row
 }
 
+/** The banners' live region (the first status region of the linked view). */
+function bannerRegion(): HTMLElement {
+  const region = document.querySelector<HTMLElement>('[role="status"]')
+  if (!region) throw new Error('no banner region')
+  return region
+}
+
 const initialSync = useSyncStore.getState()
 const initialUI = useUIStore.getState()
 const initialExpenses = useExpenseStore.getState()
@@ -64,6 +145,8 @@ const initialExpenses = useExpenseStore.getState()
 beforeEach(() => {
   vi.useFakeTimers({ shouldAdvanceTime: true })
   vi.setSystemTime(NOW)
+  localStorage.clear()
+  vi.mocked(previewJoin).mockImplementation(() => Promise.resolve(FOUND))
 })
 
 afterEach(() => {
@@ -73,6 +156,7 @@ afterEach(() => {
   useExpenseStore.setState(initialExpenses, true)
   vi.useRealTimers()
   vi.restoreAllMocks()
+  vi.mocked(previewJoin).mockReset()
   vi.unstubAllGlobals()
 })
 
@@ -82,6 +166,24 @@ function connectedPanel(state: Partial<ReturnType<typeof useSyncStore.getState>>
   useSyncStore.setState({ syncId: CODE, cloudStatus: 'synced', lastSyncAt: NOW, ...state })
   return render(<SyncPanel />)
 }
+
+async function settle() {
+  await act(async () => {
+    for (let i = 0; i < 6; i++) await Promise.resolve()
+  })
+}
+
+/** Types `code` into Join, previews it, and confirms the preview. */
+async function joinWith(code = CODE) {
+  fireEvent.change(screen.getByLabelText('Sync code'), { target: { value: code } })
+  fireEvent.click(screen.getByRole('button', { name: 'Join' }))
+  await settle()
+  const question = screen.getByRole('group', { name: 'Join this sync?' })
+  fireEvent.click(within(question).getByRole('button', { name: 'Join' }))
+  await settle()
+}
+
+const generate = () => screen.getByRole('button', { name: /Generate sync code/ })
 
 describe('Sync now', () => {
   it('shows Synced only for an ok result', async () => {
@@ -96,15 +198,15 @@ describe('Sync now', () => {
   })
 
   it.each([
-    [false, []],
-    [true, [['info', OLD_DEVICE_WAITING]]],
+    [0, []],
+    [2, [['info', OLD_DEVICE_WAITING]]],
   ])(
-    'does not say Synced when the push was held back for an old device (banner up before: %s)',
+    'does not say Synced when the push was held back for an old device (waiting before: %i)',
     async (before, expected) => {
       connectedPanel({
         waitingForOld: before,
         triggerSync: () => {
-          useSyncStore.setState({ waitingForOld: true })
+          useSyncStore.setState({ waitingForOld: 2 })
           return Promise.resolve({ ok: true, pushed: false, changedLocal: false })
         },
       })
@@ -126,21 +228,19 @@ describe('Sync now', () => {
       return Promise.resolve(NETWORK)
     }
     connectedPanel({ triggerSync: failNow })
-    expect(screen.queryByText(syncMessage('network'))).toBeNull() // no banner yet
+    expect(screen.queryByText(MSG.network)).toBeNull() // no banner yet
     const said: string[] = []
+    const region = bannerRegion()
     const watch = new MutationObserver(() => {
-      const text = document.querySelector('[role="status"]')?.textContent ?? ''
-      if (text !== said.at(-1)) said.push(text)
+      if (region.textContent !== said.at(-1)) said.push(region.textContent)
     })
-    const banners = document.querySelector('[role="status"]')
-    if (!banners) throw new Error('no banner region')
-    watch.observe(banners, { subtree: true, childList: true, characterData: true })
+    watch.observe(region, { subtree: true, childList: true, characterData: true })
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Sync now' }))
       await Promise.resolve()
     })
-    expect(said).toEqual([syncMessage('network')]) // the banner region, once
+    expect(said).toEqual([MSG.network]) // the banner region, once
     expect(toasts()).toEqual([]) // and no toast saying it again
 
     // The same failure again: nothing changes on screen, so the toast answers the tap.
@@ -149,17 +249,8 @@ describe('Sync now', () => {
       await Promise.resolve()
     })
     watch.disconnect()
-    expect(said).toEqual([syncMessage('network')])
-    expect(toasts()).toEqual([['warning', syncMessage('network')]])
-  })
-
-  it('shows the failure, never Synced, for ok:false', async () => {
-    connectedPanel({ triggerSync: () => Promise.resolve(NETWORK) })
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Sync now' }))
-      await Promise.resolve()
-    })
-    expect(toasts()).toEqual([['warning', syncMessage('network')]])
+    expect(said).toEqual([MSG.network])
+    expect(toasts()).toEqual([['warning', MSG.network]])
   })
 
   it('is busy only while its own request runs, keeps focus, and has a 44 px target on phones', async () => {
@@ -200,7 +291,7 @@ describe('Sync now', () => {
   })
 
   // One severity everywhere: amber while a retried failure is young, red once it has failed
-  // for 10 minutes, red for refused access.
+  // for 10 minutes, red for what needs the owner.
   it.each([
     ['offline', 'warning'],
     ['moved', 'warning'],
@@ -209,27 +300,30 @@ describe('Sync now', () => {
     ['network', 'warning'],
     ['server', 'warning'],
     ['invalid', 'warning'],
+    ['busy', 'warning'],
     ['permission', 'error'],
+    ['not-found', 'error'],
+    ['denied', 'error'],
   ] as const)('reports a fresh %s failure in its own colour (%s)', async (kind, tone) => {
     connectedPanel({ triggerSync: () => Promise.resolve(failed(kind)) })
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Sync now' }))
       await Promise.resolve()
     })
-    expect(toasts()).toEqual([[tone, syncMessage(kind)]])
+    expect(toasts()).toEqual([[tone, MSG[kind]]])
   })
 
   it('reports a failure that has lasted 10 minutes in red', async () => {
     connectedPanel({
       cloudStatus: 'error',
-      lastError: { ...failure('network'), since: NOW - TEN_MINUTES },
-      triggerSync: () => Promise.resolve(failed('network')),
+      lastError: failure('network', { since: NOW - TEN_MINUTES }),
+      triggerSync: () => Promise.resolve(NETWORK),
     })
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Sync now' }))
       await Promise.resolve()
     })
-    expect(toasts()).toEqual([['error', syncMessage('network')]])
+    expect(toasts()).toEqual([['error', MSG.network]])
   })
 
   it('says nothing when sync was switched off while it ran', async () => {
@@ -242,210 +336,75 @@ describe('Sync now', () => {
   })
 })
 
-describe('Connect and Generate', () => {
-  async function connectWith(result: SyncResult) {
+describe('Generate', () => {
+  it.each([
+    [OK, ['success', 'Sync code created. Join it on your other device.']],
+    [NETWORK, ['warning', `Sync code created, but the first sync didn't finish: ${MSG.network}`]],
+    [failed('moved'), ['warning', `Sync code created. ${MSG.moved}`]],
+    [
+      failed('too-large'),
+      [
+        'error',
+        "Sync code created. Sync is paused: Your data (1365 KB) is too large for the sync server. It's still saved here — export a backup.",
+      ],
+    ],
+    [failed('permission'), ['error', 'Sync code created, but the sync server refused access.']],
+    [OFF, null],
+  ])('reports the first sync honestly (%j)', async (result, toast) => {
     const setupSync = vi.fn(() => Promise.resolve(result))
     useSyncStore.setState({ setupSync })
     render(<SyncPanel />)
-    const input = screen.getByPlaceholderText('Paste sync code from another device')
-    fireEvent.change(input, { target: { value: CODE } })
     await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+      fireEvent.click(generate())
       await Promise.resolve()
     })
-    expect(setupSync).toHaveBeenCalledWith(CODE)
-    return input
-  }
-
-  it('Connect with ok says connected and clears the input', async () => {
-    const input = await connectWith(OK)
-    expect(toasts()).toEqual([['success', 'Connected — data synced']])
-    expect(input).toHaveValue('')
+    // A new random code, set up as established (it may create the relay copy).
+    expect(setupSync).toHaveBeenCalledWith(expect.stringMatching(/^[0-9a-f-]{36}$/))
+    expect(toasts()).toEqual(toast ? [toast] : [])
   })
 
-  it.each(['Connect', 'Generate'] as const)(
-    '%s says the old device holds the relay when the first push was held back',
-    async (action) => {
-      useSyncStore.setState({
-        setupSync: () => {
-          useSyncStore.setState({ syncId: CODE, cloudStatus: 'synced', waitingForOld: true })
-          return Promise.resolve({ ok: true, pushed: false, changedLocal: false })
-        },
-      })
-      render(<SyncPanel />)
-      if (action === 'Connect') {
-        fireEvent.change(screen.getByPlaceholderText('Paste sync code from another device'), {
-          target: { value: CODE },
-        })
-      }
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', { name: action === 'Connect' ? 'Connect' : /Generate/ }),
-        )
-        await Promise.resolve()
-      })
-      expect(toasts()).toEqual([['info', OLD_DEVICE_WAITING]])
-    },
-  )
-
-  it('Connect with ok:false says so, keeps the code and clears the input', async () => {
-    const input = await connectWith(NETWORK)
-    expect(toasts()).toEqual([
-      ['warning', `Code saved, but couldn't sync yet: ${syncMessage('network')}`],
-    ])
-    expect(input).toHaveValue('')
-  })
-
-  // Never "Connected" for a relay that refused this device, and no "yet": waiting fixes nothing.
-  it.each([
-    ['Connect', 'Code saved, but the sync server refused access.'],
-    ['Generate', 'Sync code created, but the sync server refused access.'],
-  ] as const)(
-    '%s against a refusing relay says the code is saved and access refused',
-    async (action, message) => {
-      const refused = failure('permission')
-      useSyncStore.setState({
-        setupSync: () => {
-          useSyncStore.setState({ syncId: CODE, cloudStatus: 'error', lastError: refused })
-          return Promise.resolve({ ok: false, error: 'permission', message: refused.message })
-        },
-      })
-      render(<SyncPanel />)
-      if (action === 'Connect') {
-        fireEvent.change(screen.getByPlaceholderText('Paste sync code from another device'), {
-          target: { value: CODE },
-        })
-      }
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', { name: action === 'Connect' ? 'Connect' : /Generate/ }),
-        )
-        await Promise.resolve()
-      })
-      expect(toasts()).toEqual([['error', message]])
-    },
-  )
-
-  it.each([
-    [
-      'too-large' as const,
-      'error',
-      "Code saved. Sync is paused: Your data (1228 KB) is too large for the sync server. It's still saved here — export a backup.",
-    ],
-    ['moved' as const, 'warning', `Code saved. ${syncMessage('moved')}`],
-    ['update-required' as const, 'warning', `Code saved. ${syncMessage('update-required')}`],
-  ])('Connect into a %s pause promises no sync "yet"', async (error, kind, message) => {
-    await connectWith({ ok: false, error, message: syncMessage(error, 1228) })
-    expect(toasts()).toEqual([[kind, message]])
-  })
-
-  it.each([
-    ['too-large' as const, 'error', 'Code saved. Sync is paused.'],
-    ['moved' as const, 'warning', 'Code saved. Sync is paused.'],
-    ['network' as const, 'warning', "Code saved, but couldn't sync yet."],
-  ])(
-    'Connect into a %s failure the banner explains: the toast leaves the why to it',
-    async (kind, tone, message) => {
-      const lastError = failure(kind)
-      const setupSync = vi.fn(() => {
-        useSyncStore.setState({ syncId: CODE, cloudStatus: 'error', lastError })
-        return Promise.resolve({ ok: false, error: kind, message: lastError.message } as const)
-      })
-      useSyncStore.setState({ setupSync })
-      render(<SyncPanel />)
-      fireEvent.change(screen.getByPlaceholderText('Paste sync code from another device'), {
-        target: { value: CODE },
-      })
-      await act(async () => {
-        fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
-        await Promise.resolve()
-      })
-      expect(toasts()).toEqual([[tone, message]])
-      const region = document.querySelector('[role="status"]')
-      expect(region?.textContent).toContain(
-        kind === 'moved'
-          ? syncMessage('moved')
-          : kind === 'too-large'
-            ? 'too large'
-            : lastError.message,
-      )
-    },
-  )
-
-  it('Enter in the code field connects once: its activation never presses Sync now too', async () => {
-    const setupSync = vi.fn(() => {
-      useSyncStore.setState({ syncId: CODE, cloudStatus: 'synced', lastSyncAt: NOW })
-      return Promise.resolve(OK)
+  it('says the old device holds the relay when the first push was held back', async () => {
+    useSyncStore.setState({
+      setupSync: () => {
+        useSyncStore.setState({ syncId: CODE, cloudStatus: 'synced', waitingForOld: 1 })
+        return Promise.resolve({ ok: true, pushed: false, changedLocal: false })
+      },
     })
-    const triggerSync = vi.fn(() => Promise.resolve(OK))
-    useSyncStore.setState({ setupSync, triggerSync })
     render(<SyncPanel />)
-    const input = screen.getByPlaceholderText('Paste sync code from another device')
-    fireEvent.change(input, { target: { value: CODE } })
-    let notCancelled = true
     await act(async () => {
-      notCancelled = fireEvent.keyDown(input, { key: 'Enter' })
+      fireEvent.click(generate())
       await Promise.resolve()
     })
-    // The default action (keypress, which activates whatever has focus by then) is cancelled.
-    expect(notCancelled).toBe(false)
-    expect(setupSync).toHaveBeenCalledTimes(1)
-    expect(triggerSync).not.toHaveBeenCalled()
-    expect(toasts()).toEqual([['success', 'Connected — data synced']])
+    expect(toasts()).toEqual([['info', OLD_DEVICE_WAITING]])
   })
 
-  it('Generate keeps focus while it sets up (aria-disabled, not disabled), and runs once', async () => {
+  it('keeps focus while it sets up (aria-disabled, not disabled), and runs once', async () => {
     let finish: (r: SyncResult) => void = () => undefined
     const pending = new Promise<SyncResult>((resolve) => (finish = resolve))
     const setupSync = vi.fn(() => pending)
     useSyncStore.setState({ setupSync })
     render(<SyncPanel />)
-    const generate = screen.getByRole('button', { name: /Generate sync code/ })
-    generate.focus()
-    fireEvent.click(generate)
+    const button = generate()
+    button.focus()
+    fireEvent.click(button)
     const busy = screen.getByRole('button', { name: /Setting up/ })
-    expect(busy).toBe(generate)
+    expect(busy).toBe(button)
     expect(busy).toHaveAttribute('aria-disabled', 'true')
     expect(busy).toBeEnabled()
     expect(busy).toHaveFocus()
     fireEvent.click(busy) // a second press while it runs does nothing
-    const connect = screen.getByRole('button', { name: 'Connect' })
-    fireEvent.change(screen.getByPlaceholderText('Paste sync code from another device'), {
-      target: { value: CODE },
-    })
-    expect(connect).toHaveAttribute('aria-disabled', 'true')
-    fireEvent.click(connect) // nor does Connect
+    fireEvent.change(screen.getByLabelText('Sync code'), { target: { value: CODE } })
+    const join = screen.getByRole('button', { name: 'Join' })
+    expect(join).toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(join) // nor does Join
+    await settle()
     expect(setupSync).toHaveBeenCalledTimes(1)
+    expect(previewJoin).not.toHaveBeenCalled()
     await act(async () => {
       finish(OK)
       await pending
     })
-    expect(generate).toHaveAttribute('aria-disabled', 'false')
-  })
-
-  it.each([
-    [OK, ['success', 'Sync code generated — enter it on your other device']],
-    [
-      NETWORK,
-      ['warning', `Sync code created, but the first sync didn't finish: ${syncMessage('network')}`],
-    ],
-    [failed('moved'), ['warning', `Sync code created. ${syncMessage('moved')}`]],
-    [
-      { ok: false, error: 'too-large', message: syncMessage('too-large', 1228) } as const,
-      [
-        'error',
-        "Sync code created. Sync is paused: Your data (1228 KB) is too large for the sync server. It's still saved here — export a backup.",
-      ],
-    ],
-    [OFF, null],
-  ])('Generate reports the first sync honestly (%j)', async (result, toast) => {
-    useSyncStore.setState({ setupSync: () => Promise.resolve(result) })
-    render(<SyncPanel />)
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /Generate sync code/ }))
-      await Promise.resolve()
-    })
-    expect(toasts()).toEqual(toast ? [toast] : [])
+    expect(button).toHaveAttribute('aria-disabled', 'false')
   })
 
   it('Disconnect during a hung first sync frees the buttons and drops the late result', async () => {
@@ -461,301 +420,291 @@ describe('Connect and Generate', () => {
       },
     })
     render(<SyncPanel />)
-    fireEvent.click(screen.getByRole('button', { name: /Generate sync code/ }))
+    fireEvent.click(generate())
     fireEvent.click(screen.getByRole('button', { name: /Disconnect sync/ }))
     fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
 
-    expect(screen.getByRole('button', { name: /Generate sync code/ })).toBeEnabled()
-    fireEvent.change(screen.getByPlaceholderText('Paste sync code from another device'), {
-      target: { value: CODE },
-    })
-    expect(screen.getByRole('button', { name: 'Connect' })).toBeEnabled()
+    expect(generate()).toHaveAttribute('aria-disabled', 'false')
+    fireEvent.change(screen.getByLabelText('Sync code'), { target: { value: CODE } })
+    expect(screen.getByRole('button', { name: 'Join' })).toHaveAttribute('aria-disabled', 'false')
     await act(async () => {
       finish(NETWORK) // the stale request ends at its deadline, ~15 s later
       await pending
     })
     expect(toasts()).toEqual([['info', 'Sync disconnected']])
-    expect(screen.getByRole('button', { name: /Generate sync code/ })).toBeEnabled()
+  })
+
+  it('AC-U6: asks "Start a separate sync?" while this device remembers a code', async () => {
+    keepPrevious(CODE, NOW - DAY)
+    const setupSync = vi.fn(() => Promise.resolve(OK))
+    useSyncStore.setState({ setupSync })
+    render(<SyncPanel />)
+    fireEvent.click(generate())
+    const question = screen.getByRole('group', { name: 'Start a separate sync?' })
+    expect(question).toHaveAccessibleDescription(
+      'Your other devices stay on the old code. Reconnect instead to keep one sync.',
+    )
+    expect(within(question).getByRole('button', { name: 'Cancel' })).toHaveFocus()
+    expect(setupSync).not.toHaveBeenCalled()
+    await act(async () => {
+      fireEvent.click(within(question).getByRole('button', { name: 'Make a new code' }))
+      await Promise.resolve()
+    })
+    expect(setupSync).toHaveBeenCalledTimes(1)
+    expect(setupSync).not.toHaveBeenCalledWith(CODE)
+  })
+
+  it('Cancel on "Start a separate sync?" makes nothing and gives focus back to Generate', () => {
+    keepPrevious(CODE, NOW - DAY)
+    const setupSync = vi.fn(() => Promise.resolve(OK))
+    useSyncStore.setState({ setupSync })
+    render(<SyncPanel />)
+    fireEvent.click(generate())
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    expect(setupSync).not.toHaveBeenCalled()
+    expect(generate()).toHaveFocus()
+  })
+
+  it('asks nothing extra with no remembered code', async () => {
+    const setupSync = vi.fn(() => Promise.resolve(OK))
+    useSyncStore.setState({ setupSync })
+    render(<SyncPanel />)
+    await act(async () => {
+      fireEvent.click(generate())
+      await Promise.resolve()
+    })
+    expect(screen.queryByRole('group', { name: 'Start a separate sync?' })).toBeNull()
+    expect(setupSync).toHaveBeenCalledTimes(1)
   })
 })
 
-describe('status row', () => {
-  it('ages "Synced · just now" while the panel stays open', () => {
-    connectedPanel({ lastSyncAt: NOW })
-    expect(statusRow()).toHaveTextContent('Synced · just now')
-    act(() => {
-      vi.advanceTimersByTime(5 * 60_000)
+describe('Join (never creates, AC-U3)', () => {
+  it('previews, then joins with the code as a joiner: "Joined. This device is synced."', async () => {
+    const setupSync = vi.fn(() => Promise.resolve(OK))
+    useSyncStore.setState({ setupSync })
+    render(<SyncPanel />)
+    await joinWith()
+    expect(previewJoin).toHaveBeenCalledWith(CODE)
+    expect(setupSync).toHaveBeenCalledTimes(1)
+    expect(setupSync).toHaveBeenCalledWith(CODE, { join: true })
+    expect(toasts()).toEqual([['success', 'Joined. This device is synced.']])
+  })
+
+  it('a code with no synced copy saves nothing and sets nothing up', async () => {
+    vi.mocked(previewJoin).mockImplementation(() => Promise.resolve({ kind: 'not-found' }))
+    const setupSync = vi.fn(() => Promise.resolve(OK))
+    useSyncStore.setState({ setupSync })
+    render(<SyncPanel />)
+    fireEvent.change(screen.getByLabelText('Sync code'), { target: { value: CODE } })
+    fireEvent.click(screen.getByRole('button', { name: 'Join' }))
+    await settle()
+    expect(screen.getByText(MSG['not-found'])).toBeInTheDocument()
+    expect(setupSync).not.toHaveBeenCalled()
+    expect(localStorage.length).toBe(0)
+  })
+
+  it('says the old device holds the relay when the first push was held back', async () => {
+    useSyncStore.setState({
+      setupSync: () => {
+        useSyncStore.setState({ syncId: CODE, cloudStatus: 'synced', waitingForOld: 1 })
+        return Promise.resolve({ ok: true, pushed: false, changedLocal: false })
+      },
     })
-    expect(statusRow()).toHaveTextContent('Synced · 5m ago')
-    act(() => {
-      vi.advanceTimersByTime(25 * 60_000)
-    })
-    expect(statusRow()).toHaveTextContent('Synced · 30m ago')
+    render(<SyncPanel />)
+    await joinWith()
+    expect(toasts()).toEqual([['info', OLD_DEVICE_WAITING]])
   })
 
   it.each([
-    // Linked, before the first cycle (the engine may still be loading).
-    [{ cloudStatus: 'idle' as const }, 'Starting sync…'],
-    [{ cloudStatus: 'synced' as const, pendingLocal: true }, 'Saved here · syncing soon'],
-    [{ cloudStatus: 'synced' as const, lastSyncAt: NOW - 120_000 }, 'Synced · 2m ago'],
-    [{ cloudStatus: 'syncing' as const, pendingLocal: true }, 'Syncing…'],
-    [{ cloudStatus: 'syncing' as const, lastSyncAt: NOW - 120_000 }, 'Synced · 2m ago'],
+    [NETWORK, 'warning', `Code saved, but couldn't sync yet: ${MSG.network}`],
+    [failed('permission'), 'error', 'Code saved, but the sync server refused access.'],
     [
-      { cloudStatus: 'syncing' as const, pendingLocal: true, lastError: failure('offline') },
-      'Syncing…',
+      failed('not-found'),
+      'error',
+      'Code saved. Sync is paused: No synced data found for this code. Check it on your other device.',
     ],
     [
-      { cloudStatus: 'synced' as const, waitingForOld: true },
-      'Saved here · other device needs update',
+      failed('too-large'),
+      'error',
+      "Code saved. Sync is paused: Your data (1365 KB) is too large for the sync server. It's still saved here — export a backup.",
     ],
-    // Held back with nothing new here: no push is due, so not "syncing soon".
-    [
-      { cloudStatus: 'synced' as const, pendingLocal: true, waitingForOld: true },
-      'Saved here · other device needs update',
-    ],
-    // The row keeps naming what is wrong; the banner under it says since when.
-    [
-      {
-        cloudStatus: 'error' as const,
-        lastError: { ...failure('server'), since: NOW - TEN_MINUTES },
-      },
-      'Sync server error',
-    ],
-    [{ cloudStatus: 'offline' as const }, "Offline — will sync when you're back"],
-    // The engine's code failed to load here: nothing promises it loads once back online.
-    [{ cloudStatus: 'offline' as const, engineFailed: true }, 'Offline · not synced'],
-    // Refused access outlasts an outage: the row keeps saying it offline.
-    [
-      { cloudStatus: 'error' as const, lastError: failure('permission') },
-      'Sync server refused access',
-    ],
-    [{ cloudStatus: 'paused' as const }, 'Sync paused'],
-    [
-      {
-        cloudStatus: 'error' as const,
-        lastError: { kind: 'permission' as const, message: syncMessage('permission'), since: NOW },
-      },
-      'Sync server refused access',
-    ],
-  ])('%j reads "%s"', (state, label) => {
-    connectedPanel(state)
-    expect(screen.getByText(label)).toBeInTheDocument()
+    [failed('moved'), 'warning', `Code saved. ${MSG.moved}`],
+  ] as const)('a join whose first sync fails says so honestly (%j)', async (result, tone, text) => {
+    useSyncStore.setState({ setupSync: () => Promise.resolve(result) })
+    render(<SyncPanel />)
+    await joinWith()
+    expect(toasts()).toEqual([[tone, text]])
   })
 
   it.each([
-    ['network', "Can't reach the sync server"],
-    ['server', 'Sync server error'],
-    ['permission', 'Sync server refused access'],
-    ['invalid', "Couldn't read the synced copy"],
-    ['too-large', 'Sync paused'],
-    ['moved', 'Sync paused'],
+    ['too-large', 'error', 'Code saved. Sync is paused.'],
+    ['not-found', 'error', 'Code saved. Sync is paused.'],
+    ['moved', 'warning', 'Code saved. Sync is paused.'],
+    ['network', 'warning', "Code saved, but couldn't sync yet."],
   ] as const)(
-    'keeps the %s failure, never an older Synced, while a background retry runs',
-    (kind, label) => {
-      connectedPanel({ cloudStatus: 'syncing', lastSyncAt: NOW - 9000, lastError: failure(kind) })
-      expect(statusRow()).toHaveTextContent(label)
-      expect(statusRow()).not.toHaveTextContent('Synced')
+    'a join into a %s failure the banner explains: the toast leaves the why to it',
+    async (kind, tone, message) => {
+      const lastError = failure(kind)
+      useSyncStore.setState({
+        setupSync: () => {
+          useSyncStore.setState({ syncId: CODE, cloudStatus: 'error', lastError })
+          return Promise.resolve(failed(kind))
+        },
+      })
+      render(<SyncPanel />)
+      await joinWith()
+      expect(toasts()).toEqual([[tone, message]])
+      expect(bannerRegion().textContent).toContain(
+        lastError.message.replace(/^Sync paused: y/, 'Y'),
+      )
     },
   )
 
-  it.each([
-    [{ cloudStatus: 'paused' as const, lastError: failure('moved') }, 'text-warning'],
-    [{ cloudStatus: 'paused' as const, lastError: failure('too-large') }, 'text-negative'],
-    [{ cloudStatus: 'error' as const, lastError: failure('server') }, 'text-warning'],
-    [
-      {
-        cloudStatus: 'error' as const,
-        lastError: { ...failure('server'), since: NOW - TEN_MINUTES },
-      },
-      'text-negative',
-    ],
-    [{ cloudStatus: 'error' as const, lastError: failure('permission') }, 'text-negative'],
-    [{ cloudStatus: 'offline' as const }, 'text-warning'],
-    [{ cloudStatus: 'synced' as const, waitingForOld: true }, 'text-[var(--text-secondary)]'],
-    [{ cloudStatus: 'synced' as const }, 'text-positive'],
-  ])('%j is coloured %s', (state, colour) => {
-    connectedPanel(state)
-    expect(statusRow()).toHaveClass(colour)
+  it('Enter in the code field previews once: its activation never presses Sync now too', async () => {
+    const setupSync = vi.fn(() => {
+      useSyncStore.setState({ syncId: CODE, cloudStatus: 'synced', lastSyncAt: NOW })
+      return Promise.resolve(OK)
+    })
+    const triggerSync = vi.fn(() => Promise.resolve(OK))
+    useSyncStore.setState({ setupSync, triggerSync })
+    render(<SyncPanel />)
+    const input = screen.getByLabelText('Sync code')
+    fireEvent.change(input, { target: { value: CODE } })
+    let notCancelled = true
+    await act(async () => {
+      notCancelled = fireEvent.keyDown(input, { key: 'Enter' })
+      await Promise.resolve()
+    })
+    await settle()
+    // The default action (keypress, which activates whatever has focus by then) is cancelled.
+    expect(notCancelled).toBe(false)
+    expect(previewJoin).toHaveBeenCalledTimes(1)
+    expect(setupSync).not.toHaveBeenCalled() // the preview asks first
+    expect(triggerSync).not.toHaveBeenCalled()
   })
 })
 
-describe('banners', () => {
-  it('shows a held-back push in neutral grey, as the pill does (cyan means a sync in progress)', () => {
-    connectedPanel({ waitingForOld: true })
-    const dot = statusRow().previousElementSibling
-    expect(dot).toHaveClass('bg-[var(--text-tertiary)]')
-    const banner = shownBanner(OLD_DEVICE_WAITING)
-    expect(banner).toHaveClass('border-white/[0.1]', 'bg-white/[0.03]')
-    expect(`${dot?.className ?? ''} ${banner.className}`).not.toMatch(/accent/)
-  })
+describe('one question at a time (F-050)', () => {
+  const groups = () => screen.queryAllByRole('group')
+  const reconnect = () => screen.getByRole('button', { name: /^Reconnect to/ })
 
-  it.each(['network', 'server', 'permission', 'invalid'] as const)(
-    'explains a %s failure in its own words',
-    (kind) => {
-      connectedPanel({
-        cloudStatus: 'error',
-        lastError: { kind, message: syncMessage(kind), since: NOW },
-      })
-      expect(shownBanner(syncMessage(kind))).toBeInTheDocument()
-      expect(screen.getByRole('status')).toHaveTextContent(syncMessage(kind))
+  it.each([false, true])(
+    "Generate and Reconnect wait while Join's preview asks (a code remembered: %s)",
+    async (remembered) => {
+      if (remembered) keepPrevious(CODE, NOW - DAY)
+      const setupSync = vi.fn(() => Promise.resolve(OK))
+      useSyncStore.setState({ setupSync })
+      render(<SyncPanel />)
+      fireEvent.change(screen.getByLabelText('Sync code'), { target: { value: CODE } })
+      fireEvent.click(screen.getByRole('button', { name: 'Join' }))
+      await settle()
+      expect(screen.getByRole('group', { name: 'Join this sync?' })).toBeInTheDocument()
+      expect(generate()).toHaveAttribute('aria-disabled', 'true')
+      fireEvent.click(generate())
+      if (remembered) {
+        expect(reconnect()).toHaveAttribute('aria-disabled', 'true')
+        fireEvent.click(reconnect())
+      }
+      await settle()
+      expect(groups()).toHaveLength(1)
+      expect(setupSync).not.toHaveBeenCalled()
+      // Cancel: the field is back, and so are the other setups
+      fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+      expect(generate()).toHaveAttribute('aria-disabled', 'false')
     },
   )
 
-  // A button inside the live region would be read as part of the sentence ("…to update.
-  // Reload"): the region holds the sentence only, and the button is described by it.
+  it('Generate and Reconnect wait while Join checks a code', async () => {
+    keepPrevious(CODE, NOW - DAY)
+    vi.mocked(previewJoin).mockImplementation(() => new Promise<JoinPreview>(() => undefined))
+    render(<SyncPanel />)
+    fireEvent.change(screen.getByLabelText('Sync code'), { target: { value: CODE } })
+    fireEvent.click(screen.getByRole('button', { name: 'Join' }))
+    await settle()
+    expect(screen.getByRole('button', { name: 'Checking…' })).toBeInTheDocument()
+    expect(generate()).toHaveAttribute('aria-disabled', 'true')
+    expect(reconnect()).toHaveAttribute('aria-disabled', 'true')
+  })
+
+  it('Join waits while "Start a separate sync?" asks', async () => {
+    keepPrevious(CODE, NOW - DAY)
+    render(<SyncPanel />)
+    fireEvent.click(generate())
+    expect(screen.getByRole('group', { name: 'Start a separate sync?' })).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Sync code'), { target: { value: CODE } })
+    const join = screen.getByRole('button', { name: 'Join' })
+    expect(join).toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(join)
+    await settle()
+    expect(previewJoin).not.toHaveBeenCalled()
+    expect(groups()).toHaveLength(1)
+  })
+
+  it('Reconnect answers "Start a separate sync?": the question goes', () => {
+    useExpenseStore.setState({ demo: 'sample', clearSampleData: vi.fn() })
+    keepPrevious(CODE, NOW - DAY)
+    render(<SyncPanel />)
+    fireEvent.click(generate())
+    fireEvent.click(reconnect())
+    // the sample-data question asks in Reconnect's place, alone
+    expect(screen.getByRole('group', { name: 'Remove the sample data first?' })).toBeInTheDocument()
+    expect(groups()).toHaveLength(1)
+    expect(generate()).toHaveAttribute('aria-disabled', 'true')
+  })
+})
+
+describe('Reconnect (P3-18)', () => {
+  const reconnect = () => screen.queryByRole('button', { name: /^Reconnect to/ })
+
+  it('AC-U6: offers Reconnect for 30 days after a Disconnect, named without the full code', () => {
+    keepPrevious(CODE, NOW - 29 * DAY)
+    render(<SyncPanel />)
+    const button = reconnect()
+    expect(button).toHaveAccessibleName('Reconnect to the code ending in a 1 b 2')
+    expect(button).toHaveTextContent('Reconnect to ••••-…-a1b2')
+    // The local date (d MMM), however far the time zone is from UTC.
+    expect(button).toHaveAccessibleDescription(
+      `This device remembers the code until ${format(NOW + DAY, 'd MMM')}.`,
+    )
+    expect(document.body.textContent).not.toContain('11111111')
+    // Reconnect is the main action now: Generate steps back.
+    expect(generate()).not.toHaveClass('bg-accent')
+  })
+
+  it('offers nothing once the 30 days are over', () => {
+    keepPrevious(CODE, NOW - 30 * DAY)
+    render(<SyncPanel />)
+    expect(reconnect()).toBeNull()
+    expect(generate()).toHaveClass('bg-accent')
+  })
+
   it.each([
-    ['moved', 'Reload', syncMessage('moved')],
-    ['reload', 'Reload', syncMessage('reload')],
-    [
-      'too-large',
-      'Export backup',
-      "Your data (1365 KB) is too large for the sync server. It's still saved here — export a backup.",
-    ],
-  ] as const)(
-    'announces a %s banner without its button, which the sentence describes',
-    (kind, name, sentence) => {
-      connectedPanel({ cloudStatus: 'paused', lastError: failure(kind) })
-      const region = screen.getByRole('status')
-      const button = screen.getByRole('button', { name })
-      expect(region).not.toContainElement(button)
-      expect(region).toHaveTextContent(sentence, { normalizeWhitespace: false })
-      expect(region.textContent).toBe(sentence)
-      expect(button).toHaveAccessibleDescription(sentence)
-    },
-  )
-
-  it('turns a retried failure red, and says since when, once it has lasted 10 minutes', () => {
-    const since = NOW - 9 * 60_000
-    connectedPanel({ cloudStatus: 'error', lastError: { ...failure('network'), since } })
-    const banner = () => shownBanner(syncMessage('network'))
-    expect(banner()).toHaveClass('text-warning')
-    expect(statusRow()).toHaveClass('text-warning')
-
-    act(() => {
-      vi.advanceTimersByTime(60_000)
-    })
-    expect(shownBanner(failingSinceMessage(since))).toHaveClass('text-negative')
-    expect(failingSinceMessage(since)).toBe(
-      `Sync has been failing since ${clockTime(since)}. Your changes are saved on this device.`,
-    )
-    expect(statusRow()).toHaveTextContent("Can't reach the sync server")
-    expect(statusRow()).toHaveClass('text-negative')
-  })
-
-  it('explains too-large with the size under the row, without repeating "Sync paused"', () => {
-    const message = syncMessage('too-large', 1365)
-    connectedPanel({ cloudStatus: 'paused', lastError: { kind: 'too-large', message, since: NOW } })
-    expect(message).toMatch(/^Sync paused: your data \(1365 KB\)/)
-    expect(statusRow()).toHaveTextContent('Sync paused')
-    const banners = screen.getByRole('status')
-    expect(banners).toHaveTextContent(
-      "Your data (1365 KB) is too large for the sync server. It's still saved here — export a backup.",
-    )
-    expect(banners).not.toHaveTextContent('Sync paused')
-  })
-
-  it('Export backup opens Backup and asks for its Download button to take focus', () => {
-    const message = syncMessage('too-large', 1365)
-    connectedPanel({ cloudStatus: 'paused', lastError: { kind: 'too-large', message, since: NOW } })
-    const button = screen.getByRole('button', { name: 'Export backup' })
-    expect(button).toHaveClass('h-11', 'md:h-8')
-    fireEvent.click(button)
-    expect(useUIStore.getState()).toMatchObject({
-      settingsTab: 'backup',
-      settingsFocus: 'backup-download',
-    })
-  })
-
-  it('sets banner text at 13 px on phones (11 px from md up)', () => {
-    connectedPanel({ cloudStatus: 'error', lastError: failure('server') })
-    const banner = shownBanner(syncMessage('server'))
-    expect(banner).toHaveClass('text-[13px]', 'md:text-[11px]')
-  })
-
-  // The service worker is prompt-style: a plain reload is served by the old worker, so the new
-  // build that is installed and waiting would never run, and the same pause would come back.
-  it.each(['moved', 'update-required'] as const)(
-    'offers a Reload that runs the waiting build when sync %s',
-    (kind) => {
-      const reloadToLatest = vi
-        .spyOn(getUpdateController(), 'reloadToLatest')
-        .mockImplementation(() => {})
-      const reload = vi.fn()
-      vi.stubGlobal('location', { reload })
-      connectedPanel({
-        cloudStatus: 'paused',
-        lastError: { kind, message: syncMessage(kind), since: NOW },
+    [true, false],
+    [false, true],
+  ])(
+    'reconnects with the remembered code (established: %s, so join: %s), forgets the slot, focuses Sync now',
+    async (established, join) => {
+      // the setup the device had when it disconnected: generated or found (established), or a
+      // join whose relay copy was never found, which must never create one on a Reconnect (P3-5)
+      storage.saveSyncId(CODE, established)
+      keepPrevious(CODE, NOW - DAY)
+      storage.saveSyncId(null)
+      const setupSync = vi.fn((code: string, _opts?: { join?: boolean }) => {
+        useSyncStore.setState({ syncId: code, cloudStatus: 'synced', lastSyncAt: NOW })
+        return Promise.resolve(OK)
       })
-      expect(
-        shownBanner('Sync moved to a newer version. Reload SpendTrack to update.'),
-      ).toBeInTheDocument()
-      const button = screen.getByRole('button', { name: 'Reload' })
-      expect(button).toHaveClass('h-11', 'md:h-8')
-      fireEvent.click(button)
-      expect(reloadToLatest).toHaveBeenCalledTimes(1)
-      expect(reload).not.toHaveBeenCalled()
+      useSyncStore.setState({ setupSync })
+      render(<SyncPanel />)
+      await act(async () => {
+        fireEvent.click(reconnect() ?? document.body)
+        await Promise.resolve()
+      })
+      expect(setupSync).toHaveBeenCalledWith(CODE, { join })
+      expect(localStorage.getItem(PREV_KEY)).toBeNull()
+      expect(toasts()).toEqual([['success', 'Reconnected. This device is synced.']])
+      expect(screen.getByRole('button', { name: 'Sync now' })).toHaveFocus()
     },
   )
-
-  // The engine's code did not load on this page (a stale chunk it could not reload for): only a
-  // reload fetches it again, so the panel says that and offers one, in amber.
-  it('offers a Reload that runs the newest build when sync could not start on this page', () => {
-    const reloadToLatest = vi
-      .spyOn(getUpdateController(), 'reloadToLatest')
-      .mockImplementation(() => {})
-    connectedPanel({
-      cloudStatus: 'paused',
-      lastError: { kind: 'reload', message: syncMessage('reload'), since: NOW },
-    })
-    expect(statusRow()).toHaveTextContent('Sync paused')
-    expect(shownBanner(syncMessage('reload'))).toBeInTheDocument()
-    expect(screen.queryByText(/Sync moved to a newer version/)).not.toBeInTheDocument()
-    expect(screen.queryByText(/Can't reach|failing since/)).not.toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Reload' }))
-    expect(reloadToLatest).toHaveBeenCalledTimes(1)
-  })
-
-  it('shows the old-device banner for 24 hours after an old device wrote', () => {
-    connectedPanel({ legacyWriterAt: NOW - 60_000 })
-    expect(
-      shownBanner(
-        'Another device runs an older SpendTrack (0.8.4 or earlier). Open it and reload.',
-      ),
-    ).toBeInTheDocument()
-    cleanup()
-    connectedPanel({ legacyWriterAt: NOW - 25 * 60 * 60_000 })
-    expect(screen.queryByText(/older SpendTrack/)).not.toBeInTheDocument()
-  })
-
-  it('says pushes are held back while the old device keeps overwriting, in one sentence when both apply', () => {
-    connectedPanel({ waitingForOld: true })
-    expect(shownBanner(OLD_DEVICE_WAITING)).toBeInTheDocument()
-    cleanup()
-    connectedPanel({ legacyWriterAt: NOW, waitingForOld: true })
-    const both =
-      'An older SpendTrack (0.8.4 or earlier) on your other device keeps overwriting the synced copy. Open it and reload; everything is saved here.'
-    expect(shownBanner(both)).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent(both)
-    expect(screen.queryByText(OLD_DEVICE_WAITING)).not.toBeInTheDocument()
-  })
-
-  it('shows nothing when sync is healthy', () => {
-    connectedPanel()
-    expect(screen.getByRole('status')).toBeEmptyDOMElement()
-  })
-
-  it('announces a banner that appears while the panel is open (one live region, always there)', () => {
-    connectedPanel()
-    const region = screen.getByRole('status')
-    act(() => useSyncStore.setState({ cloudStatus: 'error', lastError: failure('server') }))
-    // Screen readers announce what is added to a live region, not a region added with it.
-    expect(screen.getAllByRole('status')).toEqual([region])
-    expect(region).toHaveTextContent(syncMessage('server'))
-    act(() => useSyncStore.setState({ legacyWriterAt: NOW, waitingForOld: true }))
-    expect(screen.getAllByRole('status')).toEqual([region])
-    expect(region).toHaveTextContent(/older SpendTrack/)
-    expect(within(region).queryByRole('button')).toBeNull()
-  })
 })
 
 describe('Disconnect', () => {
@@ -790,13 +739,519 @@ describe('Disconnect', () => {
     expect(screen.getByRole('button', { name: /Disconnect sync/ })).toHaveFocus()
     expect(disconnectSync).not.toHaveBeenCalled()
   })
+
+  it('AC-U6: keeps the code for 30 days, offers Reconnect and focuses it', () => {
+    connectedPanel({
+      disconnectSync: () => {
+        useSyncStore.setState({ syncId: null, cloudStatus: 'off' })
+      },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Disconnect sync/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
+    expect(JSON.parse(localStorage.getItem(PREV_KEY) ?? 'null')).toEqual({
+      code: CODE,
+      until: NOW + 30 * DAY,
+      established: false, // this test saved no setup: never assumed established
+    })
+    expect(screen.getByRole('button', { name: /^Reconnect to/ })).toHaveFocus()
+    expect(toasts()).toEqual([['info', 'Sync disconnected']])
+  })
+
+  it('focuses Generate when storage refused to remember the code', () => {
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new DOMException('full', 'QuotaExceededError')
+    })
+    connectedPanel({
+      disconnectSync: () => {
+        useSyncStore.setState({ syncId: null, cloudStatus: 'off' })
+      },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Disconnect sync/ }))
+    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
+    expect(generate()).toHaveFocus()
+  })
+})
+
+describe('status row', () => {
+  it('ages "Synced · just now" while the panel stays open', () => {
+    connectedPanel({ lastSyncAt: NOW })
+    expect(statusRow()).toHaveTextContent('Synced · just now')
+    act(() => {
+      vi.advanceTimersByTime(5 * 60_000)
+    })
+    expect(statusRow()).toHaveTextContent('Synced · 5m ago')
+  })
+
+  it.each([
+    // Linked, before the first cycle (the engine may still be loading).
+    [{ cloudStatus: 'idle' as const }, 'Starting sync…'],
+    [{ cloudStatus: 'synced' as const, pendingLocal: true }, 'Saved here · syncing soon'],
+    [{ cloudStatus: 'synced' as const, pendingLocal: true, pending: 3 }, 'Saved here · 3 to sync'],
+    [{ cloudStatus: 'synced' as const, lastSyncAt: NOW - 120_000 }, 'Synced · 2m ago'],
+    [{ cloudStatus: 'syncing' as const, pendingLocal: true, pending: 1 }, 'Syncing…'],
+    [{ cloudStatus: 'syncing' as const, lastSyncAt: NOW - 120_000 }, 'Synced · 2m ago'],
+    [
+      { cloudStatus: 'synced' as const, waitingForOld: 2 },
+      'Saved here · other device needs update',
+    ],
+    // Held back with nothing new here: no push is due, so not "syncing soon".
+    [
+      { cloudStatus: 'synced' as const, pendingLocal: true, pending: 1, waitingForOld: 1 },
+      'Saved here · other device needs update',
+    ],
+    // The row keeps naming what is wrong; the banner under it says since when.
+    [
+      { cloudStatus: 'error' as const, lastError: failure('server', { since: NOW - TEN_MINUTES }) },
+      'Sync server error',
+    ],
+    [
+      { cloudStatus: 'error' as const, lastError: failure('network', { retryAt: NOW + 27_000 }) },
+      "Can't reach the sync server · retry in 30 s",
+    ],
+    [
+      { cloudStatus: 'error' as const, lastError: failure('busy') },
+      'Devices synced at the same moment',
+    ],
+    [{ cloudStatus: 'offline' as const }, "Offline — will sync when you're back"],
+    [
+      { cloudStatus: 'offline' as const, pending: 3 },
+      "Offline — will sync when you're back · 3 to sync",
+    ],
+    // The engine's code failed to load here: nothing promises it loads once back online.
+    [{ cloudStatus: 'offline' as const, engineFailed: true }, 'Offline · not synced'],
+    // Refused access outlasts an outage: the row keeps saying it.
+    [
+      { cloudStatus: 'error' as const, lastError: failure('permission') },
+      'Sync server refused access',
+    ],
+    [{ cloudStatus: 'paused' as const }, 'Sync paused'],
+    [{ cloudStatus: 'paused' as const, lastError: failure('not-found') }, 'Sync paused'],
+  ])('%j reads "%s"', (state, label) => {
+    connectedPanel(state)
+    expect(statusRow()).toHaveTextContent(label)
+  })
+
+  it('counts the retry down while the panel stays open', () => {
+    connectedPanel({
+      cloudStatus: 'error',
+      lastError: failure('server', { retryAt: NOW + 27_000 }),
+    })
+    expect(statusRow()).toHaveTextContent('Sync server error · retry in 30 s')
+    act(() => {
+      vi.advanceTimersByTime(10_000)
+    })
+    expect(statusRow()).toHaveTextContent('Sync server error · retry in 20 s')
+  })
+
+  it.each([
+    ['network', "Can't reach the sync server"],
+    ['server', 'Sync server error'],
+    ['permission', 'Sync server refused access'],
+    ['invalid', "Couldn't read the synced copy"],
+    ['too-large', 'Sync paused'],
+    ['moved', 'Sync paused'],
+  ] as const)(
+    'keeps the %s failure, never an older Synced, while a background retry runs',
+    (kind, label) => {
+      connectedPanel({ cloudStatus: 'syncing', lastSyncAt: NOW - 9000, lastError: failure(kind) })
+      expect(statusRow()).toHaveTextContent(label)
+      expect(statusRow()).not.toHaveTextContent('Synced')
+    },
+  )
+
+  it.each([
+    [{ cloudStatus: 'paused' as const, lastError: failure('moved') }, 'text-warning'],
+    [{ cloudStatus: 'paused' as const, lastError: failure('too-large') }, 'text-negative'],
+    [{ cloudStatus: 'paused' as const, lastError: failure('not-found') }, 'text-negative'],
+    [{ cloudStatus: 'paused' as const, lastError: failure('denied') }, 'text-negative'],
+    [{ cloudStatus: 'error' as const, lastError: failure('server') }, 'text-warning'],
+    [
+      { cloudStatus: 'error' as const, lastError: failure('server', { since: NOW - TEN_MINUTES }) },
+      'text-negative',
+    ],
+    [{ cloudStatus: 'error' as const, lastError: failure('permission') }, 'text-negative'],
+    [{ cloudStatus: 'offline' as const }, 'text-warning'],
+    [{ cloudStatus: 'synced' as const, waitingForOld: 1 }, 'text-[var(--text-secondary)]'],
+    [{ cloudStatus: 'synced' as const }, 'text-positive'],
+  ])('%j is coloured %s', (state, colour) => {
+    connectedPanel(state)
+    expect(statusRow()).toHaveClass(colour)
+  })
+})
+
+describe('banners', () => {
+  it('shows a held-back push in neutral grey, as the pill does (cyan means a sync in progress)', () => {
+    connectedPanel({ waitingForOld: 1 })
+    const dot = statusRow().previousElementSibling
+    expect(dot).toHaveClass('bg-[var(--text-tertiary)]')
+    const banner = shownBanner(OLD_DEVICE_WAITING)
+    expect(banner).toHaveClass('border-white/[0.1]', 'bg-white/[0.03]')
+    expect(`${dot?.className ?? ''} ${banner.className}`).not.toMatch(/accent/)
+  })
+
+  it.each(['network', 'server', 'permission', 'invalid', 'busy'] as const)(
+    'explains a %s failure in the engine’s own words',
+    (kind) => {
+      connectedPanel({ cloudStatus: 'error', lastError: failure(kind) })
+      expect(shownBanner(MSG[kind])).toBeInTheDocument()
+      expect(bannerRegion()).toHaveTextContent(MSG[kind])
+    },
+  )
+
+  // A button inside the live region would be read as part of the sentence ("…to update.
+  // Reload"): the region holds the sentence only, and the button is described by it.
+  it.each([
+    ['moved', 'Reload', MSG.moved],
+    ['reload', 'Reload', SYNC_RELOAD_MESSAGE],
+    [
+      'too-large',
+      'Export backup',
+      "Your data (1365 KB) is too large for the sync server. It's still saved here — export a backup.",
+    ],
+  ] as const)(
+    'announces a %s banner without its button, which the sentence describes',
+    (kind, name, sentence) => {
+      connectedPanel({ cloudStatus: 'paused', lastError: failure(kind) })
+      const region = bannerRegion()
+      const button = screen.getByRole('button', { name })
+      expect(region).not.toContainElement(button)
+      expect(region.textContent).toBe(sentence)
+      expect(button).toHaveAccessibleDescription(sentence)
+    },
+  )
+
+  it.each([
+    ['not-found', 'No synced data found for this code. Check it on your other device.'],
+    ['denied', 'The sync server refused access. Your data is safe on this device.'],
+  ] as const)('explains the %s pause in red, without repeating "Sync paused"', (kind, sentence) => {
+    connectedPanel({ cloudStatus: 'paused', lastError: failure(kind) })
+    expect(shownBanner(sentence)).toHaveClass('text-negative')
+    expect(bannerRegion().textContent).toBe(sentence)
+    expect(screen.queryByRole('button', { name: 'Reload' })).toBeNull()
+  })
+
+  it('turns a retried failure red, and says since when, once it has lasted 10 minutes', () => {
+    const since = NOW - 9 * 60_000
+    connectedPanel({ cloudStatus: 'error', lastError: failure('network', { since }) })
+    expect(shownBanner(MSG.network)).toHaveClass('text-warning')
+    expect(statusRow()).toHaveClass('text-warning')
+
+    act(() => {
+      vi.advanceTimersByTime(60_000)
+    })
+    expect(shownBanner(failingSinceMessage(since))).toHaveClass('text-negative')
+    expect(failingSinceMessage(since)).toBe(
+      `Sync has been failing since ${clockTime(since)}. Your changes are saved on this device.`,
+    )
+    expect(statusRow()).toHaveTextContent("Can't reach the sync server")
+    expect(statusRow()).toHaveClass('text-negative')
+  })
+
+  it('Export backup opens Backup and asks for its Download button to take focus', () => {
+    connectedPanel({ cloudStatus: 'paused', lastError: failure('too-large') })
+    const button = screen.getByRole('button', { name: 'Export backup' })
+    expect(button).toHaveClass('h-11', 'md:h-8')
+    fireEvent.click(button)
+    expect(useUIStore.getState()).toMatchObject({
+      settingsTab: 'backup',
+      settingsFocus: 'backup-download',
+    })
+  })
+
+  it('sets banner text at 13 px on phones (11 px from md up)', () => {
+    connectedPanel({ cloudStatus: 'error', lastError: failure('server') })
+    expect(shownBanner(MSG.server)).toHaveClass('text-[13px]', 'md:text-[11px]')
+  })
+
+  // The service worker is prompt-style: a plain reload is served by the old worker, so the new
+  // build that is installed and waiting would never run, and the same pause would come back.
+  it.each(['moved', 'update-required', 'reload'] as const)(
+    'offers a Reload that runs the waiting build when sync is paused (%s)',
+    (kind) => {
+      const reloadToLatest = vi
+        .spyOn(getUpdateController(), 'reloadToLatest')
+        .mockImplementation(() => {})
+      const reload = vi.fn()
+      vi.stubGlobal('location', { reload })
+      connectedPanel({ cloudStatus: 'paused', lastError: failure(kind) })
+      expect(shownBanner(MSG[kind])).toBeInTheDocument()
+      const button = screen.getByRole('button', { name: 'Reload' })
+      expect(button).toHaveClass('h-11', 'md:h-8')
+      fireEvent.click(button)
+      expect(reloadToLatest).toHaveBeenCalledTimes(1)
+      expect(reload).not.toHaveBeenCalled()
+    },
+  )
+
+  it('AC-U5: names a 0.8.4 writer for 24 hours, from either signal', () => {
+    connectedPanel({ legacyWriterAt: NOW - 60_000 })
+    const OLD =
+      "A device still runs an old SpendTrack (0.8.4 or earlier). Open it and reload. Until then, don't rename categories, restore backups or delete everything on it."
+    expect(shownBanner(OLD)).toBeInTheDocument()
+    cleanup()
+    connectedPanel({
+      view: view({ legacy: { v084At: NOW - DAY + 1000, v085At: null, v5preAt: null } }),
+    })
+    expect(shownBanner(OLD)).toBeInTheDocument()
+    cleanup()
+    connectedPanel({ legacyWriterAt: NOW - 25 * 60 * 60_000, view: null })
+    expect(screen.queryByText(/old SpendTrack/)).not.toBeInTheDocument()
+  })
+
+  it.each([
+    ['0.9.2', 'Your other device runs SpendTrack 0.9.2. Open it and reload to update.'],
+    ['0.10.0', 'Your other device runs SpendTrack 0.10.0. Open it and reload to update.'],
+  ] as const)('AC-U5: names a %s writer seen within 24 hours', (version, sentence) => {
+    const seenAt = (at: number): SyncView['legacy'] =>
+      version === '0.9.2'
+        ? { v084At: null, v085At: at, v5preAt: null }
+        : { v084At: null, v085At: null, v5preAt: at }
+    connectedPanel({ view: view({ legacy: seenAt(NOW - 60_000) }) })
+    expect(shownBanner(sentence)).toBeInTheDocument()
+    cleanup()
+    connectedPanel({ view: view({ legacy: seenAt(NOW - DAY) }) })
+    expect(screen.queryByText(sentence)).toBeNull()
+  })
+
+  it('says one old-device sentence, the oldest writer first', () => {
+    connectedPanel({
+      view: view({ legacy: { v084At: NOW, v085At: NOW, v5preAt: NOW } }),
+    })
+    expect(bannerRegion().textContent).toMatch(/^A device still runs an old SpendTrack \(0\.8\.4/)
+    expect(bannerRegion().textContent).not.toMatch(/0\.9\.2|0\.10\.0/)
+  })
+
+  it('says pushes are held back while the old device keeps overwriting, in one sentence when both apply', () => {
+    connectedPanel({ waitingForOld: 1 })
+    expect(shownBanner(OLD_DEVICE_WAITING)).toBeInTheDocument()
+    cleanup()
+    connectedPanel({ legacyWriterAt: NOW, waitingForOld: 3 })
+    const both =
+      "An older SpendTrack (0.8.4 or earlier) on your other device keeps overwriting the synced copy. Open it and reload; everything is saved here. Until then, don't rename categories, restore backups or delete everything on it."
+    expect(shownBanner(both)).toBeInTheDocument()
+    expect(bannerRegion()).toHaveTextContent(both)
+    expect(screen.queryByText(OLD_DEVICE_WAITING)).not.toBeInTheDocument()
+  })
+
+  it.each([
+    [69, null],
+    [70, 'info'],
+    [89, 'info'],
+    [90, 'warning'],
+    [104, 'warning'],
+  ] as const)('AC-U5: a size of %i %% shows the meter as %s', (pct, tone) => {
+    connectedPanel({ view: view({ sizePct: pct }) })
+    const sentence = `Sync uses ${String(pct)} % of the relay limit. At 100 % sync pauses; your data stays on this device.`
+    if (tone === null) {
+      expect(screen.queryByText(sentence)).toBeNull()
+      return
+    }
+    const banner = shownBanner(sentence)
+    expect(banner).toHaveClass(tone === 'info' ? 'text-[var(--text-secondary)]' : 'text-warning')
+    // the icon turns with the colour: ⓘ to inform, the alert sign to warn (as every warning banner)
+    expect(banner.querySelector('svg')).toHaveClass(
+      tone === 'info' ? 'lucide-info' : 'lucide-circle-alert',
+    )
+  })
+
+  it('leaves the size to the too-large pause once it is over the limit', () => {
+    connectedPanel({
+      cloudStatus: 'paused',
+      lastError: failure('too-large'),
+      view: view({ sizePct: 120 }),
+    })
+    expect(screen.queryByText(/of the relay limit/)).toBeNull()
+  })
+
+  it('shows nothing when sync is healthy', () => {
+    connectedPanel({ view: view() })
+    expect(bannerRegion()).toBeEmptyDOMElement()
+  })
+
+  it('announces a banner that appears while the panel is open (one live region, always there)', () => {
+    connectedPanel()
+    const region = bannerRegion()
+    act(() => useSyncStore.setState({ cloudStatus: 'error', lastError: failure('server') }))
+    // Screen readers announce what is added to a live region, not a region added with it.
+    expect(screen.getAllByRole('status')).toEqual([region])
+    expect(region).toHaveTextContent(MSG.server)
+    act(() => useSyncStore.setState({ legacyWriterAt: NOW, waitingForOld: 1 }))
+    expect(screen.getAllByRole('status')).toEqual([region])
+    expect(region).toHaveTextContent(/older SpendTrack/)
+    expect(within(region).queryByRole('button')).toBeNull()
+  })
+})
+
+describe('the linked view (F-104, AC-U4)', () => {
+  it('shows the code masked, with Show, Copy and the code-safety line', () => {
+    connectedPanel({ view: view() })
+    expect(screen.getByText('••••-…-a1b2')).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('11111111-1111')
+    expect(screen.getByRole('button', { name: 'Show code' })).toHaveTextContent('Show')
+    expect(screen.getByRole('button', { name: 'Copy' })).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'Share the code only with your own devices: anyone with it can change your synced data.',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('lists the devices the engine knows', () => {
+    connectedPanel({ view: view() })
+    const list = screen.getByRole('list', { name: 'Devices' })
+    expect(within(list).getAllByRole('listitem')).toHaveLength(2)
+    expect(
+      screen.getByText(`All your devices run SpendTrack ${__APP_VERSION__}.`),
+    ).toBeInTheDocument()
+  })
+
+  it('no longer carries the "Link your phone in 3 steps" card', () => {
+    connectedPanel()
+    expect(screen.queryByText(/Link your phone/)).toBeNull()
+  })
+})
+
+describe('a sync set up by a newer SpendTrack (P3-19, AC-E9)', () => {
+  function newerPanel(state: Partial<ReturnType<typeof useSyncStore.getState>> = {}) {
+    useSyncStore.setState({
+      syncId: null,
+      cloudStatus: 'paused',
+      lastError: { kind: 'update-required', message: NEWER_CONFIG, since: NOW },
+      ...state,
+    })
+    return render(<SyncPanel />)
+  }
+
+  it('offers Reload and Disconnect, never Generate or Join (which would overwrite it)', () => {
+    newerPanel()
+    expect(shownBanner(NEWER_CONFIG)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Disconnect sync/ })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /Generate/ })).toBeNull()
+    expect(screen.queryByLabelText('Sync code')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Sync now' })).toBeNull()
+  })
+
+  it('Disconnect asks first, then removes it explicitly and keeps no Reconnect slot', () => {
+    const disconnectSync = vi.fn(() => {
+      useSyncStore.setState({ cloudStatus: 'off', lastError: null })
+    })
+    newerPanel({ disconnectSync })
+    fireEvent.click(screen.getByRole('button', { name: /Disconnect sync/ }))
+    const question = screen.getByRole('group', { name: 'Disconnect sync on this device?' })
+    expect(question).toHaveAccessibleDescription(
+      'This device forgets the sync a newer SpendTrack set up here. Your data stays on this device and on your other devices.',
+    )
+    expect(disconnectSync).not.toHaveBeenCalled()
+    fireEvent.click(within(question).getByRole('button', { name: 'Disconnect' }))
+    expect(disconnectSync).toHaveBeenCalledTimes(1)
+    expect(localStorage.getItem(PREV_KEY)).toBeNull()
+    expect(generate()).toHaveFocus()
+  })
+})
+
+describe('T-026-1: copy keyed to state (F-026)', () => {
+  const FORBIDDEN = /no cloud|local only|local-only|shared secret|no sharing/i
+  const copy = () => document.body.textContent
+
+  const pausedStates = (
+    ['too-large', 'moved', 'update-required', 'reload', 'not-found', 'denied'] as const
+  ).map((kind): [string, () => void] => [
+    `paused ${kind}`,
+    () => connectedPanel({ cloudStatus: 'paused', lastError: failure(kind) }),
+  ])
+  const states: [string, () => void][] = [
+    ['unlinked', () => render(<SyncPanel />)],
+    [
+      'unlinked with Reconnect',
+      () => {
+        keepPrevious(CODE, NOW - DAY)
+        render(<SyncPanel />)
+      },
+    ],
+    ['linked plain', () => connectedPanel({ view: view() })],
+    [
+      'legacy 0.8.4 peer',
+      () => connectedPanel({ legacyWriterAt: NOW, view: view({ allCurrent: false }) }),
+    ],
+    [
+      'legacy 0.9.2 peer',
+      () =>
+        connectedPanel({
+          view: view({ allCurrent: false, legacy: { v084At: null, v085At: NOW, v5preAt: null } }),
+        }),
+    ],
+    [
+      'legacy 0.10.0 peer',
+      () =>
+        connectedPanel({
+          view: view({ allCurrent: false, legacy: { v084At: null, v085At: null, v5preAt: NOW } }),
+        }),
+    ],
+    ['offline with sync', () => connectedPanel({ cloudStatus: 'offline', pending: 2 })],
+    ...pausedStates,
+    [
+      'newer config',
+      () => {
+        useSyncStore.setState({
+          syncId: null,
+          cloudStatus: 'paused',
+          lastError: { kind: 'update-required', message: NEWER_CONFIG, since: NOW },
+        })
+        render(<SyncPanel />)
+      },
+    ],
+    ['size meter', () => connectedPanel({ view: view({ sizePct: 82 }) })],
+  ]
+
+  it.each(states)('%s: claims nothing untrue about where the data lives', (_state, show) => {
+    show()
+    expect(copy()).not.toMatch(FORBIDDEN)
+  })
+
+  it('the unlinked intro says the synced copy is readable with the app’s public key', () => {
+    render(<SyncPanel />)
+    expect(screen.getByRole('heading', { name: 'Link your devices' })).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        "Generate a sync code here, then join it on your other device. There's no account: the code links them. The synced copy isn't encrypted yet, so anyone with this app's public key could read it.",
+      ),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(
+        'Share the code only with your own devices: anyone with it can change your synced data.',
+      ),
+    ).toBeInTheDocument()
+    // The two instructional cards are gone (bundle offset): the intro replaces them.
+    expect(screen.queryByText('On this device')).toBeNull()
+    expect(screen.queryByText('On other devices')).toBeNull()
+  })
+
+  it('the unlinked view, word for word', () => {
+    keepPrevious(CODE, NOW - DAY)
+    render(<SyncPanel />)
+    expect(copy()).toBe(
+      [
+        'Link your devices',
+        "Generate a sync code here, then join it on your other device. There's no account: the code links them. The synced copy isn't encrypted yet, so anyone with this app's public key could read it.",
+        'Reconnect to ••••-…-a1b2',
+        `This device remembers the code until ${format(NOW + 29 * DAY, 'd MMM')}.`,
+        'Generate sync code for this device',
+        'or join an existing one',
+        'Sync code',
+        'Join',
+        'Share the code only with your own devices: anyone with it can change your synced data.',
+        `This device runs SpendTrack ${__APP_VERSION__}`,
+      ].join(''),
+    )
+  })
 })
 
 describe('the panel names its parts', () => {
   it('labels the sync code field (the placeholder disappears as you paste)', () => {
     render(<SyncPanel />)
     expect(screen.getByLabelText('Sync code')).toBe(
-      screen.getByPlaceholderText('Paste sync code from another device'),
+      screen.getByPlaceholderText('Paste your sync code'),
     )
   })
 
@@ -812,6 +1267,16 @@ describe('the panel names its parts', () => {
 })
 
 describe('focus stays in the panel when its view changes', () => {
+  it('Sync now takes the focus the problem pill asked for, once', () => {
+    useUIStore.getState().focusSettings('sync', 'sync-now')
+    const { unmount } = connectedPanel({ cloudStatus: 'paused', lastError: failure('not-found') })
+    expect(screen.getByRole('button', { name: 'Sync now' })).toHaveFocus()
+    expect(useUIStore.getState().settingsFocus).toBeNull()
+    unmount()
+    connectedPanel()
+    expect(screen.getByRole('button', { name: 'Sync now' })).not.toHaveFocus()
+  })
+
   it('opening the confirm focuses Cancel, and Cancel returns to Disconnect sync', () => {
     connectedPanel()
     fireEvent.click(screen.getByRole('button', { name: /Disconnect sync/ }))
@@ -820,18 +1285,7 @@ describe('focus stays in the panel when its view changes', () => {
     expect(screen.getByRole('button', { name: /Disconnect sync/ })).toHaveFocus()
   })
 
-  it('after Disconnect, focus is on Generate sync code', () => {
-    connectedPanel({
-      disconnectSync: () => {
-        useSyncStore.setState({ syncId: null, cloudStatus: 'off' })
-      },
-    })
-    fireEvent.click(screen.getByRole('button', { name: /Disconnect sync/ }))
-    fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
-    expect(screen.getByRole('button', { name: /Generate sync code/ })).toHaveFocus()
-  })
-
-  it.each(['Connect', 'Generate'] as const)(
+  it.each(['Join', 'Generate'] as const)(
     'after %s, focus is on Sync now (the control it pressed is gone)',
     async (action) => {
       useSyncStore.setState({
@@ -841,65 +1295,26 @@ describe('focus stays in the panel when its view changes', () => {
         },
       })
       render(<SyncPanel />)
-      if (action === 'Connect') {
-        fireEvent.change(screen.getByPlaceholderText('Paste sync code from another device'), {
-          target: { value: CODE },
+      if (action === 'Join') await joinWith()
+      else {
+        await act(async () => {
+          fireEvent.click(generate())
+          await Promise.resolve()
         })
       }
-      await act(async () => {
-        fireEvent.click(
-          screen.getByRole('button', {
-            name: action === 'Connect' ? 'Connect' : /Generate sync code/,
-          }),
-        )
-        await Promise.resolve()
-      })
       expect(screen.getByRole('button', { name: 'Sync now' })).toHaveFocus()
     },
   )
 
   it('does not move focus when sync connects without the panel asking', () => {
     render(<SyncPanel />)
-    const input = screen.getByPlaceholderText('Paste sync code from another device')
-    input.focus()
+    screen.getByLabelText('Sync code').focus()
     act(() => useSyncStore.setState({ syncId: CODE, cloudStatus: 'synced', lastSyncAt: NOW }))
     expect(screen.getByRole('button', { name: 'Sync now' })).not.toHaveFocus()
   })
 })
 
-describe('the "Link your phone" steps', () => {
-  const steps = () => screen.queryByText('Link your phone in 3 steps')
-
-  it('show after Generate, for the code generated here', async () => {
-    useSyncStore.setState({
-      setupSync: (code) => {
-        useSyncStore.setState({ syncId: code, cloudStatus: 'synced', lastSyncAt: NOW })
-        return Promise.resolve(OK)
-      },
-    })
-    render(<SyncPanel />)
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /Generate sync code/ }))
-      await Promise.resolve()
-    })
-    expect(steps()).toBeInTheDocument()
-  })
-
-  it('stay hidden on a device linked to a code it did not generate in this session', () => {
-    connectedPanel({ lastSyncAt: null })
-    expect(steps()).not.toBeInTheDocument()
-  })
-})
-
-describe('tap targets on phones', () => {
-  it('gives Copy and the tap-to-copy code a 44 px target', () => {
-    connectedPanel()
-    expect(screen.getByRole('button', { name: 'Copy' })).toHaveClass('min-h-11', 'md:min-h-0')
-    expect(screen.getByTitle('Tap to copy')).toHaveClass('min-h-11', 'md:min-h-0')
-  })
-})
-
-describe("the demo's sample data (P2-22)", () => {
+describe("the demo's sample data (P2-22, F-027)", () => {
   const QUESTION = 'Remove the sample data first?'
   const question = () => screen.queryByRole('group', { name: QUESTION })
 
@@ -916,15 +1331,9 @@ describe("the demo's sample data (P2-22)", () => {
     return { clearSampleData, setupSync }
   }
 
-  const typeCode = () => {
-    fireEvent.change(screen.getByPlaceholderText('Paste sync code from another device'), {
-      target: { value: CODE },
-    })
-  }
-
   it('Generate asks first, in place of the button, with the safe answer focused', () => {
     const { setupSync, clearSampleData } = withSample()
-    fireEvent.click(screen.getByRole('button', { name: /Generate sync code/ }))
+    fireEvent.click(generate())
     const group = question()
     expect(group).toBeInTheDocument()
     expect(group).toHaveAccessibleDescription(
@@ -943,7 +1352,7 @@ describe("the demo's sample data (P2-22)", () => {
       order.push('setup')
       return Promise.resolve(OK)
     })
-    fireEvent.click(screen.getByRole('button', { name: /Generate sync code/ }))
+    fireEvent.click(generate())
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Remove and connect' }))
       await Promise.resolve()
@@ -954,44 +1363,51 @@ describe("the demo's sample data (P2-22)", () => {
     expect(question()).not.toBeInTheDocument()
   })
 
-  it('Keep it on this device connects with the code and keeps the sample rows', async () => {
+  it('Join asks first too, before any preview, and Keep goes on with the sample rows kept', async () => {
     const { setupSync, clearSampleData } = withSample()
-    typeCode()
-    fireEvent.click(screen.getByRole('button', { name: 'Connect' }))
+    fireEvent.change(screen.getByLabelText('Sync code'), { target: { value: CODE } })
+    fireEvent.click(screen.getByRole('button', { name: 'Join' }))
     expect(question()).toBeInTheDocument()
-    expect(setupSync).not.toHaveBeenCalled()
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: 'Keep it on this device' }))
-      await Promise.resolve()
-    })
-    expect(setupSync).toHaveBeenCalledWith(CODE)
+    expect(previewJoin).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: 'Keep it on this device' }))
+    await settle()
+    fireEvent.click(
+      within(screen.getByRole('group', { name: 'Join this sync?' })).getByRole('button', {
+        name: 'Join',
+      }),
+    )
+    await settle()
+    expect(setupSync).toHaveBeenCalledWith(CODE, { join: true })
     expect(clearSampleData).not.toHaveBeenCalled()
-    expect(toasts()).toEqual([['success', 'Connected — data synced']])
   })
 
-  it.each(['Generate', 'Connect'] as const)(
-    'Escape after %s backs out: nothing removed, nothing set up, focus back where it was',
-    (action) => {
-      const { setupSync, clearSampleData } = withSample()
-      if (action === 'Connect') typeCode()
-      fireEvent.click(
-        screen.getByRole('button', { name: action === 'Connect' ? 'Connect' : /Generate/ }),
-      )
-      fireEvent.keyDown(screen.getByRole('button', { name: 'Keep it on this device' }), {
-        key: 'Escape',
-      })
-      expect(question()).not.toBeInTheDocument()
-      expect(setupSync).not.toHaveBeenCalled()
-      expect(clearSampleData).not.toHaveBeenCalled()
-      expect(
-        screen.getByRole('button', { name: action === 'Connect' ? 'Connect' : /Generate/ }),
-      ).toHaveFocus()
-    },
-  )
+  it('Reconnect asks first too', () => {
+    keepPrevious(CODE, NOW - DAY)
+    const { setupSync } = withSample()
+    fireEvent.click(screen.getByRole('button', { name: /^Reconnect to/ }))
+    expect(question()).toBeInTheDocument()
+    expect(setupSync).not.toHaveBeenCalled()
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Keep it on this device' }), {
+      key: 'Escape',
+    })
+    expect(screen.getByRole('button', { name: /^Reconnect to/ })).toHaveFocus()
+  })
+
+  it('Escape after Generate backs out: nothing removed, nothing set up, focus back on it', () => {
+    const { setupSync, clearSampleData } = withSample()
+    fireEvent.click(generate())
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Keep it on this device' }), {
+      key: 'Escape',
+    })
+    expect(question()).not.toBeInTheDocument()
+    expect(setupSync).not.toHaveBeenCalled()
+    expect(clearSampleData).not.toHaveBeenCalled()
+    expect(generate()).toHaveFocus()
+  })
 
   it("a double click's second press does not answer the question it raised", () => {
     const { setupSync, clearSampleData } = withSample()
-    fireEvent.click(screen.getByRole('button', { name: /Generate sync code/ }), { detail: 1 })
+    fireEvent.click(generate(), { detail: 1 })
     fireEvent.click(screen.getByRole('button', { name: 'Remove and connect' }), { detail: 2 })
     expect(question()).toBeInTheDocument()
     expect(clearSampleData).not.toHaveBeenCalled()
@@ -1006,25 +1422,13 @@ describe("the demo's sample data (P2-22)", () => {
     const setupSync = vi.fn(() => Promise.resolve(OK))
     useSyncStore.setState({ setupSync })
     render(<SyncPanel />)
-    fireEvent.click(screen.getByRole('button', { name: /Generate sync code/ }))
+    fireEvent.click(generate())
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Remove and connect' }))
       await Promise.resolve()
     })
     expect(setupSync).not.toHaveBeenCalled()
     expect(toasts()).toEqual([['error', 'SpendTrack is still loading your data.']])
-    expect(screen.getByRole('button', { name: /Generate sync code/ })).toHaveFocus()
-  })
-
-  it('asks nothing when there is no sample data', async () => {
-    const setupSync = vi.fn(() => Promise.resolve(OK))
-    useSyncStore.setState({ setupSync })
-    render(<SyncPanel />)
-    await act(async () => {
-      fireEvent.click(screen.getByRole('button', { name: /Generate sync code/ }))
-      await Promise.resolve()
-    })
-    expect(question()).not.toBeInTheDocument()
-    expect(setupSync).toHaveBeenCalledTimes(1)
+    expect(generate()).toHaveFocus()
   })
 })

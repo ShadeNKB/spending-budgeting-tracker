@@ -20,6 +20,7 @@ import {
   settle,
   stubRelayEnv,
   type Device,
+  steadyRandom,
 } from '../../__tests__/fakeRelay'
 
 vi.mock(
@@ -40,6 +41,7 @@ beforeEach(() => {
   localStorage.clear()
   stubRelayEnv()
   resetRelay()
+  steadyRandom() // retries at exactly 2, 4, 8 … s (the jitter is asserted in sync.status)
   Object.defineProperty(document, 'visibilityState', { value: 'visible', configurable: true })
 })
 

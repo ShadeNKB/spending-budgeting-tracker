@@ -30,7 +30,12 @@ export const freshSyncMeta = (): SyncMeta => ({
   lastRev: null,
   memo: EMPTY_MEMO,
   legacySeen: {},
+  v5preDev: null,
   repairAt: 0,
+  lastEtag: null,
+  etagFor: null,
+  transport: null,
+  probedAt: 0,
 })
 
 export const freshMeta = (): EnvelopeMeta => ({
@@ -89,21 +94,28 @@ function readMemo(v: unknown): MemoState {
   return { memo, extRefreshAt: num(own(v, 'extRefreshAt'), 0) }
 }
 
+type LegacySeen = { -readonly [K in keyof SyncMeta['legacySeen']]: number }
+const LEGACY_KINDS = ['v084', 'v085', 'v5pre'] as const
+
 function readSync(v: unknown): SyncMeta {
   if (!isPlainObject(v)) return freshSyncMeta()
   const seen = own(v, 'legacySeen')
-  const legacySeen: { v084?: number; v085?: number } = {}
-  if (isPlainObject(seen)) {
-    const a = numOrNull(own(seen, 'v084'))
-    const b = numOrNull(own(seen, 'v085'))
-    if (a !== null) legacySeen.v084 = a
-    if (b !== null) legacySeen.v085 = b
+  const legacySeen: LegacySeen = {}
+  for (const k of LEGACY_KINDS) {
+    const at = isPlainObject(seen) ? numOrNull(own(seen, k)) : null
+    if (at !== null) legacySeen[k] = at
   }
+  const transport = own(v, 'transport')
   return {
     lastRev: strOrNull(own(v, 'lastRev')),
     memo: readMemo(own(v, 'memo')),
     legacySeen,
+    v5preDev: strOrNull(own(v, 'v5preDev')),
     repairAt: num(own(v, 'repairAt'), 0),
+    lastEtag: strOrNull(own(v, 'lastEtag')),
+    etagFor: strOrNull(own(v, 'etagFor')),
+    transport: transport === 'table' || transport === 'rpc' ? transport : null,
+    probedAt: num(own(v, 'probedAt'), 0),
   }
 }
 
@@ -135,18 +147,31 @@ export function joinMeta(ours: EnvelopeMeta, theirs: EnvelopeMeta): EnvelopeMeta
     a === null ? b : b === null ? a : Math.max(a, b)
   const memo = new Map(ours.sync.memo.memo)
   for (const [k, t] of theirs.sync.memo.memo) memo.set(k, Math.max(memo.get(k) ?? 0, t))
-  const seen = (k: 'v084' | 'v085'): { v084?: number; v085?: number } => {
+  const legacySeen: LegacySeen = {}
+  for (const k of LEGACY_KINDS) {
     const v = max(ours.sync.legacySeen[k] ?? null, theirs.sync.legacySeen[k] ?? null)
-    return v === null ? {} : { [k]: v }
+    if (v !== null) legacySeen[k] = v
   }
+  // The etag and the code it belongs to travel together; the newer probe wins.
+  const etag = theirs.sync.lastEtag !== null ? theirs.sync : ours.sync
+  const probe = theirs.sync.probedAt > ours.sync.probedAt ? theirs.sync : ours.sync
   const sync: SyncMeta = {
     lastRev: theirs.sync.lastRev ?? ours.sync.lastRev,
     memo: {
       memo: [...memo],
       extRefreshAt: Math.max(ours.sync.memo.extRefreshAt, theirs.sync.memo.extRefreshAt),
     },
-    legacySeen: { ...seen('v084'), ...seen('v085') },
+    legacySeen,
+    // The device goes with the later 0.10.0 sighting.
+    v5preDev:
+      (theirs.sync.legacySeen.v5pre ?? 0) > (ours.sync.legacySeen.v5pre ?? 0)
+        ? theirs.sync.v5preDev
+        : ours.sync.v5preDev,
     repairAt: Math.max(ours.sync.repairAt, theirs.sync.repairAt),
+    lastEtag: etag.lastEtag,
+    etagFor: etag.etagFor,
+    transport: probe.transport,
+    probedAt: probe.probedAt,
   }
   const day = (a: string | null, b: string | null): string | null =>
     a === null ? b : b === null ? a : a > b ? a : b

@@ -64,6 +64,45 @@ describe('old-client guarantees (§12.1)', () => {
       // Its own writes, on its own merge's terms: 0.9.2 keeps the newer copy of a record WHOLE (no
       // rebase, P2-5), so a v5 edit older than an unpushed 0.9.2 edit of the same record loses to
       // it, journaled on v5 (§12.3 row 5, track spec §16 risk 4). The reverse never happens.
+      // Fixed 100 ms legs, and the phone syncs at once: its edit is on the relay before v5's
+      // newer edit of the same record lands (else 0.9.2 takes v5's newer record whole and drops
+      // its own unpushed amount, on its own merge's terms, with any peer; whether it did depended
+      // on the random latencies of seed 2).
+      const w = new World({
+        seed: 2,
+        devices: [{ kind: 'v5' }, { kind: 'v085' }],
+        net: { ...CALM, latency: [100, 100] },
+      })
+      await w.setup()
+      const v5 = must(w.v5[0])
+      const phone = must(w.old[0]).client
+      const x = must(
+        v5.op((doc, ctx) => addExpense(doc, ctx, { itemName: 'X', amount: 1, day: D })).created,
+      ).id
+      await w.settle()
+      phone.updateExpense(x, { amount: 7 })
+      const y = phone.addExpense({ itemName: 'Y', amount: 3 }).id
+      void phone.triggerSync()
+      await w.clock.run(400)
+      v5.op((doc, ctx) => updateExpense(doc, ctx, x, { notes: 'v5 note' }))
+      await w.settle()
+      const px = must(phone.s.expenses.find((r) => r.id === x))
+      expect([px.amount, px.notes]).toEqual([7, 'v5 note'])
+      expect(phone.s.expenses.some((r) => r.id === y)).toBe(true)
+      expect(v5.doc.expenses.has(y)).toBe(true)
+      w.stop()
+    },
+    SIM_TIMEOUT,
+  )
+
+  it(
+    "G3 (unpinned): at seed 2's own pace, 0.9.2 drops its own unpushed amount by its own merge, nothing else",
+    async () => {
+      // The same writes at the network's random pace (CALM, seed 2) and the phone's own timers:
+      // v5's newer notes edit reaches the relay before the phone pushes its older amount edit,
+      // and 0.9.2 keeps the newer copy of a record WHOLE (no rebase, P2-5), so its unpushed amount
+      // goes, on 0.9.2, by 0.9.2's own merge (two 0.9.2 devices do the same). v5 never held that
+      // amount, so it loses nothing and journals nothing; the phone's other write (Y) is kept.
       const w = new World({ seed: 2, devices: [{ kind: 'v5' }, { kind: 'v085' }], net: CALM })
       await w.setup()
       const v5 = must(w.v5[0])
@@ -78,10 +117,28 @@ describe('old-client guarantees (§12.1)', () => {
       v5.op((doc, ctx) => updateExpense(doc, ctx, x, { notes: 'v5 note' }))
       await w.settle()
       const px = must(phone.s.expenses.find((r) => r.id === x))
-      expect([px.amount, px.notes]).toEqual([7, 'v5 note'])
+      const vx = must(v5.doc.expenses.get(x))
+      expect([px.amount, px.notes]).toEqual([1, 'v5 note']) // 0.9.2's unpushed amount is gone
+      expect([vx.a.v, vx.o.v]).toEqual([1, 'v5 note']) // v5 never held it: nothing of v5's lost
+      expect(v5.journal).toEqual([])
       expect(phone.s.expenses.some((r) => r.id === y)).toBe(true)
       expect(v5.doc.expenses.has(y)).toBe(true)
       w.stop()
+
+      // The control: a second 0.9.2 in v5's place, the same writes at the same pace. 0.9.2's own
+      // merge drops the same amount, so v5 is not what loses it.
+      const c = new World({ seed: 2, devices: [{ kind: 'v085' }, { kind: 'v085' }], net: CALM })
+      await c.setup()
+      const [p1, p2] = [must(c.old[0]).client, must(c.old[1]).client]
+      const cx = p2.addExpense({ itemName: 'X', amount: 1 }).id
+      await c.settle()
+      p1.updateExpense(cx, { amount: 7 })
+      await c.clock.run(400)
+      p2.updateExpense(cx, { notes: 'note' })
+      await c.settle()
+      const c1 = must(p1.s.expenses.find((r) => r.id === cx))
+      expect([c1.amount, c1.notes]).toEqual([1, 'note'])
+      c.stop()
     },
     SIM_TIMEOUT,
   )

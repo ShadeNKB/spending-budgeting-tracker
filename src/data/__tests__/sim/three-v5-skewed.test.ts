@@ -2,22 +2,20 @@
 import { describe, expect, it } from 'vitest'
 import { SIM_SEEDS } from '../support/rng'
 import { CALM } from './relay'
-import { SIM_TIMEOUT, SKEWS, standardRun } from './world'
+import { SIM_TIMEOUT, SKEWS, V011, runProblems, standardRun } from './world'
 
-describe('sim: 3 × v5 with clock skews 0, +2 h, −1 day', () => {
+describe('sim: 3 × 0.11.0 with clock skews 0, +2 h, −1 day', () => {
   for (const cas of [true, false]) {
     it(
       `converges (CAS ${cas ? 'on' : 'off'}, ${SIM_SEEDS} seeds)`,
       async () => {
         for (let seed = 1; seed <= SIM_SEEDS; seed++) {
           const r = await standardRun(
-            [{ kind: 'v5' }, { kind: 'v5', skew: SKEWS.fast }, { kind: 'v5', skew: SKEWS.slow }],
+            [V011, { ...V011, skew: SKEWS.fast }, { ...V011, skew: SKEWS.slow }],
             seed,
             { ...CALM, cas },
           )
-          expect(r.violations, `seed ${seed}`).toEqual([])
-          expect(r.roundPushes, `seed ${seed} rounds`).toBe(0)
-          expect(r.idlePushes, `seed ${seed} idle`).toBeLessThanOrEqual(3)
+          expect(runProblems(r, { idle: 3 }), `seed ${seed}`).toEqual([])
         }
       },
       SIM_TIMEOUT,

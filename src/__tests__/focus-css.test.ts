@@ -527,11 +527,14 @@ describe('the sticky header and the tab bar', () => {
     // The SyncPill's polite region (quick add's own status span has no aria-live).
     const region = header?.querySelector('[role="status"][aria-live="polite"]')
     expect(region).not.toBeNull()
-    // Below 1280 px the pill has no room: its wrapper is screen-reader-only there, never
-    // display: none, which would silence the live region on phones.
-    const wrapper = region?.parentElement?.parentElement
-    expect(wrapper).toHaveClass('sr-only', 'xl:not-sr-only')
-    expect(wrapper).not.toHaveClass('hidden')
+    // Below 1280 px the pill has no room: the region is screen-reader-only at every width and
+    // sits in no display: none box, which would silence it on phones. The pill itself is
+    // display: none there (P3-16), so it is never an invisible focus stop.
+    expect(region).toHaveClass('sr-only')
+    for (let el = region?.parentElement; el && el !== header; el = el.parentElement) {
+      expect(el).not.toHaveClass('hidden')
+    }
+    expect(region?.nextElementSibling).toHaveClass('hidden', 'xl:inline-flex')
   })
 
   it('labels both navigations "Primary"; the logo is a plain link, never "current page"', () => {

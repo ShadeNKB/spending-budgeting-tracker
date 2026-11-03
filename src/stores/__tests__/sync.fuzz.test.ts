@@ -646,7 +646,7 @@ async function runSeed(profile: Profile, seed: number): Promise<string> {
 
   // Everything comes back: network, sockets, codes, storage. Then the dust settles.
   await advance(1)
-  relay().failures = { pull: [], push: [] }
+  relay().failures = { head: [], pull: [], push: [] }
   relay().pushLatencyFor = null
   dropRealtime(false)
   restore(true)
