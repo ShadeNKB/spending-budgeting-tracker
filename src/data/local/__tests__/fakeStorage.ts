@@ -52,6 +52,9 @@ export class FakeBacking {
     for (const to of this.views) {
       if (to === from) continue
       this.pending.push(() => {
+        // A page that has gone gets no events. A write that lands as a test ends can queue one on
+        // a real timer, which may fire after the test environment (and its window) is torn down.
+        if (typeof window === 'undefined') return
         const e = new Event('storage')
         Object.defineProperty(e, 'key', { value: key })
         Object.defineProperty(e, 'oldValue', { value: oldValue })
