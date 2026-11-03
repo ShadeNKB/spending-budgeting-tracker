@@ -121,7 +121,7 @@ To enable cross-device sync (optional):
 ```bash
 cp .env.example .env.local
 # fill VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY,
-# then run supabase/migrations/001_sync.sql in your Supabase SQL editor.
+# then apply supabase/migrations in your Supabase SQL editor (see supabase/README.md).
 ```
 
 See [`.env.example`](.env.example) for the 3-step setup.
@@ -183,7 +183,7 @@ When sync is configured (Supabase env vars + a UUID sync code paired between dev
 - **Single in-flight cycle** (with a cross-tab lock) prevents push-during-pull races; compare-and-set writes (behind `VITE_SYNC_CAS=on`) stop two crossing pushes from overwriting each other.
 - **Backoff** on push failure (2 s × 2ⁿ⁻¹, cap 60 s, ±20 % jitter), paused while hidden or offline; resets on success, `online` and coming back to the app.
 - **Payload guard** pauses sync before a push passes 1 MB (Supabase row limit), with a clear message and a size meter from 70 %.
-- **No accounts.** The anon key is public and this table grants broad anon access, so anyone with the key can read the relay copy; the 122-bit UUID is what a device needs to change it. Do not treat this model as hardened multi-user SaaS security. The relay functions and the table lockdown (migrations 004/005, `VITE_SYNC_RELAY`) close that gap later.
+- **No accounts.** The anon key is public and this table grants broad anon access, so anyone with the key can read the relay copy; the 122-bit UUID is what a device needs to change it. Do not treat this model as hardened multi-user SaaS security. The relay functions and the table lockdown (migrations 004/005, `VITE_SYNC_RELAY`) close that gap once you apply them ([`supabase/README.md`](supabase/README.md)).
 
 See [`src/data/core`](src/data/core) for the merge logic and [`src/stores/syncEngine.ts`](src/stores/syncEngine.ts) for the cycle.
 
@@ -221,12 +221,14 @@ If you do want phone ↔ laptop sync, here's the full flow:
 You need your own free Supabase project. This is what stores the synced data — no third-party sees it. Plan ~5 minutes.
 
 1. Sign up at [supabase.com](https://supabase.com) and create a project.
-2. In the project's **SQL Editor**, run [`supabase/migrations/001_sync.sql`](supabase/migrations/001_sync.sql), then [`002_sync_indexes.sql`](supabase/migrations/002_sync_indexes.sql) (index + retention helper) and [`003_harden_prune_search_path.sql`](supabase/migrations/003_harden_prune_search_path.sql) (pins `search_path` on the prune function). The helper only creates a manual pruning function; schedule it yourself if you want automatic 90-day cleanup.
+2. In the project's **SQL Editor**, run [`supabase/migrations/001_sync.sql`](supabase/migrations/001_sync.sql), then [`002_sync_indexes.sql`](supabase/migrations/002_sync_indexes.sql) (index + retention helper), [`003_harden_prune_search_path.sql`](supabase/migrations/003_harden_prune_search_path.sql) (pins `search_path` on the prune function) and [`004_sync_rpc.sql`](supabase/migrations/004_sync_rpc.sql) (the relay's sync functions; it also takes delete and prune away from the public key). The helper only creates a manual pruning function; schedule it yourself if you want automatic 90-day cleanup. [`005_sync_lockdown.sql`](supabase/migrations/005_sync_lockdown.sql) comes later, once every device runs 0.11.0 or later on the sync functions and Settings → Sync says "Ready for the database lockdown." [`supabase/README.md`](supabase/README.md) says what each file does (apply them by hand, never with `supabase db push`), and [the runbook](docs/brain/sync-runbook.md) walks through 004 and 005 with checks and rollback.
 3. From **Project Settings → API**, copy the **Project URL** and the **anon public** key.
-4. Add them as env vars on Vercel (or in `.env.local` if you self-host):
+4. Add them as env vars on Vercel (or in `.env.local` if you self-host). The last two switch the app to the sync functions and compare-and-set; add them after 004 and once `scripts/verify-cas.mjs` passes:
    ```bash
    VITE_SUPABASE_URL=https://your-project.supabase.co
    VITE_SUPABASE_ANON_KEY=eyJhbGc...
+   VITE_SYNC_RELAY=auto
+   VITE_SYNC_CAS=on
    ```
 5. Redeploy. The app now offers sync in Settings.
 
@@ -246,7 +248,7 @@ Add an expense on Device A. It appears on Device B within a second via Supabase 
 
 Tablet, work browser, another browser profile — join the same code in Settings → Sync. There's no device limit, and Settings → Sync → **Devices** lists every device with its version.
 
-> **Share the code only with your own devices.** Anyone with it can change your synced data. The relay copy isn't encrypted yet, so anyone with the app's public key could read it. **Disconnect** keeps the code on that device for 30 days (**Reconnect** is one tap); if you lose it, copy it from another linked device. Generating a new code starts a separate sync; old buckets are pruned after 90 days if you schedule `prune_stale_sync_buckets()`.
+> **Share the code only with your own devices.** Anyone with it can change your synced data. The relay copy isn't encrypted yet, so until the database lockdown (migration 005) anyone with the app's public key could read it. **Disconnect** keeps the code on that device for 30 days (**Reconnect** is one tap); if you lose it, copy it from another linked device. Generating a new code starts a separate sync; old buckets are pruned after 90 days if you schedule `prune_stale_sync_buckets()`.
 
 ### How sync actually works
 
@@ -276,7 +278,7 @@ Device A                                    Device B
 - **Backoff** on push failure (2 s → 60 s with jitter), paused in the background, and a check every minute while the app is open if Realtime is unavailable.
 - **Realtime auto-reconnect** on `CLOSED / CHANNEL_ERROR / TIMED_OUT`, on a hashed topic.
 - **Payload guard** pauses sync before a push passes 1 MB (Supabase row limit).
-- **No accounts.** The relay copy is readable with the public anon key; the 122-bit UUID is what it takes to change it. Fine for a personal Supabase relay, not a hardened multi-user SaaS boundary.
+- **No accounts.** Until migration 005 is applied, the relay copy is readable with the public anon key; the 122-bit UUID is what it takes to change it. Fine for a personal Supabase relay, not a hardened multi-user SaaS boundary.
 
 Full architecture: [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) · [`src/services/syncService.ts`](src/services/syncService.ts).
 
@@ -341,7 +343,7 @@ Yes. Settings → <b>Appearance</b> offers <b>Light</b>, <b>Dark</b>, and <b>Sys
 <details>
 <summary><b>Is my data encrypted?</b></summary>
 <br/>
-In transit (HTTPS to Supabase): yes. At rest in <code>localStorage</code> or Supabase: no, it's plain JSON, and anyone with this app's public key could read the relay copy. Your sync code is what it takes to change it, so share it only with your own devices.
+In transit (HTTPS to Supabase): yes. At rest in <code>localStorage</code> or Supabase: no, it's plain JSON, and until migration 005 is applied anyone with this app's public key could read the relay copy. Your sync code is what it takes to change it, so share it only with your own devices.
 </details>
 
 ---
@@ -359,7 +361,7 @@ The pill in the top bar is tappable when sync fails. Tap it to retry. Local data
 <br/>
 
 1. Confirm both devices have <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> set (env vars must match on both deployments).
-2. Confirm <code>supabase/migrations/001_sync.sql</code> ran without errors. <i>Important:</i> the migration intentionally disables RLS for this simple personal relay model; enabling RLS without replacing the sync access layer will block anon writes.
+2. Confirm the files in <code>supabase/migrations</code> ran without errors, in order (see <a href="supabase/README.md"><code>supabase/README.md</code></a>). <i>Important:</i> 001 leaves RLS off so devices can write the table directly. <code>005_sync_lockdown.sql</code> turns RLS on with no policies and leaves only the relay's sync functions, so after it a build without <code>VITE_SYNC_RELAY=auto</code> (and any SpendTrack older than 0.11.0) is refused: "The sync server refused access." Apply 005 only once Settings → Sync says "Ready for the database lockdown.", and never turn RLS on by hand. <a href="docs/brain/sync-runbook.md">The runbook</a> has the checks and the rollback.
 3. Reload both devices. The Supabase JS SDK is lazy-loaded only when sync is configured, so an offline cold start looks like silent failure — a refresh re-triggers the load.
 </details>
 
@@ -415,7 +417,7 @@ src/
   utils/        parseExpense, insights, recurring, helpers
   hooks/        useToast, useHotkeys, useHaptic
 public/         favicon, manifest
-supabase/       sync migrations
+supabase/       sync migrations and their checks (supabase/README.md)
 docs/           user guide, screenshots
 ```
 

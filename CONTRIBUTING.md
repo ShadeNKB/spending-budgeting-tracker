@@ -17,7 +17,7 @@ npm ci
 npm run dev
 ```
 
-Optional cloud sync needs a local `.env.local` with `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`, plus the SQL in `supabase/migrations/001_sync.sql` applied to your own Supabase project. Leave those variables unset when you only need local-first behavior.
+Optional cloud sync needs a local `.env.local` with `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`, plus the SQL in `supabase/migrations/` applied by hand, in order, to your own Supabase project (see [`supabase/README.md`](supabase/README.md); never `supabase db push`). Leave those variables unset when you only need local-first behavior.
 
 Before opening a pull request, run:
 

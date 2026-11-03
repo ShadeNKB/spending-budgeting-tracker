@@ -1,6 +1,6 @@
 # Security
 
-SpendTrack is a local-first browser app. By default it does not run a backend service or transmit user spending data. If optional Supabase sync is enabled, the app stores plaintext JSON in the user's own Supabase project and uses a UUID sync code as the shared secret.
+SpendTrack is a local-first browser app. By default it does not run a backend service or transmit user spending data. If optional Supabase sync is enabled, the app stores its sync copy as plaintext JSON in one row of the user's own Supabase project, keyed by a random UUID sync code. Until migration 005 is applied, anyone holding the app's public anon key can list and read every row (sync codes included) and write rows; migration 004 already takes delete, truncate and the prune function away from that key and refuses malformed writes. After 005 the table is closed to the public key: a device reaches its row only through three `SECURITY DEFINER` functions that need the sync code. The copy stays readable to whoever has the code and to the project owner; end-to-end encrypted (private) sync is planned. See [`supabase/README.md`](supabase/README.md).
 
 ## Supported Versions
 

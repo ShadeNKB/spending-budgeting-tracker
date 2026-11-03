@@ -12,7 +12,13 @@
 //   of the fraction dropped).
 // - The RPC functions of 004_sync_rpc.sql (st_sync_head, st_sync_pull, st_sync_push with p_row,
 //   p_payload, p_base, p_force), absent by default (404 `PGRST202`, as before 004) until
-//   `enableRpc()`; `lockTable()` refuses every table call with 401 `42501` (005).
+//   `enableRpc()`; `lockTable()` refuses every table call with 401 `42501` (005). As the SQL
+//   does (PR-5 track spec §4, held to it by scripts/verify-cas.test.mjs): st_sync_push measures
+//   the payload as jsonb text bytes and validates id, payload, size and shape (22023); its CAS
+//   and forced tokens are `GREATEST(now, current + 1 µs)`; head and pull answer null for an id
+//   that is not a lower-case UUID; after 004 a table write that would leave a bad row answers
+//   400 `23514`; the lockdown is refused without 004, and the 004 rollback under the lockdown
+//   (both throw, 55000). A GET with no sync_id filter lists rows, as PostgREST does (F-006).
 // - Realtime: /realtime/v1/websocket for supabase-js 2.106 (realtime-js, Phoenix serializer VSN
 //   2.0.0: text frames `[join_ref, ref, topic, event, payload]`, binary user broadcasts). It
 //   answers heartbeats, replies to phx_join with ids for the channel's postgres_changes bindings
@@ -41,6 +47,7 @@ export type WriterClass = 'v5' | 'v085' | 'legacy' | 'other'
 export type RequestKind =
   | 'head'
   | 'pull'
+  | 'list'
   | 'push'
   | 'insert'
   | 'update'
@@ -64,8 +71,9 @@ export interface RelayRequest {
   readonly at: number
   readonly method: string
   /**
-   * head / pull: a read (`select=updated_at` is a head); push: an upsert; insert: a create-only
-   * POST; update: a PATCH; rpc: a function call (`fn`); broadcast: a `rev` ping (`via`).
+   * head / pull: a read (`select=updated_at` is a head); list: a read with no sync_id filter;
+   * push: an upsert; insert: a create-only POST; update: a PATCH; rpc: a function call (`fn`);
+   * broadcast: a `rev` ping (`via`).
    */
   readonly kind: RequestKind
   /** The page origin that made it (one device per origin in this suite). */
@@ -111,10 +119,13 @@ export interface Relay {
   topicChannels(topic: string): number
   /** The topics of every open channel (the raw code must never be one for 0.11.0). */
   topics(): readonly string[]
-  /** 004 applied / rolled back. */
+  /** 004 applied / rolled back (the rollback throws, 55000, while the table is locked). */
   enableRpc(): void
   disableRpc(): void
-  /** 005 applied / rolled back: every table call answers 401 `42501`. */
+  /**
+   * 005 applied / rolled back: every table call answers 401 `42501`. The lockdown throws (55000)
+   * without 004.
+   */
   lockTable(): void
   unlockTable(): void
   /** The table leaves the realtime publication: joins asking for row events are refused. */
@@ -141,8 +152,12 @@ const TABLE_PATH = '/rest/v1/sync_buckets'
 const RPC_PATH = '/rest/v1/rpc/'
 const BROADCAST_PATH = '/realtime/v1/api/broadcast'
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
-/** st_sync_push: an object payload of at most 1.2 MB (004). */
+/** st_sync_push: an object payload of at most 1.2 MiB of jsonb text (004). */
 const RPC_PAYLOAD_MAX = 1_258_291
+/** `sync_buckets_payload_bounded` (004): table writes, at most 2 MiB of jsonb text. */
+const TABLE_PAYLOAD_MAX = 2_097_152
+/** What Postgres reads as ±infinity (`sync_buckets_updated_at_finite` refuses it). */
+const NON_FINITE = /^\s*[+-]?infinity\s*$/i
 const CORS: Record<string, string> = {
   'Access-Control-Allow-Origin': '*',
   'Access-Control-Allow-Methods': 'GET, POST, PATCH, HEAD, OPTIONS',
@@ -152,8 +167,89 @@ const CORS: Record<string, string> = {
   'Access-Control-Max-Age': '600',
 }
 
+/** PostgREST's answer to anon for a table it may not touch (005). */
+const DENIED = {
+  code: '42501',
+  details: null,
+  hint: null,
+  message: 'permission denied for table sync_buckets',
+}
+
 const isRecord = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
+
+/** The `": "` and `", "` spaces jsonb_out adds to JSON.stringify's compact form. */
+function jsonbSpaces(value: unknown): number {
+  if (Array.isArray(value)) {
+    let n = Math.max(0, value.length - 1)
+    for (const item of value) n += jsonbSpaces(item)
+    return n
+  }
+  if (!isRecord(value)) return 0
+  const members = Object.values(value).filter(
+    (v) => v !== undefined && typeof v !== 'function' && typeof v !== 'symbol',
+  )
+  let n = 2 * members.length - Math.min(1, members.length)
+  for (const member of members) n += jsonbSpaces(member)
+  return n
+}
+
+/**
+ * `octet_length(v::jsonb::text)`, what 004 measures: the UTF-8 bytes of JSON.stringify(v) plus
+ * one space after every key's colon and after every comma. Outside the model (never in a
+ * SpendTrack payload): numbers Postgres prints differently (1e21 and up, small exponents), and
+ * `\u0000` or lone surrogates, which jsonb refuses outright.
+ */
+export function jsonbTextBytes(value: unknown): number {
+  const text: string | undefined = JSON.stringify(value)
+  if (text === undefined) return 0
+  return Buffer.byteLength(text, 'utf8') + jsonbSpaces(value)
+}
+
+/** st_sync_push's 22023 message for its arguments, in 004's order, or null when they pass. */
+function pushRefusal(row: unknown, payload: unknown): string | null {
+  if (typeof row !== 'string' || !UUID.test(row)) return 'invalid row id'
+  if (!isRecord(payload)) return 'invalid payload'
+  if (jsonbTextBytes(payload) > RPC_PAYLOAD_MAX) return 'payload too large'
+  const shaped =
+    (Array.isArray(payload.expenses) && isRecord(payload.x5)) ||
+    (payload.st === 5 && typeof payload.iv === 'string' && typeof payload.ct === 'string') ||
+    (payload.expenses === 'moved' && isRecord(payload.x5))
+  return shaped ? null : 'invalid payload shape'
+}
+
+/**
+ * What a table write leaving this row meets: 001's NOT NULL (23502), then, once 004 is applied,
+ * its checks in name order (Postgres tests CHECK constraints alphabetically; 23514).
+ */
+function rowRefusal(
+  syncId: string | null,
+  payload: unknown,
+  token: unknown,
+  checked: boolean,
+): { readonly code: string; readonly message: string } | null {
+  const column =
+    syncId === null ? 'sync_id' : payload === null || payload === undefined ? 'payload' : null
+  if (column !== null) {
+    return {
+      code: '23502',
+      message: `null value in column "${column}" of relation "sync_buckets" violates not-null constraint`,
+    }
+  }
+  if (!checked) return null
+  const failed = !UUID.test(syncId ?? '')
+    ? 'sync_buckets_id_uuid'
+    : !isRecord(payload) || jsonbTextBytes(payload) > TABLE_PAYLOAD_MAX
+      ? 'sync_buckets_payload_bounded'
+      : typeof token === 'string' && NON_FINITE.test(token)
+        ? 'sync_buckets_updated_at_finite'
+        : null
+  if (failed === null) return null
+  return {
+    code: '23514',
+    message: `new row for relation "sync_buckets" violates check constraint "${failed}"`,
+  }
+}
 
 export function writerOf(payload: unknown): WriterClass {
   if (!isRecord(payload)) return 'other'
@@ -643,15 +739,26 @@ export async function startRelay(port = 4219): Promise<Relay> {
     const columns = columnsOf(url)
     if (method === 'GET' || method === 'HEAD') {
       const kind: RequestKind =
-        columns.length === 1 && columns[0] === 'updated_at' ? 'head' : 'pull'
+        syncId === null
+          ? 'list'
+          : columns.length === 1 && columns[0] === 'updated_at'
+            ? 'head'
+            : 'pull'
       if (locked) {
         note({ method, kind, origin, syncId, writer: null, outcome: 'denied' })
-        json(res, 401, {
-          code: '42501',
-          details: null,
-          hint: null,
-          message: 'permission denied for table sync_buckets',
-        })
+        json(res, 401, DENIED)
+        return
+      }
+      if (kind === 'list') {
+        // no filter: every row, as PostgREST answers anon while it may SELECT (F-006)
+        const limit = Number(url.searchParams.get('limit') ?? Infinity)
+        const all = [...rows].slice(0, Number.isNaN(limit) ? Infinity : limit)
+        note({ method, kind, origin, syncId, writer: null, outcome: 'ok' })
+        json(
+          res,
+          200,
+          all.map(([id, r]) => pick(columns, id, r)),
+        )
         return
       }
       if (kind === 'pull') await gate()
@@ -683,48 +790,51 @@ export async function startRelay(port = 4219): Promise<Relay> {
       const writer = writerOf(item.payload)
       if (locked) {
         note({ method, kind: 'update', origin, syncId, writer, outcome: 'denied', base })
-        json(res, 401, {
-          code: '42501',
-          details: null,
-          hint: null,
-          message: 'permission denied for table sync_buckets',
-        })
+        json(res, 401, DENIED)
         return
       }
       const row = syncId === null ? undefined : rows.get(syncId)
       const baseUs = base === null ? null : parseMicros(base)
       const matches = row !== undefined && (base === null || (baseUs !== null && row.us === baseUs))
-      const outcome: Outcome = row === undefined ? 'missing' : matches ? 'ok' : 'conflict'
+      // an UPDATE that matches no row checks nothing; one that does checks the row it leaves
+      const payload = row !== undefined && !('payload' in item) ? row.payload : item.payload
+      const refused = matches ? rowRefusal(syncId, payload, item.updated_at, rpc) : null
+      const outcome: Outcome =
+        row === undefined ? 'missing' : !matches ? 'conflict' : refused ? 'invalid' : 'ok'
       note({ method, kind: 'update', origin, syncId, writer, outcome, base })
+      if (refused !== null) {
+        json(res, 400, { ...refused, details: null, hint: null })
+        return
+      }
       if (!matches || syncId === null || row === undefined) {
         represent(req, res, 200, [])
         return
       }
       const sent = typeof item.updated_at === 'string' ? parseMicros(item.updated_at) : null
-      const stored = write(syncId, 'payload' in item ? item.payload : row.payload, sent ?? row.us)
+      const stored = write(syncId, payload, sent ?? row.us)
       represent(req, res, 200, [pick(columns, syncId, stored)])
       return
     }
-    // POST: an upsert with merge-duplicates, else an insert
+    // POST: an upsert with merge-duplicates, else an insert. One statement: every row passes its
+    // checks (NOT NULL and 004's CHECKs, then the primary key for an insert) or nothing is written.
     const upsert = prefer.includes('resolution=merge-duplicates')
+    const kind: RequestKind = upsert ? 'push' : 'insert'
     const items = (Array.isArray(body) ? body : [body]).filter(isRecord)
-    const out: Record<string, unknown>[] = []
     for (const item of items) {
       const id = typeof item.sync_id === 'string' ? item.sync_id : null
       const writer = writerOf(item.payload)
-      const kind: RequestKind = upsert ? 'push' : 'insert'
       if (locked) {
         note({ method, kind, origin, syncId: id, writer, outcome: 'denied' })
-        json(res, 401, {
-          code: '42501',
-          details: null,
-          hint: null,
-          message: 'permission denied for table sync_buckets',
-        })
+        json(res, 401, DENIED)
         return
       }
-      if (id === null) continue
-      if (!upsert && rows.has(id)) {
+      const refused = rowRefusal(id, item.payload, item.updated_at, rpc)
+      if (refused !== null) {
+        note({ method, kind, origin, syncId: id, writer, outcome: 'invalid' })
+        json(res, 400, { ...refused, details: null, hint: null })
+        return
+      }
+      if (!upsert && id !== null && rows.has(id)) {
         note({ method, kind, origin, syncId: id, writer, outcome: 'conflict' })
         json(res, 409, {
           code: '23505',
@@ -734,9 +844,20 @@ export async function startRelay(port = 4219): Promise<Relay> {
         })
         return
       }
-      note({ method, kind, origin, syncId: id, writer, outcome: 'ok' })
+    }
+    const out: Record<string, unknown>[] = []
+    for (const item of items) {
+      if (typeof item.sync_id !== 'string') continue
+      note({
+        method,
+        kind,
+        origin,
+        syncId: item.sync_id,
+        writer: writerOf(item.payload),
+        outcome: 'ok',
+      })
       const sent = typeof item.updated_at === 'string' ? parseMicros(item.updated_at) : null
-      out.push(pick(columns, id, write(id, item.payload, sent ?? nowMicros())))
+      out.push(pick(columns, item.sync_id, write(item.sync_id, item.payload, sent ?? nowMicros())))
     }
     represent(req, res, 201, out)
   }
@@ -778,7 +899,8 @@ export async function startRelay(port = 4219): Promise<Relay> {
       })
       return
     }
-    const row = syncId === null ? undefined : rows.get(syncId)
+    // head and pull look up lower-case UUIDs only (004: NULL for any other id)
+    const row = syncId === null || !UUID.test(syncId) ? undefined : rows.get(syncId)
     if (name === 'st_sync_head') {
       note({
         method: 'POST',
@@ -820,18 +942,8 @@ export async function startRelay(port = 4219): Promise<Relay> {
     const payload = args.p_payload
     const base = typeof args.p_base === 'string' ? args.p_base : null
     const force = args.p_force === true
-    const shaped =
-      isRecord(payload) &&
-      ((Array.isArray(payload.expenses) && isRecord(payload.x5)) ||
-        (payload.st === 5 && typeof payload.iv === 'string' && typeof payload.ct === 'string') ||
-        (payload.expenses === 'moved' && isRecord(payload.x5)))
-    const invalid =
-      syncId === null ||
-      !UUID.test(syncId) ||
-      !isRecord(payload) ||
-      JSON.stringify(payload).length > RPC_PAYLOAD_MAX ||
-      !shaped
-    if (invalid) {
+    const invalid = pushRefusal(args.p_row, payload)
+    if (invalid !== null || syncId === null) {
       note({
         method: 'POST',
         kind: 'rpc',
@@ -843,19 +955,26 @@ export async function startRelay(port = 4219): Promise<Relay> {
         base,
         force,
       })
-      json(res, 400, { code: '22023', details: null, hint: null, message: 'invalid payload' })
+      json(res, 400, {
+        code: '22023',
+        details: null,
+        hint: null,
+        message: invalid ?? 'invalid row id',
+      })
       return
     }
+    // A write's token is GREATEST(clock_timestamp(), current + 1 µs): it never repeats or goes
+    // back, also over a row a skewed writer dated far ahead.
     const now = nowMicros()
     let landed: StoredRow | null = null
     if (force) {
-      if (row !== undefined) landed = write(syncId, payload, now)
+      if (row !== undefined) landed = write(syncId, payload, Math.max(now, row.us + 1))
     } else if (base === null) {
       if (row === undefined) landed = write(syncId, payload, now)
     } else {
       const baseUs = parseMicros(base)
       if (row !== undefined && baseUs !== null && row.us === baseUs) {
-        landed = write(syncId, payload, Math.max(now, baseUs + 1))
+        landed = write(syncId, payload, Math.max(now, row.us + 1))
       }
     }
     if (landed !== null) {
@@ -975,6 +1094,9 @@ export async function startRelay(port = 4219): Promise<Relay> {
       resolve()
     })
   })
+  // port 0: the system picked a free one
+  const address = server.address()
+  const bound = typeof address === 'object' && address !== null ? address.port : port
 
   const WRITE_KINDS: ReadonlySet<RequestKind> = new Set(['push', 'insert', 'update'])
   const isWrite = (r: RelayRequest): boolean =>
@@ -983,7 +1105,7 @@ export async function startRelay(port = 4219): Promise<Relay> {
     r.at >= since && (origin === undefined || r.origin === origin)
 
   return {
-    origin: `http://localhost:${String(port)}`,
+    origin: `http://localhost:${String(bound)}`,
     log,
     row: (syncId) => {
       const r = rows.get(syncId)
@@ -1008,9 +1130,19 @@ export async function startRelay(port = 4219): Promise<Relay> {
       rpc = true
     },
     disableRpc: () => {
+      if (locked) {
+        throw new Error(
+          '55000 SpendTrack 004 rollback: the lockdown (005) is applied. Roll back 005 first (005_sync_lockdown.rollback.sql), or keep 004. Nothing was changed.',
+        )
+      }
       rpc = false
     },
     lockTable: () => {
+      if (!rpc) {
+        throw new Error(
+          '55000 SpendTrack 005: the sync functions from 004 are missing or not as 004 made them. Apply 004 and run 004_verify.sql first. Nothing was changed.',
+        )
+      }
       locked = true
     },
     unlockTable: () => {
