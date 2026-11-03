@@ -156,7 +156,7 @@ describe('T-016-1: every failing transport has its kind and words (AC-E20)', () 
   const cases: [string, 'pull' | 'push', Failure, string, string][] = [
     ['a network failure', 'pull', { status: 0 }, 'network', syncMessage('network')],
     ['a 5xx', 'push', { status: 502, message: 'Bad Gateway' }, 'server', syncMessage('server')],
-    ['a full relay (53400)', 'push', { status: 503, code: '53400' }, 'server', FULL_RELAY_MESSAGE],
+    ['a full relay (53400)', 'push', { status: 500, code: '53400' }, 'server', FULL_RELAY_MESSAGE],
     [
       'a refused payload (22023)',
       'push',

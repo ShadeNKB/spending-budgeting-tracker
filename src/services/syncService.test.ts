@@ -367,6 +367,8 @@ describe('errors and deadlines', () => {
     ['permission', { status: 403, message: 'Forbidden' }],
     ['permission', { status: 400, code: '42501', message: 'permission denied for table' }],
     ['no-rpc', { status: 404, code: 'PGRST202', message: 'no such function' }],
+    // PostgREST answers 53400 with HTTP 500; the code decides, whatever the status
+    ['full', { status: 500, code: '53400', message: 'relay is full' }],
     ['full', { status: 503, code: '53400', message: 'relay is full' }],
     ['invalid', { status: 400, code: '22023', message: 'invalid payload' }],
   ] as const)('classifies a %s failure (%j) on head, pull and push', async (kind, failure) => {

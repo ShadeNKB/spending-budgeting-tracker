@@ -24,7 +24,7 @@ A local-first spending tracker. React 19 + TS strict + Vite 7 + Zustand 5 + Tail
 - **Route fade is CSS** — a route-level `AnimatePresence` (framer-motion, removed in 0.9.4) caused blank renders (see [bugs-fixed.md](bugs-fixed.md)). Use the `.route-fade-in` CSS keyframe.
 - **Motion system: CSS + Web Animations, no library** — sheets, the palette and toasts animate with CSS transitions keyed on `data-state` from `usePresence` (exits wait only on their parts' finite animations, capped); springs are `linear()` tokens in `index.css` sampled from `src/ui/spring.ts`; the ledger swipe snaps with WAAPI. Every animating module asks `prefersReducedMotion()` or carries `motion-reduce:!transform-none` (guarded by `a11y-guards.test.ts`). Never re-add an animation library: the JS budget has no room.
 - **PWA manifest + service worker** — changes here require a manual cache-bust check on installed clients.
-- **Supabase RLS** — `GRANT` alone is _not_ enough; either enable RLS with policies or explicitly disable it. See [bugs-fixed.md](bugs-fixed.md).
+- **Supabase RLS** — `GRANT` alone is _not_ enough; either enable RLS with policies or explicitly disable it. See [bugs-fixed.md](bugs-fixed.md). The relay's end state is the deliberate third case: migration 005 turns RLS on with **no** policies, and devices reach `sync_buckets` only through the `st_sync_*` `SECURITY DEFINER` functions from 004 (owned by the table owner; RLS is not forced, so they still work). The owner applies 004 and 005 by hand, in that order and gated: [sync-runbook.md](sync-runbook.md). Never `supabase db push` ([supabase/README.md](../../supabase/README.md)).
 
 ## Common failure points (read before changing these areas)
 

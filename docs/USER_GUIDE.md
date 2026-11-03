@@ -71,13 +71,13 @@ Settings → **Budgets**: a monthly cap per category, more than 0 and at most 10
 >
 > If you do want phone ↔ laptop sync, **plan for ~5 minutes of one-time Supabase setup.** After that, every additional device is a join-the-code step.
 
-A sync code links your devices: there's no account. The synced copy on the relay isn't encrypted yet, so anyone with this app's public key could read it; the code itself is what lets a device change it. Share it only with your own devices.
+A sync code links your devices: there's no account. The synced copy on the relay isn't encrypted yet, so until the database lockdown (migration 005) is applied anyone with this app's public key could read it; the code itself is what lets a device change it. After the lockdown, reading or changing the copy takes the code. Share it only with your own devices.
 
 **One-time setup (per Supabase project):**
 
 1. Create a free project at [supabase.com](https://supabase.com).
-2. In the Supabase SQL Editor, run `supabase/migrations/001_sync.sql` (and optionally `002_sync_indexes.sql` for retention helpers). The helper only creates a manual pruning function; schedule it yourself if you want automatic 90-day cleanup.
-3. Copy your project URL and anon public key into `.env.local` as `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
+2. In the Supabase SQL Editor, run the files in `supabase/migrations` in order: `001_sync.sql`, `002_sync_indexes.sql` (retention helper), `003_harden_prune_search_path.sql` and `004_sync_rpc.sql` (the relay's sync functions). `supabase/README.md` says what each one does. The helper only creates a manual pruning function; schedule it yourself if you want automatic 90-day cleanup. `005_sync_lockdown.sql` comes later, when Settings → **Sync** says "Ready for the database lockdown." on every device; `docs/brain/sync-runbook.md` walks through 004 and 005.
+3. Copy your project URL and anon public key into `.env.local` as `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. After 004, add `VITE_SYNC_RELAY=auto` (the sync functions) and, once `scripts/verify-cas.mjs` passes, `VITE_SYNC_CAS=on` (compare-and-set), then rebuild.
 4. Open Settings → **Sync** in the app and tap **Generate sync code for this device**. On every other device, paste the code under **or join an existing one** and tap **Join**.
 
 **Linking a device:**
@@ -92,13 +92,13 @@ A sync code links your devices: there's no account. The synced copy on the relay
 - It's masked (`••••-…-1a2b`). **Show** reveals it until you tap **Hide**, for 30 seconds at most, and it hides again when you leave the app or close Settings. **Copy** always copies the full code, to paste on your other device.
 - Pair as many devices as you like with the same code (phone + laptop + tablet + work browser, etc.). Changes from every device are merged; nothing is overwritten wholesale.
 - If you ever lose the code, copy it from another linked device (Settings → Sync). Generating a new one starts a separate sync; the old bucket stays in Supabase until `prune_stale_sync_buckets()` removes it (90 days, if you scheduled it).
-- This no-account relay is designed for a personal Supabase project. It uses broad anon table access, so it is not a hardened multi-user SaaS security model.
+- This no-account relay is designed for a personal Supabase project. Until the database lockdown (migration 005) it uses broad anon table access, so it is not a hardened multi-user SaaS security model.
 
 **What Settings → Sync shows:**
 
 - the status (**Synced · 2m ago**, **Saved here · 3 to sync**, **Can't reach the sync server · retry in 30 s**, **Sync paused**) with **Sync now**;
 - **Devices**: every device on this sync, **This device** first, then each **Other device**, with its SpendTrack version and when it last synced. A device on an older SpendTrack says "update it" (0.10.0 and 0.9.2 don't report themselves, so they show as "Older SpendTrack (0.10.0)"); one not seen for 60 days is greyed. When every other device runs this version it says so ("All your devices run SpendTrack 0.11.0."), which is the sign it's safe to rely on the newest sync features;
-- in one line, whether live updates are on, or unavailable (then it syncs when you open the app and every minute);
+- in one line, whether live updates are on, or unavailable (then it syncs when you open the app and every minute). When the app uses the relay's sync functions (after migration 004, with `VITE_SYNC_RELAY=auto`), the line adds "using the relay's sync functions", and another line says whether the database is ready for the lockdown (migration 005) or what is still missing;
 - a banner when a device on SpendTrack 0.10.0, 0.9.2 or 0.8.4 wrote the synced copy in the last day, and how full the relay row is from 70 % ("Sync uses 82 % of the relay limit"). At 100 % sync pauses; your data stays on this device and merges keep coming in.
 
 On a laptop (1280 px and wider) the pill in the top bar says the same in short: **Synced · 2m ago**, **3 to sync**, **Offline · 3 to sync**, **Sync retrying · 30 s**, **Sync paused · code not found**. When it reports a problem, it is a button that opens Settings → Sync.
@@ -112,7 +112,7 @@ How it works:
 - Your changes go out 1.5 seconds after you stop (5 seconds at most while you keep typing), and at once when you leave the app. Other devices' changes arrive within seconds through Supabase Realtime while the app is open; if live updates are blocked, the app checks every minute and whenever you come back to it (a check that finds nothing new downloads nothing). Changes made offline are kept and sent when you are back.
 - If a push fails, retries back off (2, 4, 8, 16, 32, then 60 seconds, a little randomised), pause while the app is in the background or offline, and start again at once when you come back. The pill says **Synced** only when every change has reached the relay.
 - If your other device removes a lot of entries at once (10 or more, and 50 or more or a tenth of everything), this device keeps a copy first and says "Your other device removed N entries" with **Undo** for 30 seconds.
-- Devices still on 0.10.0 or 0.9.2 keep syncing with this version. Update every device when you can: the devices list tells you which one is behind.
+- Devices still on 0.10.0 or 0.9.2 keep syncing with this version until the database lockdown (migration 005), which Settings only calls ready once no older SpendTrack has written the synced copy for 14 days. Update every device when you can: the devices list tells you which one is behind.
 - A sync set up by a newer SpendTrack (after going back to an older version) is left untouched: Settings → Sync asks you to reload, and offers only **Disconnect**.
 
 If you'd rather not run a Supabase project, a JSON backup moves your data between devices: download it on one, import it on the other.
@@ -149,7 +149,7 @@ That means:
 
 - no third-party analytics, no telemetry
 - no recovery from the relay unless you set up sync (or download your own backups)
-- the synced copy isn't encrypted yet: anyone with this app's public key could read it, and anyone with your sync code can change it. Share the code only with your own devices
+- the synced copy isn't encrypted yet: until the database lockdown (migration 005) anyone with this app's public key could read it, and anyone with your sync code can change it. Share the code only with your own devices
 
 ## Operational limits
 

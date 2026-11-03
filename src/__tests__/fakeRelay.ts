@@ -16,6 +16,11 @@
 // `updated_at` is stored and returned in PostgREST's form (microseconds, trailing zeros trimmed,
 // `+00:00`), unique per write of a row like Postgres's clock. A table write stores the client's
 // token; an RPC write gets the server's (`GREATEST(clock, base + 1 µs)`).
+// The database follows supabase/migrations (PR-5 track spec §4, held to it by
+// fakeRelay.contract.test.ts): `rpc: 'present'` is 004 applied (the three sync functions with
+// their validation, and the NOT VALID checks on new table writes, 23514), `lockdown` is 005
+// (every table call 401 42501). `migrate()` moves between the states as the SQL files do, and
+// refuses where they refuse (55000).
 // State lives on globalThis, so device module graphs loaded with vi.resetModules() share
 // one relay; every device boots on its own storage (MemoryStorage). Works against the v0.8.4
 // code too (it ignores the event argument).
@@ -149,7 +154,11 @@ interface RelayState {
   offlineClients: Set<number>
   /** Ghost pushes (see `Failure`) that have landed. */
   ghostsLanded: number
-  /** Migration 004: the three sync functions exist ('absent' answers 404 PGRST202). */
+  /**
+   * Migration 004: the three sync functions exist ('absent' answers 404 PGRST202), and a table
+   * write that would leave a bad row (non-UUID id, non-object or > 2 MiB payload, ±infinity
+   * token) answers 400 23514.
+   */
   rpc: 'absent' | 'present'
   /** Migration 005: every table call answers 401 42501 (the functions keep working). */
   lockdown: boolean
@@ -157,9 +166,9 @@ interface RelayState {
   broadcast: 'on' | 'rejected'
   /** `postgres_changes` refused (realtime publication dropped): such a channel fails to join. */
   rowEvents: 'on' | 'rejected'
-  /** The RPC push refuses a payload whose JSON is longer than this in UTF-8 bytes (22023). */
+  /** The RPC push refuses a payload whose jsonb text is longer than this in bytes (22023). */
   rpcMaxBytes: number
-  /** The RPC create is over its caps: 53400. */
+  /** The RPC create is over its caps: 53400 (HTTP 500, as PostgREST answers it). */
   rpcFull: boolean
   /** The options every client was created with (the last one last). */
   clientOptions: unknown[]
@@ -245,6 +254,96 @@ const errorResponse = (status: number, message: string, code = ''): RelayRespons
 const isObject = (v: unknown): v is Record<string, unknown> =>
   typeof v === 'object' && v !== null && !Array.isArray(v)
 
+// ---------------------------------------------------------------------------
+// What migration 004 checks (track spec §3.1, §3.2)
+// ---------------------------------------------------------------------------
+
+/** A lower-case UUID of any version: `normalizeUuid` output and the private (v8) row ids. */
+const ROW_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+/** `sync_buckets_payload_bounded`: an object of at most 2 MiB of jsonb text. */
+const TABLE_PAYLOAD_MAX = 2_097_152
+/** `isfinite(updated_at)`: Postgres reads these as ±infinity. */
+const NON_FINITE = /^\s*[+-]?infinity\s*$/i
+
+const isRowId = (v: unknown): v is string => typeof v === 'string' && ROW_ID.test(v)
+
+/** The members JSON.stringify writes (it drops undefined, functions and symbols). */
+const written = (v: unknown): boolean =>
+  v !== undefined && typeof v !== 'function' && typeof v !== 'symbol'
+
+/** The `": "` and `", "` spaces jsonb_out adds to JSON.stringify's compact form. */
+function jsonbSpaces(value: unknown): number {
+  if (Array.isArray(value)) {
+    let n = Math.max(0, value.length - 1)
+    for (const item of value) n += jsonbSpaces(item)
+    return n
+  }
+  if (!isObject(value)) return 0
+  const members = Object.values(value).filter(written)
+  let n = 2 * members.length - Math.min(1, members.length)
+  for (const member of members) n += jsonbSpaces(member)
+  return n
+}
+
+/**
+ * `octet_length(v::jsonb::text)`, what 004 measures: the UTF-8 bytes of JSON.stringify(v) plus
+ * one space after every key's colon and after every comma. Outside the model (never in a
+ * SpendTrack payload): numbers Postgres prints differently (1e21 and up, small exponents), and
+ * `\u0000` or lone surrogates, which jsonb refuses outright.
+ */
+export function jsonbTextBytes(value: unknown): number {
+  // (JSON.stringify answers undefined for undefined, which encodes as no bytes)
+  return new TextEncoder().encode(JSON.stringify(value)).length + jsonbSpaces(value)
+}
+
+/** st_sync_push's shapes: v5 plaintext, a private envelope, or the moved marker. */
+const pushShape = (p: Record<string, unknown>): boolean =>
+  (Array.isArray(p.expenses) && isObject(p.x5)) ||
+  (p.st === 5 && typeof p.iv === 'string' && typeof p.ct === 'string') ||
+  (p.expenses === 'moved' && isObject(p.x5))
+
+/** st_sync_push's 22023 message for its arguments, in 004's order, or null when they pass. */
+function pushRefusal(row: unknown, payload: unknown, maxBytes: number): string | null {
+  if (!isRowId(row)) return 'invalid row id'
+  if (!isObject(payload)) return 'invalid payload'
+  if (jsonbTextBytes(payload) > maxBytes) return 'payload too large'
+  if (!pushShape(payload)) return 'invalid payload shape'
+  return null
+}
+
+/**
+ * What a table write leaving this row meets: 001's NOT NULL on `payload` (23502), then, once 004
+ * is applied, its checks in name order (Postgres tests CHECK constraints alphabetically; 23514).
+ */
+function rowRefusal(
+  syncId: string,
+  payload: unknown,
+  token: unknown,
+  checked: boolean,
+): RelayResponse | null {
+  if (payload === null || payload === undefined) {
+    return errorResponse(
+      400,
+      'null value in column "payload" of relation "sync_buckets" violates not-null constraint',
+      '23502',
+    )
+  }
+  if (!checked) return null
+  const failed = !isRowId(syncId)
+    ? 'sync_buckets_id_uuid'
+    : !isObject(payload) || jsonbTextBytes(payload) > TABLE_PAYLOAD_MAX
+      ? 'sync_buckets_payload_bounded'
+      : typeof token === 'string' && NON_FINITE.test(token)
+        ? 'sync_buckets_updated_at_finite'
+        : null
+  if (failed === null) return null
+  return errorResponse(
+    400,
+    `new row for relation "sync_buckets" violates check constraint "${failed}"`,
+    '23514',
+  )
+}
+
 function cloneRecord(v: Record<string, unknown>): Record<string, unknown> {
   const copy = clone(v)
   return isObject(copy) ? copy : {}
@@ -318,6 +417,49 @@ export function seedRow(syncId: string, payload: unknown): void {
 /** Removes the row without any event (pruned on the server, or never there). */
 export function dropRow(syncId: string): void {
   relay().rows.delete(syncId)
+}
+
+export type Migration = '004' | '005' | 'rollback 005' | 'rollback 004'
+
+/** A migration step the SQL refuses (`55000`, nothing changed): track spec §4 table C. */
+export class MigrationRefused extends Error {
+  readonly code = '55000'
+
+  constructor(message: string) {
+    super(`55000 ${message}`)
+    this.name = 'MigrationRefused'
+  }
+}
+
+/**
+ * Applies a migration step as the SQL file does (idempotent; no row is touched): 004 adds the
+ * functions and the checks; 005 locks the table and drops it from the realtime publication, and
+ * is refused without 004; the 005 rollback reopens the table; the 004 rollback removes the
+ * functions and checks, and is refused while 005 is applied.
+ */
+export function migrate(step: Migration): void {
+  const r = relay()
+  if (step === '004') {
+    r.rpc = 'present'
+  } else if (step === '005') {
+    if (r.rpc !== 'present') {
+      throw new MigrationRefused(
+        'SpendTrack 005: the sync functions from 004 are missing or not as 004 made them. Apply 004 and run 004_verify.sql first. Nothing was changed.',
+      )
+    }
+    r.lockdown = true
+    r.rowEvents = 'rejected'
+  } else if (step === 'rollback 005') {
+    r.lockdown = false
+    r.rowEvents = 'on'
+  } else {
+    if (r.lockdown) {
+      throw new MigrationRefused(
+        'SpendTrack 004 rollback: the lockdown (005) is applied. Roll back 005 first (005_sync_lockdown.rollback.sql), or keep 004. Nothing was changed.',
+      )
+    }
+    r.rpc = 'absent'
+  }
 }
 
 /** Queues failures for the next head/pull/push requests, in order. */
@@ -783,13 +925,13 @@ class Query implements PromiseLike<RelayResponse> {
     if (this.op === 'rpc') {
       if (r.rpc !== 'present') return NO_RPC(this.fn)
       if (this.fn === 'st_sync_push') {
-        const payload = this.args.p_payload
-        const bytes = new TextEncoder().encode(JSON.stringify(payload)).length
-        if (!isObject(payload) || bytes > r.rpcMaxBytes) {
-          return errorResponse(400, 'invalid payload', '22023')
-        }
-        if (this.args.p_base === null && this.args.p_force !== true && r.rpcFull) {
-          if (!r.rows.has(this.target)) return errorResponse(503, 'relay is full', '53400')
+        const invalid = pushRefusal(this.args.p_row, this.args.p_payload, r.rpcMaxBytes)
+        if (invalid !== null) return errorResponse(400, invalid, '22023')
+        // the caps bind a genuinely new row only: creating an existing one is a conflict
+        const create = typeof this.args.p_base !== 'string' && this.args.p_force !== true
+        if (create && r.rpcFull && !r.rows.has(this.target)) {
+          // PostgREST answers 53400 (config limit exceeded) with 500, not the 503 of class 53
+          return errorResponse(500, 'relay is full', '53400')
         }
       }
       return null
@@ -798,7 +940,9 @@ class Query implements PromiseLike<RelayResponse> {
   }
 
   /** A head or pull answer: the row, or nothing. */
-  private readAnswer(row: RelayRow | undefined): RelayResponse {
+  private readAnswer(found: RelayRow | undefined): RelayResponse {
+    // st_sync_head and st_sync_pull look up lower-case UUIDs only (004: NULL for any other id)
+    const row = this.op === 'rpc' && !isRowId(this.target) ? undefined : found
     if (row && this.lane === 'pull') {
       relay().pullLog.push({ client: this.client.id, payload: clone(row.payload), at: Date.now() })
     }
@@ -847,16 +991,21 @@ class Query implements PromiseLike<RelayResponse> {
     r.beforeWrite?.({ client: this.client.id, via, force })
     const current = r.rows.get(syncId)
     if (this.op === 'rpc') return this.rpcWrite(requestedAt, current)
-    if (this.op === 'insert' && current !== undefined) {
-      return errorResponse(409, 'duplicate key value violates unique constraint', '23505')
-    }
+    // An UPDATE that matches no row checks nothing; any other write checks the row it would leave
+    // (CHECK constraints come before the unique index, so a bad insert is 23514, not 23505).
     if (this.op === 'update') {
       if (current === undefined) return this.ok(null)
       if (this.base !== null && micros(current.updated_at) !== micros(this.base))
         return this.ok(null)
     }
-    const payload =
-      this.op === 'update' && !('payload' in this.row) ? current?.payload : this.row.payload
+    const patch = this.op === 'update'
+    const payload = patch && !('payload' in this.row) ? current?.payload : this.row.payload
+    const token = patch && !('updated_at' in this.row) ? current?.updated_at : this.row.updated_at
+    const refused = rowRefusal(syncId, payload, token, r.rpc === 'present')
+    if (refused !== null) return refused
+    if (this.op === 'insert' && current !== undefined) {
+      return errorResponse(409, 'duplicate key value violates unique constraint', '23505')
+    }
     const row: RelayRow = {
       payload: clone(payload),
       updated_at: stampFor(syncId, this.row.updated_at),
