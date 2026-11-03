@@ -310,7 +310,10 @@ describe('st_sync_push under concurrency (reasoned, not executed: PGlite has one
       }
       // creates: one at a time (a fixed advisory key), so a burst cannot overrun the caps
       const createLock = at('PERFORM pg_catalog.pg_advisory_xact_lock(7300400401);')
-      const hourCap = at(`interval '1 hour') >= 20`)
+      // the hourly cap counts only rows created in the last hour and not dated in the future
+      const hourCap = at(
+        `interval '1 hour' AND b.created_at <= pg_catalog.clock_timestamp()) >= 20`,
+      )
       // at the caps, the row is looked up again under the lock: a create that lost the race to
       // the same row is a conflict, never "full"
       const recheck = at(
@@ -554,6 +557,89 @@ describe('005 and both rollbacks (AC-2, AC-9 to AC-12, table C)', () => {
       )
       const owner = await failureOf(() => relay.apply('005'))
       expect([owner.code, owner.message]).toEqual(['55000', refusal])
+    },
+    SLOW,
+  )
+
+  it(
+    '005 refuses (55000) when row level security is FORCEd, or the publication cannot be changed; nothing changes',
+    async () => {
+      const relay = await relayAt('004')
+      const post004 = await relay.catalogSnapshot()
+
+      // FORCEd RLS would hide the rows from the functions' owner too: every device locked out.
+      await relay.run(`ALTER TABLE public.sync_buckets FORCE ROW LEVEL SECURITY`)
+      const forced = await relay.catalogSnapshot()
+      const f = await failureOf(() => relay.apply('005'))
+      expect([f.code, f.message]).toEqual([
+        '55000',
+        'SpendTrack 005: row level security on public.sync_buckets is FORCEd, which would lock the sync functions out too. Tell the lead. Nothing was changed.',
+      ])
+      expect(await relay.catalogSnapshot()).toBe(forced)
+      await relay.run(`ALTER TABLE public.sync_buckets NO FORCE ROW LEVEL SECURITY`)
+      expect(await relay.catalogSnapshot()).toBe(post004)
+
+      const publication =
+        'SpendTrack 005: the supabase_realtime publication lists the table, but this role cannot change it (it is FOR ALL TABLES, or another role owns it). Tell the lead. Nothing was changed.'
+      // Another role owns the publication.
+      await relay.superuser(`ALTER PUBLICATION supabase_realtime OWNER TO ${STRANGER}`)
+      const owned = await failureOf(() => relay.apply('005'))
+      expect([owned.code, owned.message]).toEqual(['55000', publication])
+      await relay.superuser(`ALTER PUBLICATION supabase_realtime OWNER TO ${OWNER}`)
+      expect(await relay.catalogSnapshot()).toBe(post004)
+
+      // The publication is FOR ALL TABLES (a table cannot be dropped from it).
+      await relay.superuser(`DROP PUBLICATION supabase_realtime;
+        CREATE PUBLICATION supabase_realtime FOR ALL TABLES;`)
+      const all = await failureOf(() => relay.apply('005'))
+      expect([all.code, all.message]).toEqual(['55000', publication])
+      await relay.superuser(`DROP PUBLICATION supabase_realtime;
+        CREATE PUBLICATION supabase_realtime FOR TABLE public.sync_buckets;
+        ALTER PUBLICATION supabase_realtime OWNER TO ${OWNER};`)
+      expect(await relay.catalogSnapshot()).toBe(post004)
+      await relay.apply('005')
+    },
+    SLOW,
+  )
+
+  it(
+    'the lockout guards hold for a client that runs on after the first error (psql without ON_ERROR_STOP)',
+    async () => {
+      // Such a client skips nothing but the statement that failed: the pre-BEGIN check prints its
+      // refusal and the transaction runs anyway. Dropping the pre-BEGIN block models that.
+      const withoutPre = (sql: string): string => {
+        const out = sql.replace(/DO \$pre\$[\s\S]*?\$pre\$;\n/, '')
+        expect(out).not.toBe(sql)
+        return out
+      }
+
+      // 005 with no working functions must not close the table.
+      const early = await relayAt('001-003')
+      const before = await early.catalogSnapshot()
+      const g = await failureOf(() => early.run(withoutPre(migrationSql('005'))))
+      expect([g.code, g.message]).toEqual([
+        '55000',
+        'SpendTrack 005: the preconditions failed (see the first error). Nothing was changed.',
+      ])
+      expect(await early.catalogSnapshot()).toBe(before)
+
+      // 005 on a FORCEd table must not run either.
+      const forced = await relayAt('004')
+      await forced.run(`ALTER TABLE public.sync_buckets FORCE ROW LEVEL SECURITY`)
+      const forcedBefore = await forced.catalogSnapshot()
+      const h = await failureOf(() => forced.run(withoutPre(migrationSql('005'))))
+      expect(h.code).toBe('55000')
+      expect(await forced.catalogSnapshot()).toBe(forcedBefore)
+
+      // The 004 rollback must not drop the functions under a closed table.
+      const locked = await relayAt('005')
+      const lockedBefore = await locked.catalogSnapshot()
+      const r = await failureOf(() => locked.run(withoutPre(migrationSql('004-rollback'))))
+      expect([r.code, r.message]).toEqual([
+        '55000',
+        'SpendTrack 004 rollback: refused (see the first error). Nothing was changed.',
+      ])
+      expect(await locked.catalogSnapshot()).toBe(lockedBefore)
     },
     SLOW,
   )

@@ -158,7 +158,7 @@ BEGIN
                                        'pass', v_count = 0);
 
   IF v_count = 0 THEN
-    SELECT count(*), count(*) FILTER (WHERE b.created_at > now() - interval '1 hour')
+    SELECT count(*), count(*) FILTER (WHERE b.created_at > now() - interval '1 hour' AND b.created_at <= clock_timestamp())
       INTO v_count, v_hour
       FROM public.sync_buckets AS b;
     v_full := v_count >= 500 OR v_hour >= 20;
@@ -363,7 +363,7 @@ BEGIN
       BEGIN
         -- the editor fills the last hour up to 20 creates (throwaway rows, undone with the rest)
         PERFORM set_config('role', v_editor, true);
-        SELECT count(*) INTO v_hour FROM public.sync_buckets AS b WHERE b.created_at > now() - interval '1 hour';
+        SELECT count(*) INTO v_hour FROM public.sync_buckets AS b WHERE b.created_at > now() - interval '1 hour' AND b.created_at <= clock_timestamp();
         INSERT INTO public.sync_buckets (sync_id, payload)
         SELECT c_prefix || to_hex(191 + g.i), c_doc FROM generate_series(1, greatest(0, 20 - v_hour)::int) AS g(i);
         IF v_anon THEN PERFORM set_config('role', 'anon', true); END IF;

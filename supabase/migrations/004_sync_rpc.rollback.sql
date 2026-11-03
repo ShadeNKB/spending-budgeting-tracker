@@ -43,6 +43,22 @@ BEGIN;
 
 SET LOCAL lock_timeout = '10s';
 
+-- The lockdown check again, inside the transaction: a client that runs on after the first error
+-- must not drop the functions under a closed table. A refusal here aborts the transaction in
+-- any client.
+DO $guard$
+DECLARE
+  v_table regclass := to_regclass('public.sync_buckets');
+BEGIN
+  IF v_table IS NULL
+     OR (SELECT c.relrowsecurity FROM pg_catalog.pg_class AS c WHERE c.oid = v_table)
+     OR NOT has_table_privilege('anon', v_table, 'SELECT') THEN
+    RAISE EXCEPTION 'SpendTrack 004 rollback: refused (see the first error). Nothing was changed.'
+      USING ERRCODE = '55000';
+  END IF;
+END
+$guard$;
+
 DROP FUNCTION IF EXISTS public.st_sync_push(text, jsonb, timestamptz, boolean);
 DROP FUNCTION IF EXISTS public.st_sync_pull(text);
 DROP FUNCTION IF EXISTS public.st_sync_head(text);

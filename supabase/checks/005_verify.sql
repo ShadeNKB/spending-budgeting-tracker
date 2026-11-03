@@ -126,7 +126,7 @@ BEGIN
                                        'pass', v_count = 0);
 
   IF v_count = 0 THEN
-    SELECT count(*), count(*) FILTER (WHERE b.created_at > now() - interval '1 hour')
+    SELECT count(*), count(*) FILTER (WHERE b.created_at > now() - interval '1 hour' AND b.created_at <= clock_timestamp())
       INTO v_count, v_hour
       FROM public.sync_buckets AS b;
     v_full := v_count >= 500 OR v_hour >= 20;

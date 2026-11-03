@@ -60,12 +60,56 @@ BEGIN
     RAISE EXCEPTION 'SpendTrack 005: the sync functions from 004 are missing or not as 004 made them. Apply 004 and run 004_verify.sql first. Nothing was changed.'
       USING ERRCODE = '55000';
   END IF;
+  -- FORCEd row level security would hide the rows from the functions too (their owner has no
+  -- BYPASSRLS on Supabase): every device would be locked out.
+  IF (SELECT c.relforcerowsecurity FROM pg_catalog.pg_class AS c WHERE c.oid = v_table) THEN
+    RAISE EXCEPTION 'SpendTrack 005: row level security on public.sync_buckets is FORCEd, which would lock the sync functions out too. Tell the lead. Nothing was changed.'
+      USING ERRCODE = '55000';
+  END IF;
+  -- Step 3 must be able to take the table out of the publication.
+  IF EXISTS (SELECT 1
+               FROM pg_catalog.pg_publication AS p
+               JOIN pg_catalog.pg_publication_tables AS pt ON pt.pubname = p.pubname
+              WHERE p.pubname = 'supabase_realtime'
+                AND pt.schemaname = 'public' AND pt.tablename = 'sync_buckets'
+                AND (p.puballtables OR NOT pg_has_role(p.pubowner, 'USAGE'))) THEN
+    RAISE EXCEPTION 'SpendTrack 005: the supabase_realtime publication lists the table, but this role cannot change it (it is FOR ALL TABLES, or another role owns it). Tell the lead. Nothing was changed.'
+      USING ERRCODE = '55000';
+  END IF;
 END
 $pre$;
 
 BEGIN;
 
 SET LOCAL lock_timeout = '10s';
+
+-- The lockout checks again, inside the transaction: a client that runs on after the first error
+-- (psql without ON_ERROR_STOP, some script runners) must not close the table without working
+-- functions. A refusal here aborts the transaction in any client.
+DO $guard$
+DECLARE
+  v_table regclass := to_regclass('public.sync_buckets');
+  v_owner oid := (SELECT c.relowner FROM pg_catalog.pg_class AS c
+                   WHERE c.oid = to_regclass('public.sync_buckets'));
+  v_ok int;
+BEGIN
+  SELECT count(*) INTO v_ok
+    FROM unnest(ARRAY[to_regprocedure('public.st_sync_head(text)'),
+                      to_regprocedure('public.st_sync_pull(text)'),
+                      to_regprocedure('public.st_sync_push(text, jsonb, timestamptz, boolean)')]) AS f(fn)
+    JOIN pg_catalog.pg_proc AS p ON p.oid = f.fn
+   WHERE p.prosecdef
+     AND p.proconfig @> ARRAY['search_path=""']
+     AND p.proowner = v_owner
+     AND has_function_privilege('anon', p.oid, 'EXECUTE')
+     AND has_function_privilege('authenticated', p.oid, 'EXECUTE');
+  IF v_table IS NULL OR v_ok <> 3
+     OR (SELECT c.relforcerowsecurity FROM pg_catalog.pg_class AS c WHERE c.oid = v_table) THEN
+    RAISE EXCEPTION 'SpendTrack 005: the preconditions failed (see the first error). Nothing was changed.'
+      USING ERRCODE = '55000';
+  END IF;
+END
+$guard$;
 
 -- 1. No direct table access for the API roles (column privileges go with it).
 REVOKE ALL ON TABLE public.sync_buckets FROM PUBLIC, anon, authenticated;

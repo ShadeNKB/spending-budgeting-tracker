@@ -224,8 +224,11 @@ BEGIN
     END IF;
     -- One create at a time (a fixed key used only here), so a burst cannot overrun the caps.
     PERFORM pg_catalog.pg_advisory_xact_lock(7300400401);
+    -- A created_at in the future (anon can write the column until 005) never counts, so it
+    -- cannot hold the hourly cap full.
     IF (SELECT pg_catalog.count(*) FROM public.sync_buckets AS b
-         WHERE b.created_at > pg_catalog.now() - interval '1 hour') >= 20
+         WHERE b.created_at > pg_catalog.now() - interval '1 hour'
+           AND b.created_at <= pg_catalog.clock_timestamp()) >= 20
        OR (SELECT pg_catalog.count(*) FROM public.sync_buckets) >= 500 THEN
       -- The same row may have been created while this call waited for the lock.
       SELECT b.updated_at INTO v_cur FROM public.sync_buckets AS b WHERE b.sync_id = p_row;

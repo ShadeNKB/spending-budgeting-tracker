@@ -508,6 +508,16 @@ describe('creation caps: 20 an hour, 500 rows (AC-6)', () => {
     expect((await push(rest, throwaway(0xa2), doc())).status).toBe(500)
   })
 
+  it('rows dated in the future (anon may write created_at until 005) never hold the hourly cap full', async () => {
+    await clear()
+    await relay.run(`INSERT INTO public.sync_buckets (sync_id, payload, created_at)
+      SELECT format('10000000-0000-4000-8000-%s', lpad(to_hex(i), 12, '0')), '{}'::jsonb, 'infinity'
+        FROM generate_series(1, 20) AS i`)
+    await relay.fill({ count: 19, createdAgo: '1 minute', from: 100 })
+    expect((await push(rest, throwaway(0xa1), doc())).body).toMatchObject({ ok: true })
+    expect((await push(rest, throwaway(0xa2), doc())).status).toBe(500)
+  })
+
   it('the 501st row is 53400; creating a row that exists at the cap is a conflict', async () => {
     await clear()
     await relay.fill({ count: 499, createdAgo: '2 hours' })

@@ -41,7 +41,7 @@ r AS MATERIALIZED (
 ),
 census AS (
   SELECT count(*) AS total,
-         count(*) FILTER (WHERE r.created_at > now() - interval '1 hour') AS last_hour,
+         count(*) FILTER (WHERE r.created_at > now() - interval '1 hour' AND r.created_at <= clock_timestamp()) AS last_hour,
          count(*) FILTER (WHERE NOT r.good_id) AS bad_id,
          count(*) FILTER (WHERE NOT r.good_id AND r.active) AS bad_id_active,
          count(*) FILTER (WHERE NOT (r.is_object AND r.bytes <= 2097152)) AS bad_payload,
