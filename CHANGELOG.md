@@ -1,6 +1,135 @@
 # Changelog
 
-## 0.11.0 — 2026-11-02
+## Unreleased: database update 004/005 (PR-5, files only)
+
+PR-5 of the data-engine overhaul: the database step. It is not an app release. The app is byte-for-byte 0.11.0 and keeps that version number. Nothing changes until you apply the SQL yourself in the Supabase SQL editor, following `docs/brain/sync-runbook.md`: migration 004 at gate C, then migration 005 at gate E, at least 7 days later.
+
+At gate C, 004 takes delete, truncate and the prune function away from the app's public key, and the database starts refusing badly formed new writes. It also adds the relay's own sync functions, and every SpendTrack build keeps syncing. Two Vercel switches, `VITE_SYNC_RELAY=auto` and `VITE_SYNC_CAS=on`, then move the app onto those functions and turn on 0.11.0's compare-and-set. At gate E, 005 closes the table. The public key alone can no longer list, read or write a synced copy. Your devices reach their copy through the functions, which need the sync code.
+
+Every migration and undo file runs in one transaction, can be run twice and never changes or deletes a row. The checks only read, or they undo the rows they wrote. None of it has touched the live project: the tests prove it on a real Postgres.
+
+### Fixed
+
+These take effect when you apply the migration named.
+
+- **The app's public key can no longer delete or empty the relay** (004). It loses DELETE, TRUNCATE, REFERENCES and TRIGGER on the table, and MAINTAIN on Postgres 17 or later. It also loses the right to run `prune_stale_sync_buckets`, which removes old rows. Supabase's default privileges had granted all of these, and no SpendTrack version ever used them. Undoing 004 doesn't give them back. (F-068)
+- **The database refuses badly formed writes** (004). From now on a written row needs three things: a lower-case UUID code, a JSON object of at most 2 MiB as its payload, and a real time as its token. Anything else gets error 23514 and writes nothing. Rows already there are never scanned or changed, so old junk can't make the migration fail. (F-068)
+- **The sync functions check every write on the server** (004). `st_sync_push` refuses, with error 22023:
+  - a bad code;
+  - a payload that isn't an object;
+  - a copy over 1,258,291 bytes as stored (the limit 0.11.0 already checks before sending);
+  - any shape SpendTrack doesn't write.
+
+  It does compare-and-set on the row's current token, so two crossing uploads can't overwrite each other (F-001). Every token it stores is later than the row's last one, whatever a device's clock wrote before. (F-068)
+
+- **Nobody holding the public key can list or read your synced copy** (005). The API roles lose every privilege on the table, and row level security comes on with no policies. The table also leaves the Realtime change feed, so row changes no longer go to anyone who subscribes. Your devices keep syncing through the three functions. (F-006, the database half)
+
+### Changed
+
+- **New sync codes are capped** from gate C: 20 new rows an hour and 500 rows in all. A new code over a cap gets "The sync relay is full. Your changes are saved on this device." Codes you already use keep syncing. Creating a code that already exists is never refused as full.
+- **After the lockdown, live updates come over Broadcast.** Each time the app opens, it first asks for the database's change feed. 005 refuses that, so the app switches to Broadcast, and "Live updates on" can take a few seconds. If Supabase's Realtime settings don't allow public channels, Settings › Sync says "Live updates unavailable · syncing on open and every minute". Changes still arrive when you open the app and every minute. That setting is your choice, and the runbook says what each answer means. (F-006)
+- **The docs now explain how to set up the relay.** README, the user guide, CONTRIBUTING, SECURITY, the operating manual and `.env.example` now say:
+  - apply migrations 001 to 004 by hand, in order, and never with `supabase db push`;
+  - the relay copy is readable with the public key only until 005;
+  - where to find the runbook.
+
+  SECURITY.md no longer calls the sync code a "shared secret". (F-006)
+
+### Added
+
+- **`supabase/migrations/004_sync_rpc.sql`** (gate C) and **`005_sync_lockdown.sql`** (gate E). Each one checks its preconditions before it starts. When it can't run, it stops with "SpendTrack 00X: … Nothing was changed." 005 refuses unless 004's functions are exactly as 004 made them, because a lockdown without them would stop every device.
+- **Undo files.**
+  - `004_sync_rpc.rollback.sql` removes the functions, the write checks and the index, and keeps the revokes. It refuses to run while 005 is applied.
+  - `005_sync_lockdown.rollback.sql` puts back exactly the state after 004. That reopens F-006, so it is only for reviving a device that can't update.
+- **Three read-only checks in `supabase/checks/`.**
+  - `000_preflight_readonly.sql` is one `SELECT`. It reports the stage (`before 004`, `004 applied`, `005 applied` or `mixed`), counts and privileges, and gives a GO or STOP verdict with the reason. It never shows a sync code or a payload.
+  - `004_verify.sql` and `005_verify.sql` check the catalog, then use the functions as the public key on throwaway rows and undo every row they wrote. Row 0 reads `PASS 34/34` and `PASS 20/20`.
+- **`scripts/verify-cas.mjs`**, the compare-and-set check you run from the laptop before you set `VITE_SYNC_CAS=on`. It has a read-only `--lockdown` mode for gate E, and it sends the same requests as 0.11.0.
+  - Before writing anything, it refuses when the project URL isn't `https`, when the key is a `service_role` or secret key, or when the row id isn't a throwaway id: `00000000-0000-4000-8000-` plus 12 hex digits, which no real code is.
+  - It also refuses a row that already exists.
+  - It never prints the key.
+- **`docs/brain/sync-runbook.md`**: gate C (about 30 minutes) and gate E (about 20) as numbered, timed steps. Each step says what the output should look like. It also has STOP points, troubleshooting, rollback, what you'll see after the lockdown and a log to paste outputs into. **`supabase/README.md`** says what each file does and when to run it.
+
+### Known limits
+
+- **Nothing is applied yet.** Until gate C, the relay works exactly as on 0.11.0, F-068 included.
+- **After 005, the synced copy stays readable to whoever holds the code**, and to the project owner. End-to-end encryption comes with private sync (PR-6). (F-006, confidentiality part)
+- **Someone could still fill the database on purpose.** Before 005 the table takes any number of rows of up to 2 MiB each. After 005 the caps count rows, not bytes. 500 copies of 1.2 MB come to about 600 MB, over the free plan's 500 MB, and that takes about 25 hours. Supabase then makes the project read-only and sync stops, but nothing on your devices is lost. A firmer limit is a later change, and the runbook says what to watch.
+- **Some app wording goes out of date after the lockdown** (0.11.1 copy items):
+  - Settings › Sync keeps its gate E line.
+  - Settings › Backup, and Sync before you link, still say anyone with the public key could read the copy.
+  - The "Cloud sync not configured" steps name only `001_sync.sql`.
+- **A NUL character or a lone surrogate in an entry name or note** makes the relay refuse the whole copy (22P05 or 22P02). That has been true since 0.8, on the table and through the functions. Sync retries and your data stays safe on the device. A client-side fix is a 0.11.1 candidate.
+- **A table write over 2 MiB of stored text gets 23514** and is retried as a server error instead of pausing as too large. It can only happen between 004 and the gate C redeploy, and mostly with CJK text under the app's own 1 MiB guard.
+- **After 005, every app open asks for the change feed again.** It needs two refusals, a few seconds, before it settles on Broadcast. Remembering the refusal is a 0.11.1 candidate.
+- **Some things only the live project can show**, so they stay runbook checks: PostgREST itself, Realtime, the SQL editor, the Postgres version (the tests run 18; Supabase runs 15 or 17), and two devices writing at the same instant.
+
+### Changed (engineering)
+
+- **004.**
+  - **Preconditions** run before `BEGIN` and fail with 55000. The table and 002's `created_at` must exist, and so must the roles `anon` and `authenticated`. You must own the table and the prune function. No other `st_sync_*` function may exist: an overload would make PostgREST fail with PGRST203.
+  - **The transaction.** Everything runs in one transaction with `SET LOCAL lock_timeout = '10s'`.
+    - Privileges are revoked from PUBLIC, `anon` and `authenticated`; `MAINTAIN` only on 17+. `service_role` is untouched.
+    - Three `NOT VALID` checks are added, each only when absent by name: `sync_buckets_id_uuid`, `sync_buckets_payload_bounded` and `sync_buckets_updated_at_finite`.
+    - The `created_at DESC` index is plain: the table holds at most 500 rows.
+  - **The functions.** `st_sync_head`, `st_sync_pull` and `st_sync_push` are `SECURITY DEFINER` with `search_path = ''` and every name schema-qualified. They are owned by the table owner, with `EXECUTE` for `anon` and `authenticated` only. Head and pull answer `null` for an id that isn't a lower-case UUID.
+  - **Validation.** Push validates in this order, each failure a 22023: `invalid row id`, `invalid payload`, `payload too large`, `invalid payload shape`.
+    - The accepted shapes are v5 plaintext, a private envelope with a numeric `st` of 5, and a moved marker.
+    - The shape test is `IS NOT TRUE`, so a missing key can't slip through.
+    - A NULL `p_force` means not forced.
+  - **Create.** An existing row is a conflict, checked first. Then the push takes an advisory lock and checks both caps. At the caps it looks for the row again, so a create that lost a race is a conflict, never "full". The insert is `INSERT … ON CONFLICT DO NOTHING`.
+  - **CAS and force.**
+    - The row is read `FOR UPDATE`, and the `UPDATE` matches that token again.
+    - Any other base is a conflict, a later one too, because an older build's upsert can move a token back.
+    - The new token is `GREATEST(clock, current + 1 µs)`. When the current token is not finite or is past 9999-12-31, it is the clock.
+    - Every answer returns the token as stored, and the file ends with `NOTIFY pgrst, 'reload schema'`.
+- **005.** The preconditions check the three functions: definer, empty `search_path`, owner, and `EXECUTE` for both roles. Then:
+  - `REVOKE ALL`;
+  - `ENABLE ROW LEVEL SECURITY`, not forced, with no policies;
+  - the table dropped from `supabase_realtime`;
+  - `REPLICA IDENTITY DEFAULT`;
+  - `NOTIFY`.
+- **Checks.**
+  - **The preflight** is one `SELECT` of 21 rows. It passes a static scan for DDL, DML, `SET`, `DO` and `NOTIFY`, and runs inside `BEGIN READ ONLY`.
+    - "In use" means written in the last 30 days.
+    - Row 7 warns from 1,000 KB and stops past 1,228 KB.
+  - **The verify files** are each a `pg_temp` function that returns one result set.
+    - Their writes sit in one inner block that always ends by raising `st-verify-undo`. A crash becomes an `unexpected_error` row.
+    - They act as `anon` through `set_config('role', …)` and show `SKIPPED` when the editor can't.
+    - They adapt when the relay is at its caps.
+- **Proof on real Postgres.** `@electric-sql/pglite` 0.5.10 (PostgreSQL 18.6) is exactly pinned and dev only.
+  - `src/__tests__/pgRelay.ts` emulates Supabase's roles, default privileges and publication. The default privileges reproduce F-068. It runs every file as a non-superuser owner, with data and catalog snapshots.
+  - `src/__tests__/pgRest.ts` is a PostgREST-shaped `fetch`:
+    - one transaction per request, as `anon`;
+    - Postgres builds every JSON value and every error;
+    - PostgREST's status table, in which 53400 is HTTP 500;
+    - a request log.
+  - 0.11.0's unmodified `syncService` runs through supabase-js against it under every flag and database state, in five session time zones.
+  - JSONB slack (stored bytes over sent bytes) is under the client's 1.15, so the client is unchanged. It measures 1.068 at 700 rows, 1.071 at 3,500 and at 5,000, and 1.048 for a copy that is mostly tombstones.
+- **Fakes.** `fakeRelay` and the e2e `relayServer` now model 004 and 005:
+  - payload size counted in stored (jsonb text) bytes;
+  - the same validation order and messages;
+  - `null` for a junk id;
+  - 23514 or 23502 for a bad table write once 004 is in;
+  - tokens of `max(now, current + 1 µs)`;
+  - 53400 as HTTP 500;
+  - `fakeRelay.migrate()` refuses with 55000 where the SQL does;
+  - `startRelay(0)` binds a free port;
+  - an unfiltered GET lists rows (the new `list` kind);
+  - `lockTable()` needs `enableRpc()` first.
+- **Tests.** 3,599 unit tests in 173 files, against 3,352 in 166 on 0.11.0. They pass in Singapore, Honolulu and Kiritimati time.
+  - New suites: `sql/migrations` (19), `sql/rpc` (30), `sql/checks` (16), `sql/transport` (8), `fakeRelay.contract` (69) and `verify-cas` (94).
+  - `verify-cas.pg` (10) runs the script against the real SQL. It also checks that the runbook quotes every check name and RESULT count.
+  - `syncService.test` gains a 53400-over-HTTP-500 case. `sync.status.test`'s full-relay fixture now uses 500.
+- **Mutations.** The correctness reviews and repairs ran 59 mutants over the SQL, the checks, the script and the fakes. Each repair killed every mutant that had survived the review before it, except three:
+  - `clock_timestamp()` replaced by `now()` in the create;
+  - two guards in `004_verify` against a role switch that silently fails.
+
+  No state a single local connection can reach tells them apart.
+
+- **Bundle.** Unchanged: every built file is identical to main's 0.11.0. JS is 708,791 B, 692.2 of 700 KB, and CSS is 62,661 B. No runtime dependency changed, and `npm audit --omit=dev` finds 0.
+
+## 0.11.0 — 2026-11-03
 
 PR-3 of the data-engine overhaul: the sync engine. Sync now asks the relay whether anything changed before it downloads anything. It keeps working when live updates die, and it sends what you typed as the app closes. Joining a device shows what joining will do before anything changes, and a mistyped code can no longer start a separate sync. Settings › Sync shows what is waiting, which devices are on the sync and which SpendTrack each one runs. The sync code stays hidden until you ask to see it.
 
