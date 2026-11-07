@@ -11,6 +11,7 @@ import {
   type RecoveryApi,
   type RestoreResult,
   type SnapshotInfo,
+  type SnapshotSkips,
 } from '../../stores/useExpenseStore'
 import { useSyncStore } from '../../stores/useSyncStore'
 import { useUIStore, type Toast } from '../../stores/useUIStore'
@@ -73,6 +74,7 @@ const snapshot = (id: string, over: Partial<SnapshotInfo> = {}): SnapshotInfo =>
   at: NOW - HOUR,
   reason: 'daily',
   rows: 641,
+  restorable: true,
   ...over,
 })
 
@@ -114,6 +116,8 @@ function spiesOf(lists: Lists) {
     markFixed: vi.fn((id: string) => {
       lists.attention = lists.attention.filter((a) => a.id !== id)
     }),
+    unmarkFixed: vi.fn((_id: string) => undefined),
+    snapshotSkips: vi.fn((_p: ImportPreview): SnapshotSkips => ({ back: 0, deletedSince: 0 })),
     discard: vi.fn((id: string) => {
       lists.attention = lists.attention.filter((a) => a.id !== id)
     }),
@@ -153,6 +157,10 @@ function fakeApi(init: Partial<Lists> = {}): Fake {
     markFixed: (id) => {
       spy.markFixed(id)
     },
+    unmarkFixed: (id) => {
+      spy.unmarkFixed(id)
+    },
+    snapshotSkips: (p) => spy.snapshotSkips(p),
     discard: (id) => {
       spy.discard(id)
     },
@@ -486,16 +494,21 @@ describe('Needs attention (acceptance 10–12)', () => {
   it('Fix opens the Add sheet prefilled; once added, the row is marked fixed and leaves', async () => {
     const user = userEvent.setup()
     const addExpense = vi.fn(
-      (input: { itemName: string; amount: number; category?: string; day?: string }) => ({
-        id: 'new-1',
-        itemName: input.itemName,
-        amount: input.amount,
-        category: input.category ?? 'Other',
-        date: `${input.day ?? '2026-10-19'}T12:00:00`,
-        day: input.day ?? '2026-10-19',
-        createdAt: '2026-10-19T06:02:00.000Z',
-        ext: {},
-      }),
+      (input: { itemName: string; amount: number; category?: string; day?: string }) => {
+        const added = {
+          id: 'new-1',
+          itemName: input.itemName,
+          amount: input.amount,
+          category: input.category ?? 'Other',
+          date: `${input.day ?? '2026-10-19'}T12:00:00`,
+          day: input.day ?? '2026-10-19',
+          createdAt: '2026-10-19T06:02:00.000Z',
+          ext: {},
+        }
+        // as the engine's commit does: the store holds the entry before addExpense returns
+        useExpenseStore.setState({ expenses: [added] })
+        return added
+      },
     )
     const fake = fakeApi({
       attention: [
@@ -542,6 +555,13 @@ describe('Needs attention (acceptance 10–12)', () => {
       expect(screen.queryByRole('button', { name: 'Fix Chicken rice' })).toBeNull()
     })
     expect(screen.getByRole('heading', { name: 'Needs attention (1)' })).toBeInTheDocument()
+
+    // the Add toast's Undo (or Ctrl+Z) takes the entry back out: the row is listed again
+    expect(fake.spy.unmarkFixed).not.toHaveBeenCalled()
+    act(() => {
+      useExpenseStore.setState({ expenses: [] })
+    })
+    expect(fake.spy.unmarkFixed).toHaveBeenCalledExactlyOnceWith('a1')
   })
 })
 
@@ -723,6 +743,37 @@ describe('Snapshots (acceptance 3, 5, 6)', () => {
     expect(applyImport).toHaveBeenCalledWith(PREVIEW, 'restore')
     expect(lastToast()?.message).toBe('Restored 12 entries')
     expect(screen.queryByRole('region', { name: 'Restore from this copy?' })).toBeNull()
+  })
+
+  it('a removal copy that no longer says what it took: Download only, no Restore', async () => {
+    await open(
+      fakeApi({
+        snapshots: [snapshot('s1', { reason: 'mass', rows: 40, restorable: false })],
+      }),
+    )
+    const row = nth(within(section('Snapshots')).getAllByRole('listitem'), 0)
+    expect(row).toHaveTextContent(
+      'Download only: this copy no longer says which entries that removal took.',
+    )
+    expect(within(row).queryByRole('button', { name: /^Restore/ })).toBeNull()
+    expect(within(row).getByRole('button', { name: /^Download / })).toBeInTheDocument()
+  })
+
+  it('the preview counts what restored before is left alone', async () => {
+    const user = userEvent.setup()
+    const fake = fakeApi({ snapshots: [snapshot('s1', { reason: 'delete-all', rows: 30 })] })
+    fake.spy.previewSnapshot.mockResolvedValueOnce({
+      ...PREVIEW,
+      counts: { ...PREVIEW.counts, inFile: 0, restored: 0 },
+    })
+    fake.spy.snapshotSkips.mockReturnValueOnce({ back: 29, deletedSince: 1 })
+    await open(fake)
+    await user.click(screen.getByRole('button', { name: /^Restore Before Delete all/ }))
+    const preview = await screen.findByRole('region', { name: 'Restore from this copy?' })
+    expect(preview.querySelectorAll('li')).toHaveLength(3)
+    expect(preview).toHaveTextContent('30 in the copy')
+    expect(preview).toHaveTextContent('29 already here')
+    expect(preview).toHaveTextContent('1 deleted again since (they stay deleted)')
   })
 
   it('a copy that no longer reads says so and opens no preview', async () => {

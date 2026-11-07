@@ -9,6 +9,7 @@ import {
   useExpenseStore,
   type ImportOutcome,
   type ImportPreview as Preview,
+  type SnapshotSkips,
 } from '../../stores/useExpenseStore'
 import { RefusedNotice } from './ClearData'
 import { TypedConfirm } from './TypedConfirm'
@@ -27,9 +28,13 @@ interface Line {
   readonly what: string
 }
 
-/** What is being imported: a backup file (the default), or a snapshot kept on this device. */
+/**
+ * What is being imported: a backup file (the default), or a snapshot kept on this device, with
+ * what its restore leaves alone (restored before: back already, or deleted again since).
+ */
 export interface PreviewSource {
   readonly kind: 'snapshot'
+  readonly skips?: SnapshotSkips
 }
 
 /**
@@ -37,13 +42,14 @@ export interface PreviewSource {
  * something. Every row in the file is in exactly one part (unreadable rows included), so the
  * parts add up to the total.
  */
-function previewLines(preview: Preview, of: string): Line[] {
+function previewLines(preview: Preview, of: string, skips: SnapshotSkips | undefined): Line[] {
   const c = preview.counts
   const parts: Line[] = [
     { n: c.added, what: 'new' },
     { n: c.restored, what: 'restored (they were deleted)' },
     { n: c.updated, what: 'updated' },
-    { n: c.alreadyHere, what: 'already here' },
+    { n: c.alreadyHere + (skips?.back ?? 0), what: 'already here' },
+    { n: skips?.deletedSince ?? 0, what: 'deleted again since (they stay deleted)' },
     { n: c.deletedInFile, what: `marked deleted in the ${of}` },
     { n: c.unreadable, what: "can't be read" },
   ].filter((l) => l.n > 0)
@@ -87,6 +93,7 @@ export function ImportPreview({
   onClose,
   onDownloadBackup,
   source,
+  replace,
 }: {
   preview: Preview
   /** The preview is done: applied, cancelled or refused and closed. */
@@ -94,6 +101,8 @@ export function ImportPreview({
   onDownloadBackup: () => void
   /** Left out: a backup file. */
   source?: PreviewSource
+  /** false: Restore only (a first run has nothing to replace). A snapshot never offers it. */
+  replace?: boolean
 }) {
   const snapshot = source?.kind === 'snapshot'
   const toast = useToast()
@@ -144,7 +153,9 @@ export function ImportPreview({
     if (changed === 0) {
       toast.info(
         snapshot
-          ? 'Nothing to restore: everything in the copy is already here'
+          ? (source.skips?.deletedSince ?? 0) > 0
+            ? 'Nothing to restore: the rest of the copy is here already or was deleted again since'
+            : 'Nothing to restore: everything in the copy is already here'
           : mode === 'restore'
             ? 'Nothing to import: everything in the file is already here'
             : 'Nothing to replace: this device already matches the file',
@@ -183,7 +194,7 @@ export function ImportPreview({
     )
   }
 
-  const lines = previewLines(preview, snapshot ? 'copy' : 'file')
+  const lines = previewLines(preview, snapshot ? 'copy' : 'file', source?.skips)
   const deletes = preview.replaceDeletes
 
   return (
@@ -251,7 +262,7 @@ export function ImportPreview({
             >
               Restore
             </Button>
-            {!snapshot && (
+            {!snapshot && replace !== false && (
               <Button
                 ref={replaceRef}
                 variant="ghost"

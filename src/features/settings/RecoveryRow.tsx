@@ -11,7 +11,7 @@ import { whenText } from './recoveryText'
 const PAGE = 20
 
 /** Row actions: equal width under the row text, 44 px tall on phones (compact on desktop). */
-export const ROW_ACTION = 'h-11 flex-1 px-3 text-[13px] sm:h-9 sm:flex-none'
+export const ROW_ACTION = 'tap-target h-11 flex-1 px-3 text-[13px] sm:h-9 sm:flex-none'
 
 /**
  * One section: an h4 that "Review" can send focus to, an optional control beside it (Mark all

@@ -12,6 +12,7 @@ import { isPlainObject, own } from '../../core/sanitize'
 import type { Doc, OpCtx, SanitizeResult } from '../../core/types'
 import { decodeWire, encodeWire } from '../../core/wire'
 import type { ChangeItem, RecoveryApi } from '../types'
+import { storedList } from '../json'
 import { FakeBacking } from './fakeStorage'
 import { bootTab, envelopeDoc, settle, stored, type Tab } from './harness'
 import { OWNER_CATS, ownerV4, truncated } from './fixtures/v4Owner'
@@ -768,5 +769,263 @@ describe('Recovery API across a re-boot', () => {
     const preview = await r.previewSnapshot(must(r.snapshots()[0], 'snapshot').id)
     t.store.getState().applyImport(preview, 'restore')
     expect(t.store.getState().expenses).toHaveLength(30)
+  })
+})
+
+// ── repair round (data-safety review): a second restore, and precision without the journal ──────
+
+/** Sum of the live amounts, in cents (a duplicate shows up here as money counted twice). */
+const cents = (t: Tab): number =>
+  t.store.getState().expenses.reduce((n, e) => n + Math.round(e.amount * 100), 0)
+
+/** Live ids that a restore suffixed (`…~r<hash>.2`): a revive id that was taken already. */
+const suffixed = (t: Tab): string[] => liveIds(t).filter((id) => /~r[0-9a-z]+\.\d+$/.test(id))
+
+describe('a second restore never brings back a later delete, nor a second copy (review B1)', () => {
+  it('"Restore all" again after two of them were deleted since: those two stay deleted', async () => {
+    const t = await bootTab({ keys: ownerV4({ rows: 40, tombstones: 0 }).keys })
+    await afterBoot()
+    const out = port(t).applyRemote(removing(t, liveIds(t).slice(0, 20)))
+    const id = must(out.mass, 'mass').entryId
+    const r = await api(t)
+    expect(await r.restoreChange(id)).toMatchObject({ applied: 20, why: null })
+    const revived = liveIds(t).filter((x) => x.includes('~r'))
+    expect(revived).toHaveLength(20)
+    t.store.getState().deleteExpense(must(revived[0], 'a'))
+    t.store.getState().deleteExpense(must(revived[1], 'b'))
+    // the session cache is gone: this one reads the snapshot
+    expect(await r.restoreChange(id)).toMatchObject({ applied: 0, why: 'deleted-since' })
+    expect(t.store.getState().expenses).toHaveLength(38)
+    expect(suffixed(t)).toEqual([])
+  })
+
+  it('"Restore all" again after one restored entry was edited: no second copy', async () => {
+    const t = await bootTab({ keys: ownerV4({ rows: 40, tombstones: 0 }).keys })
+    await afterBoot()
+    const out = port(t).applyRemote(removing(t, liveIds(t).slice(0, 20)))
+    const id = must(out.mass, 'mass').entryId
+    const r = await api(t)
+    await r.restoreChange(id)
+    const edited = must(
+      liveIds(t).find((x) => x.includes('~r')),
+      'revived',
+    )
+    const was = must(
+      t.store.getState().expenses.find((e) => e.id === edited),
+      'entry',
+    ).amount
+    t.store.getState().updateExpense(edited, { amount: was + 5.55 })
+    const total = cents(t)
+    expect(await r.restoreChange(id)).toMatchObject({ applied: 0, why: 'already' })
+    expect(t.store.getState().expenses).toHaveLength(40)
+    expect(cents(t)).toBe(total)
+    expect(suffixed(t)).toEqual([])
+  })
+
+  it('one quiet removal restored, edited, restored again: already back, no second copy (M1)', async () => {
+    const t = await bootTab({ keys: ownerV4({ rows: 20, tombstones: 0 }).keys })
+    await afterBoot()
+    synced(t)
+    const a = must(liveIds(t)[0], 'a')
+    port(t).applyRemote(removing(t, [a]))
+    const r = await api(t)
+    const row = must(r.changes()[0], 'removed')
+    expect(await r.restoreChange(row.id)).toMatchObject({ applied: 1, why: null })
+    const back = must(
+      liveIds(t).find((x) => x.startsWith(`${a}~r`)),
+      'back',
+    )
+    t.store.getState().updateExpense(back, { amount: 77 })
+    expect(await r.restoreChange(row.id)).toMatchObject({ applied: 0, why: 'already' })
+    expect(t.store.getState().expenses).toHaveLength(20)
+    expect(suffixed(t)).toEqual([])
+  })
+
+  it('"Before Delete all" restored, one deleted, restored again: it stays deleted', async () => {
+    const t = await bootTab({ keys: ownerV4({ rows: 30 }).keys })
+    await afterBoot()
+    vi.setSystemTime(T0 + MINUTE)
+    t.store.getState().deleteAllEverywhere()
+    const r = await api(t)
+    const snap = must(
+      r.snapshots().find((s) => s.reason === 'delete-all'),
+      'delete-all',
+    )
+    t.store.getState().applyImport(await r.previewSnapshot(snap.id), 'restore')
+    expect(t.store.getState().expenses).toHaveLength(30)
+    const gone = must(liveIds(t)[3], 'gone')
+    t.store.getState().deleteExpense(gone)
+    const again = await r.previewSnapshot(snap.id)
+    expect(again.counts).toMatchObject({ restored: 0, added: 0 })
+    expect(r.snapshotSkips(again)).toEqual({ back: 29, deletedSince: 1 })
+    expect(t.store.getState().applyImport(again, 'restore').applied).toBe(0)
+    expect(t.store.getState().expenses).toHaveLength(29)
+    expect(liveIds(t)).not.toContain(gone)
+    expect(suffixed(t)).toEqual([])
+  })
+
+  it('a snapshot preview, then a restore and a delete elsewhere, then Restore: the delete stays', async () => {
+    const t = await bootTab({ keys: ownerV4({ rows: 30 }).keys })
+    await afterBoot()
+    vi.setSystemTime(T0 + MINUTE)
+    t.store.getState().deleteAllEverywhere()
+    const r = await api(t)
+    const snap = must(
+      r.snapshots().find((s) => s.reason === 'delete-all'),
+      'delete-all',
+    )
+    // the owner opens the preview; meanwhile the copy is restored (here, or by the other device,
+    // whose revive ids are the same) and one of those entries is deleted again
+    const held = await r.previewSnapshot(snap.id)
+    expect(held.counts.restored).toBe(30)
+    t.store.getState().applyImport(await r.previewSnapshot(snap.id), 'restore')
+    const gone = must(liveIds(t)[7], 'gone')
+    t.store.getState().deleteExpense(gone)
+    // Restore on the preview held all along: planned again now, so nothing comes back twice
+    expect(t.store.getState().applyImport(held, 'restore').applied).toBe(0)
+    expect(t.store.getState().expenses).toHaveLength(29)
+    expect(liveIds(t)).not.toContain(gone)
+    expect(suffixed(t)).toEqual([])
+  })
+
+  it('a mass restore from Changes after a re-boot reads only what that removal took (M13)', async () => {
+    const b = new FakeBacking()
+    const t = await bootTab({ backing: b, keys: ownerV4({ rows: 40, tombstones: 0 }).keys })
+    await afterBoot()
+    const ids = liveIds(t)
+    const out = port(t).applyRemote(removing(t, ids.slice(0, 20)))
+    const entry = must(out.mass, 'mass').entryId
+    // separately, later: one of the entries the removal left is deleted here
+    const later = must(ids[25], 'later')
+    t.store.getState().deleteExpense(later)
+    await t.store.getState().hydrate()
+    await afterBoot()
+    const r = await api(t)
+    expect(await r.restoreChange(entry)).toMatchObject({ applied: 20, why: null })
+    expect(t.store.getState().expenses).toHaveLength(39)
+    expect(liveIds(t).some((x) => x === later || x.startsWith(`${later}~r`))).toBe(false)
+  })
+})
+
+describe('the precision rule holds without the journal (review M2)', () => {
+  /** A remote mass removal of 20 of 40, its change marked seen, then another entry deleted. */
+  async function seenMass() {
+    const b = new FakeBacking()
+    const t = await bootTab({ backing: b, keys: ownerV4({ rows: 40, tombstones: 0 }).keys })
+    await afterBoot()
+    const ids = liveIds(t)
+    port(t).applyRemote(removing(t, ids.slice(0, 20)))
+    const later = must(ids[30], 'later')
+    t.store.getState().deleteExpense(later)
+    const r = await api(t)
+    r.markAllSeen()
+    return { t, b, r, later }
+  }
+
+  it('once the seen journal entry is evicted, the copy still brings back only what was taken', async () => {
+    const { t, b, r, later } = await seenMass()
+    // the journal bound (or quota shedding) drops seen entries: here, all of them
+    b.data.set('st5:journal', '[]')
+    const snap = must(
+      r.snapshots().find((s) => s.reason === 'mass'),
+      'mass',
+    )
+    expect(snap.restorable).toBe(true)
+    const preview = await r.previewSnapshot(snap.id)
+    expect(preview.counts).toMatchObject({ inFile: 20, restored: 20 })
+    t.store.getState().applyImport(preview, 'restore')
+    expect(t.store.getState().expenses).toHaveLength(39)
+    expect(liveIds(t).some((x) => x === later || x.startsWith(`${later}~r`))).toBe(false)
+  })
+
+  it('the removed ids outlive the engine rewriting the snapshot index', async () => {
+    const { t, b, r } = await seenMass()
+    b.data.set('st5:journal', '[]')
+    // a later pre-destructive snapshot rewrites the index (and evicts by its rules)
+    vi.setSystemTime(T0 + 5 * MINUTE)
+    t.store.getState().deleteAllEverywhere()
+    const snap = must(
+      r.snapshots().find((s) => s.reason === 'mass'),
+      'mass',
+    )
+    expect(snap.restorable).toBe(true)
+    expect((await r.previewSnapshot(snap.id)).counts.inFile).toBe(20)
+  })
+
+  it('an older removal copy with no ids and no journal entry: Download only, never Restore', async () => {
+    const { r, b } = await seenMass()
+    b.data.set('st5:journal', '[]')
+    const index = stored(b, 'st5:snaps')
+    if (!Array.isArray(index)) throw new Error('no index')
+    // as 0.11.0 left it: no ids in the index
+    b.data.set(
+      'st5:snaps',
+      JSON.stringify(
+        index.map((s: unknown) => {
+          if (!isPlainObject(s)) return s
+          const { ids: _ids, ...rest } = s
+          return rest
+        }),
+      ),
+    )
+    const snap = must(
+      r.snapshots().find((s) => s.reason === 'mass'),
+      'mass',
+    )
+    expect(snap.restorable).toBe(false)
+    await expect(r.previewSnapshot(snap.id)).rejects.toThrow(/can only be downloaded/)
+    expect(await r.snapshotFile(snap.id)).not.toBeNull()
+  })
+})
+
+describe('more restores that must stay exact (review mutants M3, M5)', () => {
+  it('a conflict whose value came back by a later edit is changed since: nothing is put back (M3)', async () => {
+    const t = await bootTab({ keys: ownerV4({ rows: 20, tombstones: 0 }).keys })
+    await afterBoot()
+    synced(t)
+    const id = must(liveIds(t)[0], 'id')
+    t.store.getState().updateExpense(id, { amount: 12.5 })
+    port(t).applyRemote(amountOn(t, id, 99))
+    const r = await api(t)
+    const c = must(r.changes()[0], 'conflict')
+    // edited again since, to the same value: a later write, which wins
+    t.store.getState().updateExpense(id, { amount: 50 })
+    t.store.getState().updateExpense(id, { amount: 99 })
+    expect(await r.restoreChange(c.id)).toMatchObject({ applied: 0, why: 'changed-since' })
+    expect(t.store.getState().expenses.find((e) => e.id === id)?.amount).toBe(99)
+  })
+
+  it('a conflict that could not be journaled is not counted: Review never opens an empty list (4b)', async () => {
+    const b = new FakeBacking()
+    await bootTab({ backing: b, keys: ownerV4({ rows: 20, tombstones: 0 }).keys })
+    await afterBoot()
+    b.data.set('st5:db', truncated(must(b.data.get('st5:db'), 'envelope'), 40))
+    // no room for the damaged envelope's copy: the boot runs in memory only (nothing written)
+    b.quota = b.used() + 10
+    const t = await bootTab({ backing: b })
+    await afterBoot()
+    expect(t.store.getState().local).toBe('memory-only')
+    const id = must(liveIds(t)[0], 'id')
+    t.store.getState().updateExpense(id, { amount: 12.5 })
+    expect(port(t).outbox().has(`ex:${id}`)).toBe(true)
+    const out = port(t).applyRemote(amountOn(t, id, 99))
+    expect(t.store.getState().expenses.find((e) => e.id === id)?.amount).toBe(99)
+    expect(out.conflicts).toBe(0)
+    expect((await api(t)).changes()).toEqual([])
+  })
+
+  it('Discard of one of two identical stored rows removes only that one (M5)', async () => {
+    const t = await bootTab({ keys: withBadRows([BAD.date]) })
+    await afterBoot()
+    const list = storedList(t.backing.data.get('st5:q') ?? null)
+    const row = list.find((x: unknown) => isPlainObject(x) && own(x, 'reason') === 'bad-date')
+    // the same row kept twice (as an older build could leave it)
+    t.backing.data.set('st5:q', JSON.stringify([...list, row]))
+    const r = await api(t)
+    const item = byReason(r.attention(), 'bad-date')
+    r.discard(item.id)
+    expect(r.attention().filter((a) => a.id === item.id)).toHaveLength(1)
+    r.discard(item.id)
+    expect(r.attention().filter((a) => a.id === item.id)).toHaveLength(0)
   })
 })

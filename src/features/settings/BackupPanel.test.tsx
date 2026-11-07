@@ -330,6 +330,8 @@ describe('the Recovery row', () => {
       attentionFile: () => null,
       markFixed: () => undefined,
       discard: () => undefined,
+      snapshotSkips: () => ({ back: 0, deletedSince: 0 }),
+      unmarkFixed: () => undefined,
     }
     return api
   }

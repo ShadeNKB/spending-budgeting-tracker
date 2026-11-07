@@ -209,12 +209,14 @@ export function FirstRunCard({ onStartFresh }: { onStartFresh: () => void }) {
             preview={pending.preview}
             onClose={closePreview}
             onDownloadBackup={downloadBackup}
+            // a first run has nothing to replace
+            replace={false}
           />
         )}
       </div>
 
       {(syncHint || tip) && (
-        <div className="mt-3 flex flex-col gap-1 text-[13px] leading-relaxed text-[var(--text-tertiary)]">
+        <div className="mt-3 flex flex-col gap-1 text-[14px] leading-relaxed text-[var(--text-tertiary)]">
           {syncHint && (
             <p id={hintId}>Join with the code from Settings › Sync on your other device.</p>
           )}

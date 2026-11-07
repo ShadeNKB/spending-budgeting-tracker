@@ -341,7 +341,7 @@ function RecoveryRow({ ref, onOpen }: { ref: Ref<HTMLButtonElement>; onOpen: () 
       <LifeBuoy size={16} aria-hidden className="shrink-0 text-accent/70" />
       <span className="flex min-w-0 flex-1 flex-col gap-0.5">
         <span className="text-[13px] font-semibold text-white">Recovery</span>
-        <span id={subId} className="text-[12px] leading-snug text-[var(--text-tertiary)]">
+        <span id={subId} className="text-[12px] leading-relaxed text-[var(--text-tertiary)]">
           Snapshots, changes from your other device, entries set aside
         </span>
       </span>

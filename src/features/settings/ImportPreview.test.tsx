@@ -273,7 +273,10 @@ describe('ImportPreview of a snapshot', () => {
     replaceDeletes: 12,
   }
 
-  function showSnapshot(preview: Preview = SNAP) {
+  function showSnapshot(
+    preview: Preview = SNAP,
+    skips?: { readonly back: number; readonly deletedSince: number },
+  ) {
     applyImport = vi.fn(() => {
       useExpenseStore.setState({
         undoStack: [{ id: 'imp-s1', label: 'Import', expiresAt: Date.now() + 30_000 }],
@@ -287,7 +290,7 @@ describe('ImportPreview of a snapshot', () => {
     render(
       <ImportPreview
         preview={preview}
-        source={{ kind: 'snapshot' }}
+        source={{ kind: 'snapshot', skips }}
         onClose={onClose}
         onDownloadBackup={onDownload}
       />,
@@ -342,11 +345,53 @@ describe('ImportPreview of a snapshot', () => {
     expect(toasts()[0]?.action).toBeUndefined()
   })
 
+  it('counts what restored before is left alone: back already, or deleted again since', () => {
+    const region = showSnapshot(
+      { ...SNAP, counts: { ...SNAP.counts, inFile: 0, restored: 0 } },
+      { back: 29, deletedSince: 1 },
+    )
+    expect(
+      within(region)
+        .getAllByRole('listitem')
+        .map((li) => li.textContent),
+    ).toEqual(['30 in the copy', '29 already here', '1 deleted again since (they stay deleted)'])
+    applyImport.mockReturnValue({
+      applied: 0,
+      skipped: 0,
+      added: 0,
+      restored: 0,
+      updated: 0,
+      removed: 0,
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Restore' }), { detail: 1 })
+    expect(toasts()[0]?.message).toBe(
+      'Nothing to restore: the rest of the copy is here already or was deleted again since',
+    )
+  })
+
   it("names deleted entries in the copy as the copy's", () => {
     const region = showSnapshot({
       ...SNAP,
       counts: { ...SNAP.counts, inFile: 13, deletedInFile: 1 },
     })
     expect(within(region).getByText('marked deleted in the copy')).toBeInTheDocument()
+  })
+})
+
+describe('ImportPreview without Replace (a first run)', () => {
+  it('replace={false}: Restore and Cancel only', () => {
+    applyImport = vi.fn(() => OUTCOME)
+    useExpenseStore.setState({ undoStack: [], applyImport })
+    render(
+      <ImportPreview
+        preview={PREVIEW}
+        replace={false}
+        onClose={vi.fn()}
+        onDownloadBackup={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('button', { name: 'Restore' })).toHaveFocus()
+    expect(screen.queryByRole('button', { name: /Replace/ })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument()
   })
 })

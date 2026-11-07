@@ -10,7 +10,12 @@ import { useToast } from '../../hooks/useToast'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { importWithReload } from '../../lib/chunkReload'
 import { downloadJSON } from '../../lib/download'
-import type { AttentionItem, RecoveryApi } from '../../stores/useExpenseStore'
+import {
+  useExpenseStore,
+  type AttentionItem,
+  type ExpenseView,
+  type RecoveryApi,
+} from '../../stores/useExpenseStore'
 import { PagedList, ROW_ACTION, RecoveryRow, RecoverySection, When } from './RecoveryRow'
 
 // Needs attention, in Recovery (PR-4 track spec §3.2, F-014): each row SpendTrack couldn't read
@@ -45,6 +50,36 @@ const ORIGINS: Readonly<Record<AttentionItem['origin'], string>> = {
 }
 
 const ADDED_NOTE = 'The unreadable original stays in your raw data download.'
+
+/** Past the Add toast's Undo (and Ctrl+Z on it), with room: a Fix's entry is kept by then. */
+const FIX_WATCH_MS = 35_000
+
+/**
+ * A Fix marks its row fixed as the entry is added. Undone (the toast's Undo, Ctrl+Z) or deleted
+ * within the watch, the entry is gone and the row is listed again: the owner can fix it later.
+ * Module-level, so closing Settings does not end it.
+ */
+function watchFix(api: RecoveryApi, itemId: string, addedId: string): void {
+  const stop = () => {
+    off()
+    clearTimeout(timer)
+  }
+  const here = (s: { readonly expenses: readonly ExpenseView[] }) =>
+    s.expenses.some((e) => e.id === addedId)
+  // counted as gone only once it was there
+  let seen = here(useExpenseStore.getState())
+  const off = useExpenseStore.subscribe((s) => {
+    if (here(s)) seen = true
+    if (here(s) || !seen) return
+    stop()
+    try {
+      api.unmarkFixed(itemId)
+    } catch {
+      // not saving any more: nothing to list again on this device
+    }
+  })
+  const timer = setTimeout(stop, FIX_WATCH_MS)
+}
 
 function titleOf(item: AttentionItem): string {
   if (item.kind === 'copy') {
@@ -125,12 +160,14 @@ export function RecoveryAttention({
     onChanged()
   }
 
-  const fixed = (item: AttentionItem) => {
+  const fixed = (item: AttentionItem, added: ExpenseView) => {
     try {
       api.markFixed(item.id)
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Couldn't mark it fixed.")
+      return
     }
+    watchFix(api, item.id, added.id)
     onChanged()
   }
 
@@ -191,6 +228,7 @@ export function RecoveryAttention({
                     <>
                       {canWrite && item.salvage !== null && (
                         <Button
+                          variant="ghost"
                           size={null}
                           className={ROW_ACTION}
                           aria-label={`Fix ${titleOf(item)}`}
@@ -262,8 +300,8 @@ export function RecoveryAttention({
                     notes: salvage.notes,
                   }
             }
-            onAdded={() => {
-              if (fixing !== null) fixed(fixing)
+            onAdded={(added) => {
+              if (fixing !== null) fixed(fixing, added)
             }}
             addedNote={ADDED_NOTE}
             returnFocus={() => headingRef.current ?? fallbackRef.current}

@@ -11,6 +11,7 @@ import type {
   RecoveryApi,
   SnapshotInfo,
   SnapshotReason,
+  SnapshotSkips,
 } from '../../stores/useExpenseStore'
 import { ImportPreview } from './ImportPreview'
 import { PagedList, ROW_ACTION, RecoveryRow, RecoverySection, When } from './RecoveryRow'
@@ -51,17 +52,23 @@ export function RecoverySnapshots({
    * The row whose copy is being read ("Checking…", preview null), or previewed in its place.
    * Closing hands focus back to that row's Restore.
    */
-  const open = useInlineConfirm<{ id: string; preview: Preview | null }>()
+  const open = useInlineConfirm<{
+    id: string
+    preview: Preview | null
+    skips: SnapshotSkips | null
+  }>()
   const reads = useRef(0)
 
   const preview = async (snap: SnapshotInfo) => {
     if (open.pending?.id === snap.id) return
     reads.current += 1
     const mine = reads.current
-    open.ask({ id: snap.id, preview: null }, snap.id)
+    open.ask({ id: snap.id, preview: null, skips: null }, snap.id)
     try {
       const p = await api.previewSnapshot(snap.id)
-      if (mine === reads.current) open.ask({ id: snap.id, preview: p }, snap.id)
+      if (mine === reads.current) {
+        open.ask({ id: snap.id, preview: p, skips: api.snapshotSkips(p) }, snap.id)
+      }
     } catch (err) {
       if (mine !== reads.current) return
       open.close()
@@ -110,7 +117,7 @@ export function RecoverySnapshots({
               return (
                 <ImportPreview
                   preview={pending.preview}
-                  source={{ kind: 'snapshot' }}
+                  source={{ kind: 'snapshot', skips: pending.skips ?? undefined }}
                   onDownloadBackup={onDownloadBackup}
                   onClose={() => {
                     open.close()
@@ -125,7 +132,7 @@ export function RecoverySnapshots({
                 title={label}
                 actions={
                   <>
-                    {canWrite && (
+                    {canWrite && snap.restorable && (
                       <Button
                         id={open.triggerId(snap.id)}
                         size={null}
@@ -159,6 +166,11 @@ export function RecoverySnapshots({
                 <span>
                   <When at={snap.at} /> · {entries(snap.rows)}
                 </span>
+                {!snap.restorable && (
+                  <span className="text-[var(--text-tertiary)]">
+                    Download only: this copy no longer says which entries that removal took.
+                  </span>
+                )}
                 {checking && (
                   <span role="status" className="text-[var(--text-tertiary)]">
                     Checking…

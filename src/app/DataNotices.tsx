@@ -100,7 +100,7 @@ const TONES: Record<Tone, { strip: string; icon: string }> = {
 }
 
 // 44 px tall on phones, compact on desktop (as the update banner's).
-const ACTION = 'h-11 px-3.5 text-[13px] md:h-8'
+const ACTION = 'tap-target h-11 px-3.5 text-[13px] md:h-8'
 
 function Strip({
   label,

@@ -80,6 +80,7 @@ import {
   useExpenseStore,
   whenHydrated,
   type RemoteApplied,
+  type RestoreResult,
   type SyncPort,
 } from './useExpenseStore'
 import { syncPanelShown, useUIStore } from './useUIStore'
@@ -724,14 +725,24 @@ function toastConflicts(n: number): void {
   })
 }
 
+/** A mass restore that brought nothing back, by why (Settings › Backup › Recovery's words). */
+const MASS_REFUSAL: Readonly<Record<NonNullable<RestoreResult['why']>, string>> = {
+  already: 'Those entries are already back.',
+  'changed-since': 'Those entries are already back.',
+  'deleted-since':
+    'Those entries are back already or were deleted again since, so nothing was restored.',
+  gone: "This change can't be restored any more.",
+}
+
 async function restoreMass(entryId: string): Promise<void> {
   const ui = useUIStore.getState()
   try {
-    const { applied } = await useExpenseStore.getState().restoreJournal(entryId)
-    ui.pushToast({
-      kind: 'success',
-      message: applied > 0 ? `Restored ${entries(applied)}` : 'Those entries are already back.',
-    })
+    const { applied, why } = await useExpenseStore.getState().restoreJournal(entryId)
+    ui.pushToast(
+      applied > 0
+        ? { kind: 'success', message: `Restored ${entries(applied)}` }
+        : { kind: 'info', message: MASS_REFUSAL[why ?? 'already'] },
+    )
   } catch (err) {
     ui.pushToast({
       kind: 'error',

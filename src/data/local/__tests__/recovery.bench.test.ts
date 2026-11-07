@@ -49,6 +49,8 @@ describe(`Recovery centre budgets (${String(ROWS)} rows, ${BENCH_STRICT ? 'stric
   let tab: Tab
   let recovery: RecoveryApi
   let snapId = ''
+  /** The storage right after Delete all, for a fresh boot per timed restore. */
+  let stored: [string, string][] = []
 
   beforeAll(async () => {
     const backing = new FakeBacking()
@@ -65,6 +67,7 @@ describe(`Recovery centre budgets (${String(ROWS)} rows, ${BENCH_STRICT ? 'stric
     tab.store.getState().deleteAllEverywhere()
     recovery = await tab.store.getState().recovery()
     snapId = must(recovery.snapshots()[0], 'snapshot').id
+    stored = [...backing.data]
   }, 120_000)
 
   afterAll(() => {
@@ -81,17 +84,19 @@ describe(`Recovery centre budgets (${String(ROWS)} rows, ${BENCH_STRICT ? 'stric
   }, 120_000)
 
   it('applying it (one map copy, a safety copy, an Undo): 120 ms', async () => {
-    // each run restores the whole copy again: the run before is undone first (not timed)
+    // each run restores the copy on a fresh boot of the same storage (not timed): a restore that
+    // was undone is not restored again (its revive ids are deleted since, they stay deleted)
     const times: number[] = []
     for (let i = 0; i < 6; i++) {
-      const preview = await recovery.previewSnapshot(snapId)
-      const t = performance.now()
-      tab.store.getState().applyImport(preview, 'restore')
-      times.push(performance.now() - t)
-      expect(tab.store.getState().expenses.length).toBeGreaterThan(4000)
-      const undo = must(tab.store.getState().undoStack.at(-1), 'undo')
-      tab.store.getState().consumeUndo(undo.id)
-      expect(tab.store.getState().expenses).toHaveLength(0)
+      const backing = new FakeBacking()
+      for (const [k, v] of stored) backing.data.set(k, v)
+      const t = await bootTab({ backing })
+      const r = await t.store.getState().recovery()
+      const preview = await r.previewSnapshot(snapId)
+      const start = performance.now()
+      t.store.getState().applyImport(preview, 'restore')
+      times.push(performance.now() - start)
+      expect(t.store.getState().expenses.length).toBeGreaterThan(4000)
     }
     times.sort((a, b) => a - b)
     const median = times[Math.floor(times.length / 2)] ?? Number.POSITIVE_INFINITY

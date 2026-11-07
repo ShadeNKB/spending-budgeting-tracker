@@ -47,7 +47,7 @@ function titleOf(c: ChangeItem): string {
 const restoredOf = (c: ChangeItem): RecordSummary | null =>
   c.kind === 'edit-after-delete' ? c.after : c.before
 
-/** What the owner reads when a restore did nothing, by why. */
+/** What the owner reads when a restore did nothing, by why (the mass removal's toast too). */
 function refusal(why: NonNullable<RestoreResult['why']>, mass: boolean): string {
   switch (why) {
     case 'already':
@@ -55,7 +55,9 @@ function refusal(why: NonNullable<RestoreResult['why']>, mass: boolean): string 
     case 'changed-since':
       return 'It has changed again since, so nothing was restored.'
     case 'deleted-since':
-      return 'It was deleted since, so nothing was restored.'
+      return mass
+        ? 'Those entries are back already or were deleted again since, so nothing was restored.'
+        : 'It was deleted since, so nothing was restored.'
     case 'gone':
       return "This change can't be restored any more."
   }

@@ -30,7 +30,7 @@ import { recordsFile } from './files'
 import type { WriteResult } from './io'
 import { isPinned, type JournalEntry } from './journal'
 import { parseJson, storedList } from './json'
-import { DB_KEY, JOURNAL_KEY, QUARANTINE_KEY, QUARANTINE_RAW_PREFIX } from './keys'
+import { DB_KEY, JOURNAL_KEY, QUARANTINE_KEY, QUARANTINE_RAW_PREFIX, SNAPS_KEY } from './keys'
 import { isSecretCopy, needsAttention } from './quarantine'
 import { decodeSnapshot } from './recovery'
 import type { SnapMeta } from './snapshots'
@@ -41,6 +41,7 @@ import type {
   RecordSummary,
   RecoveryApi,
   RestoreResult,
+  SnapshotSkips,
 } from './types'
 
 /**
@@ -62,8 +63,13 @@ export interface RecoveryHost {
   readonly undoTtl: number
   /** An import preview of `dec`, applied later by applyImport (the path previewImport takes). */
   readonly preview: (r: Runtime, dec: SanitizeResult, fileName: string) => ImportPreview
-  /** A derived copy (st5:q, st5:journal) through the engine's shedding writer. */
-  readonly write: (r: Runtime, key: string, value: string) => WriteResult
+  /**
+   * The engine's shedding writer, at `level`. It does not refuse by itself: every write here
+   * goes through `write` below, which refuses in memory only and once this device was wiped.
+   */
+  readonly writeShed: (r: Runtime, key: string, value: string, maxLevel: number) => WriteResult
+  /** The shedding level of derived copies (st5:q, st5:journal, st5:snaps). */
+  readonly level: number
   readonly publish: (r: Runtime) => void
   /** Sets how many needs-attention items the owner has seen (persisted, published). */
   readonly seen: (r: Runtime, n: number) => void
@@ -72,8 +78,13 @@ export interface RecoveryHost {
 }
 
 const UNREADABLE = "This copy can't be read any more."
+const DOWNLOAD_ONLY =
+  'This copy can only be downloaded: it no longer says which entries that removal took.'
 const NOT_SAVING =
   "This device isn't saving, so nothing can be restored here. Download your data first."
+
+/** A Fix's mark on a needs-attention row: the existing rule then lists it no more. */
+const FIXED = 'repaired:fixed:'
 
 /** The quarantine name of a relay copy kept whole (engine.ts RELAY_COPY_KEY). */
 const RELAY_COPY = 'relay'
@@ -181,6 +192,52 @@ function copyItem(key: string): AttentionItem {
 
 const same = (a: unknown, b: unknown): boolean => canon(a) === canon(b)
 
+/** The mark of a revive id (`<root>~r<hash>`, core/ids.ts reviveId). */
+const REVIVED = '~r'
+
+/** The records a restore may bring back, and what it leaves alone (counted). */
+interface Sorted extends SnapshotSkips {
+  readonly keep: readonly ExpenseRec[]
+}
+
+/**
+ * Sorts out what a restore of `recs` must leave alone, against `doc` as it is now. §4.3 revive ids
+ * are deterministic, so a deleted record restored before (here, or on the other device) sits
+ * under its first revive id: live there, it is back already, maybe edited since (the import plan
+ * would revive it again under `.2`, a second copy); deleted there, it was deleted again since and
+ * stays deleted (the plan would bring it back under `.2`). Everything else is planned as usual
+ * (a record live under its own id counts as already here).
+ */
+function sortOut(doc: Doc, recs: Iterable<ExpenseRec>): Sorted {
+  // nothing was ever revived here (no `~r` id, live or deleted): nothing to sort out
+  const revived = (ids: Iterable<string>): boolean => {
+    for (const id of ids) if (id.includes(REVIVED)) return true
+    return false
+  }
+  if (!revived(doc.expenses.keys()) && !revived(doc.tombs.keys()))
+    return { keep: [...recs], back: 0, deletedSince: 0 }
+  const res = resolver(doc.renames)
+  const keep: ExpenseRec[] = []
+  let back = 0
+  let deletedSince = 0
+  for (const rec of recs) {
+    // a revived record's own id is its first candidate (the root drops the suffix): skip it
+    const first = doc.tombs.has(rec.id) ? reviveId(rec, res(rec.c.v), (id) => id === rec.id) : null
+    if (first !== null && doc.expenses.has(first)) back++
+    else if (first !== null && doc.tombs.has(first)) deletedSince++
+    else keep.push(rec)
+  }
+  return { keep, back, deletedSince }
+}
+
+/** The ids a removal's snapshot holds back to (index first, else its journal entry), or null. */
+function idsOf(meta: SnapMeta, journal: readonly JournalEntry[]): ReadonlySet<string> | null {
+  const stored = meta.ids?.filter((x): x is string => typeof x === 'string')
+  const ids =
+    stored ?? journal.find((x) => x.kind === 'mass' && x.snapshotId === meta.id)?.ids ?? null
+  return ids === null ? null : new Set(ids)
+}
+
 export function createRecovery(host: RecoveryHost): RecoveryApi {
   const rt = host.rt
 
@@ -189,6 +246,13 @@ export function createRecovery(host: RecoveryHost): RecoveryApi {
     if (!canWrite(r)) throw new Error(NOT_SAVING)
     return r
   }
+
+  /** A derived copy through the shedding writer; refused in memory only or once wiped. */
+  const write = (r: Runtime, key: string, value: string): WriteResult =>
+    canWrite(r) ? host.writeShed(r, key, value, host.level) : 'error'
+
+  /** Snapshot previews and the decoded copy each plans from, for snapshotSkips. */
+  const held = new WeakMap<ImportPreview, Doc>()
 
   const none = (why: NonNullable<RestoreResult['why']>, skipped = 1): RestoreResult => ({
     applied: 0,
@@ -205,32 +269,33 @@ export function createRecovery(host: RecoveryHost): RecoveryApi {
     return { applied, skipped: 0, undoId, why: null }
   }
 
-  /** An import restore of exactly `recs`: revived under fresh ids where deleted, never a delete. */
+  /**
+   * An import restore of `recs`: revived under their revive ids where deleted, never a delete.
+   * What was restored before is left alone: back already (maybe edited since), or deleted again
+   * since, which stays deleted (sortOut).
+   */
   function revive(recs: readonly ExpenseRec[]): RestoreResult {
     const r = rt()
-    const plan = planImport(r.doc, recordsFile(recs))
+    const { keep, deletedSince } = sortOut(r.doc, recs)
+    const plan = planImport(r.doc, recordsFile(keep))
     const n = plan.counts.restored + plan.counts.added
-    if (n === 0)
-      return none(plan.counts.unreadable === recs.length ? 'gone' : 'already', recs.length)
+    if (n === 0) {
+      const why =
+        keep.length > 0 && plan.counts.unreadable === keep.length
+          ? 'gone'
+          : deletedSince > 0
+            ? 'deleted-since'
+            : 'already'
+      return none(why, recs.length)
+    }
     const res = apply((doc, ctx) => applyImport(doc, ctx, plan, 'restore'), n)
     return res.why === null ? { ...res, skipped: recs.length - n } : res
   }
 
-  /**
-   * The record a removal took, or an edit made after the delete here: back under its revive id.
-   * That id is deterministic, so a restore made before is found: still live (maybe edited since)
-   * it is back; deleted since (here or on the other device) it stays deleted, never revived again.
-   */
+  /** The record a removal took, or an edit made after the delete here: back under its revive id. */
   function reviveOne(w: WireRecord | undefined): RestoreResult {
     const rec = decodeOne(w)
-    if (rec === null) return none('gone')
-    const r = rt()
-    // a revived record's own id is its first candidate (the root drops the suffix): skip it
-    const first = reviveId(rec, resolver(r.doc.renames)(rec.c.v), (id) => id === rec.id)
-    if (first === null) return none('gone')
-    if (r.doc.expenses.has(first) || r.doc.expenses.has(rec.id)) return none('already')
-    if (r.doc.tombs.has(first)) return none('deleted-since')
-    return revive([rec])
+    return rec === null ? none('gone') : revive([rec])
   }
 
   /**
@@ -287,14 +352,62 @@ export function createRecovery(host: RecoveryHost): RecoveryApi {
     return res
   }
 
-  /** The snapshot's doc, kept to exactly what the removal it was taken for took (precision rule). */
-  function precise(r: Runtime, meta: SnapMeta, doc: Doc): Doc {
+  /**
+   * The snapshot's doc, kept to exactly what the removal it was taken for took (precision rule):
+   * from the ids in the snapshot index, else in its journal entry. A Delete all took every live
+   * entry its copy holds. A removal's copy that says neither is null: Download only.
+   */
+  function precise(r: Runtime, meta: SnapMeta, doc: Doc): Doc | null {
     if (meta.reason !== 'delete-all' && meta.reason !== 'mass') return doc
-    const mass = r.journal?.read().find((x) => x.kind === 'mass' && x.snapshotId === meta.id)
-    const ids = mass?.ids
-    if (ids === undefined) return doc
-    const keep = new Set(ids)
+    const keep = idsOf(meta, r.journal?.read() ?? [])
+    if (keep === null) return meta.reason === 'mass' ? null : doc
     return { ...doc, expenses: new Map([...doc.expenses].filter(([id]) => keep.has(id))) }
+  }
+
+  /**
+   * Before a removal's journal entry is marked seen (and so may be evicted), the ids it took go
+   * into its snapshot's index entry, which the precision rule then reads. False when they could
+   * not be kept: the entry then stays unseen, so it stays.
+   */
+  function keepIds(r: Runtime, e: JournalEntry): boolean {
+    if (e.kind !== 'mass' || e.snapshotId === undefined || e.ids === undefined) return true
+    const list = storedList(r.io?.get(SNAPS_KEY) ?? null)
+    const at = list.findIndex((x) => isPlainObject(x) && own(x, 'id') === e.snapshotId)
+    const meta = list[at]
+    // no such snapshot any more (nothing to keep), or its ids are kept already
+    if (!isPlainObject(meta) || Array.isArray(own(meta, 'ids'))) return true
+    const next = list.map((x, i) => (i === at ? { ...meta, ids: e.ids } : x))
+    return write(r, SNAPS_KEY, JSON.stringify(next)) === 'ok'
+  }
+
+  /** A preview of the snapshot's records that plans against the doc as it is whenever it is read. */
+  function snapshotPreview(meta: SnapMeta, doc: Doc): ImportPreview {
+    const r = rt()
+    // renames as this device has them: the revive ids sortOut checks are the ones applied.
+    // Docs are replaced, never changed: one sort per doc (the plan reads `doc` many times).
+    let memo: { readonly cur: Doc; readonly out: Doc } | null = null
+    const now = (): Doc => {
+      const cur = rt().doc
+      if (memo?.cur !== cur) {
+        const kept = sortOut(cur, doc.expenses.values()).keep
+        memo = {
+          cur,
+          out: { ...doc, renames: cur.renames, expenses: new Map(kept.map((x) => [x.id, x])) },
+        }
+      }
+      return memo.out
+    }
+    // engine.applyImport plans again at Restore from this same object: its `doc` is read then,
+    // so a restore or a delete made since the preview is sorted out too
+    const dec: SanitizeResult = {
+      ...recordsFile([]),
+      get doc() {
+        return now()
+      },
+    }
+    const preview = host.preview(r, dec, `snapshot-${meta.id}`)
+    held.set(preview, doc)
+    return preview
   }
 
   /** The snapshot's decoded doc, or null when it is gone or no longer reads. */
@@ -322,14 +435,21 @@ export function createRecovery(host: RecoveryHost): RecoveryApi {
     host.publish(r)
   }
 
-  /** Rewrites st5:q with the element whose id is `id` mapped (or dropped, for null). */
-  function rewriteQ(id: string, map: (e: QEntry) => QEntry | null): void {
+  /**
+   * Rewrites st5:q with the first element whose id is `id` and that `pick` takes mapped (or
+   * dropped, for null). Only that one: an identical row kept twice stays once.
+   */
+  function rewriteQ(
+    id: string,
+    map: (e: QEntry) => QEntry | null,
+    pick: (e: QEntry) => boolean = needsAttention,
+  ): void {
     const r = writable()
     let hit = false
     const next: unknown[] = []
     for (const x of qList(r)) {
       const q = hit ? null : qEntryOf(x)
-      if (q === null || !needsAttention(q) || entryId(q) !== id) {
+      if (q === null || !pick(q) || entryId(q) !== id) {
         next.push(x)
         continue
       }
@@ -338,7 +458,7 @@ export function createRecovery(host: RecoveryHost): RecoveryApi {
       if (m !== null) next.push(m)
     }
     if (!hit) return
-    if (host.write(r, QUARANTINE_KEY, JSON.stringify(next)) !== 'ok') {
+    if (write(r, QUARANTINE_KEY, JSON.stringify(next)) !== 'ok') {
       throw new Error("Couldn't change this on the device. Nothing was changed.")
     }
     quarantineChanged(r)
@@ -354,18 +474,34 @@ export function createRecovery(host: RecoveryHost): RecoveryApi {
     },
 
     snapshots() {
+      const r = rt()
+      const journal = r.journal?.read() ?? []
       // the same millisecond (a migration, then a Delete all at once): the later one has the
       // larger id (snapshots.ts takes the next free one)
-      return [...(rt().snaps?.index() ?? [])]
+      return [...(r.snaps?.index() ?? [])]
         .sort((a, b) => b.at - a.at || Number(b.id) - Number(a.id))
-        .map(({ id, at, reason, rows }) => ({ id, at, reason, rows }))
+        .map((m) => ({
+          id: m.id,
+          at: m.at,
+          reason: m.reason,
+          rows: m.rows,
+          restorable: m.reason !== 'mass' || idsOf(m, journal) !== null,
+        }))
     },
 
     async previewSnapshot(id) {
       const got = await snapshotDoc(id)
       if (got === null) throw new Error(UNREADABLE)
       const doc = precise(rt(), got.meta, got.doc)
-      return host.preview(rt(), { ...recordsFile([]), doc }, `snapshot-${id}`)
+      if (doc === null) throw new Error(DOWNLOAD_ONLY)
+      return snapshotPreview(got.meta, doc)
+    },
+
+    snapshotSkips(preview) {
+      const doc = held.get(preview)
+      if (doc === undefined) return { back: 0, deletedSince: 0 }
+      const { back, deletedSince } = sortOut(rt().doc, doc.expenses.values())
+      return { back, deletedSince }
     },
 
     async snapshotFile(id) {
@@ -413,9 +549,10 @@ export function createRecovery(host: RecoveryHost): RecoveryApi {
         else if (e.kind === 'removed' || e.after === undefined) res = reviveOne(e.before)
         else res = putBack(e)
       }
-      // the journal's own writer writes nothing in memory only or once this device was wiped
+      // the journal's own writer writes nothing in memory only or once this device was wiped;
+      // a removal's ids go to its snapshot first, or the entry stays unseen (and kept)
       const r = rt()
-      r.journal?.markSeen(id)
+      if (e === undefined || keepIds(r, e)) r.journal?.markSeen(id)
       host.publish(r)
       return res
     },
@@ -424,11 +561,8 @@ export function createRecovery(host: RecoveryHost): RecoveryApi {
       const r = rt()
       const list = r.journal?.read() ?? []
       if (!canWrite(r) || list.every((e) => e.seen)) return
-      host.write(
-        r,
-        JOURNAL_KEY,
-        JSON.stringify(list.map((e) => (e.seen ? e : { ...e, seen: true }))),
-      )
+      const next = list.map((e) => (e.seen || !keepIds(r, e) ? e : { ...e, seen: true }))
+      write(r, JOURNAL_KEY, JSON.stringify(next))
       host.publish(r)
     },
 
@@ -481,7 +615,15 @@ export function createRecovery(host: RecoveryHost): RecoveryApi {
 
     markFixed(id) {
       // the raw stays in st5:q (and in the raw download); a repaired: reason is never listed again
-      rewriteQ(id, (q) => ({ ...q, reason: `repaired:fixed:${q.reason}` }))
+      rewriteQ(id, (q) => ({ ...q, reason: `${FIXED}${q.reason}` }))
+    },
+
+    unmarkFixed(id) {
+      rewriteQ(
+        id,
+        (q) => ({ ...q, reason: q.reason.slice(FIXED.length) }),
+        (q) => q.reason.startsWith(FIXED),
+      )
     },
 
     discard(id) {

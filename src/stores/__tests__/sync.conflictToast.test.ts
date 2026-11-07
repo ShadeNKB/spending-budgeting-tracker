@@ -14,6 +14,7 @@ import {
   stubRelayEnv,
   type Device,
 } from '../../__tests__/fakeRelay'
+import { must } from '../../data/__tests__/support/must'
 import { CONFLICT_TOAST_MS } from '../syncEngine'
 
 vi.mock(
@@ -127,6 +128,39 @@ describe('the conflict toast', () => {
     expect(UI(laptop).toasts.map((t) => t.message)).toContain(
       'Your other device removed 20 entries',
     )
+  })
+
+  it("the mass removal's Undo, pressed again, says why nothing more came back (review 4a)", async () => {
+    const { laptop, phone } = await pair()
+    for (const e of ROWS.slice(0, 20)) S(phone).deleteExpense(e.id)
+    await advance(MINUTE)
+    const undo = UI(laptop).toasts.find((t) => t.message === 'Your other device removed 20 entries')
+    expect(undo?.action?.label).toBe('Undo')
+    // the Undo runs in the Recovery centre's lazy chunk (a real module load)
+    await S(laptop).recovery()
+    /** Presses that Undo again; the toast it ends with (a restore that reads a snapshot body waits on real I/O). */
+    const says = async () => {
+      laptop.ui.useUIStore.setState({ toasts: [] })
+      undo?.action?.onClick()
+      await vi.waitFor(() => {
+        expect(UI(laptop).toasts.length).toBeGreaterThan(0)
+      })
+      return UI(laptop).toasts.at(-1)
+    }
+    expect(await says()).toMatchObject({ kind: 'success', message: 'Restored 20 entries' })
+    expect(await says()).toMatchObject({ kind: 'info', message: 'Those entries are already back.' })
+    // one of them deleted again since: it stays deleted, and the toast says so
+    const back = must(
+      S(laptop).expenses.find((e) => e.id.includes('~r')),
+      'revived',
+    )
+    S(laptop).deleteExpense(back.id)
+    expect(await says()).toMatchObject({
+      kind: 'info',
+      message:
+        'Those entries are back already or were deleted again since, so nothing was restored.',
+    })
+    expect(S(laptop).expenses).toHaveLength(29)
   })
 
   it('a merge with nothing taken over says nothing', async () => {

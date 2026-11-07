@@ -67,6 +67,19 @@ export interface SnapshotInfo {
   readonly at: number
   readonly reason: SnapshotReason
   readonly rows: number
+  /**
+   * False for a removal's copy that no longer says which entries that removal took (an older
+   * index, its journal entry gone): it can be downloaded, never restored.
+   */
+  readonly restorable: boolean
+}
+
+/** What a snapshot restore leaves alone, as it stands now (every restore plans again). */
+export interface SnapshotSkips {
+  /** Restored before and still here (maybe edited since). */
+  readonly back: number
+  /** Restored before and deleted again since, here or on the other device: they stay deleted. */
+  readonly deletedSince: number
 }
 
 /** A journaled record as the owner reads it (from the stored wire record, every field guarded). */
@@ -119,8 +132,13 @@ export interface RecoveryApi {
   summary(): { readonly snapshots: number; readonly newChanges: number; readonly canWrite: boolean }
   /** Newest first, from the index alone (no body is read). */
   snapshots(): readonly SnapshotInfo[]
-  /** Applied with applyImport(preview, 'restore'). Throws when the copy no longer reads. */
+  /**
+   * Applied with applyImport(preview, 'restore'), which plans it again against the entries then.
+   * Throws when the copy no longer reads, or can only be downloaded.
+   */
   previewSnapshot(id: string): Promise<ImportPreview>
+  /** What that snapshot preview leaves alone now; zeros for any other preview. */
+  snapshotSkips(preview: ImportPreview): SnapshotSkips
   /** A v5 backup file of that snapshot; null when it no longer reads. Records no backup. */
   snapshotFile(id: string): Promise<BackupFileV5 | null>
   /** Pinned unseen first, then newest first. */
@@ -132,6 +150,8 @@ export interface RecoveryApi {
   /** That one item, in the needs-attention download's shape; null when it is gone. */
   attentionFile(id: string): unknown
   markFixed(id: string): void
+  /** Lists a fixed item again (the entry its Fix added was undone). */
+  unmarkFixed(id: string): void
   discard(id: string): void
 }
 
@@ -195,7 +215,7 @@ export interface ExpenseActions {
   markBackedUp(): void
   quarantineFile(): unknown
   markAttentionSeen(): void
-  restoreJournal(entryId: string): Promise<UndoOutcome>
+  restoreJournal(entryId: string): Promise<RestoreResult>
   /** The Recovery centre (its own lazy chunk, loaded on the first call). */
   recovery(): Promise<RecoveryApi>
   refreshStorageFacts(): void

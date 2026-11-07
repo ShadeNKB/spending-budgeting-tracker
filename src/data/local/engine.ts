@@ -86,6 +86,7 @@ import type {
   ImportPreview,
   LocalStatus,
   RecoveryApi,
+  RestoreResult,
   RemoteApplied,
   StorageFacts,
   SyncMeta,
@@ -1077,13 +1078,15 @@ export function createEngine(host: EngineHost): Engine {
    * that leaves none the merge is refused before anything is removed. Running in memory only, or
    * removed from this device, nothing is written either way: storage keeps what it had.
    */
-  function keepJournal(r: Runtime, entries: JournalEntry[], mass: MassNote | null): void {
+  /** True once `entries` are journaled (Recovery lists them then). */
+  function keepJournal(r: Runtime, entries: JournalEntry[], mass: MassNote | null): boolean {
     const journal = r.journal
-    if (journal === null || journal.append(entries)) return
-    if (mass === null || mass.snapshotId !== null || r.memoryOnly || r.wiped) return
+    if (journal === null) return false
+    if (journal.append(entries)) return true
+    if (mass === null || mass.snapshotId !== null || r.memoryOnly || r.wiped) return false
     if (shedMirror(r) && journal.append(entries)) {
       publish(r)
-      return
+      return true
     }
     throw new SafetyCopyError(REMOTE_SAFETY_COPY_ERROR)
   }
@@ -1115,7 +1118,7 @@ export function createEngine(host: EngineHost): Engine {
       // §11.9 order: the snapshot, then the journal, then the merge. What a mass removal takes
       // is restorable after a reload before the envelope can drop it.
       const entries = classify(m, r.outbox, wall, rng, massNote)
-      keepJournal(r, entries, massNote)
+      const kept = keepJournal(r, entries, massNote)
       commit(r, m.doc, [], 'remote')
       flush(r)
       let mass: RemoteApplied['mass'] = null
@@ -1126,7 +1129,9 @@ export function createEngine(host: EngineHost): Engine {
           mass = { entryId: e.id, count: m.removed.length }
         }
       }
-      const conflicts = mass === null ? entries.filter((x) => x.kind === 'conflict').length : 0
+      // the conflict toast's Review lists them: none when they could not be journaled
+      const conflicts =
+        mass === null && kept ? entries.filter((x) => x.kind === 'conflict').length : 0
       return { changedLocal: true, removed: m.removed.length, mass, quarantined, conflicts }
     },
     ack(sent, dec, outcome): number {
@@ -1209,17 +1214,13 @@ export function createEngine(host: EngineHost): Engine {
 
   let recoveryLoad: Promise<typeof RecoveryModule> | null = null
 
-  /** The derived-copy writer (st5:q, st5:journal), refusing in memory only or once wiped. */
-  function writeDerived(r: Runtime, key: string, value: string): WriteResult {
-    return r.memoryOnly || r.wiped ? 'error' : writeShed(r, key, value, LEVEL_DERIVED)
-  }
-
   const recoveryHost: RecoveryModule.RecoveryHost = {
     rt: need,
     run,
     undoTtl: UNDO_LONG,
     preview: previewOf,
-    write: writeDerived,
+    writeShed,
+    level: LEVEL_DERIVED,
     publish,
     seen: setSeen,
     omit,
@@ -1432,7 +1433,7 @@ export function createEngine(host: EngineHost): Engine {
     },
 
     /** A remote mass removal's Undo (P2-20): the Recovery centre restores it. */
-    restoreJournal: async (entryId: string): Promise<UndoOutcome> =>
+    restoreJournal: async (entryId: string): Promise<RestoreResult> =>
       (await recovery()).restoreChange(entryId),
 
     recovery,

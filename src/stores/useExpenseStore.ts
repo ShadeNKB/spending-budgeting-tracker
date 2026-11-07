@@ -18,6 +18,7 @@ import type {
   ImportOutcome,
   ImportPreview,
   RecoveryApi,
+  RestoreResult,
   UndoOutcome,
 } from '../data/local/types'
 import type { ExpenseView } from '../types'
@@ -37,6 +38,7 @@ export type {
   RestoreResult,
   SnapshotInfo,
   SnapshotReason,
+  SnapshotSkips,
   StorageFacts,
   SyncMeta,
   SyncPort,
@@ -248,7 +250,7 @@ export const useExpenseStore = create<ExpenseState>()(
     markAttentionSeen: () => {
       ready().markAttentionSeen()
     },
-    restoreJournal: (entryId: string): Promise<UndoOutcome> => ready().restoreJournal(entryId),
+    restoreJournal: (entryId: string): Promise<RestoreResult> => ready().restoreJournal(entryId),
     recovery: (): Promise<RecoveryApi> => ready().recovery(),
     refreshStorageFacts: () => {
       engine?.refreshStorageFacts()

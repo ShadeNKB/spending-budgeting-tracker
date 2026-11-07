@@ -20,6 +20,11 @@ export interface SnapMeta {
   readonly rows: number
   readonly chars: number
   readonly z: 0 | 1
+  /**
+   * A removal's copy (reason `mass`): the ids that removal took, written by the Recovery centre
+   * before its journal entry may go (PR-4). Kept as stored; read with a type check per id.
+   */
+  readonly ids?: readonly unknown[]
 }
 
 const REASONS: ReadonlySet<string> = new Set([
@@ -31,6 +36,7 @@ const REASONS: ReadonlySet<string> = new Set([
   'mass',
 ])
 const isReason = (v: unknown): v is SnapReason => typeof v === 'string' && REASONS.has(v)
+const isList = (v: unknown): v is readonly unknown[] => Array.isArray(v)
 
 const DAY_MS = 86_400_000
 /** Shedding never touches a snapshot younger than this (§9.11). */
@@ -58,6 +64,7 @@ function readIndex(text: string | null): SnapMeta[] {
     const rows = own(e, 'rows')
     const chars = own(e, 'chars')
     const z = own(e, 'z')
+    const ids = own(e, 'ids')
     if (
       typeof id === 'string' &&
       typeof at === 'number' &&
@@ -65,7 +72,7 @@ function readIndex(text: string | null): SnapMeta[] {
       typeof rows === 'number' &&
       typeof chars === 'number'
     ) {
-      out.push({ id, at, reason, rows, chars, z: z === 1 ? 1 : 0 })
+      out.push({ id, at, reason, rows, chars, z: z === 1 ? 1 : 0, ...(isList(ids) ? { ids } : {}) })
     }
   }
   return out

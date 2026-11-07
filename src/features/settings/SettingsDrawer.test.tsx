@@ -130,6 +130,8 @@ describe('SettingsDrawer focus', () => {
       attentionFile: () => null,
       markFixed: () => undefined,
       discard: () => undefined,
+      snapshotSkips: () => ({ back: 0, deletedSince: 0 }),
+      unmarkFixed: () => undefined,
     }
     useExpenseStore.setState({
       attention: { quarantined: 1, copies: 0, unseen: 1, full: false },
