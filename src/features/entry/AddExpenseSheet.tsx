@@ -27,7 +27,19 @@ interface Props {
   open: boolean
   onClose: () => void
   /** `date` is a day, `yyyy-MM-dd`. */
-  prefill?: { itemName?: string; amount?: number; category?: string; date?: DayKey }
+  prefill?: {
+    itemName?: string
+    amount?: number
+    category?: string
+    date?: DayKey
+    notes?: string
+  }
+  /** The entry was added (before the sheet closes): Recovery's Fix marks its row fixed. */
+  onAdded?: (added: ExpenseView) => void
+  /** Said after the confirmation ("Added "Kopi" · $1.80. <note>"). */
+  addedNote?: string
+  /** Where focus goes on close when the control that opened the sheet is gone. */
+  returnFocus?: () => HTMLElement | null
 }
 
 function formFrom(prefill: Props['prefill'], today: string) {
@@ -36,11 +48,18 @@ function formFrom(prefill: Props['prefill'], today: string) {
     amount: prefill?.amount ? String(prefill.amount) : '',
     category: prefill?.category ?? '',
     date: prefill?.date ?? today,
-    notes: '',
+    notes: prefill?.notes ?? '',
   }
 }
 
-export function AddExpenseSheet({ open, onClose, prefill }: Props) {
+export function AddExpenseSheet({
+  open,
+  onClose,
+  prefill,
+  onAdded,
+  addedNote,
+  returnFocus,
+}: Props) {
   const categories = useExpenseStore((s) => s.categories)
   // The data engine did not load (bootError): nothing typed here could be saved this time.
   const cantSave = useExpenseStore((s) => s.bootError !== null)
@@ -109,11 +128,12 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
       return
     }
     vibrate(10)
+    onAdded?.(created)
     const isBackdated = form.date !== today
     const undoId = `add-${created.id}`
     confirmAdded(
       toast,
-      `Added "${created.itemName}" · ${fmt(created.amount)}${isBackdated ? ` · ${dayLabel(form.date)}` : ''}`,
+      `Added "${created.itemName}" · ${fmt(created.amount)}${isBackdated ? ` · ${dayLabel(form.date)}` : ''}${addedNote === undefined ? '' : `. ${addedNote}`}`,
       {
         undoId,
         action: {
@@ -150,7 +170,13 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
   // then throw away the whole form).
   if (cantSave) {
     return (
-      <Sheet open={open} onClose={onClose} title="Add expense" side="bottom">
+      <Sheet
+        open={open}
+        onClose={onClose}
+        title="Add expense"
+        side="bottom"
+        returnFocus={returnFocus}
+      >
         <div className="flex flex-col gap-3 px-4 pb-6 pt-2">
           <DataUnavailable
             failed
@@ -165,7 +191,13 @@ export function AddExpenseSheet({ open, onClose, prefill }: Props) {
   }
 
   return (
-    <Sheet open={open} onClose={onClose} title="Add expense" side="bottom">
+    <Sheet
+      open={open}
+      onClose={onClose}
+      title="Add expense"
+      side="bottom"
+      returnFocus={returnFocus}
+    >
       {/* WebKit reveals only the caret line of a text field when the sheet itself scrolls:
           focus brings the whole control, ring included (its scroll-margin), into view. */}
       <div

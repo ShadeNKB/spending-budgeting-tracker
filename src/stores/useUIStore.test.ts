@@ -162,14 +162,21 @@ describe('useUIStore persisted preferences', { timeout: 15_000 }, () => {
 })
 
 describe('settings focus', { timeout: 15_000 }, () => {
-  it('sends focus to the needs-attention card', async () => {
-    const store = await loadStore()
-    store.focusSettings('backup', 'backup-attention')
-    const { useUIStore } = await import('./useUIStore')
-    expect(useUIStore.getState().settingsTab).toBe('backup')
-    expect(useUIStore.getState().takeSettingsFocus('backup-attention')).toBe(true)
-    expect(useUIStore.getState().takeSettingsFocus('backup-attention')).toBe(false)
-  })
+  it.each(['recovery-attention', 'recovery-changes'] as const)(
+    'sends Backup to a Recovery section once (%s)',
+    async (control) => {
+      const store = await loadStore()
+      store.focusSettings('backup', control)
+      const { useUIStore } = await import('./useUIStore')
+      expect(useUIStore.getState().settingsTab).toBe('backup')
+      expect(useUIStore.getState().settingsFocus).toBe(control)
+      // only the section asked for takes it, and only once
+      const other = control === 'recovery-attention' ? 'recovery-changes' : 'recovery-attention'
+      expect(useUIStore.getState().takeSettingsFocus(other)).toBe(false)
+      expect(useUIStore.getState().takeSettingsFocus(control)).toBe(true)
+      expect(useUIStore.getState().takeSettingsFocus(control)).toBe(false)
+    },
+  )
 })
 
 describe('toasts', { timeout: 15_000 }, () => {

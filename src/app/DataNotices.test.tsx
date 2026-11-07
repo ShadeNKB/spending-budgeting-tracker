@@ -211,6 +211,18 @@ describe('DataNotices strips', () => {
       { kind: 'needs-attention' },
     )
 
+    // Details: Settings › Backup › Recovery, on what needs attention (acceptance 10).
+    await user.click(within(recovered).getByRole('button', { name: 'Details' }))
+    expect(useUIStore.getState()).toMatchObject({
+      settingsOpen: true,
+      settingsTab: 'backup',
+      settingsFocus: 'recovery-attention',
+    })
+    expect(dismissReport).not.toHaveBeenCalled()
+    act(() => {
+      useUIStore.setState({ settingsOpen: false, settingsFocus: null })
+    })
+
     await user.click(within(recovered).getByRole('button', { name: 'Dismiss recovery notice' }))
     expect(dismissReport).toHaveBeenCalledOnce()
     expect(noStrip('Data recovered')).toBeNull()
@@ -251,7 +263,7 @@ describe('DataNotices strips', () => {
 })
 
 describe('DataNotices boot toasts', () => {
-  it('needs attention: one toast per boot, whose Review opens Settings › Backup on the card', () => {
+  it('needs attention: one toast per boot, whose Review opens Recovery on Needs attention', () => {
     renderNotices()
     show({ attention: { quarantined: 2, copies: 0, unseen: 2, full: false } })
     expect(toasts()).toHaveLength(1)
@@ -269,7 +281,7 @@ describe('DataNotices boot toasts', () => {
     expect(useUIStore.getState()).toMatchObject({
       settingsOpen: true,
       settingsTab: 'backup',
-      settingsFocus: 'backup-attention',
+      settingsFocus: 'recovery-attention',
     })
   })
 
@@ -314,6 +326,14 @@ describe('DataNotices boot toasts', () => {
       message: 'Your data was upgraded: 700 entries · 2 need attention',
     })
     expect(toasts()[0]?.action?.label).toBe('Review')
+    act(() => {
+      toasts()[0]?.action?.onClick()
+    })
+    expect(useUIStore.getState()).toMatchObject({
+      settingsOpen: true,
+      settingsTab: 'backup',
+      settingsFocus: 'recovery-attention',
+    })
   })
 
   it('an upgrade with nothing to look at has no Review', () => {

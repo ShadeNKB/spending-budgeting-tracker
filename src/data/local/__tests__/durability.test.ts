@@ -176,7 +176,7 @@ describe('a remote mass removal stays restorable after a reload (P2-20)', () => 
     const next = await bootTab({ backing: b })
     await settle()
     expect(next.store.getState().expenses).toHaveLength(0)
-    await expect(next.store.getState().restoreJournal(mass.entryId)).resolves.toEqual({
+    await expect(next.store.getState().restoreJournal(mass.entryId)).resolves.toMatchObject({
       applied: 120,
       skipped: 0,
     })
@@ -197,7 +197,7 @@ describe('a remote mass removal stays restorable after a reload (P2-20)', () => 
 
     const next = await bootTab({ backing: b })
     await settle()
-    await expect(next.store.getState().restoreJournal(mass.entryId)).resolves.toEqual({
+    await expect(next.store.getState().restoreJournal(mass.entryId)).resolves.toMatchObject({
       applied: 120,
       skipped: 0,
     })

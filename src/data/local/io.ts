@@ -1,6 +1,7 @@
 // Storage access for the local engine (track spec §8, §9.11). Every write goes through the one
 // safe writer; nothing here deletes a key on a read or parse failure (I12): `removeKey` is called
-// only by Remove-from-this-device, snapshot/journal rotation and visible shedding of derived copies.
+// only by Remove-from-this-device, snapshot/journal rotation, visible shedding of derived copies
+// and the owner's own Discard of one set-aside copy in the Recovery centre.
 import { StorageQuotaError, safeSet } from '../../services/storage'
 import { isSpendTrackKey } from './keys'
 

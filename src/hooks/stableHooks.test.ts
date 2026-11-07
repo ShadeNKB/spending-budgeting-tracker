@@ -28,6 +28,10 @@ vi.mock('../features/entry/AddExpenseSheet', () => ({
   },
 }))
 vi.mock('../ui/ToastHost', () => ({ ToastHost: () => null }))
+// The first-run card and the backup nudge (PR-4) too: an empty device shows the welcome card, whose
+// chunk would re-render with the first entry and, landing at whatever moment its load ends, bind
+// the press shield's page-wide keydown listener inside a count meant for the shell's own.
+vi.mock('../app/DataCards', () => ({ default: () => null }))
 // Overlays mount through OverlaySlot once the app is idle (T5). Go idle at once so the sheets
 // mount at boot, as a real session does a second after load.
 vi.mock('../lib/whenIdle', () => ({

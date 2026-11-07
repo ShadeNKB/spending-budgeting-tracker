@@ -68,10 +68,10 @@ function upgradeMessage(report: BootReport): string {
   return `${upgraded} · ${report.needsAttention.toLocaleString()} ${verb} attention`
 }
 
-/** "Review": Settings › Backup, with focus on the needs-attention card. */
+/** "Review", "Details": Settings › Backup › Recovery, with focus on what needs attention. */
 function review(): void {
   const ui = useUIStore.getState()
-  ui.focusSettings('backup', 'backup-attention')
+  ui.focusSettings('backup', 'recovery-attention')
   ui.setSettingsOpen(true)
 }
 
@@ -126,7 +126,8 @@ function Strip({
         <p className="min-w-[10rem] flex-1 py-1.5 text-[14px] leading-snug text-[var(--text-primary)] md:text-[13px]">
           {message}
         </p>
-        <div className="ml-auto flex shrink-0 flex-wrap items-center gap-1">{children}</div>
+        {/* Capped at the strip's width, so three actions wrap on a 320 px phone. */}
+        <div className="ml-auto flex max-w-full flex-wrap items-center gap-1">{children}</div>
       </div>
     </section>
   )
@@ -260,6 +261,9 @@ export function DataNotices() {
           <Button size={null} className={ACTION} onClick={downloads.damaged}>
             <Download size={14} aria-hidden />
             Download damaged data
+          </Button>
+          <Button variant="ghost" size={null} className={ACTION} onClick={review}>
+            Details
           </Button>
           {/* Named for what it closes: a toast's × is "Dismiss" too, often on screen with it. */}
           <Button

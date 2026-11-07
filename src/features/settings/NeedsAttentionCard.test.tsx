@@ -124,15 +124,23 @@ describe('NeedsAttentionCard', () => {
     )
   })
 
-  it('takes focus when "Review" on the toast asked for it', () => {
-    useUIStore.setState({ settingsFocus: 'backup-attention' })
+  it('Review opens Recovery on the needs-attention list (PR-4)', async () => {
+    const user = userEvent.setup()
+    useUIStore.setState({ settingsTab: 'backup' })
     show({ quarantined: 2, copies: 0, unseen: 2, full: false })
-    expect(screen.getByRole('region', { name: 'Needs attention' })).toHaveFocus()
-    expect(useUIStore.getState().settingsFocus).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Review' }))
+    expect(useUIStore.getState()).toMatchObject({
+      settingsTab: 'backup',
+      settingsFocus: 'recovery-attention',
+    })
+    // Review is no download, and nothing else happens
+    expect(downloaded).toEqual([])
+    expect(quarantineFile).not.toHaveBeenCalled()
   })
 
-  it('does not take focus otherwise', () => {
+  it('never takes focus by itself', () => {
     show({ quarantined: 2, copies: 0, unseen: 2, full: false })
     expect(screen.getByRole('region', { name: 'Needs attention' })).not.toHaveFocus()
+    expect(screen.getByRole('region', { name: 'Needs attention' })).not.toHaveAttribute('tabindex')
   })
 })

@@ -465,7 +465,14 @@ describe('the sync port', () => {
     const off = store.subscribe(spy)
     backing.resetCounts()
     const out = port.applyRemote(dec)
-    expect(out).toEqual({ changedLocal: false, removed: 0, mass: null, quarantined: 0 })
+    // conflicts (PR-4): a merge that changes nothing journals nothing either
+    expect(out).toEqual({
+      changedLocal: false,
+      removed: 0,
+      mass: null,
+      quarantined: 0,
+      conflicts: 0,
+    })
     await settle()
     expect(spy).not.toHaveBeenCalled()
     expect(backing.setsOf('st5:db')).toBe(0)
@@ -490,7 +497,7 @@ describe('the sync port', () => {
     expect(store.getState().expenses).toEqual([])
     expect(JSON.stringify(stored(backing, 'st5:snaps'))).toContain('mass')
     expect(JSON.stringify(stored(backing, 'st5:journal'))).toContain('"kind":"mass"')
-    await expect(store.getState().restoreJournal(mass.entryId)).resolves.toEqual({
+    await expect(store.getState().restoreJournal(mass.entryId)).resolves.toMatchObject({
       applied: 60,
       skipped: 0,
     })

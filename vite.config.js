@@ -64,9 +64,11 @@ function preloadDataEngine() {
         const bundle = ctx.bundle
         if (!bundle) return html
         const chunks = Object.values(bundle).filter((c) => c.type === 'chunk')
-        const engine = chunks.find((c) =>
-          (c.facadeModuleId ?? '').replace(/\\/g, '/').endsWith(ENGINE_MODULE),
-        )
+        // By the modules it holds, not its facade: the Recovery centre's lazy chunk (PR-4)
+        // imports modules that live in the engine chunk, which then exports more than the
+        // engine's own names and has no facade module (the dynamic import reads a namespace).
+        const isEngine = (id) => id.replace(/\\/g, '/').endsWith(ENGINE_MODULE)
+        const engine = chunks.find((c) => c.isDynamicEntry && c.moduleIds.some(isEngine))
         if (!engine) throw new Error(`No chunk for ${ENGINE_MODULE}: is it still a dynamic import?`)
         const files = []
         const visit = (chunk) => {
@@ -108,6 +110,18 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(APP_VERSION),
   },
   build: {
+    modulePreload: {
+      // The data engine runs only after the entry chunk and its vendor chunks have loaded: a
+      // chunk the engine loads later (the Recovery centre, PR-4) lists none of them, nor itself
+      // (its import() fetches it), in the engine chunk, which every boot downloads (the startup
+      // budget). Vite adds CSS deps after this.
+      resolveDependencies: (file, deps, { hostId, hostType }) =>
+        hostType === 'js' && /(^|\/)engine-[\w-]+\.js$/.test(hostId)
+          ? deps.filter(
+              (dep) => dep !== file && !/(^|\/)(index|vendor-[a-z]+)-[\w-]+\.js$/.test(dep),
+            )
+          : deps,
+    },
     rollupOptions: {
       output: {
         manualChunks: vendorChunk,

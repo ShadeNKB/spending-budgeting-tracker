@@ -166,6 +166,8 @@ const LOCK_NAME = 'st5:sync'
 const LEGACY_SEEN_EVERY_MS = 60_000
 /** The mass-removal toast stays this long, like every Undo for a bulk change (P2-12, P2-20). */
 export const MASS_UNDO_MS = 30_000
+/** The conflict toast stays as long as the other toasts with a Review. */
+export const CONFLICT_TOAST_MS = 8000
 /** st_sync_push refuses a payload whose jsonb text is over 1.2 MB (migration 004). */
 const RPC_PAYLOAD_MAX = 1_258_291
 /** jsonb text is longer than JSON.stringify's (a space after every `:` and `,`). */
@@ -680,8 +682,15 @@ function scheduleRetry(reason: CycleReason): number | null {
 // What a merge tells the owner
 // ---------------------------------------------------------------------------
 
-/** The guard tripped (§11.9): applied, snapshotted and journaled; one tap brings it all back. */
+/**
+ * The guard tripped (§11.9): applied, snapshotted and journaled; one tap brings it all back. The
+ * Undo runs in the Recovery centre's lazy chunk: it starts loading now, so the tap waits on no
+ * fetch (a failed load is tried again by the tap itself).
+ */
 function toastMassRemoval(mass: NonNullable<RemoteApplied['mass']>): void {
+  Promise.resolve()
+    .then(() => useExpenseStore.getState().recovery())
+    .catch(() => undefined)
   useUIStore.getState().pushToast({
     kind: 'warning',
     message: `Your other device removed ${entries(mass.count)}`,
@@ -690,6 +699,26 @@ function toastMassRemoval(mass: NonNullable<RemoteApplied['mass']>): void {
       label: 'Undo',
       onClick: () => {
         void restoreMass(mass.entryId)
+      },
+    },
+  })
+}
+
+/**
+ * Edits made here that a merge replaced or removed (§9.8 conflicts): kept in the journal, and one
+ * tap away in Settings › Backup › Recovery, where each one can be put back.
+ */
+function toastConflicts(n: number): void {
+  useUIStore.getState().pushToast({
+    kind: 'warning',
+    message: `${entries(n)} you changed here ${n === 1 ? 'was' : 'were'} also changed on your other device`,
+    duration: CONFLICT_TOAST_MS,
+    action: {
+      label: 'Review',
+      onClick: () => {
+        const ui = useUIStore.getState()
+        ui.focusSettings('backup', 'recovery-changes')
+        ui.setSettingsOpen(true)
       },
     },
   })
@@ -891,6 +920,7 @@ function mergeStep(code: string, pulled: Pulled | null, reason: CycleReason): St
   const take = (applied: RemoteApplied) => {
     changedLocal ||= applied.changedLocal
     if (applied.mass !== null) toastMassRemoval(applied.mass)
+    else if (applied.conflicts > 0) toastConflicts(applied.conflicts)
   }
 
   // News first: what realtime carried and the relay may since have lost to a crossing push. A

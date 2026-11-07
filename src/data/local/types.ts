@@ -8,6 +8,7 @@ import type {
   ImportCounts,
   MemoState,
   NewExpenseInput,
+  Origin,
   OutboxKey,
   PushDecision,
   QEntry,
@@ -55,6 +56,83 @@ export interface ImportPreview {
 export interface UndoOutcome {
   readonly applied: number
   readonly skipped: number
+}
+
+// ── the Recovery centre (DATA-ENGINE-SPEC §15.5, PR-4 track spec §3.1) ──────────────────────
+
+export type SnapshotReason = 'daily' | 'pre-v5' | 'delete-all' | 'import' | 'replace' | 'mass'
+
+export interface SnapshotInfo {
+  readonly id: string
+  readonly at: number
+  readonly reason: SnapshotReason
+  readonly rows: number
+}
+
+/** A journaled record as the owner reads it (from the stored wire record, every field guarded). */
+export interface RecordSummary {
+  readonly itemName: string
+  readonly amount: number | null
+  readonly day: string | null
+  readonly category: string | null
+  readonly notes: string | null
+}
+
+export interface ChangeItem {
+  readonly id: string
+  readonly at: number
+  readonly seen: boolean
+  /** Kept until seen, and counted as new: a conflict or a mass removal. */
+  readonly pinned: boolean
+  readonly kind: 'conflict' | 'replaced' | 'removed' | 'edit-after-delete' | 'mass'
+  readonly before: RecordSummary | null
+  readonly after: RecordSummary | null
+  /** mass: the entries the removal took; else 1. */
+  readonly count: number
+}
+
+export interface AttentionItem {
+  /** `${origin}|${fnv36(raw)}` for an entry; the storage key for a whole copy. */
+  readonly id: string
+  readonly at: number
+  readonly origin: Origin
+  /** The quarantine reason code ('bad-amount', 'cap', …; 'copy' for a whole stored copy). */
+  readonly reason: string
+  readonly kind: 'entry' | 'copy'
+  /** What a Fix can prefill; null when the row has neither a readable name nor an amount. */
+  readonly salvage: {
+    readonly itemName?: string
+    readonly amount?: number
+    readonly day?: string
+    readonly category?: string
+    readonly notes?: string
+  } | null
+}
+
+export type RestoreResult = UndoOutcome & {
+  /** The undo entry of an applied restore (30 s), else null. */
+  readonly undoId: string | null
+  readonly why: null | 'already' | 'changed-since' | 'deleted-since' | 'gone'
+}
+
+export interface RecoveryApi {
+  summary(): { readonly snapshots: number; readonly newChanges: number; readonly canWrite: boolean }
+  /** Newest first, from the index alone (no body is read). */
+  snapshots(): readonly SnapshotInfo[]
+  /** Applied with applyImport(preview, 'restore'). Throws when the copy no longer reads. */
+  previewSnapshot(id: string): Promise<ImportPreview>
+  /** A v5 backup file of that snapshot; null when it no longer reads. Records no backup. */
+  snapshotFile(id: string): Promise<BackupFileV5 | null>
+  /** Pinned unseen first, then newest first. */
+  changes(): readonly ChangeItem[]
+  restoreChange(id: string): Promise<RestoreResult>
+  markAllSeen(): void
+  /** Needs-attention rows, then the raw copies of whole stored values (never the sync code's). */
+  attention(): readonly AttentionItem[]
+  /** That one item, in the needs-attention download's shape; null when it is gone. */
+  attentionFile(id: string): unknown
+  markFixed(id: string): void
+  discard(id: string): void
 }
 
 export interface ImportOutcome extends UndoOutcome {
@@ -118,6 +196,8 @@ export interface ExpenseActions {
   quarantineFile(): unknown
   markAttentionSeen(): void
   restoreJournal(entryId: string): Promise<UndoOutcome>
+  /** The Recovery centre (its own lazy chunk, loaded on the first call). */
+  recovery(): Promise<RecoveryApi>
   refreshStorageFacts(): void
   dismissReport(): void
   consumeUndo(id: string): UndoOutcome | null
@@ -151,6 +231,8 @@ export interface RemoteApplied {
   readonly mass: { readonly entryId: string; readonly count: number } | null
   /** New needs-attention entries from this payload. */
   readonly quarantined: number
+  /** Journaled conflicts of this merge (0 when the mass guard tripped: its Undo toast says it). */
+  readonly conflicts: number
 }
 
 export type CommitSource = 'local' | 'tab' | 'remote' | 'boot'

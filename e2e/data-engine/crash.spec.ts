@@ -10,6 +10,14 @@ import { storedExpenses } from '../support/stored'
 
 const LIFECYCLE_MARK = 'e2e:lifecycle'
 
+// A pristine origin shows the first-run card above every screen (PR-4); these tests start past
+// it, as after Start fresh. e2e/first-run.spec.ts covers the card itself.
+test.beforeEach(async ({ context }) => {
+  await context.addInitScript(() => {
+    localStorage.setItem('spendtrack:welcome', '1')
+  })
+})
+
 test.use({ timezoneId: 'Asia/Singapore' })
 
 test('an entry added 200 ms before the renderer dies is there after a relaunch', async ({

@@ -7,9 +7,11 @@ const DIST = 'dist/assets'
 const BUDGETS = {
   // bytes — calibrated 2026-05-25 against current dist with ~15% headroom.
   // Raise deliberately when adding a large dep (and note the dep in the commit).
-  js: 700 * 1024,
+  // Raised 3 Nov 2026 by the owner's decision 'Raise to 740 KB, startup fixed': the total may
+  // grow, the startup may not (eager and boot budgets in check-relay-weight.mjs).
+  js: 740 * 1024,
   css: 80 * 1024,
-  total: 800 * 1024,
+  total: 820 * 1024,
 }
 
 function walk(dir) {

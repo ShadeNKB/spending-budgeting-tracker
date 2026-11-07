@@ -21,8 +21,15 @@ const THEME_KEY = 'spendtrack:theme'
 export type Theme = 'dark' | 'light' | 'system'
 
 export type SettingsTab = 'categories' | 'budgets' | 'backup' | 'sync'
-/** A control in Settings that another panel can send focus to. */
-export type SettingsControl = 'backup-download' | 'backup-attention' | 'sync-now'
+/**
+ * A control in Settings that another panel can send focus to. `recovery-*` open Backup's
+ * Recovery view on that section (the needs-attention list, the changes from the other device).
+ */
+export type SettingsControl =
+  | 'backup-download'
+  | 'recovery-attention'
+  | 'recovery-changes'
+  | 'sync-now'
 
 // Preferences are best-effort: if storage is unavailable they last for this session only.
 function persistPreference(key: string, value: string): void {

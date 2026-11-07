@@ -370,6 +370,49 @@ describe('AddExpenseSheet saving', () => {
     expect(screen.getByPlaceholderText(WHAT)).toHaveValue('Kopi O')
   })
 
+  // PR-4: Recovery's Fix adds an unreadable row again from what still reads.
+  it('a prefill can carry notes; onAdded gets the new entry, and the note follows the confirmation', async () => {
+    const user = userEvent.setup()
+    const onAdded = vi.fn()
+    const onClose = vi.fn()
+    const today = todayKey()
+    render(
+      <AddExpenseSheet
+        open
+        onClose={onClose}
+        prefill={{ itemName: 'Chicken rice', amount: 5.5, date: today, notes: 'with extra egg' }}
+        onAdded={onAdded}
+        addedNote="The unreadable original stays in your raw data download."
+      />,
+    )
+    expect(screen.getByRole('textbox', { name: 'Notes (optional)' })).toHaveValue('with extra egg')
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    const added = useExpenseStore.getState().expenses[0]
+    expect(added).toMatchObject({ itemName: 'Chicken rice', amount: 5.5, notes: 'with extra egg' })
+    expect(onAdded).toHaveBeenCalledOnce()
+    expect(onAdded).toHaveBeenCalledWith(added)
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(useUIStore.getState().toasts.at(-1)?.message).toBe(
+      'Added "Chicken rice" · S$5.50. The unreadable original stays in your raw data download.',
+    )
+  })
+
+  it('onAdded is not called when the store refuses the entry', async () => {
+    const user = userEvent.setup()
+    const onAdded = vi.fn()
+    render(
+      <AddExpenseSheet
+        open
+        onClose={() => {}}
+        prefill={{ itemName: 'Kopi', amount: 1.8, notes: 'n'.repeat(501) }}
+        onAdded={onAdded}
+      />,
+    )
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    expect(useExpenseStore.getState().expenses).toEqual([])
+    expect(onAdded).not.toHaveBeenCalled()
+  })
+
   it('Undo takes it back out, and says what it had to leave', async () => {
     const user = userEvent.setup()
     render(<AddExpenseSheet open onClose={() => {}} />)

@@ -147,8 +147,10 @@ BEGIN
                                WHERE pt.pubname = 'supabase_realtime' AND pt.schemaname = 'public'
                                  AND pt.tablename = 'sync_buckets') THEN 'published' ELSE 'not published' END
     INTO v_a;
-  v_res := v_res || jsonb_build_object('check', 'not_locked_yet', 'expected', 'RLS off, published',
-                                       'actual', v_a, 'pass', v_a = 'RLS off, published');
+  -- Publication membership is reported, not required: a project whose table was never in
+  -- supabase_realtime (devices then sync over Broadcast and polling) is fine before 005 too.
+  v_res := v_res || jsonb_build_object('check', 'not_locked_yet', 'expected', 'RLS off',
+                                       'actual', v_a, 'pass', NOT v_ok);
 
   -- Behaviour, on throwaway rows only.
   SELECT count(*) INTO v_count FROM public.sync_buckets AS b WHERE b.sync_id = ANY (c_ids);

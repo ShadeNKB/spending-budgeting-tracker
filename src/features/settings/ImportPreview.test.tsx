@@ -256,3 +256,97 @@ describe('ImportPreview', () => {
     )
   })
 })
+
+// PR-4: a snapshot kept on this device previews the same way, as a restore only (Recovery).
+describe('ImportPreview of a snapshot', () => {
+  const SNAP: Preview = {
+    fileName: 'snapshot-s1',
+    counts: {
+      inFile: 12,
+      added: 0,
+      restored: 12,
+      updated: 0,
+      alreadyHere: 0,
+      unreadable: 0,
+      deletedInFile: 0,
+    },
+    replaceDeletes: 12,
+  }
+
+  function showSnapshot(preview: Preview = SNAP) {
+    applyImport = vi.fn(() => {
+      useExpenseStore.setState({
+        undoStack: [{ id: 'imp-s1', label: 'Import', expiresAt: Date.now() + 30_000 }],
+      })
+      return { applied: 12, skipped: 0, added: 0, restored: 12, updated: 0, removed: 0 }
+    })
+    consumeUndo = vi.fn(() => ({ applied: 12, skipped: 0 }))
+    onClose = vi.fn()
+    onDownload = vi.fn()
+    useExpenseStore.setState({ undoStack: [], applyImport, consumeUndo })
+    render(
+      <ImportPreview
+        preview={preview}
+        source={{ kind: 'snapshot' }}
+        onClose={onClose}
+        onDownloadBackup={onDownload}
+      />,
+    )
+    return screen.getByRole('region', { name: 'Restore from this copy?' })
+  }
+
+  it('says what the copy holds and that nothing here changes; Restore only, never Replace', () => {
+    const region = showSnapshot()
+    expect(
+      within(region)
+        .getAllByRole('listitem')
+        .map((li) => li.textContent),
+    ).toEqual(['12 in the copy', '12 restored (they were deleted)'])
+    expect(region).toHaveAccessibleDescription('Nothing here is removed or changed.')
+    expect(screen.getByRole('button', { name: 'Restore' })).toHaveFocus()
+    expect(screen.queryByRole('button', { name: /Replace/ })).toBeNull()
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeEnabled()
+  })
+
+  it('Restore restores (never replaces), with a 30 s Undo, and closes', async () => {
+    const user = userEvent.setup()
+    showSnapshot()
+    await user.click(screen.getByRole('button', { name: 'Restore' }))
+    expect(applyImport).toHaveBeenCalledExactlyOnceWith(SNAP, 'restore')
+    expect(onClose).toHaveBeenCalledTimes(1)
+    const [toast] = toasts()
+    expect(toast).toMatchObject({
+      kind: 'success',
+      message: 'Restored 12 entries',
+      duration: 30_000,
+    })
+    act(() => {
+      toast?.action?.onClick()
+    })
+    expect(consumeUndo).toHaveBeenCalledWith('imp-s1')
+  })
+
+  it('a copy whose entries are all here already says so, with no Undo', () => {
+    showSnapshot()
+    applyImport.mockReturnValue({
+      applied: 0,
+      skipped: 0,
+      added: 0,
+      restored: 0,
+      updated: 0,
+      removed: 0,
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Restore' }), { detail: 1 })
+    expect(toasts()).toHaveLength(1)
+    expect(toasts()[0]?.message).toBe('Nothing to restore: everything in the copy is already here')
+    expect(toasts()[0]?.action).toBeUndefined()
+  })
+
+  it("names deleted entries in the copy as the copy's", () => {
+    const region = showSnapshot({
+      ...SNAP,
+      counts: { ...SNAP.counts, inFile: 13, deletedInFile: 1 },
+    })
+    expect(within(region).getByText('marked deleted in the copy')).toBeInTheDocument()
+  })
+})

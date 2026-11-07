@@ -1,4 +1,6 @@
 import { test, expect } from '@playwright/test'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { serveBuild, startRelay, type Relay, type StaticHost } from './support/relayServer'
 import {
   PORTS,
@@ -22,6 +24,13 @@ let hostNew: StaticHost
 let hostOld: StaticHost
 const devices: Device[] = []
 
+/** The release this build was made from (package.json), as it names itself in Settings › Sync. */
+const RELEASE = (
+  JSON.parse(
+    readFileSync(fileURLToPath(new URL('../../package.json', import.meta.url)), 'utf8'),
+  ) as { version: string }
+).version
+
 test.beforeAll(async () => {
   relay = await startRelay(PORTS.relay)
   hostNew = await serveBuild(PORTS.candidateA, build('candidate'))
@@ -35,7 +44,7 @@ test.afterAll(async () => {
   await relay.close()
 })
 
-test('0.11.0 beside 0.10.0 for 60 s: one live set, no resurrection, bounded and quiet', async ({
+test(`${RELEASE} beside 0.10.0 for 60 s: one live set, no resurrection, bounded and quiet`, async ({
   browser,
 }) => {
   test.setTimeout(240_000)
@@ -45,11 +54,11 @@ test('0.11.0 beside 0.10.0 for 60 s: one live set, no resurrection, bounded and 
   expect(relay.topics()).toContain(plainTopic(SYNC_CODE))
   expect(relay.topics().filter((t) => t.includes(SYNC_CODE))).toEqual([`sync:${SYNC_CODE}`])
   expect(relay.requests('broadcast', n.origin).length).toBeGreaterThan(0)
-  // The registry survives 0.10.0's pushes: this build's entry, 0.11.0, and none from 0.10.0.
+  // The registry survives 0.10.0's pushes: this build's entry, its release, and none from 0.10.0.
   const devs = Object.values(relayDevices(relay))
   expect(
     devs.map((d) => (typeof d === 'object' && d !== null ? Reflect.get(d, 'app') : null)),
-  ).toEqual(['0.11.0'])
+  ).toEqual([RELEASE])
   // 0.10.0 never registers itself, yet Settings › Sync names it, in the list and the banner alike,
   // and so never says every device runs this build (the gate B signal).
   const sheet = await openSettingsTab(n.page, 'Sync')

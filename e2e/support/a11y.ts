@@ -590,14 +590,11 @@ export const STATES: readonly UiState[] = [
     title: 'Settings, Sync',
     path: '/pulse',
     expenses: RICH,
+    // This suite's build has no relay settings, so Sync shows its setup steps: their file names
+    // and command wrap at 320 px with no exemption (PR-4).
     open: async (page) => {
       await openSettings(page, 'Sync')
-    },
-    // Only builds without relay settings show these setup steps (the deployed app has them); the
-    // file names in them do not wrap. SyncPanel.tsx belongs to PR-0: the wrap lands after it.
-    knownReflow: {
-      selector: '[role="tabpanel"] ol span',
-      why: 'SyncPanel setup steps (not-configured builds only); fix deferred to after PR-0',
+      await expect(page.getByText('Cloud sync not configured')).toBeVisible()
     },
   },
   {

@@ -28,5 +28,5 @@ tool, just less cold.
 
 - Dark mode primary; light mode follower but must stay WCAG AA-clean (currently 0 failures).
 - Token-first — extend CSS custom properties; no per-component one-offs.
-- Bundle budget JS 700 KB (currently ~651). Mono + tabular-nums for all numbers. Timezone-safe dates.
+- Bundle budget JS 740 KB, total 820 KB (owner, 3 Nov 2026: "Raise to 740 KB, startup fixed"). What every boot loads may not grow: it is held at 0.11.0 + 1 KB per build (`npm run size:relay`), so a new screen's code loads only when the screen opens. Mono + tabular-nums for all numbers. Timezone-safe dates.
 - One surface per release; before/after screenshots + approval before merging anything subjective.

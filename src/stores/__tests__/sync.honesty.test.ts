@@ -254,8 +254,11 @@ describe('a damaged relay copy is quarantined and repaired, at most once per 10 
       action: { label: 'Undo' },
     })
 
+    // The Undo runs in the Recovery centre's lazy chunk, which the toast started loading: a real
+    // module load, which virtual time does not run, so the test waits for it as a tap would.
+    await phone.expense.useExpenseStore.getState().recovery()
     toast?.action?.onClick()
-    await advance(0) // the restore reads its snapshot asynchronously when it is not cached
+    await advance(0)
     expect(phone.expense.useExpenseStore.getState().expenses).toHaveLength(60)
     expect(toastsOf(phone).some((t) => t.message === 'Restored 60 entries')).toBe(true)
     // The revival is a forward write: it reaches the relay and sticks there.

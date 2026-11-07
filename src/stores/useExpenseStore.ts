@@ -17,6 +17,7 @@ import type {
   ExpenseFields,
   ImportOutcome,
   ImportPreview,
+  RecoveryApi,
   UndoOutcome,
 } from '../data/local/types'
 import type { ExpenseView } from '../types'
@@ -24,11 +25,18 @@ import { readDeviceCurrency, setCurrencyWriter, useUIStore } from './useUIStore'
 
 export type {
   Attention,
+  AttentionItem,
   BootReport,
+  ChangeItem,
   ImportOutcome,
   ImportPreview,
   LocalStatus,
+  RecordSummary,
+  RecoveryApi,
   RemoteApplied,
+  RestoreResult,
+  SnapshotInfo,
+  SnapshotReason,
   StorageFacts,
   SyncMeta,
   SyncPort,
@@ -241,6 +249,7 @@ export const useExpenseStore = create<ExpenseState>()(
       ready().markAttentionSeen()
     },
     restoreJournal: (entryId: string): Promise<UndoOutcome> => ready().restoreJournal(entryId),
+    recovery: (): Promise<RecoveryApi> => ready().recovery(),
     refreshStorageFacts: () => {
       engine?.refreshStorageFacts()
     },

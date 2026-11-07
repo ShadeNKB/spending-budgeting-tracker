@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { SettingsDrawer } from './SettingsDrawer'
 import { keepPrevious } from './previousCode'
 import { SyncPill } from '../../app/SyncPill'
@@ -107,14 +107,46 @@ describe('SettingsDrawer focus', () => {
     expect(backupTab).toHaveFocus()
   })
 
-  it('"Review" on the needs-attention toast lands on the Needs attention card', () => {
+  it('"Review" on the needs-attention toast opens Backup › Recovery on its list (PR-4)', async () => {
+    // Recovery is its own chunk: it loads in real time.
+    vi.useRealTimers()
+    const item = {
+      id: 'local-v4|abc',
+      at: NOW,
+      origin: 'local-v4',
+      reason: 'bad-amount',
+      kind: 'entry',
+      salvage: null,
+    } as const
+    const api = {
+      summary: () => ({ snapshots: 0, newChanges: 0, canWrite: true }),
+      snapshots: () => [],
+      previewSnapshot: () => Promise.reject(new Error('unused')),
+      snapshotFile: () => Promise.resolve(null),
+      changes: () => [],
+      restoreChange: () => Promise.reject(new Error('unused')),
+      markAllSeen: () => undefined,
+      attention: () => [item],
+      attentionFile: () => null,
+      markFixed: () => undefined,
+      discard: () => undefined,
+    }
     useExpenseStore.setState({
-      attention: { quarantined: 2, copies: 0, unseen: 2, full: false },
+      attention: { quarantined: 1, copies: 0, unseen: 1, full: false },
       markAttentionSeen: vi.fn(),
+      recovery: () => Promise.resolve(api),
     })
-    useUIStore.setState({ settingsFocus: 'backup-attention' })
-    openOn('backup')
-    expect(screen.getByRole('region', { name: 'Needs attention' })).toHaveFocus()
+    useUIStore.setState({
+      settingsOpen: true,
+      settingsTab: 'backup',
+      settingsFocus: 'recovery-attention',
+    })
+    render(<SettingsDrawer />)
+    const heading = await screen.findByRole('heading', { name: 'Needs attention (1)' })
+    await waitFor(() => {
+      expect(heading).toHaveFocus()
+    })
+    expect(useUIStore.getState().settingsFocus).toBeNull()
   })
 })
 

@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { format } from 'date-fns'
 import {
   Cloud,
@@ -416,28 +416,39 @@ function NotConfigured() {
           local-first — Supabase is only used as a relay.
         </p>
         <ol className="mt-1 flex flex-col gap-1.5 text-[12px] text-[var(--text-tertiary)]">
-          <li className="flex gap-2">
-            <span className="font-mono text-accent">1.</span>
-            Create a free project at <span className="font-mono text-white/60">supabase.com</span>
-          </li>
-          <li className="flex gap-2">
-            <span className="font-mono text-accent">2.</span>
-            Run the SQL migration from{' '}
-            <span className="font-mono text-white/60">supabase/migrations/001_sync.sql</span>
-          </li>
-          <li className="flex gap-2">
-            <span className="font-mono text-accent">3.</span>
-            Add <span className="font-mono text-white/60">VITE_SUPABASE_URL</span> and{' '}
-            <span className="font-mono text-white/60">VITE_SUPABASE_ANON_KEY</span> to Vercel and
-            your local <span className="font-mono text-white/60">.env.local</span>
-          </li>
-          <li className="flex gap-2">
-            <span className="font-mono text-accent">4.</span>
-            Redeploy — sync activates automatically
-          </li>
+          <SetupStep n={1}>
+            Create a free project at <code className={SETUP_NAME}>supabase.com</code>
+          </SetupStep>
+          <SetupStep n={2}>
+            Run migrations 001 to 004 from <code className={SETUP_NAME}>supabase/migrations</code>,
+            in order, by hand in the Supabase SQL editor (never{' '}
+            <code className={SETUP_NAME}>supabase db push</code>). See{' '}
+            <code className={SETUP_NAME}>docs/brain/sync-runbook.md</code>.
+          </SetupStep>
+          <SetupStep n={3}>
+            Add <code className={SETUP_NAME}>VITE_SUPABASE_URL</code> and{' '}
+            <code className={SETUP_NAME}>VITE_SUPABASE_ANON_KEY</code> to Vercel and your local{' '}
+            <code className={SETUP_NAME}>.env.local</code>
+          </SetupStep>
+          <SetupStep n={4}>Redeploy — sync activates automatically</SetupStep>
         </ol>
       </div>
     </div>
+  )
+}
+
+const SETUP_NAME = 'font-mono text-white/60'
+
+/**
+ * One setup step: its number, then its words as one run of text, so a long file name or command
+ * in it wraps (anywhere, if it must) instead of pushing the panel sideways at 320 px.
+ */
+function SetupStep({ n, children }: { n: number; children: ReactNode }) {
+  return (
+    <li className="flex gap-2">
+      <span className="font-mono text-accent">{n}.</span>
+      <span className="min-w-0 [overflow-wrap:anywhere]">{children}</span>
+    </li>
   )
 }
 
@@ -692,7 +703,8 @@ function SyncContent() {
           setConfirmDisconnect(true)
         }}
         variant="ghost"
-        className="w-full text-[var(--text-tertiary)] hover:text-white"
+        // 44 px tall under a finger (not just its hit area); a mouse keeps the 40 px button.
+        className="w-full text-[var(--text-tertiary)] hover:text-white [@media(pointer:coarse)]:h-11"
       >
         <Link2Off size={14} /> Disconnect sync
       </Button>
@@ -754,8 +766,8 @@ function SyncContent() {
           </h3>
           <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
             Generate a sync code here, then join it on your other device. There&apos;s no account:
-            the code links them. The synced copy isn&apos;t encrypted yet, so anyone with this
-            app&apos;s public key could read it.
+            the code links them. The synced copy isn&apos;t encrypted yet: until the database
+            lockdown (update 005), anyone with this app&apos;s public key could read it.
           </p>
         </div>
 
