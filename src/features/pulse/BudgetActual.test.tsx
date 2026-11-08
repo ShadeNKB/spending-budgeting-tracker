@@ -41,7 +41,7 @@ beforeEach(() => {
 function renderRows(items: CategoryBudgetStat[], isFinal = false) {
   return render(
     <MemoryRouter>
-      <BudgetActual items={items} isFinal={isFinal} />
+      <BudgetActual items={items} isFinal={isFinal} period={null} />
     </MemoryRouter>,
   )
 }
@@ -97,12 +97,35 @@ describe('BudgetActual names', () => {
     render(
       <MemoryRouter initialEntries={['/pulse']}>
         <Routes>
-          <Route path="/pulse" element={<BudgetActual items={ITEMS} isFinal={false} />} />
+          <Route
+            path="/pulse"
+            element={<BudgetActual items={ITEMS} isFinal={false} period={null} />}
+          />
           <Route path="/ledger" element={<LedgerProbe />} />
         </Routes>
       </MemoryRouter>,
     )
     await user.click(row('Food & Dining'))
     expect(screen.getByTestId('location')).toHaveTextContent('/ledger?category=Food%20%26%20Dining')
+  })
+
+  it('opens a past month in the ledger over that month, not this one', async () => {
+    const user = userEvent.setup()
+    const september = { start: '2026-09-01', end: '2026-09-30' }
+    render(
+      <MemoryRouter initialEntries={['/pulse']}>
+        <Routes>
+          <Route
+            path="/pulse"
+            element={<BudgetActual items={ITEMS} isFinal period={september} />}
+          />
+          <Route path="/ledger" element={<LedgerProbe />} />
+        </Routes>
+      </MemoryRouter>,
+    )
+    await user.click(row('Food & Dining'))
+    expect(screen.getByTestId('location')).toHaveTextContent(
+      '/ledger?category=Food%20%26%20Dining&range=custom&customStart=2026-09-01&customEnd=2026-09-30',
+    )
   })
 })

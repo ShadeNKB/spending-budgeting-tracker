@@ -536,10 +536,22 @@ export function computeWeekAnalytics(index: LedgerIndex, today: DayKey): WeekAna
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
 
-export function colorFromString(str: string): string {
-  if (!str) return '#5A6478'
+function hueOf(str: string): number {
   let hash = 0
   for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash)
-  const hue = Math.abs(hash) % 360
-  return `hsl(${hue}, 65%, 62%)`
+  return Math.abs(hash) % 360
+}
+
+export function colorFromString(str: string): string {
+  if (!str) return '#5A6478'
+  return `hsl(${hueOf(str)}, 65%, 62%)`
+}
+
+/**
+ * The same colour at `alpha` (0-1), for a tint or a glow. Hex alpha appended to an hsl() colour
+ * is invalid CSS, and the browser drops the whole declaration.
+ */
+export function colorWithAlpha(str: string, alpha: number): string {
+  if (!str) return `rgb(90 100 120 / ${alpha})`
+  return `hsl(${hueOf(str)} 65% 62% / ${alpha})`
 }

@@ -1,7 +1,8 @@
 import { ArrowRight, Sun } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
-import { colorFromString } from '../../lib/analytics'
+import { colorFromString, colorWithAlpha } from '../../lib/analytics'
+import { initialOf } from '../../lib/format'
 import type { Expense } from '../../types'
 
 export function TodayStrip({ entries, total }: { entries: readonly Expense[]; total: number }) {
@@ -44,13 +45,13 @@ export function TodayStrip({ entries, total }: { entries: readonly Expense[]; to
               <span
                 className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
                 style={{
-                  background: `${colorFromString(e.category)}1E`,
+                  background: colorWithAlpha(e.category, 0.12),
                   color: colorFromString(e.category),
-                  boxShadow: `0 0 0 1px ${colorFromString(e.category)}28`,
+                  boxShadow: `0 0 0 1px ${colorWithAlpha(e.category, 0.16)}`,
                 }}
                 aria-hidden
               >
-                {e.itemName.charAt(0).toUpperCase()}
+                {initialOf(e.itemName)}
               </span>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-[13px] text-white">{e.itemName}</div>

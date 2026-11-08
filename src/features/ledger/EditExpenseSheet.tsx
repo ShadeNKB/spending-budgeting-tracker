@@ -119,6 +119,7 @@ export function EditExpenseSheet({
       fields[invalid].current?.focus()
       return
     }
+    const before = useExpenseStore.getState().undoStack.at(-1)?.id
     try {
       // Fields sent back unchanged are no edit: an amount-only change keeps the stored date
       // byte for byte, and a new day is stored as that day (P2-2). Empty notes clear them.
@@ -134,7 +135,12 @@ export function EditExpenseSheet({
       toast.error(actionErrorMessage(err))
       return
     }
-    toast.success('Expense updated')
+    // Undo only what this save put on the stack: a save that changed nothing adds no entry, and
+    // an older edit of the same expense must not be undone in its name.
+    const after = useExpenseStore.getState().undoStack.at(-1)?.id
+    const undo =
+      after !== before && after?.startsWith(`update-${expense.id}-`) === true ? after : undefined
+    toast.success('Expense updated', { undoId: undo, action: undoAction(toast, undo) })
     onClose()
   }
 
@@ -327,6 +333,18 @@ export function EditExpenseSheet({
   )
 }
 
+/** A toast's Undo for the store's undo entry `undo`; none when there is no entry to undo. */
+function undoAction(toast: ReturnType<typeof useToast>, undo: string | undefined) {
+  if (undo === undefined) return undefined
+  return {
+    label: 'Undo',
+    onClick: () => {
+      const outcome = useExpenseStore.getState().consumeUndo(undo)
+      if (outcome !== null && outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
+    },
+  }
+}
+
 /** "Delete expense", then the question in its place. Re-keyed on every opening of the sheet. */
 function DeleteExpense({ expense, onDeleted }: { expense: Expense; onDeleted: () => void }) {
   const toast = useToast()
@@ -344,17 +362,7 @@ function DeleteExpense({ expense, onDeleted }: { expense: Expense; onDeleted: ()
             const undo = deleteUndoId(useExpenseStore.getState().undoStack, expense.id)
             toast.info(`Deleted "${expense.itemName}"`, {
               undoId: undo,
-              action:
-                undo === undefined
-                  ? undefined
-                  : {
-                      label: 'Undo',
-                      onClick: () => {
-                        const outcome = useExpenseStore.getState().consumeUndo(undo)
-                        if (outcome !== null && outcome.skipped > 0)
-                          toast.warning(undoOutcomeMessage(outcome))
-                      },
-                    },
+              action: undoAction(toast, undo),
             })
             // The sheet closes and hands focus back itself (to the next row).
             confirm.close(null)

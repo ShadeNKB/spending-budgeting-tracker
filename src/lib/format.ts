@@ -186,3 +186,13 @@ export function resolveDefaultCurrency(env: {
   }
   return 'USD'
 }
+
+/** The first character a person sees in `text`, upper-cased: an emoji or a flag stays whole. */
+export function initialOf(text: string): string {
+  const trimmed = text.trim()
+  const first =
+    'Segmenter' in Intl
+      ? new Intl.Segmenter().segment(trimmed)[Symbol.iterator]().next().value?.segment
+      : Array.from(trimmed)[0]
+  return (first ?? '').toUpperCase()
+}

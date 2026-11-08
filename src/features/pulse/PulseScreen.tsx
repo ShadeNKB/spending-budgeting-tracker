@@ -12,7 +12,15 @@ import {
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useUIStore } from '../../stores/useUIStore'
 import { computeMonthAnalytics, computeYearAnalytics } from '../../lib/analytics'
-import { makeKey, monthKeyOf, monthName, monthShortName, shortDate } from '../../lib/dates'
+import {
+  makeKey,
+  monthKeyOf,
+  monthName,
+  monthRange,
+  monthShortName,
+  shortDate,
+} from '../../lib/dates'
+import type { LedgerPeriod } from '../ledger/ledgerParams'
 import { getLedgerIndex } from '../../lib/ledgerIndex'
 import { importWithReload } from '../../lib/chunkReload'
 import { whenIdle } from '../../lib/whenIdle'
@@ -84,6 +92,14 @@ export function PulseScreen() {
   )
 
   const a = yearData ?? monthData
+  // A category opens the Ledger over the period on screen: a past month or year as its days.
+  const ledgerPeriod: LedgerPeriod = yearData
+    ? yearOffset === 0
+      ? 'year'
+      : { start: makeKey(yearData.year, 1, 1), end: makeKey(yearData.year, 12, 31) }
+    : monthData.isCurrent
+      ? null
+      : monthRange(monthData.monthKey)
   // "Oct 2026" on phones keeps the header on one row; "October 2026" from sm.
   const shortLabel = yearData
     ? yearData.label
@@ -351,7 +367,7 @@ export function PulseScreen() {
           <SectionHeader icon={Layers} meta={a.label}>
             Top categories
           </SectionHeader>
-          <TopCategories items={a.topCategories} />
+          <TopCategories items={a.topCategories} period={ledgerPeriod} />
         </Card>
 
         <Card className="min-w-0">
@@ -376,7 +392,11 @@ export function PulseScreen() {
           >
             Budget vs actual
           </SectionHeader>
-          <BudgetActual items={monthData.categoryBudgets} isFinal={!monthData.isCurrent} />
+          <BudgetActual
+            items={monthData.categoryBudgets}
+            isFinal={!monthData.isCurrent}
+            period={ledgerPeriod}
+          />
         </Card>
       )}
 

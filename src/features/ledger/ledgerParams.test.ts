@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { RANGES, isRange, isValidYmd } from './ledgerParams'
+import { RANGES, isRange, isValidYmd, ledgerCategoryHref } from './ledgerParams'
 
 describe('isRange', () => {
   it('accepts every known range', () => {
@@ -22,4 +22,14 @@ describe('isValidYmd', () => {
       expect(isValidYmd(v)).toBe(false)
     },
   )
+})
+
+describe('ledgerCategoryHref', () => {
+  it('opens this month by default, this year, or a past period as its days', () => {
+    expect(ledgerCategoryHref('Food & Dining', null)).toBe('/ledger?category=Food%20%26%20Dining')
+    expect(ledgerCategoryHref('Transport', 'year')).toBe('/ledger?category=Transport&range=year')
+    expect(ledgerCategoryHref('Transport', { start: '2025-01-01', end: '2025-12-31' })).toBe(
+      '/ledger?category=Transport&range=custom&customStart=2025-01-01&customEnd=2025-12-31',
+    )
+  })
 })
