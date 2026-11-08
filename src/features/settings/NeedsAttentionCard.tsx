@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useId } from 'react'
+import { useEffect, useId } from 'react'
 import { format } from 'date-fns'
-import { Download, FileWarning } from 'lucide-react'
+import { Download, FileWarning, ListChecks } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { useToast } from '../../hooks/useToast'
 import { downloadJSON } from '../../lib/download'
@@ -32,7 +32,7 @@ function keptText(entries: number, copies: number): string {
  * The entries this device could not read (from storage, a file or the relay), and whole stored
  * copies set aside as they were found. They are kept, never deleted, and can be downloaded as
  * they are. Seeing the card marks them seen, so the "couldn't be read" toast stops coming back
- * for them. "Review" on that toast sends focus here.
+ * for them. Review opens Recovery on the list, where each one can be fixed or discarded.
  */
 export function NeedsAttentionCard() {
   const quarantined = useExpenseStore((s) => s.attention.quarantined)
@@ -45,12 +45,6 @@ export function NeedsAttentionCard() {
   useEffect(() => {
     if (quarantined > 0 && unseen > 0) useExpenseStore.getState().markAttentionSeen()
   }, [quarantined, unseen])
-
-  const takeFocus = useCallback((card: HTMLElement | null) => {
-    if (!card || !useUIStore.getState().takeSettingsFocus('backup-attention')) return
-    card.focus()
-    card.scrollIntoView({ block: 'nearest', inline: 'nearest' })
-  }, [])
 
   if (quarantined === 0) return null
 
@@ -70,12 +64,9 @@ export function NeedsAttentionCard() {
   }
 
   return (
-    // Focusable (not a tab stop) so "Review" can bring the whole card into view and read it.
     <section
-      ref={takeFocus}
-      tabIndex={-1}
       aria-labelledby={titleId}
-      className="focus-inset flex flex-col gap-3 rounded-lg border border-warning/30 bg-warning/[0.07] p-4"
+      className="flex flex-col gap-3 rounded-lg border border-warning/30 bg-warning/[0.07] p-4"
     >
       <div className="flex items-start gap-2">
         <FileWarning size={15} aria-hidden className="mt-0.5 shrink-0 text-warning" />
@@ -93,9 +84,20 @@ export function NeedsAttentionCard() {
           )}
         </div>
       </div>
-      <Button variant="ghost" className="w-full" onClick={download}>
-        <Download size={14} aria-hidden /> {one ? 'Download it' : 'Download them'}
-      </Button>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        <Button
+          variant="ghost"
+          className="sm:flex-1"
+          onClick={() => {
+            useUIStore.getState().focusSettings('backup', 'recovery-attention')
+          }}
+        >
+          <ListChecks size={14} aria-hidden /> Review
+        </Button>
+        <Button variant="ghost" className="sm:flex-1" onClick={download}>
+          <Download size={14} aria-hidden /> {one ? 'Download it' : 'Download them'}
+        </Button>
+      </div>
     </section>
   )
 }

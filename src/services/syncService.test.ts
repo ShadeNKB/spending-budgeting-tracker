@@ -7,6 +7,7 @@ import { plainTopic } from '../data/core/e2e'
 import {
   advance,
   failNext,
+  landedPushes,
   relay,
   requestsOf,
   resetRelay,
@@ -371,6 +372,25 @@ describe('errors and deadlines', () => {
     ['full', { status: 500, code: '53400', message: 'relay is full' }],
     ['full', { status: 503, code: '53400', message: 'relay is full' }],
     ['invalid', { status: 400, code: '22023', message: 'invalid payload' }],
+    // 004's checks on table writes: the payload refused, as 22023 refuses it on the functions
+    [
+      'invalid',
+      {
+        status: 400,
+        code: '23514',
+        message:
+          'new row for relation "sync_buckets" violates check constraint "sync_buckets_payload_bounded"',
+      },
+    ],
+    // any other integrity error stays a server error (only the checks say "this payload")
+    [
+      'server',
+      {
+        status: 400,
+        code: '23502',
+        message: 'null value in column "payload" of relation "sync_buckets"',
+      },
+    ],
   ] as const)('classifies a %s failure (%j) on head, pull and push', async (kind, failure) => {
     const svc = await loadService()
     const t = await transportOf(svc)
@@ -387,6 +407,31 @@ describe('errors and deadlines', () => {
       await expect(settle(call())).rejects.toMatchObject({ name: 'SyncTransportError', kind })
     }
   })
+
+  it.each([
+    ['the plain upsert', {}, null, false],
+    ['a compare-and-set create', { VITE_SYNC_CAS: 'on' }, null, false],
+    ['a compare-and-set update', { VITE_SYNC_CAS: 'on' }, 'pulled', false],
+    ['a forced update', { VITE_SYNC_CAS: 'on' }, 'stale', true],
+  ] as const)(
+    'F-016: after 004, %s over 2 MiB of jsonb text is refused as invalid (23514), never landing',
+    async (_label, env, base, force) => {
+      relay().rpc = 'present'
+      const svc = await loadService(env)
+      const t = await transportOf(svc)
+      if (base !== null) seedRow(ROW, doc())
+      const etag = base === 'pulled' ? ((await settle(t.pull(ROW)))?.etag ?? null) : base
+      // Under the client's 1 MiB character check, over the table's 2 MiB of bytes (3-byte script).
+      const big = { ...doc('big'), categories: ['漢'.repeat(750_000)] }
+      expect(JSON.stringify(big).length).toBeLessThan(1024 * 1024)
+      expect(new TextEncoder().encode(JSON.stringify(big)).length).toBeGreaterThan(2 * 1024 * 1024)
+      const refused = settle(t.push(ROW, big, { base: etag, force, keepalive: false }))
+      await expect(refused).rejects.toBeInstanceOf(svc.SyncTransportError)
+      await expect(refused).rejects.toMatchObject({ kind: 'invalid', code: '23514', status: 400 })
+      expect(rowPayload(ROW)).toEqual(base === null ? undefined : doc())
+      expect(landedPushes()).toBe(0)
+    },
+  )
 
   it('classifies an RPC 404 as no functions', async () => {
     relay().rpc = 'present'

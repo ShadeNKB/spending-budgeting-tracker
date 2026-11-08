@@ -12,7 +12,9 @@ import { ToastAnnouncer } from './ToastAnnouncer'
 import { useRouteFocus } from './useRouteFocus'
 import { SAFE_GUTTER_X } from './safeArea'
 import {
+  IS_DEMO,
   installPersistence,
+  isOwnRow,
   undoOutcomeMessage,
   useExpenseStore,
   whenHydrated,
@@ -22,12 +24,15 @@ import { useUIStore } from '../stores/useUIStore'
 import { useHotkeys } from '../hooks/useHotkeys'
 import { useToast } from '../hooks/useToast'
 import { useIdle } from '../hooks/useIdle'
+import { useToday } from '../hooks/useToday'
 import { importWithReload } from '../lib/chunkReload'
+import { toDayKey } from '../lib/dates'
 
 // Overlays hidden on first paint. lazy() alone does not keep them (or the motion runtime
 // they share) off the critical path: a lazy component that is rendered at boot is fetched at
 // boot. So each overlay mounts through an OverlaySlot, on its first open or once the app goes
-// idle after load, whichever comes first. A stale chunk reloads once.
+// idle after load, whichever comes first. A stale chunk reloads once (each site spelled out:
+// src/__tests__/lazy-imports.test.ts checks every one).
 const SettingsDrawer = lazy(() =>
   importWithReload(() => import('../features/settings/SettingsDrawer')).then((m) => ({
     default: m.SettingsDrawer,
@@ -49,6 +54,10 @@ const ToastHost = lazy(() =>
 const HotkeyHints = lazy(() =>
   importWithReload(() => import('../ui/HotkeyHints')).then((m) => ({ default: m.HotkeyHints })),
 )
+// The first-run card and the backup nudge (PR-4): one chunk (its default export, so no wrapper
+// here), fetched only when the cheap check in AppShell says a card may be wanted. It decides
+// the rest itself.
+const DataCards = lazy(() => importWithReload(() => import('./DataCards')))
 
 /**
  * WebKit brings a text field that takes focus into view by its caret line and ignores the
@@ -90,6 +99,23 @@ export function AppShell() {
   const addSheetOpen = useUIStore((s) => s.addSheetOpen)
   const setAddSheetOpen = useUIStore((s) => s.setAddSheetOpen)
   const toast = useToast()
+  const today = useToday()
+  // The cheap first look for the data cards, run on every store change: an empty device that is
+  // saving (a first run, maybe), or own entries (only a demo build has rows that are not the
+  // owner's: its sample data) with no backup for 29 days, the nudge's 30 local calendar days
+  // less one for a DST hour either way. It may say yes early, never late: the chunk checks the
+  // rest (stored data, a sync code, the calendar days, sync health and Later). Every byte here is
+  // startup code, so nothing it can leave to the chunk is checked here. The build flag comes
+  // first: a production build folds it away.
+  const cards = useExpenseStore(
+    (s) =>
+      s.local === 'saved' &&
+      (s.expenses.length === 0
+        ? !IS_DEMO
+        : (!IS_DEMO || s.expenses.some(isOwnRow)) &&
+          (s.facts.lastBackupAt === null ||
+            toDayKey(new Date(s.facts.lastBackupAt + 29 * 86_400_000)) <= today)),
+  )
 
   const idle = useIdle()
   // Stable close handlers: the overlays get the same onClose on every shell render.
@@ -197,6 +223,12 @@ export function AppShell() {
             // Routes render synchronously; the `route-fade-in` CSS keyframe gives the
             // subtle fade without any React-state animation that can fail.
             <div key="route-content" className="route-fade-in">
+              {/* Above the screen, never over it: the screen stays usable under the card. Mounted
+                  the first time a card may be wanted, behind the slot's own error boundary (a
+                  card that fails is left out); from then on the chunk decides what shows. */}
+              <OverlaySlot open={cards}>
+                <DataCards />
+              </OverlaySlot>
               <Outlet />
             </div>
           )}

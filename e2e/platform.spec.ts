@@ -119,6 +119,14 @@ async function builtShell(request: APIRequestContext) {
 
 // ─── headers ───────────────────────────────────────────────────────────────
 
+// A pristine origin shows the first-run card above every screen (PR-4); these tests start past
+// it, as after Start fresh. e2e/first-run.spec.ts covers the card itself.
+test.beforeEach(async ({ context }) => {
+  await context.addInitScript(() => {
+    localStorage.setItem('spendtrack:welcome', '1')
+  })
+})
+
 test.describe('Security headers', () => {
   test('every response carries the vercel.json security headers', async ({ request }) => {
     expect(securityHeaders).toHaveLength(6)

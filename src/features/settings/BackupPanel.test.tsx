@@ -7,6 +7,7 @@ import {
   type ExpenseView,
   type ImportOutcome,
   type ImportPreview as Preview,
+  type RecoveryApi,
   type StorageFacts,
 } from '../../stores/useExpenseStore'
 import { useSyncStore } from '../../stores/useSyncStore'
@@ -135,7 +136,7 @@ describe('Backup copy per state', () => {
     seed({ sync: true, count: 12 })
     expect(
       screen.getByText(
-        "Synced through your relay: every linked device has a full copy. The relay copy isn't encrypted yet, so anyone with this app's public key could read it.",
+        "Synced through your relay: every linked device has a full copy. The relay copy isn't encrypted yet: until the database lockdown (update 005), anyone with this app's public key could read it.",
       ),
     ).toBeInTheDocument()
     expect(screen.queryByText(/stored only on this device/)).toBeNull()
@@ -297,6 +298,184 @@ describe('Needs attention in the panel', () => {
     expect(
       card.compareDocumentPosition(deleteButton) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy()
+  })
+})
+
+// PR-4: the way into Recovery (acceptance 1, 2).
+describe('the Recovery row', () => {
+  /** A Recovery API with `fresh` new changes from the other device, and nothing else. */
+  function recoveryWith(fresh: number) {
+    let unseen = fresh
+    const api: RecoveryApi = {
+      summary: () => ({ snapshots: 0, newChanges: unseen, canWrite: true }),
+      snapshots: () => [],
+      previewSnapshot: () => Promise.reject(new Error('unused')),
+      snapshotFile: () => Promise.resolve(null),
+      changes: () =>
+        Array.from({ length: unseen }, (_, i) => ({
+          id: `c${String(i)}`,
+          at: Date.now(),
+          seen: false,
+          pinned: true,
+          kind: 'removed' as const,
+          before: { itemName: 'Lunch', amount: 4.5, day: null, category: null, notes: null },
+          after: null,
+          count: 1,
+        })),
+      restoreChange: () => Promise.reject(new Error('unused')),
+      markAllSeen: () => {
+        unseen = 0
+      },
+      attention: () => [],
+      attentionFile: () => null,
+      markFixed: () => undefined,
+      discard: () => undefined,
+      snapshotSkips: () => ({ back: 0, deletedSince: 0 }),
+      unmarkFixed: () => undefined,
+    }
+    return api
+  }
+
+  it('sits between Needs attention and the delete actions, and opens before its count arrives', () => {
+    seed()
+    act(() => {
+      useExpenseStore.setState({ attention: { quarantined: 1, copies: 0, unseen: 0, full: false } })
+    })
+    const row = screen.getByRole('button', { name: 'Recovery' })
+    expect(row).toHaveAccessibleDescription(
+      'Snapshots, changes from your other device, entries set aside',
+    )
+    const card = screen.getByRole('region', { name: 'Needs attention' })
+    const deleteButton = screen.getByRole('button', { name: 'Delete all entries' })
+    expect(card.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(
+      row.compareDocumentPosition(deleteButton) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+  })
+
+  it('says how many changes from the other device are new; none after Mark all seen', async () => {
+    const user = userEvent.setup()
+    const api = recoveryWith(2)
+    seed({ sync: true })
+    act(() => {
+      useExpenseStore.setState({ recovery: () => Promise.resolve(api) })
+    })
+    // the count reads again when the entries change (a merge that journals a change)
+    act(() => {
+      useExpenseStore.setState({ expenses: [view('e9')] })
+    })
+    const row = await screen.findByRole('button', { name: 'Recovery, 2 new' })
+    expect(within(row).getByText('2 new')).toBeInTheDocument()
+
+    await user.click(row)
+    const heading = await screen.findByRole('heading', { name: 'Recovery', level: 3 })
+    expect(heading).toHaveFocus()
+    // Recovery replaces Backup's content
+    expect(screen.queryByRole('button', { name: 'Download JSON backup' })).toBeNull()
+    await user.click(await screen.findByRole('button', { name: 'Mark all seen' }))
+    await user.click(screen.getByRole('button', { name: 'Back to Backup' }))
+    const back = await screen.findByRole('button', { name: 'Recovery' })
+    expect(back).toHaveFocus()
+    expect(screen.queryByText('2 new')).toBeNull()
+  })
+
+  it('a "Review" while Backup is open opens Recovery on that section', async () => {
+    seed()
+    act(() => {
+      useExpenseStore.setState({ recovery: () => Promise.resolve(recoveryWith(0)) })
+      useUIStore.getState().focusSettings('backup', 'recovery-changes')
+    })
+    expect(await screen.findByRole('heading', { name: 'Recovery', level: 3 })).toBeInTheDocument()
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Changes from your other device' })).toHaveFocus()
+    })
+  })
+})
+
+// PR-4, F-050: ask the browser again to keep the data (acceptance 15).
+describe('Ask the browser to keep it', () => {
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, 'storage')
+  })
+
+  function stubStorage(persist: () => Promise<boolean>) {
+    const spy = vi.fn(persist)
+    Object.defineProperty(navigator, 'storage', {
+      configurable: true,
+      value: { persist: spy, persisted: () => Promise.resolve(false) },
+    })
+    return spy
+  }
+
+  it('is offered only while storage is not protected and the browser can be asked', () => {
+    seed({ facts: { persisted: false } })
+    expect(screen.queryByRole('button', { name: 'Ask the browser to keep it' })).toBeNull()
+    cleanup()
+    stubStorage(() => Promise.resolve(true))
+    seed({ facts: { persisted: true } })
+    expect(screen.queryByRole('button', { name: 'Ask the browser to keep it' })).toBeNull()
+    cleanup()
+    seed({ facts: { persisted: null } })
+    expect(screen.getByRole('button', { name: 'Ask the browser to keep it' })).toBeInTheDocument()
+  })
+
+  it('a grant: the line reads protected, and the toast says so', async () => {
+    const user = userEvent.setup()
+    const persist = stubStorage(() => Promise.resolve(true))
+    seed({ facts: { persisted: false } })
+    refreshStorageFacts.mockImplementation(() => {
+      useExpenseStore.setState({ facts: { ...NO_FACTS, persisted: true } })
+    })
+    await user.click(screen.getByRole('button', { name: 'Ask the browser to keep it' }))
+    expect(persist).toHaveBeenCalledOnce()
+    await waitFor(() => {
+      expect(screen.getByText('Storage: protected from automatic cleanup')).toBeInTheDocument()
+    })
+    expect(screen.queryByRole('button', { name: 'Ask the browser to keep it' })).toBeNull()
+    expect(useUIStore.getState().toasts.at(-1)?.message).toBe(
+      'Storage is now protected from automatic cleanup.',
+    )
+  })
+
+  it.each([
+    ['refused', () => Promise.resolve(false)],
+    ['thrown', () => Promise.reject(new Error('no'))],
+  ])('%s: the browser did not agree, and it can be asked again', async (_, answer) => {
+    const user = userEvent.setup()
+    const persist = stubStorage(answer)
+    seed({ facts: { persisted: false } })
+    const ask = screen.getByRole('button', { name: 'Ask the browser to keep it' })
+    await user.click(ask)
+    await waitFor(() => {
+      expect(useUIStore.getState().toasts.at(-1)?.message).toBe(
+        "The browser didn't agree. Keep sync on or download backups.",
+      )
+    })
+    expect(
+      screen.getByText('Storage: may be cleared by the browser. Keep sync on or download backups.'),
+    ).toBeInTheDocument()
+    await user.click(ask)
+    expect(persist).toHaveBeenCalledTimes(2)
+  })
+
+  it('a second press while the browser answers asks once', async () => {
+    let answer: (granted: boolean) => void = () => undefined
+    const persist = stubStorage(
+      () =>
+        new Promise<boolean>((resolve) => {
+          answer = resolve
+        }),
+    )
+    seed({ facts: { persisted: false } })
+    const ask = screen.getByRole('button', { name: 'Ask the browser to keep it' })
+    fireEvent.click(ask, { detail: 1 })
+    fireEvent.click(ask, { detail: 1 })
+    fireEvent.click(ask, { detail: 2 })
+    expect(persist).toHaveBeenCalledOnce()
+    await act(async () => {
+      answer(false)
+      await Promise.resolve()
+    })
   })
 })
 

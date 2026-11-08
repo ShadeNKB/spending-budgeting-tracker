@@ -263,13 +263,31 @@ describe('old writers (P3-8)', () => {
     expect(view?.allCurrent).toBe(false)
   })
 
-  it('a 0.11.0 peer whose entry was stamped as it wrote is never a 0.10.0 writer', async () => {
+  it('a peer on this release whose entry was stamped as it wrote is never a 0.10.0 writer', async () => {
     const phone = await connected()
     await advance(5000)
-    writeAs010({ n: '', app: '0.11.0', m: 'table', e: 0, at: Date.now() }, 'r11')
+    writeAs010({ n: '', app: __APP_VERSION__, m: 'table', e: 0, at: Date.now() }, 'r11')
     await advance(5000)
     expect(portOf(phone).meta().legacySeen.v5pre).toBeUndefined()
     expect(phone.sync.useSyncStore.getState().view?.allCurrent).toBe(true)
+  })
+
+  it('a peer still on 0.11.0 registers as it writes: listed as older, never a 0.10.0 writer', async () => {
+    // the upgrade window: this device runs this release, the other has not reloaded yet
+    const phone = await connected()
+    await advance(5000)
+    writeAs010({ n: '', app: '0.11.0', m: 'table', e: 0, at: Date.now() }, 'r11d')
+    await advance(5000)
+    expect(portOf(phone).meta().legacySeen.v5pre).toBeUndefined()
+    const view = phone.sync.useSyncStore.getState().view
+    expect(view?.legacy.v5preAt).toBeNull()
+    expect(view?.devices.find((d) => d.id === 'old010')).toMatchObject({
+      name: 'Other device',
+      app: '0.11.0',
+      legacy: false,
+      older: true,
+    })
+    expect(view?.allCurrent).toBe(false)
   })
 
   it('a 0.10.0 that updates is listed by its own entry again, and its sighting stops counting', async () => {
@@ -279,13 +297,13 @@ describe('old writers (P3-8)', () => {
     await advance(5000)
     expect(phone.sync.useSyncStore.getState().view?.devices.map((d) => d.app)).toContain('0.10.0')
     vi.setSystemTime(Date.now() + MINUTE)
-    // the same device on 0.11.0: it registers itself as it writes
-    writeAs010({ n: '', app: '0.11.0', m: 'table', e: 0, at: Date.now() }, 'r11b')
+    // the same device, updated to this release: it registers itself as it writes
+    writeAs010({ n: '', app: __APP_VERSION__, m: 'table', e: 0, at: Date.now() }, 'r11b')
     await advance(5000)
     const view = phone.sync.useSyncStore.getState().view
     expect(view?.devices.find((d) => d.id === 'old010')).toMatchObject({
       name: 'Other device',
-      app: '0.11.0',
+      app: __APP_VERSION__,
       legacy: false,
     })
     expect(view?.legacy.v5preAt).toBeNull()
@@ -327,12 +345,12 @@ describe('old writers (P3-8)', () => {
     }
   })
 
-  it('a 0.11.0 peer whose clock runs 7 hours slow is itself once seen writing again', async () => {
+  it('a peer on this release whose clock runs 7 hours slow is itself once seen writing again', async () => {
     const phone = await connected()
     await advance(5000)
     const slow = () => Date.now() - 7 * 60 * MINUTE
     // its first write is stamped by its own clock (no faster writer pinned it): it is itself
-    writeAs010({ n: '', app: '0.11.0', m: 'table', e: 0, at: slow() }, 'slow0001')
+    writeAs010({ n: '', app: __APP_VERSION__, m: 'table', e: 0, at: slow() }, 'slow0001')
     stampAhead(-7 * 60 * MINUTE)
     await advance(5000)
     expect(portOf(phone).meta().legacySeen.v5pre).toBeUndefined()
@@ -341,7 +359,7 @@ describe('old writers (P3-8)', () => {
     phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
     await advance(10_000)
     vi.setSystemTime(Date.now() + MINUTE)
-    writeAs010({ n: '', app: '0.11.0', m: 'table', e: 0, at: slow() }, 'slow0002')
+    writeAs010({ n: '', app: __APP_VERSION__, m: 'table', e: 0, at: slow() }, 'slow0002')
     await advance(5000)
     const view = phone.sync.useSyncStore.getState().view
     expect(portOf(phone).meta().legacySeen.v5pre).toBeUndefined()
@@ -353,16 +371,16 @@ describe('old writers (P3-8)', () => {
     expect(view?.allCurrent).toBe(true)
   })
 
-  it('a slow 0.11.0 peer misread once at its first sighting is itself again at its next write', async () => {
+  it('a slow peer on this release misread once at its first sighting is itself again at its next write', async () => {
     const phone = await connected()
     await advance(5000)
     const slow = () => Date.now() - 7 * 60 * MINUTE
     // first sighting, its token pinned after the phone's write: 7 hours past its `seen`
-    writeAs010({ n: '', app: '0.11.0', m: 'table', e: 0, at: slow() }, 'slow0003')
+    writeAs010({ n: '', app: __APP_VERSION__, m: 'table', e: 0, at: slow() }, 'slow0003')
     await advance(5000)
     expect(portOf(phone).meta().v5preDev).toBe('old010')
     vi.setSystemTime(Date.now() + MINUTE)
-    writeAs010({ n: '', app: '0.11.0', m: 'table', e: 0, at: slow() }, 'slow0004')
+    writeAs010({ n: '', app: __APP_VERSION__, m: 'table', e: 0, at: slow() }, 'slow0004')
     await advance(5000)
     // its entry moved: it registered as it wrote, and the sighting ends whatever the clocks say
     expect(portOf(phone).meta()).toMatchObject({ v5preDev: null })
@@ -403,7 +421,7 @@ describe('old writers (P3-8)', () => {
     expect(view?.allCurrent).toBe(false)
   })
 
-  it('never marks this device, nor a 0.11.0 peer with its own entry, as v5pre', async () => {
+  it('never marks this device, nor a peer on this release with its own entry, as v5pre', async () => {
     const phone = await connected('p1')
     await connected('l1') // the laptop registers itself on its pushes
     await advance(5000)

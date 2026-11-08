@@ -158,7 +158,7 @@ What 004 set up:
 - `prune_locked`: the public key can't run the prune function.
 - `old_clients_still_work`: the public key can still read and write the table (until gate E).
 - `write_guards_present`: the three write checks and the index exist.
-- `not_locked_yet`: the table isn't locked yet (row level security off, still published).
+- `not_locked_yet`: the table isn't locked yet (row level security off). It also says whether the table is in the Realtime publication; either is fine before gate E.
 
 What the functions do, tried as the public key and undone afterwards:
 

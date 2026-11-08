@@ -65,6 +65,14 @@ async function csvDays(page: Page): Promise<Record<string, string>> {
   return out
 }
 
+// A pristine origin shows the first-run card above every screen (PR-4); these tests start past
+// it, as after Start fresh. e2e/first-run.spec.ts covers the card itself.
+test.beforeEach(async ({ context }) => {
+  await context.addInitScript(() => {
+    localStorage.setItem('spendtrack:welcome', '1')
+  })
+})
+
 for (const z of ZONES) {
   test.describe(z.zone, () => {
     test.use({ timezoneId: z.zone })

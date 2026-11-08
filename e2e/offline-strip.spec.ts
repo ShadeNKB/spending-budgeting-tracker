@@ -38,6 +38,14 @@ function textContrast(text: Locator): Promise<number> {
   })
 }
 
+// A pristine origin shows the first-run card above every screen (PR-4); these tests start past
+// it, as after Start fresh. e2e/first-run.spec.ts covers the card itself.
+test.beforeEach(async ({ context }) => {
+  await context.addInitScript(() => {
+    localStorage.setItem('spendtrack:welcome', '1')
+  })
+})
+
 for (const theme of ['light', 'dark'] as const) {
   test(`the offline strip's text clears 4.5:1 in the ${theme} theme`, async ({ page, context }) => {
     await page.addInitScript((value) => {

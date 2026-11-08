@@ -216,7 +216,8 @@ export async function closeSettings(page: Page) {
  */
 export async function openLedger(page: Page, item?: string) {
   await inHand(page)
-  if (!page.url().includes('/ledger'))
+  // A device opened on /ledger shows this month: older entries need the All range too.
+  if (!page.url().includes('/ledger') || !page.url().includes('range=all'))
     await page.goto(new URL('/ledger?range=all', page.url()).href)
   await expect(page.getByText('Loading local spending data')).toHaveCount(0)
   if (item !== undefined) await page.getByLabel('Search expenses', { exact: true }).fill(item)

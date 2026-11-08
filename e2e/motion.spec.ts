@@ -79,6 +79,14 @@ declare global {
   }
 }
 
+// A pristine origin shows the first-run card above every screen (PR-4); these tests start past
+// it, as after Start fresh. e2e/first-run.spec.ts covers the card itself.
+test.beforeEach(async ({ context }) => {
+  await context.addInitScript(() => {
+    localStorage.setItem('spendtrack:welcome', '1')
+  })
+})
+
 test.use({ timezoneId: 'Asia/Singapore', locale: 'en-US' })
 
 test.beforeEach(async ({ page }, testInfo) => {

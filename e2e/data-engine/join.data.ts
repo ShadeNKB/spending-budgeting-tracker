@@ -1,4 +1,6 @@
 import { test, expect } from '@playwright/test'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { serveBuild, startRelay, type Relay, type StaticHost } from './support/relayServer'
 import {
   PORTS,
@@ -21,6 +23,13 @@ let relay: Relay
 let hostA: StaticHost
 let hostB: StaticHost
 const devices: Device[] = []
+
+/** The release this build was made from (package.json), as it names itself in Settings › Sync. */
+const RELEASE = (
+  JSON.parse(
+    readFileSync(fileURLToPath(new URL('../../package.json', import.meta.url)), 'utf8'),
+  ) as { version: string }
+).version
 
 const MISSING = '5e5e5e5e-0e2e-4e2e-8e2e-00000000dead'
 const entry = (id: string, itemName: string, day: string) => ({
@@ -74,7 +83,7 @@ test('Generate on one device, Join on the other: checked, previewed, merged; nev
   devices.push(b)
   const sheetB = await openSettingsTab(b.page, 'Sync')
   // AC-P4: the build says which release it is
-  await expect(sheetB.getByText('This device runs SpendTrack 0.11.0')).toBeVisible()
+  await expect(sheetB.getByText(`This device runs SpendTrack ${RELEASE}`)).toBeVisible()
   const field = sheetB.getByRole('textbox', { name: 'Sync code' })
   const join = sheetB.getByRole('button', { name: 'Join', exact: true })
   const quietBefore = relay.log.filter((q) => q.origin === b.origin).length

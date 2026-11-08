@@ -12,6 +12,14 @@ async function waitForApp(page: Page) {
 
 // ─── app boot ──────────────────────────────────────────────────────────────
 
+// A pristine origin shows the first-run card above every screen (PR-4); these tests start past
+// it, as after Start fresh. e2e/first-run.spec.ts covers the card itself.
+test.beforeEach(async ({ context }) => {
+  await context.addInitScript(() => {
+    localStorage.setItem('spendtrack:welcome', '1')
+  })
+})
+
 test.describe('App boot', () => {
   test('loads without console errors', async ({ page }) => {
     const errors: string[] = []

@@ -4,7 +4,7 @@
 // recovery ladder that never delete; snapshots before destructive operations; the journal;
 // cross-tab read-merge-write and the old-tab fold. Every user action is a core op on the doc.
 import { DEFAULT_CATEGORIES } from '../../constants'
-import { reloadPage } from '../../lib/chunkReload'
+import { importWithReload, reloadPage } from '../../lib/chunkReload'
 import { isSupportedCurrency } from '../../lib/format'
 import { storage } from '../../services/storage'
 import { useSyncStore } from '../../stores/useSyncStore'
@@ -68,9 +68,10 @@ import { type Touched, addTouched, diffTouched, everyKey, joinOutbox } from './o
 import { queryPersisted, requestPersist } from './persist'
 import { Quarantine, RAW_COPIES_PER_KEY } from './quarantine'
 import { decodeSeed } from './demo'
-import { blobText, decodeFile, recordsFile } from './files'
+import { blobText, decodeFile } from './files'
 import { parseJson } from './json'
 import { decodeSnapshot, salvageEnvelope } from './recovery'
+import type * as RecoveryModule from './recoveryCentre'
 import { REMOTE_SAFETY_COPY_ERROR, SafetyCopyError } from './refusal'
 import { smartCategory } from './smart'
 import { type SnapMeta, type SnapReason, Snapshots } from './snapshots'
@@ -84,6 +85,8 @@ import type {
   ImportOutcome,
   ImportPreview,
   LocalStatus,
+  RecoveryApi,
+  RestoreResult,
   RemoteApplied,
   StorageFacts,
   SyncMeta,
@@ -96,16 +99,18 @@ import { type Views, buildViews } from './views'
 const DEMO = import.meta.env.VITE_DEMO_MODE === 'true'
 const isDemoId = (id: string): boolean => id.startsWith(DEMO_PREFIX)
 
+// Module-private: the engine chunk's dynamic import reads a namespace object (the Recovery
+// centre's chunk imports from this chunk), and every export is a member of it on the boot path.
 /** Retry of a failed envelope write while nothing else changes (§9.4). */
-export const RETRY_MS = 30_000
+const RETRY_MS = 30_000
 /** The mirror follows the envelope after this much quiet (§9.10). */
-export const MIRROR_IDLE = 1000
+const MIRROR_IDLE = 1000
 /** storage-event debounces (§9.9). */
-export const TAB_DEBOUNCE = 50
-export const V4_DEBOUNCE = 200
+const TAB_DEBOUNCE = 50
+const V4_DEBOUNCE = 200
 /** Undo lifetimes (P2-12). */
-export const UNDO_SHORT = 5000
-export const UNDO_LONG = 30_000
+const UNDO_SHORT = 5000
+const UNDO_LONG = 30_000
 const UNDO_MAX = 5
 
 /** Shedding levels (§9.11): 1 daily snapshots, 2 quiet journal, 3 old snapshots, 4 the mirror. */
@@ -133,7 +138,8 @@ const pristineDoc = (): Doc => ({ ...EMPTY_DOC, categories: DEFAULT_CATEGORIES }
 const withDefaultCategories = (doc: Doc): Doc =>
   doc.categories.length > 0 ? doc : { ...doc, categories: DEFAULT_CATEGORIES }
 
-interface Runtime {
+/** One boot's state. Exported as a type for the Recovery centre's host (recoveryCentre.ts). */
+export interface Runtime {
   readonly io: Io | null
   readonly q: Quarantine | null
   readonly snaps: Snapshots | null
@@ -544,6 +550,26 @@ export function createEngine(host: EngineHost): Engine {
   }
 
   const revId = (prefix: string) => (): string => `${prefix}-${newRev(rng)}`
+
+  /** An import preview the engine holds the decoded source of, until applyImport uses it. */
+  function previewOf(r: Runtime, dec: SanitizeResult, fileName: string): ImportPreview {
+    const plan = ops.planImport(r.doc, dec)
+    const preview: ImportPreview = {
+      fileName,
+      counts: plan.counts,
+      replaceDeletes: plan.replaceDeletes,
+    }
+    r.previews.set(preview, { dec, used: false })
+    return preview
+  }
+
+  function setSeen(r: Runtime, n: number): void {
+    if (r.meta.attentionSeen === n) return
+    r.meta = { ...r.meta, attentionSeen: n }
+    r.dirty = true
+    flush(r)
+    publish(r)
+  }
 
   function addQuarantine(r: Runtime, entries: readonly QEntry[]): number {
     if (r.q === null || entries.length === 0 || r.memoryOnly) return 0
@@ -1052,13 +1078,15 @@ export function createEngine(host: EngineHost): Engine {
    * that leaves none the merge is refused before anything is removed. Running in memory only, or
    * removed from this device, nothing is written either way: storage keeps what it had.
    */
-  function keepJournal(r: Runtime, entries: JournalEntry[], mass: MassNote | null): void {
+  /** True once `entries` are journaled (Recovery lists them then). */
+  function keepJournal(r: Runtime, entries: JournalEntry[], mass: MassNote | null): boolean {
     const journal = r.journal
-    if (journal === null || journal.append(entries)) return
-    if (mass === null || mass.snapshotId !== null || r.memoryOnly || r.wiped) return
+    if (journal === null) return false
+    if (journal.append(entries)) return true
+    if (mass === null || mass.snapshotId !== null || r.memoryOnly || r.wiped) return false
     if (shedMirror(r) && journal.append(entries)) {
       publish(r)
-      return
+      return true
     }
     throw new SafetyCopyError(REMOTE_SAFETY_COPY_ERROR)
   }
@@ -1074,7 +1102,9 @@ export function createEngine(host: EngineHost): Engine {
       const current = r.doc
       const m = mergeDoc(current, dec.doc)
       observe(r.clock, wall, maxStampDoc(dec.doc))
-      if (m.doc === current) return { changedLocal: false, removed: 0, mass: null, quarantined }
+      if (m.doc === current) {
+        return { changedLocal: false, removed: 0, mass: null, quarantined, conflicts: 0 }
+      }
       let massNote: MassNote | null = null
       if (guardTrips(m.removed, current)) {
         const snap = takeSnapshot(r, 'mass', current)
@@ -1088,7 +1118,7 @@ export function createEngine(host: EngineHost): Engine {
       // §11.9 order: the snapshot, then the journal, then the merge. What a mass removal takes
       // is restorable after a reload before the envelope can drop it.
       const entries = classify(m, r.outbox, wall, rng, massNote)
-      keepJournal(r, entries, massNote)
+      const kept = keepJournal(r, entries, massNote)
       commit(r, m.doc, [], 'remote')
       flush(r)
       let mass: RemoteApplied['mass'] = null
@@ -1099,7 +1129,10 @@ export function createEngine(host: EngineHost): Engine {
           mass = { entryId: e.id, count: m.removed.length }
         }
       }
-      return { changedLocal: true, removed: m.removed.length, mass, quarantined }
+      // the conflict toast's Review lists them: none when they could not be journaled
+      const conflicts =
+        mass === null && kept ? entries.filter((x) => x.kind === 'conflict').length : 0
+      return { changedLocal: true, removed: m.removed.length, mass, quarantined, conflicts }
     },
     ack(sent, dec, outcome): number {
       const r = need()
@@ -1175,6 +1208,32 @@ export function createEngine(host: EngineHost): Engine {
    */
   function exportBackup(): BackupFileV5 {
     return encodeBackupFile(need().doc, { omitIds: omit() })
+  }
+
+  // ── the Recovery centre (PR-4): its own lazy chunk; the host reads the runtime on every call ──
+
+  let recoveryLoad: Promise<typeof RecoveryModule> | null = null
+
+  const recoveryHost: RecoveryModule.RecoveryHost = {
+    rt: need,
+    run,
+    undoTtl: UNDO_LONG,
+    preview: previewOf,
+    writeShed,
+    level: LEVEL_DERIVED,
+    publish,
+    seen: setSeen,
+    omit,
+    rng,
+  }
+
+  async function recovery(): Promise<RecoveryApi> {
+    need()
+    recoveryLoad ??= importWithReload(() => import('./recoveryCentre')).catch((err: unknown) => {
+      recoveryLoad = null
+      throw err
+    })
+    return (await recoveryLoad).createRecovery(recoveryHost)
   }
 
   function markBackedUp(): void {
@@ -1331,14 +1390,7 @@ export function createEngine(host: EngineHost): Engine {
       if (dec.writer === 'invalid' || dec.writer === 'e2e' || dec.writer === 'moved') {
         throw new Error("This file isn't a SpendTrack backup.")
       }
-      const plan = ops.planImport(r.doc, dec)
-      const preview: ImportPreview = {
-        fileName: file instanceof File ? file.name : 'backup.json',
-        counts: plan.counts,
-        replaceDeletes: plan.replaceDeletes,
-      }
-      r.previews.set(preview, { dec, used: false })
-      return preview
+      return previewOf(r, dec, file instanceof File ? file.name : 'backup.json')
     },
 
     applyImport(preview: ImportPreview, mode: 'restore' | 'replace'): ImportOutcome {
@@ -1377,41 +1429,14 @@ export function createEngine(host: EngineHost): Engine {
 
     markAttentionSeen(): void {
       const r = need()
-      const n = r.q?.count() ?? 0
-      if (r.meta.attentionSeen === n) return
-      r.meta = { ...r.meta, attentionSeen: n }
-      r.dirty = true
-      flush(r)
-      publish(r)
+      setSeen(r, r.q?.count() ?? 0)
     },
 
-    async restoreJournal(entryId: string): Promise<UndoOutcome> {
-      let recs = need().massCache.get(entryId) ?? null
-      if (recs === null) {
-        // later (after a reload): the guard snapshot, compressed or not, else the records the
-        // journal entry kept when no snapshot could be stored (P2-20)
-        const e = need().journal?.find(entryId)
-        const snapId = e?.snapshotId
-        const body =
-          e?.body ?? (snapId === undefined ? null : ((await need().snaps?.body(snapId)) ?? null))
-        if (e?.ids !== undefined && body !== null) {
-          const snapDoc = decodeSnapshot(body, Date.now())
-          recs = e.ids.flatMap((id) => {
-            const rec = snapDoc.expenses.get(id)
-            return rec === undefined ? [] : [rec]
-          })
-        }
-      }
-      const r = need()
-      if (recs === null || recs.length === 0) return { applied: 0, skipped: 0 }
-      const before = r.doc
-      const plan = ops.planImport(before, recordsFile(recs))
-      const res = run(r, (doc, ctx) => ops.applyImport(doc, ctx, plan, 'restore'))
-      r.massCache.delete(entryId)
-      r.journal?.markSeen(entryId)
-      const applied = res.doc === before ? 0 : plan.counts.restored + plan.counts.added
-      return { applied, skipped: recs.length - applied }
-    },
+    /** A remote mass removal's Undo (P2-20): the Recovery centre restores it. */
+    restoreJournal: async (entryId: string): Promise<RestoreResult> =>
+      (await recovery()).restoreChange(entryId),
+
+    recovery,
 
     refreshStorageFacts(): void {
       const r = need()

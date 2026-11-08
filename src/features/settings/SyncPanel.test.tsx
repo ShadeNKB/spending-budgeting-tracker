@@ -22,9 +22,13 @@ import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useUIStore } from '../../stores/useUIStore'
 
 // A build with sync configured; the store's actions are replaced per test, so no request is made.
+// A test of a build without relay settings turns `relayBuild.on` off (reset after each test).
+const relayBuild = vi.hoisted(() => ({ on: true }))
 vi.mock('../../services/syncConfig', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../services/syncConfig')>()),
-  syncEnabled: true,
+  get syncEnabled() {
+    return relayBuild.on
+  },
 }))
 // The engine is stubbed: the panel reaches it only through loadSyncEngine() (Join's preview).
 vi.mock('../../stores/syncEngine', () => ({ previewJoin: vi.fn() }))
@@ -151,6 +155,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
+  relayBuild.on = true
   useSyncStore.setState(initialSync, true)
   useUIStore.setState(initialUI, true)
   useExpenseStore.setState(initialExpenses, true)
@@ -770,6 +775,25 @@ describe('Disconnect', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Disconnect' }))
     expect(generate()).toHaveFocus()
   })
+
+  it.each([
+    ['the linked view', () => connectedPanel()],
+    [
+      'the view of a sync a newer SpendTrack set up',
+      () => {
+        useSyncStore.setState({
+          syncId: null,
+          cloudStatus: 'paused',
+          lastError: { kind: 'update-required', message: NEWER_CONFIG, since: NOW },
+        })
+        render(<SyncPanel />)
+      },
+    ],
+  ])('in %s, Disconnect sync is 44 px tall under a finger (40 px with a mouse)', (_view, show) => {
+    show()
+    const button = screen.getByRole('button', { name: /Disconnect sync/ })
+    expect(button).toHaveClass('h-10', '[@media(pointer:coarse)]:h-11')
+  })
 })
 
 describe('status row', () => {
@@ -1153,6 +1177,9 @@ describe('a sync set up by a newer SpendTrack (P3-19, AC-E9)', () => {
 describe('T-026-1: copy keyed to state (F-026)', () => {
   const FORBIDDEN = /no cloud|local only|local-only|shared secret|no sharing/i
   const copy = () => document.body.textContent
+  /** Readable with the public key only until 005 (PR-4 §3.5): the lockdown then asks for the code. */
+  const INTRO =
+    "Generate a sync code here, then join it on your other device. There's no account: the code links them. The synced copy isn't encrypted yet: until the database lockdown (update 005), anyone with this app's public key could read it."
 
   const pausedStates = (
     ['too-large', 'moved', 'update-required', 'reload', 'not-found', 'denied'] as const
@@ -1202,6 +1229,13 @@ describe('T-026-1: copy keyed to state (F-026)', () => {
       },
     ],
     ['size meter', () => connectedPanel({ view: view({ sizePct: 82 }) })],
+    [
+      'a build with no relay',
+      () => {
+        relayBuild.on = false
+        render(<SyncPanel />)
+      },
+    ],
   ]
 
   it.each(states)('%s: claims nothing untrue about where the data lives', (_state, show) => {
@@ -1209,14 +1243,10 @@ describe('T-026-1: copy keyed to state (F-026)', () => {
     expect(copy()).not.toMatch(FORBIDDEN)
   })
 
-  it('the unlinked intro says the synced copy is readable with the app’s public key', () => {
+  it('the unlinked intro says the synced copy is readable with the public key until 005', () => {
     render(<SyncPanel />)
     expect(screen.getByRole('heading', { name: 'Link your devices' })).toBeInTheDocument()
-    expect(
-      screen.getByText(
-        "Generate a sync code here, then join it on your other device. There's no account: the code links them. The synced copy isn't encrypted yet, so anyone with this app's public key could read it.",
-      ),
-    ).toBeInTheDocument()
+    expect(screen.getByText(INTRO)).toBeInTheDocument()
     expect(
       screen.getByText(
         'Share the code only with your own devices: anyone with it can change your synced data.',
@@ -1233,7 +1263,7 @@ describe('T-026-1: copy keyed to state (F-026)', () => {
     expect(copy()).toBe(
       [
         'Link your devices',
-        "Generate a sync code here, then join it on your other device. There's no account: the code links them. The synced copy isn't encrypted yet, so anyone with this app's public key could read it.",
+        INTRO,
         'Reconnect to ••••-…-a1b2',
         `This device remembers the code until ${format(NOW + 29 * DAY, 'd MMM')}.`,
         'Generate sync code for this device',
@@ -1244,6 +1274,45 @@ describe('T-026-1: copy keyed to state (F-026)', () => {
         `This device runs SpendTrack ${__APP_VERSION__}`,
       ].join(''),
     )
+  })
+})
+
+describe('a build with no relay settings: the setup steps (F-026, PR-4 §3.5)', () => {
+  const STEPS = [
+    'Create a free project at supabase.com',
+    'Run migrations 001 to 004 from supabase/migrations, in order, by hand in the Supabase SQL editor (never supabase db push). See docs/brain/sync-runbook.md.',
+    'Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to Vercel and your local .env.local',
+    'Redeploy — sync activates automatically',
+  ]
+  const steps = () => within(screen.getByRole('list')).getAllByRole('listitem')
+
+  beforeEach(() => {
+    relayBuild.on = false
+    render(<SyncPanel />)
+  })
+
+  it('names migrations 001 to 004, run by hand and in order (never db push), and the runbook', () => {
+    expect(screen.getByText('Cloud sync not configured')).toBeInTheDocument()
+    expect(steps().map((li) => [...li.children].map((part) => part.textContent))).toEqual(
+      STEPS.map((step, i) => [`${String(i + 1)}.`, step]),
+    )
+    // Nothing to link in this build: no code to generate or join.
+    expect(screen.queryByRole('button')).toBeNull()
+  })
+
+  it('each step is one run of text that wraps anywhere, so no name pushes it sideways at 320 px', () => {
+    for (const li of steps()) {
+      expect(li.lastElementChild).toHaveClass('min-w-0', '[overflow-wrap:anywhere]')
+    }
+    expect([...document.querySelectorAll('ol code')].map((name) => name.textContent)).toEqual([
+      'supabase.com',
+      'supabase/migrations',
+      'supabase db push',
+      'docs/brain/sync-runbook.md',
+      'VITE_SUPABASE_URL',
+      'VITE_SUPABASE_ANON_KEY',
+      '.env.local',
+    ])
   })
 })
 

@@ -586,6 +586,18 @@ describe('004_verify.sql (AC-14)', () => {
   )
 
   it(
+    'not_locked_yet passes when the table was never in the Realtime publication (as on the live project at gate C)',
+    async () => {
+      const relay = await relayAt('004')
+      await relay.run(`ALTER PUBLICATION supabase_realtime DROP TABLE public.sync_buckets`)
+      const r = await verifyClean(relay, '004_verify')
+      expect(failed(r)).toEqual([])
+      expect(verdictOf(r).actual).toMatch(/^PASS \d+\/\d+$/)
+    },
+    SLOW,
+  )
+
+  it(
     'FAILs with the right names after each mutation',
     async () => {
       const relay = await relayAt('004')

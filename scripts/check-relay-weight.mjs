@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// Fails when sync code lands in what the browser loads before first paint. `npm run build` has
-// no relay settings, so `syncEnabled` folds to false and the whole sync engine is tree-shaken
-// out: `npm run size` never sees it. This builds again as deployed (dummy VITE_SUPABASE_*
-// values) into a temp folder and compares the eager scripts of the two builds: the entry chunk
-// and every chunk index.html modulepreloads. The engine and the Supabase SDK must stay lazy.
-// It also weighs the boot path: those plus the data engine chunks index.html preloads for the
-// first data render (marked data-boot by vite.config.js), which a boot always downloads.
-// Run after `npm run build`.
+// Holds the startup of both builds still, and fails when sync code lands in what the browser
+// loads before first paint. `npm run build` has no relay settings, so `syncEnabled` folds to
+// false and the whole sync engine is tree-shaken out: `npm run size` never sees it. This builds
+// again as deployed (dummy VITE_SUPABASE_* values) into a temp folder and weighs the eager
+// scripts of the two builds: the entry chunk and every chunk index.html modulepreloads. The
+// engine and the Supabase SDK must stay lazy. It also weighs the boot path: those plus the data
+// engine chunks index.html preloads for the first data render (marked data-boot by
+// vite.config.js), which a boot always downloads. Run after `npm run build`.
 import { mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -23,6 +23,15 @@ export const RELAY_EAGER_BUDGET = 4 * 1024
 // in the chunk the local engine shares with it. 7.8 KB at 0.10.0 (2026-11-01). Raise
 // deliberately, with a note.
 export const RELAY_BOOT_BUDGET = 12 * 1024
+
+// bytes — the startup, held still by the owner's decision of 3 Nov 2026, "Raise to 740 KB, startup
+// fixed": the total JS may grow (scripts/check-bundle-size.mjs), what every boot loads may not.
+// 0.11.0 measured 3 Nov 2026 on main 7ddf3c6: eager 465,884 / 469,778 B, boot 560,556 / 569,341 B;
+// +1,024 B each. Raise only with the owner's decision.
+/** What loads before first paint: the entry chunk and every chunk index.html modulepreloads. */
+export const EAGER_BUDGET = { base: 466_908, relay: 470_802 }
+/** What every boot downloads before the data shows: the eager scripts and the data engine's. */
+export const BOOT_BUDGET = { base: 561_580, relay: 570_365 }
 
 export const NO_BOOT_PRELOAD =
   'index.html does not modulepreload the data engine (a <link rel="modulepreload" data-boot>).\n' +
@@ -91,43 +100,126 @@ export function measure(dir) {
   }
 }
 
-const fmt = (n) => `${(n / 1024).toFixed(1)} KB`
+const bytes = (n) => `${n.toLocaleString('en-US')} B`
 
-/** The verdict on two builds: the report lines, and the error when the check fails. */
-export function compare(base, relay, budget = RELAY_EAGER_BUDGET, bootBudget = RELAY_BOOT_BUDGET) {
+/** Chunks with their bytes, by file name: "index-X.js 129,784 B, vendor-react-Y.js 286,286 B". */
+const listed = (scripts) =>
+  scripts
+    .map(({ file, size }) => `${file.slice(file.lastIndexOf('/') + 1)} ${bytes(size)}`)
+    .join(', ')
+
+/** One printed line: what is used against its budget, the verdict, and what is left or over. */
+function row(label, used, limit, chunks = '') {
+  const over = used > limit
+  const cells = [
+    `${label.padEnd(21)}${bytes(used).padStart(11)} / ${bytes(limit).padStart(9)}`,
+    (over ? 'FAIL' : 'ok').padEnd(4),
+    (over ? `${bytes(used - limit)} over` : `${bytes(limit - used)} left`).padEnd(14),
+    chunks,
+  ]
+  return cells.join('  ').trimEnd()
+}
+
+/** Why a startup budget does not move. */
+const fixedBy = (budget) =>
+  `${budget} is fixed by the owner's decision of 3 Nov 2026 ("Raise to 740 KB, startup fixed")\n` +
+  "at 0.11.0's bytes + 1,024 B: raise it in scripts/check-relay-weight.mjs only with a new\n" +
+  'decision from him.'
+
+const EAGER_HELP =
+  'Look at what those chunks gained: the entry (src/main.tsx and its static imports) or a chunk\n' +
+  'index.html modulepreloads. Load new code when its screen opens (a lazy() import, as AppShell\n' +
+  'does for Settings); a function added to a module the entry already holds\n' +
+  '(services/storage.ts, stores/*) lands in the entry even when only a lazy chunk calls it.\n' +
+  fixedBy('EAGER_BUDGET')
+
+const BOOT_HELP =
+  'Look at the data engine chunks (src/data/local/engine.ts and its static imports) and at the\n' +
+  'eager scripts: code that only a screen needs belongs in a module that screen loads when it\n' +
+  'opens.\n' +
+  fixedBy('BOOT_BUDGET')
+
+/**
+ * The verdict on two builds: the report lines, and the error when the check fails, which names
+ * every budget that is over and where to look.
+ */
+export function compare(base, relay) {
   if (!relay.hasEngine) return { lines: [], error: NO_ENGINE_CHUNK }
   if (!base.hasBootPreload || !relay.hasBootPreload) return { lines: [], error: NO_BOOT_PRELOAD }
-  const eager = relay.eagerSize - base.eagerSize
-  const over = eager > budget
-  const boot = relay.bootSize - base.bootSize
-  const bootOver = boot > bootBudget
-  const added = (m) =>
-    m.boot
-      .slice(m.eager.length)
-      .map((s) => s.file)
-      .join(', ')
+  const eagerSync = relay.eagerSize - base.eagerSize
+  const bootSync = relay.bootSize - base.bootSize
+  const added = (m) => `+ ${listed(m.boot.slice(m.eager.length))}`
   const lines = [
-    `eager JS (no relay)  ${fmt(base.eagerSize).padStart(10)}  ${base.eager.map((s) => s.file).join(', ')}`,
-    `eager JS (relay set) ${fmt(relay.eagerSize).padStart(10)}  ${relay.eager.map((s) => s.file).join(', ')}`,
-    `eager sync code      ${fmt(eager).padStart(10)} / ${fmt(budget)}  ${over ? 'FAIL' : 'ok'}`,
+    row('eager JS (no relay)', base.eagerSize, EAGER_BUDGET.base, listed(base.eager)),
+    row('eager JS (relay set)', relay.eagerSize, EAGER_BUDGET.relay, listed(relay.eager)),
+    row('eager sync code', eagerSync, RELAY_EAGER_BUDGET),
     // What every boot downloads before the data shows: the above plus the data engine's chunks.
-    `boot JS (no relay)   ${fmt(base.bootSize).padStart(10)}  + ${added(base)}`,
-    `boot JS (relay set)  ${fmt(relay.bootSize).padStart(10)}  + ${added(relay)}`,
-    `boot sync code       ${fmt(boot).padStart(10)} / ${fmt(bootBudget)}  ${bootOver ? 'FAIL' : 'ok'}`,
+    row('boot JS (no relay)', base.bootSize, BOOT_BUDGET.base, added(base)),
+    row('boot JS (relay set)', relay.bootSize, BOOT_BUDGET.relay, added(relay)),
+    row('boot sync code', bootSync, RELAY_BOOT_BUDGET),
     // Information only: what a device with a sync code downloads in all (lazy chunks included).
-    `all JS (no relay)    ${fmt(base.totalJs).padStart(10)}`,
-    `all JS (deployed)    ${fmt(relay.totalJs).padStart(10)}`,
+    `${'all JS (no relay)'.padEnd(21)}${bytes(base.totalJs).padStart(11)}`,
+    `${'all JS (deployed)'.padEnd(21)}${bytes(relay.totalJs).padStart(11)}`,
   ]
-  const error = over
-    ? 'Sync code grew what loads before first paint (the entry chunk or a modulepreloaded one).\n' +
-      'Keep it in the lazy engine (src/stores/syncEngine.ts) or raise RELAY_EAGER_BUDGET in\n' +
-      'scripts/check-relay-weight.mjs if intentional.'
-    : bootOver
-      ? 'Sync code grew what every boot downloads (the data engine chunks index.html preloads).\n' +
-        'Keep what only the sync engine needs out of the core the local engine imports, or raise\n' +
-        'RELAY_BOOT_BUDGET in scripts/check-relay-weight.mjs if intentional.'
-      : null
-  return { lines, error }
+  // Each budget: its name, what it weighs, its limit, and what the error says after the numbers.
+  const budgets = [
+    {
+      name: 'EAGER_BUDGET.base',
+      what: 'the no-relay build loads before first paint',
+      used: base.eagerSize,
+      limit: EAGER_BUDGET.base,
+      help: `(${listed(base.eager)}).\n${EAGER_HELP}`,
+    },
+    {
+      name: 'EAGER_BUDGET.relay',
+      what: 'the relay build loads before first paint',
+      used: relay.eagerSize,
+      limit: EAGER_BUDGET.relay,
+      help: `(${listed(relay.eager)}).\n${EAGER_HELP}`,
+    },
+    {
+      name: 'RELAY_EAGER_BUDGET',
+      what: 'the sync code in what loads before first paint comes to',
+      used: eagerSync,
+      limit: RELAY_EAGER_BUDGET,
+      help:
+        '(the entry chunk or a modulepreloaded one).\n' +
+        'Keep it in the lazy engine (src/stores/syncEngine.ts) or raise RELAY_EAGER_BUDGET in\n' +
+        'scripts/check-relay-weight.mjs if intentional.',
+    },
+    {
+      name: 'BOOT_BUDGET.base',
+      what: 'the no-relay build downloads at every boot',
+      used: base.bootSize,
+      limit: BOOT_BUDGET.base,
+      help: `(the eager scripts ${added(base)}).\n${BOOT_HELP}`,
+    },
+    {
+      name: 'BOOT_BUDGET.relay',
+      what: 'the relay build downloads at every boot',
+      used: relay.bootSize,
+      limit: BOOT_BUDGET.relay,
+      help: `(the eager scripts ${added(relay)}).\n${BOOT_HELP}`,
+    },
+    {
+      name: 'RELAY_BOOT_BUDGET',
+      what: 'the sync code in what every boot downloads comes to',
+      used: bootSync,
+      limit: RELAY_BOOT_BUDGET,
+      help:
+        '(the data engine chunks index.html preloads).\n' +
+        'Keep what only the sync engine needs out of the core the local engine\n' +
+        '(src/data/local/engine.ts) imports, or raise RELAY_BOOT_BUDGET in\n' +
+        'scripts/check-relay-weight.mjs if intentional.',
+    },
+  ]
+  const errors = budgets
+    .filter(({ used, limit }) => used > limit)
+    .map(
+      ({ name, what, used, limit, help }) =>
+        `${name}: ${what} ${bytes(used)}, ${bytes(used - limit)} over its ${bytes(limit)}\n${help}`,
+    )
+  return { lines, error: errors.length > 0 ? errors.join('\n\n') : null }
 }
 
 /** Builds into a temp folder with the given relay settings (they override any .env file). */

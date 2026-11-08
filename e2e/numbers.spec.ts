@@ -99,6 +99,14 @@ const heatmapDays = (page: Page) =>
 const heatmapDay = (page: Page, day: string) =>
   page.getByRole('grid', { name: /^Daily spending, / }).locator(`[data-day="${day}"]`)
 
+// A pristine origin shows the first-run card above every screen (PR-4); these tests start past
+// it, as after Start fresh. e2e/first-run.spec.ts covers the card itself.
+test.beforeEach(async ({ context }) => {
+  await context.addInitScript(() => {
+    localStorage.setItem('spendtrack:welcome', '1')
+  })
+})
+
 test.use({
   timezoneId: 'Asia/Singapore',
   locale: 'en-US',

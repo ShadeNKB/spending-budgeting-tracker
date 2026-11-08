@@ -6,6 +6,14 @@ import { storedExpenses } from '../support/stored'
 // other had added; 0.10.0 reads, merges and writes on every save and listens to the other tab.
 // Port of the auditors' multitab.cjs / b1-two-tabs.cjs probes. Invented data.
 
+// A pristine origin shows the first-run card above every screen (PR-4); these tests start past
+// it, as after Start fresh. e2e/first-run.spec.ts covers the card itself.
+test.beforeEach(async ({ context }) => {
+  await context.addInitScript(() => {
+    localStorage.setItem('spendtrack:welcome', '1')
+  })
+})
+
 test.use({ timezoneId: 'Asia/Singapore' })
 
 const quickAdd = (page: Page) =>

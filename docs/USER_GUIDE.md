@@ -51,13 +51,24 @@ Pills under the bar show what will be saved (name, amount, category, date) befor
 
 Every entry is stored with the calendar day it is for (and that day at midday local time), the same from quick add and the full entry form, so it stays on that day in every time zone.
 
+## First run
+
+On a browser with no SpendTrack data (a new phone, or a browser that cleared the site's data) a **Welcome to SpendTrack** card sits above Pulse, Ledger and Insights. The screen under it works as usual.
+
+- **Start fresh** hides it for good on this browser. Adding your first entry does too.
+- **Import a backup file** picks a JSON backup and shows what it holds in the card; **Restore** brings the entries back (the same Restore as Settings → **Backup**: it only adds, keeps a snapshot first and can be undone for 30 seconds). A file SpendTrack can't read says why.
+- **Restore from sync** (only where sync is set up) opens Settings → **Sync**: join with the code from your other device.
+- In a browser tab it also suggests adding SpendTrack to your Home Screen (Safari: Share → Add to Home Screen), so the browser keeps your data.
+
+The card never shows where SpendTrack data is already stored, with a sync code, in the demo, or when the data couldn't be loaded.
+
 ## Daily Workflow
 
 1. Add expenses as they happen.
 2. Use Pulse to check current month pace.
 3. Use Ledger to search, filter, edit, or delete entries.
 4. Use Insights to spot recurring charges and spending changes.
-5. Download a JSON backup regularly if the data matters to you (Settings → **Backup** shows when you last did).
+5. Download a JSON backup regularly if the data matters to you (Settings → **Backup** shows when you last did). After 30 days without one (60 while sync is working) a **Time for a backup** card reminds you.
 
 ## Categories and budgets
 
@@ -76,7 +87,7 @@ A sync code links your devices: there's no account. The synced copy on the relay
 **One-time setup (per Supabase project):**
 
 1. Create a free project at [supabase.com](https://supabase.com).
-2. In the Supabase SQL Editor, run the files in `supabase/migrations` in order: `001_sync.sql`, `002_sync_indexes.sql` (retention helper), `003_harden_prune_search_path.sql` and `004_sync_rpc.sql` (the relay's sync functions). `supabase/README.md` says what each one does. The helper only creates a manual pruning function; schedule it yourself if you want automatic 90-day cleanup. `005_sync_lockdown.sql` comes later, when Settings → **Sync** says "Ready for the database lockdown." on every device; `docs/brain/sync-runbook.md` walks through 004 and 005.
+2. In the Supabase SQL Editor, run the files in `supabase/migrations` by hand, one at a time and in order (never `supabase db push`): `001_sync.sql`, `002_sync_indexes.sql` (retention helper), `003_harden_prune_search_path.sql` and `004_sync_rpc.sql` (the relay's sync functions). `supabase/README.md` says what each one does. The helper only creates a manual pruning function; schedule it yourself if you want automatic 90-day cleanup. `005_sync_lockdown.sql` comes later, when Settings → **Sync** says "Ready for the database lockdown." on every device; `docs/brain/sync-runbook.md` walks through 004 and 005.
 3. Copy your project URL and anon public key into `.env.local` as `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. After 004, add `VITE_SYNC_RELAY=auto` (the sync functions) and, once `scripts/verify-cas.mjs` passes, `VITE_SYNC_CAS=on` (compare-and-set), then rebuild.
 4. Open Settings → **Sync** in the app and tap **Generate sync code for this device**. On every other device, paste the code under **or join an existing one** and tap **Join**.
 
@@ -123,15 +134,26 @@ SpendTrack keeps your data in this browser's storage, in one safety-checked copy
 
 Settings → **Backup** shows:
 
-- where your data lives: only on this device, or synced through your relay (every linked device has a full copy; the relay copy isn't encrypted yet, so anyone with this app's public key could read it);
-- whether the browser protects the storage from automatic cleanup, and when you last downloaded a backup;
+- where your data lives: only on this device, or synced through your relay (every linked device has a full copy; the relay copy isn't encrypted yet: until the database lockdown (update 005), anyone with this app's public key could read it);
+- whether the browser protects the storage from automatic cleanup, and when you last downloaded a backup. While it isn't protected, **Ask the browser to keep it** asks again; if the browser says no, keep sync on or download backups;
 - **Download JSON backup** and **Export to CSV** (for Excel, Google Sheets or another finance tool).
 
 Download a JSON backup before you clear browser data, switch browsers or devices (without sync), or reinstall the app.
 
+**Time for a backup:** when your own entries have gone 30 calendar days without a backup (60 while sync is working, since your other device holds a copy too), a card above the screens says so. **Download a backup** saves the file and records "Last backup: today"; **Later** hides the card for 7 days (30 with sync). Sync keeps your devices alike, but a delete reaches all of them; a backup file doesn't.
+
 **Import JSON backup** shows what the file would do before anything changes: how many entries are in it, new, restored (they had been deleted), updated, already here, and any it can't read. **Restore** (the default) only adds and brings back; nothing on this device or your other devices is removed, and the next sync keeps it. **Replace instead…** makes the file the whole truth and deletes the entries that aren't in it, on every linked device; you type REPLACE to confirm. Both can be undone for 30 seconds. A backup from a newer SpendTrack is refused.
 
-**Needs attention** appears when entries couldn't be read (from storage, a file or the relay). They're kept on the device, untouched; **Download them** saves them as they are.
+**Needs attention** appears when entries couldn't be read (from storage, a file or the relay). They're kept on the device, untouched; **Download them** saves them as they are, and **Review** opens them in Recovery.
+
+**Recovery** (Settings → **Backup**, below Needs attention; "N new" when your other device changed something you should see) lists, in place of the Backup screen:
+
+- **Needs attention**: each entry or copy that couldn't be read, with why, where it came from and when. **Fix** opens the entry form filled with what could be read; saving adds it as a normal entry (the unreadable original stays in the raw data download). **Download** saves that one item; **Discard…** removes it from this device only, after offering to download it first.
+- **Changes from your other device**: entries it deleted, or changed while you were editing them here. **Restore** puts back this device's version everywhere (with Undo for 30 seconds). It never brings back an entry deleted again since, or overwrites a newer change; it says so instead.
+- **Snapshots**: the copies kept each day you add something and before every big change ("Before Delete all", "Before an import or restore", …). **Restore** previews what the copy would bring back and only adds (nothing is removed or changed, Undo for 30 seconds); **Download** saves it as a backup file Import accepts.
+- **Raw data**: everything SpendTrack saved in this browser, exactly as stored, without your sync code.
+
+If this device can't save at all (its saved data couldn't be read and storage is full), Recovery says so first and offers a backup and the raw data to download before you close the app.
 
 Deleting:
 
@@ -157,7 +179,7 @@ That means:
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
 | **localStorage cap**     | ~5–10 MB per browser (varies by device). When it is full SpendTrack says "Not saved: storage is full" and retries — never silent data loss. |
 | **Sync device count**    | Unbounded — pair any number of devices with the same code; expenses and budgets merge via last-write-wins metadata.                         |
-| **Sync payload size**    | Sync pauses before a push would pass the relay's row limit (about 1 MB) and says so; your data stays saved on the device.                   |
+| **Sync payload size**    | Sync pauses before a push would pass the relay's row limit (about 1 MB) and says so; your data stays saved on the device. After migration 004 the relay also refuses a row over its stored-size limit: sync then pauses as too large, and changes from your other devices keep merging. |
 | **Tested expense count** | Up to ~5000 entries renders smoothly; the Ledger list is virtualised.                                                                       |
 | **Time zones**           | Each entry keeps the calendar day it was logged for; every screen, the CSV and backups use that day, in any time zone.                      |
 

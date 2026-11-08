@@ -125,6 +125,14 @@ const OCT_18_CASES: Case[] = [
   added('grab last fri 14', 'grab', 14, '2026-10-16', 'S$14.00 · Oct 16'),
 ]
 
+// A pristine origin shows the first-run card above every screen (PR-4); these tests start past
+// it, as after Start fresh. e2e/first-run.spec.ts covers the card itself.
+test.beforeEach(async ({ context }) => {
+  await context.addInitScript(() => {
+    localStorage.setItem('spendtrack:welcome', '1')
+  })
+})
+
 test.describe('Quick add on a Singapore phone and laptop', () => {
   test.use({ timezoneId: 'Asia/Singapore', locale: 'en-US' })
 

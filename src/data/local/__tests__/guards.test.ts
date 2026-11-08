@@ -128,7 +128,7 @@ describe('a remote mass removal is never stored before what it took is restorabl
     b.quota = Number.POSITIVE_INFINITY
     const next = await bootTab({ backing: b })
     await settle()
-    await expect(next.store.getState().restoreJournal(mass.entryId)).resolves.toEqual({
+    await expect(next.store.getState().restoreJournal(mass.entryId)).resolves.toMatchObject({
       applied: 60,
       skipped: 0,
     })

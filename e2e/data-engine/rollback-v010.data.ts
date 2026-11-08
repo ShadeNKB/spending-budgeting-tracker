@@ -1,4 +1,6 @@
 import { test, expect, type Page } from '@playwright/test'
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { serveBuild, startRelay, type Relay, type StaticHost } from './support/relayServer'
 import {
   PORTS,
@@ -25,6 +27,13 @@ let relay: Relay
 let host: StaticHost
 let device: Device | undefined
 
+/** The release this build was made from (package.json), as it names itself in Settings › Sync. */
+const RELEASE = (
+  JSON.parse(
+    readFileSync(fileURLToPath(new URL('../../package.json', import.meta.url)), 'utf8'),
+  ) as { version: string }
+).version
+
 test.beforeAll(async () => {
   relay = await startRelay(PORTS.relay)
   host = await serveBuild(PORTS.rollback, build('candidate'))
@@ -46,7 +55,7 @@ async function reopen(page: Page): Promise<void> {
 const onRelay = (item: string) =>
   expect.poll(() => relayNames(relay), { timeout: 30_000 }).toContain(item)
 
-test('0.11.0 → 0.10.0 → 0.11.0 on one origin with sync on: data, code and sync intact', async ({
+test(`${RELEASE} → 0.10.0 → ${RELEASE} on one origin with sync on: data, code and sync intact`, async ({
   browser,
 }) => {
   test.setTimeout(240_000)
@@ -79,10 +88,10 @@ test('0.11.0 → 0.10.0 → 0.11.0 on one origin with sync on: data, code and sy
   const back = await syncState(page)
   expect(back.config).toMatchObject({ kind: 'plain', code: SYNC_CODE, established: true })
   await expect.poll(async () => (await syncState(page)).outbox, { timeout: 30_000 }).toBe(0)
-  // the registry still names this device as 0.11.0, and nothing paused the sync
+  // the registry still names this device as this build's release, and nothing paused the sync
   const apps = Object.values(relayDevices(relay)).map((x) =>
     typeof x === 'object' && x !== null ? Reflect.get(x, 'app') : null,
   )
-  expect(apps).toEqual(['0.11.0'])
+  expect(apps).toEqual([RELEASE])
   await expect(page.getByText(/Sync paused/)).toHaveCount(0)
 })

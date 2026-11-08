@@ -61,6 +61,14 @@ async function tapTab(page: Page, name: string) {
   await page.getByRole('link', { name, exact: true }).filter({ visible: true }).first().click()
 }
 
+// A pristine origin shows the first-run card above every screen (PR-4); these tests start past
+// it, as after Start fresh. e2e/first-run.spec.ts covers the card itself.
+test.beforeEach(async ({ context }) => {
+  await context.addInitScript(() => {
+    localStorage.setItem('spendtrack:welcome', '1')
+  })
+})
+
 test.describe('stale chunk after a deploy', () => {
   test('reloads exactly once, then the screen renders', async ({ page, browserName }) => {
     // WebKit keeps a module URL that failed in a tab failed for the life of that tab, across

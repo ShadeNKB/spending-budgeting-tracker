@@ -71,7 +71,9 @@ export class PayloadTooLargeError extends Error {
 
 /**
  * `no-rpc`: the sync functions are not there (PGRST202, or 404 from an RPC); `full`: the relay
- * refused to create another row (53400); `invalid`: the server refused the payload (22023).
+ * refused to create another row (53400); `invalid`: the server refused the payload (22023 from
+ * the functions, 23514 from 004's checks on a table write). The engine pauses an `invalid` as
+ * too large when the payload's size explains it, and retries any other with backoff.
  */
 export type TransportErrorKind = 'network' | 'server' | 'permission' | 'invalid' | 'no-rpc' | 'full'
 
@@ -239,7 +241,7 @@ function transportError(error: PostgrestFailure, status: number, rpc: boolean): 
           ? 'no-rpc'
           : code === '53400'
             ? 'full'
-            : code === '22023'
+            : code === '22023' || code === '23514'
               ? 'invalid'
               : 'server'
   return new SyncTransportError(
