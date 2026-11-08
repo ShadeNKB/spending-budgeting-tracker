@@ -13,6 +13,7 @@ T7a, the first slice of T7 (everyday entry and the Ledger): fixes from the overh
 - **An item that starts with an emoji or a flag** shows it whole in its avatar, not a broken box. (F-112)
 - **A message waits while you point at it or Tab into it**, so reaching for Undo never races its timer. A finger touching it, or a mouse it appeared under, does not hold it. (F-073, WCAG 2.2.1)
 - The arrow on Top categories rows shows without hovering, so touch and keyboard users see that a row opens the Ledger.
+- **"Remove from this device" leaves nothing behind**, even when another open tab changes the currency before it notices the removal: that tab wrote the currency choice back. It now makes the check a save makes first. This was the rare `guards.test.ts` failure seen under full test load since 0.12.0.
 
 ### Changed (engineering)
 

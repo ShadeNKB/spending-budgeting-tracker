@@ -378,6 +378,19 @@ describe('Remove from this device', () => {
     expect([...b.data.keys()].filter(isSpendTrackKey)).toEqual([])
     expect(reload.calls).toBe(1)
   })
+
+  it('writes no currency choice afterwards, from a tab that has not noticed the removal yet', async () => {
+    const b = new FakeBacking()
+    seed(b, ownerV4({ rows: 5, noSync: true }).keys)
+    const other = await bootTab({ backing: b })
+    await settle()
+    const t = await bootTab({ backing: b })
+    await settle()
+    await t.store.getState().removeDataFromThisDevice()
+    expect([...b.data.keys()].filter(isSpendTrackKey)).toEqual([])
+    other.store.getState().setCurrency('EUR')
+    expect([...b.data.keys()].filter(isSpendTrackKey)).toEqual([])
+  })
 })
 
 describe('an add’s confirmation (§6.5)', () => {
