@@ -17,7 +17,7 @@ T7a, the first slice of T7 (everyday entry and the Ledger): fixes from the overh
 
 ### Changed (engineering)
 
-- **Startup is 6,189 B lighter:** Fuse's basic build (same package, same version); the app uses no extended search or logical queries. Boot 556,121 / 561,580 B (5,459 B left, was 21 B), eager 461,077 / 466,908 B; all JS 726.7 / 740 KB.
+- **Startup is 6,189 B lighter:** Fuse's basic build (same package, same version); the app uses no extended search or logical queries. Boot 556,139 / 561,580 B (5,441 B left, was 21 B), eager 461,077 / 466,908 B; all JS 726.7 / 740 KB.
 - New `e2e/ledger-pulse.spec.ts` on Chromium and iPhone WebKit: sticky day headings (it fails on 0.12.0), the Pulse drill period, the avatar tint and an emoji initial.
 - Already closed by earlier releases, so not touched: F-074 (heatmap rows), F-075 (iOS focus zoom), F-079 (palette under a sheet), F-088 (armed delete). F-078 has Alt+N beside Ctrl+N.
 
