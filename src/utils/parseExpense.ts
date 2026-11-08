@@ -1,4 +1,4 @@
-import Fuse from 'fuse.js'
+import Fuse from 'fuse.js/basic'
 import { format } from 'date-fns'
 
 export interface ParsedExpense {
