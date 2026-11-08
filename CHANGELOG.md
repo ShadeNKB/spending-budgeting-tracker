@@ -1,6 +1,51 @@
 # Changelog
 
-## Unreleased: database update 004/005 (PR-5, files only)
+## 0.12.0 — 2026-11-08
+
+PR-4 of the data-engine overhaul: the Recovery centre. Settings › Backup › Recovery lists the safety copies SpendTrack takes before big changes, the changes a sync made to what you had, and the entries that need attention, and brings any of them back. A new device opens with a short welcome, and a device that hasn't been backed up for a while says so.
+
+### Added
+
+- **The Recovery centre** (Settings › Backup › Recovery), loaded only when you open it. (F-004, F-014)
+  - **Snapshots:** the copies taken before Delete all, before your other device removed many entries, before an import, and at the upgrade. Each shows what a Restore would do ("30 in the copy · 30 restored (they were deleted)") before anything changes. Restore never deletes and never changes an entry you have now, takes a safety copy first and offers Undo for 30 seconds. Download saves the copy as a backup file that Import accepts.
+  - **Changes from your other device:** each entry deleted there, and each edit that replaced a change you had made here first, shown before → after. Restore puts it back on both devices, and says why when it can't: the entry changed or was deleted again since.
+  - **Needs attention:** each entry or copy that couldn't be read, with what went wrong. Fix opens the add form filled with what could be read. Discard removes that one item from this device, after offering a download. Download raw data saves everything, without your sync code.
+  - The Recovery row says "N new" when a sync changed something you haven't looked at.
+- **When a sync replaces a change you made first**, one message says so, with Review.
+- **A welcome card on a new device:** Start fresh, Import a backup file, or Restore from sync. It never shows on a device that already holds data or a sync code.
+- **A backup reminder** after 30 days without a backup (60 when sync is healthy), with Download a backup and Later. (F-050)
+- **"Ask the browser to keep it"** in Backup: SpendTrack asks the browser not to clear its storage automatically, and says when it is protected. (F-050)
+
+### Fixed
+
+- **A second restore never brings back what was deleted later.** Restoring the same copy or change again skips anything already back or deleted since, also when the delete happens between the preview and the Restore. An edited entry is never added twice.
+- **A removal copy remembers which entries it took**, so its Restore brings back only those, even after older history has been trimmed.
+- **A copy over the relay's stored-size check pauses sync as "too large"** instead of retrying (update 004's check).
+- **Review** on the unreadable-entries and upgrade messages now opens the list that needs attention.
+- On a narrow phone, the "recovered" strip's buttons wrap instead of pushing Dismiss off-screen.
+- Settings › Sync on a build without sync names database updates 001 to 004, run by hand in order, and no longer scrolls sideways on a small phone. Disconnect sync is 44 px tall on a phone.
+
+### Changed
+
+- **Size budget** (owner decision, 3 Nov): all JavaScript 700 → 740 KB, everything 800 → 820 KB. The code loaded at startup is held at 0.11.0's size plus 1 KB, and that is now enforced. The Recovery centre and the cards load only when shown.
+
+### Known limits
+
+- **Restore, Undo, then Restore the same copy again brings nothing back the second time**: the Undo counts as deleting those entries again, and a restore never brings back a delete. Download the copy and Import it instead.
+- **Startup code has 21 bytes left under its budget**: the next update (T7) has to make room first.
+- The Recovery preview of 5,000 entries takes about 86 ms on a laptop (budget 80 ms; the test guard allows 2.5×).
+
+### Changed (engineering)
+
+- `src/data/local/recoveryCentre.ts`, lazy through `engine.recovery()` and `importWithReload`; the Recovery UI in `RecoveryCentre`, `RecoveryRow`, `RecoverySnapshots`, `RecoveryChanges` and `RecoveryAttention`; the cards in a lazy `DataCards` chunk (`FirstRunCard`, `BackupNudge`).
+- `RemoteApplied.conflicts` (counted only when journaled); the snapshot index keeps the removed `ids` of a removal copy (read tolerantly); `restoreJournal` returns the full restore result.
+- `vite.config.js`: the boot preload finds the engine chunk by its modules, now that the lazy recovery chunk shares them.
+- Size checks enforce the eager and boot budgets for both builds.
+- `supabase/checks/004_verify.sql`: `not_locked_yet` passes whenever row level security is off, in or out of the Realtime publication (the live table never was in it).
+- Tests: 3,808 unit tests, green in Singapore, Honolulu and Kiritimati time; simulator 653 / 653 at 150 seeds; core and sync mutations all killed; main e2e 526 passed; data-engine e2e 34 / 34, including a two-device recovery run.
+- Review: an independent data-safety review failed the first build (a second restore revived later deletes or duplicated an edit; the precision rule depended on an evictable journal entry). Both are fixed, with a test per scenario, and the reviewer's own probes pass on the fixed code.
+
+## Database update 004/005 (PR-5, files; 004 applied 7 Nov 2026 at gate C)
 
 PR-5 of the data-engine overhaul: the database step. It is not an app release. The app is byte-for-byte 0.11.0 and keeps that version number. Nothing changes until you apply the SQL yourself in the Supabase SQL editor, following `docs/brain/sync-runbook.md`: migration 004 at gate C, then migration 005 at gate E, at least 7 days later.
 
