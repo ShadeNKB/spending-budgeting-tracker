@@ -55,7 +55,10 @@ export function TopCategories({
                 </div>{' '}
                 <div className="flex items-center gap-1 font-mono text-[13px] tabular-nums text-white">
                   {fmt(it.total)}
-                  <ArrowRight size={12} className="opacity-0 transition group-hover:opacity-60" />
+                  <ArrowRight
+                    size={12}
+                    className="opacity-40 transition group-hover:opacity-70 group-focus-visible:opacity-70"
+                  />
                 </div>
               </div>
               <div className="h-1 overflow-hidden rounded-full bg-surface-2">

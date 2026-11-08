@@ -1,7 +1,7 @@
 import { memo, type KeyboardEvent, type MouseEvent } from 'react'
 import { Trash2 } from 'lucide-react'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
-import { colorFromString, colorWithAlpha } from '../../lib/analytics'
+import { categoryAvatarStyle } from '../../lib/analytics'
 import { initialOf } from '../../lib/format'
 import { toastJustLeft } from '../../ui/pressShield'
 import { useSwipeReveal } from './useSwipeReveal'
@@ -117,12 +117,8 @@ export const LedgerRow = memo(function LedgerRow({
           className="focus-inset flex min-w-0 flex-1 items-center gap-3 py-3 pl-3 pr-2 text-left md:pl-4"
         >
           <span
-            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-bold"
-            style={{
-              background: colorWithAlpha(expense.category, 0.12),
-              color: colorFromString(expense.category),
-              boxShadow: `0 0 0 1px ${colorWithAlpha(expense.category, 0.19)}`,
-            }}
+            className="cat-avatar flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-bold text-[var(--cat)]"
+            style={categoryAvatarStyle(expense.category, 0.19)}
             aria-hidden
           >
             {initialOf(expense.itemName)}

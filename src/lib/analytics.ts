@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react'
 import {
   addDays,
   addMonths,
@@ -554,4 +555,17 @@ export function colorFromString(str: string): string {
 export function colorWithAlpha(str: string, alpha: number): string {
   if (!str) return `rgb(90 100 120 / ${alpha})`
   return `hsl(${hueOf(str)} 65% 62% / ${alpha})`
+}
+
+/**
+ * A category avatar's inline style: its tint, a ring at `ring` alpha, and its colour as `--cat`
+ * for the letter (`.cat-avatar` in index.css darkens it on light surfaces).
+ */
+export function categoryAvatarStyle(category: string, ring: number): CSSProperties {
+  const style: CSSProperties & Record<'--cat', string> = {
+    '--cat': colorFromString(category),
+    background: colorWithAlpha(category, 0.12),
+    boxShadow: `0 0 0 1px ${colorWithAlpha(category, ring)}`,
+  }
+  return style
 }

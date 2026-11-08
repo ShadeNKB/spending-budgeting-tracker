@@ -503,7 +503,7 @@ export function LedgerScreen() {
               container, so the day headers stick under the app header as the page scrolls. */}
           {groups.map((g) => (
             <section key={g.key ?? 'unknown'}>
-              <header className="sticky top-[var(--app-header-h,0px)] z-[1] flex items-center justify-between gap-2 border-b border-white/[0.05] bg-surface-2/85 px-4 py-2.5 backdrop-blur">
+              <header className="sticky top-[calc(var(--app-header-h,0px)-1px)] z-[1] flex items-center justify-between gap-2 border-b border-white/[0.05] bg-surface-2/85 px-4 py-2.5 backdrop-blur">
                 <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
                   {g.label}
                 </h2>

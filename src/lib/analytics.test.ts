@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   colorFromString,
+  categoryAvatarStyle,
   colorWithAlpha,
   computeMonthAnalytics,
   computeTrailingDaily,
@@ -50,6 +51,14 @@ describe('colorFromString', () => {
     const hue = /^hsl\((\d+),/.exec(colorFromString('Transport'))?.[1]
     expect(colorWithAlpha('Transport', 0.12)).toBe(`hsl(${String(hue)} 65% 62% / 0.12)`)
     expect(colorWithAlpha('', 0.5)).toBe('rgb(90 100 120 / 0.5)')
+  })
+
+  it('styles an avatar with its tint, its ring and its colour as --cat for the letter', () => {
+    expect(categoryAvatarStyle('Transport', 0.19)).toEqual({
+      '--cat': colorFromString('Transport'),
+      background: colorWithAlpha('Transport', 0.12),
+      boxShadow: `0 0 0 1px ${colorWithAlpha('Transport', 0.19)}`,
+    })
   })
 })
 

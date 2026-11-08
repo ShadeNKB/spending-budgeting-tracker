@@ -1305,6 +1305,12 @@
     background: rgba(0, 0, 0, 0.025);
   }
 
+  /* Category avatars: the letter in its category's colour reads under 3:1 on a light surface
+     at 62% lightness, so it is darkened there. Without color-mix() it keeps that colour. */
+  [data-theme='light'] .cat-avatar {
+    color: color-mix(in srgb, var(--cat) 50%, black);
+  }
+
   /* Sticky day header — remove dark rgba fade */
   [data-theme='light'] .day-header {
     background: linear-gradient(180deg, rgba(255, 255, 255, 1) 85%, rgba(255, 255, 255, 0.6) 100%);
