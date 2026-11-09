@@ -295,10 +295,26 @@ export function updateExpense(doc: Doc, ctx: OpCtx, id: string, patch: ExpensePa
   const touched: Touched = [[`ex:${id}`, t]]
   const categories = listed(doc, next.c.v)
   if (categories !== doc.categories) touched.push([`cat:${next.c.v}`, t])
+  // A changed category is a correction to learn from (F-056): the next entry of that name files
+  // there, as an add teaches it. Like an add's, an Undo leaves what was learned.
+  let mappings = doc.mappings
+  if (fields.includes('c') && next.c.v !== OTHER) {
+    const key = mappingKey(next.n.v)
+    const old = doc.mappings.get(key)
+    if (validMapKey(key) && (old === undefined || res(old.v) !== next.c.v)) {
+      const s = tick(ctx.clock, ctx.wall, old?.s ?? 0)
+      mappings = new Map(doc.mappings).set(key, { v: next.c.v, s })
+      touched.push([`map:${key}`, s])
+    }
+  }
   const undo = entry(ctx, 'Updated expense', [
     { k: 'edit', id, fields: fields.map((f) => undoField(rec, f, next[f].s)) },
   ])
-  return result({ ...doc, expenses: withExpenses(doc, [next]), categories }, touched, undo)
+  return result(
+    { ...doc, expenses: withExpenses(doc, [next]), categories, mappings },
+    touched,
+    undo,
+  )
 }
 
 export function deleteExpenses(doc: Doc, ctx: OpCtx, ids: readonly string[]): OpResult {
