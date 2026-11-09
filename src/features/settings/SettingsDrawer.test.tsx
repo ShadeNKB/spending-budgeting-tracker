@@ -313,6 +313,23 @@ describe('Budgets', () => {
     expect(field).toHaveValue(200)
   })
 
+  it('text the field cannot read as a number is refused, never taken as an emptied field (F-114)', async () => {
+    await hydrateFrom({ categories: ['Other', 'Meals'], categoryBudgets: { Meals: 200 } })
+    vi.useFakeTimers()
+    openOn('budgets')
+    const field = screen.getByRole('spinbutton', { name: 'Monthly budget for Meals' })
+    // What a browser shows for "12,50" in a number field: an empty value, flagged bad input.
+    Object.defineProperty(field, 'validity', { value: { badInput: true }, configurable: true })
+    fireEvent.change(field, { target: { value: '' } })
+    fireEvent.blur(field)
+    expect({ ...useExpenseStore.getState().budgets }).toEqual({ Meals: 200 })
+    expect(useUIStore.getState().toasts.at(-1)).toMatchObject({
+      kind: 'error',
+      message: 'Enter the budget as a number, like 250 or 99.50.',
+    })
+    expect(field).toHaveValue(200)
+  })
+
   it('a zero or negative cap is refused with the reason, not dropped in silence', async () => {
     await hydrateFrom({ categories: ['Other', 'Meals'], categoryBudgets: { Meals: 200 } })
     vi.useFakeTimers()

@@ -1073,6 +1073,33 @@ test.describe('Command palette', () => {
     await expect(page).toHaveURL(/\/insights$/)
   })
 
+  test('a quick double Enter on "Add expense" never submits the sheet it opened', async ({
+    page,
+  }) => {
+    await load(page, '/pulse')
+    // The second Enter used to land in the sheet's What and submit it empty.
+    await openPalette(page)
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Enter')
+    const sheet = dialog(page, 'Add expense')
+    await expect(sheet).toBeVisible()
+    await expect(sheet.getByLabel('What')).toBeFocused()
+    await expect(sheet.locator('[aria-invalid="true"]')).toHaveCount(0)
+  })
+
+  test('a quick double Enter on "Go to Ledger" never reopens the palette', async ({ page }) => {
+    await load(page, '/pulse')
+    // The second Enter used to land on the Search button that focus went back to.
+    const palette = await openPalette(page)
+    await palette.getByRole('combobox').fill('ledger')
+    await page.keyboard.press('Enter')
+    await page.keyboard.press('Enter')
+    await expect(page).toHaveURL(/\/ledger$/)
+    await expect(palette).toBeHidden()
+    await page.waitForTimeout(600)
+    await expect(palette).toBeHidden()
+  })
+
   test('AC-P2: Tab moves only between the field and Clear', async ({ page }) => {
     await load(page, '/pulse')
     const palette = await openPalette(page)
@@ -1248,6 +1275,12 @@ test.describe('Forms and confirmations', () => {
     const sheet = await openAddSheet(page, testInfo)
     const what = sheet.getByLabel('What')
     const amount = sheet.getByLabel('Amount')
+    // Enter in What goes on to Amount (F-071); Enter there adds, and the empty What is the
+    // first invalid field. Past the moment a second Enter is the tail of the first.
+    await page.keyboard.press('Enter')
+    await expect(amount).toBeFocused()
+    await expect(what).not.toHaveAttribute('aria-invalid', 'true')
+    await page.waitForTimeout(600)
     await page.keyboard.press('Enter')
     await expect(what).toBeFocused()
     await expect(what).toHaveAttribute('aria-invalid', 'true')

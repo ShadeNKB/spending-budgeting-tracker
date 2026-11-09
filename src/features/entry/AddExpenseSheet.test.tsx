@@ -201,19 +201,45 @@ describe('AddExpenseSheet invalid submit', () => {
     expect(useUIStore.getState().toasts).toEqual([])
   })
 
-  it('focuses Amount when What is filled in, and keeps what was typed', async () => {
+  it('goes on from What to Amount on Enter, with no error yet, and keeps what was typed (F-071)', async () => {
     const user = userEvent.setup()
-    render(<AddExpenseSheet open onClose={() => {}} />)
+    const onClose = vi.fn()
+    render(<AddExpenseSheet open onClose={onClose} />)
     const what = screen.getByPlaceholderText(WHAT)
+    const amount = screen.getByPlaceholderText('0.00')
+    expect(what).toHaveAttribute('enterkeyhint', 'next')
+    expect(amount).toHaveAttribute('enterkeyhint', 'done')
     await user.type(what, 'Coffee')
     await user.keyboard('{Enter}')
 
-    const amount = screen.getByPlaceholderText('0.00')
+    expect(amount).toHaveFocus()
+    expect(amount).not.toHaveAttribute('aria-invalid')
+    expect(what).not.toHaveAttribute('aria-invalid')
+    expect(what).toHaveValue('Coffee')
+    expect(onClose).not.toHaveBeenCalled()
+
+    // Enter in Amount adds; with no amount, it says so there.
+    await user.keyboard('{Enter}')
     expect(amount).toHaveFocus()
     expect(amount).toHaveAttribute('aria-invalid', 'true')
     expect(amount).toHaveAccessibleDescription('Enter a valid amount')
-    expect(what).not.toHaveAttribute('aria-invalid')
-    expect(what).toHaveValue('Coffee')
+  })
+
+  it('adds on Enter in What once the amount is filled in', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(<AddExpenseSheet open onClose={onClose} />)
+    await user.type(screen.getByPlaceholderText('0.00'), '4.5')
+    const what = screen.getByPlaceholderText(WHAT)
+    expect(what).toHaveAttribute('enterkeyhint', 'done')
+    await user.type(what, 'Coffee')
+    await user.keyboard('{Enter}')
+
+    expect(onClose).toHaveBeenCalledOnce()
+    expect(useExpenseStore.getState().expenses.map((e) => [e.itemName, e.amount])).toContainEqual([
+      'Coffee',
+      4.5,
+    ])
   })
 })
 

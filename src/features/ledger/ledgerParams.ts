@@ -26,6 +26,19 @@ export function ledgerCategoryHref(category: string, period: LedgerPeriod): stri
   return `${base}&range=custom&customStart=${period.start}&customEnd=${period.end}`
 }
 
+/**
+ * The Ledger at one entry's day, searched for its name, with its Edit sheet open (`edit`, which
+ * the Ledger takes out of the URL once it has opened it).
+ */
+export function ledgerEntryHref(entry: {
+  readonly id: string
+  readonly day: string
+  readonly itemName: string
+}): string {
+  const q = encodeURIComponent(entry.itemName)
+  return `/ledger?date=${entry.day}&q=${q}&edit=${encodeURIComponent(entry.id)}`
+}
+
 /** True for a real calendar date written as `yyyy-MM-dd`. */
 export const isValidYmd = (v: string | null): v is string =>
   v !== null && /^\d{4}-\d{2}-\d{2}$/.test(v) && dayKeyOfStored(v) === v

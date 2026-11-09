@@ -10,6 +10,7 @@ import {
 } from '../../utils/amountGuard'
 import {
   NOT_STARTED,
+  UNDO_TOO_LATE,
   undoOutcomeMessage,
   useExpenseStore,
   whenReady,
@@ -143,7 +144,8 @@ export function SmartInput({
           label: 'Undo',
           onClick: () => {
             const outcome = useExpenseStore.getState().consumeUndo(undoId)
-            if (outcome !== null && outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
+            if (outcome === null) toast.info(UNDO_TOO_LATE)
+            else if (outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
           },
         },
       },

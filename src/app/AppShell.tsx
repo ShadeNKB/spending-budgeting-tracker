@@ -10,11 +10,13 @@ import { useAppliedTheme } from './useAppliedTheme'
 import { useLaunchActions } from './useLaunchActions'
 import { ToastAnnouncer } from './ToastAnnouncer'
 import { useRouteFocus } from './useRouteFocus'
+import { useScreenTitle } from './useScreenTitle'
 import { SAFE_GUTTER_X } from './safeArea'
 import {
   IS_DEMO,
   installPersistence,
   isOwnRow,
+  UNDO_TOO_LATE,
   undoOutcomeMessage,
   useExpenseStore,
   whenHydrated,
@@ -127,6 +129,7 @@ export function AppShell() {
   useAppliedTheme(theme)
   useLaunchActions()
   useRouteFocus()
+  useScreenTitle()
 
   // Surface storage quota errors to the user — without this the app would
   // silently fail to persist, which is the worst possible UX for a finance
@@ -159,8 +162,8 @@ export function AppShell() {
       if (!last) return
       // Said every time: unlike an Undo button, the key press has nothing on screen to answer it.
       const outcome = store.consumeUndo(last.id)
-      if (outcome === null) return
-      if (outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
+      if (outcome === null) toast.info(UNDO_TOO_LATE)
+      else if (outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
       else toast.info(undoOutcomeMessage(outcome))
     },
     // No Escape here: each sheet, the palette and the date picker close on it themselves, top

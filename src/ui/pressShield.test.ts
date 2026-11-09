@@ -6,6 +6,7 @@ import {
   createPressShield,
   noteToastLeft,
   toastJustLeft,
+  type KeyEvent,
   type PressEvent,
 } from './pressShield'
 
@@ -78,6 +79,104 @@ function setup() {
 }
 
 const WHOLE_PRESS = ['pointerdown', 'pointerup', 'mousedown', 'mouseup', 'click']
+
+/** A key event made `at`, as a person's keyboard sends it unless `opts` says otherwise. */
+function keyEvent(
+  type: 'keydown' | 'keyup',
+  key: string,
+  at: number,
+  opts: { repeat?: boolean; isComposing?: boolean; isTrusted?: boolean } = {},
+): KeyEvent {
+  const { repeat = false, isComposing = false, isTrusted = true } = opts
+  return { type, key, timeStamp: at, repeat, isComposing, isTrusted }
+}
+
+describe('pressShield: the tail of a key press that changed the screen', () => {
+  /** An Enter made now whose handler changes the screen; returns what the shield swallowed. */
+  function enterThatCloses(t: ReturnType<typeof setup>): boolean[] {
+    const down = t.shield.keys(keyEvent('keydown', 'Enter', t.now()))
+    t.shield.shieldKeyGesture('Enter')
+    return [down]
+  }
+
+  it('swallows the second Enter of a double press, down and up, and lets the first finish', () => {
+    const t = setup()
+    expect(enterThatCloses(t)).toEqual([false])
+    t.wait(60)
+    expect(t.shield.keys(keyEvent('keyup', 'Enter', t.now()))).toBe(false)
+    t.paint()
+    t.wait(90)
+    expect(t.shield.keys(keyEvent('keydown', 'Enter', t.now()))).toBe(true)
+    t.wait(60)
+    expect(t.shield.keys(keyEvent('keyup', 'Enter', t.now()))).toBe(true)
+  })
+
+  it('lets the key through once the change has been on screen for GESTURE_MS', () => {
+    const t = setup()
+    enterThatCloses(t)
+    t.shield.keys(keyEvent('keyup', 'Enter', t.now() + 50))
+    t.paint()
+    t.wait(GESTURE_MS + 1)
+    expect(t.shield.keys(keyEvent('keydown', 'Enter', t.now()))).toBe(false)
+    expect(t.shield.keys(keyEvent('keyup', 'Enter', t.now() + 40))).toBe(false)
+  })
+
+  it('takes every Enter made before the change was painted as the tail, however late', () => {
+    const t = setup()
+    enterThatCloses(t)
+    t.busy(2000) // the page is stuck rendering; nothing painted yet
+    expect(t.shield.keys(keyEvent('keydown', 'Enter', t.now() + 700))).toBe(true)
+  })
+
+  it('judges a key by when it was made, not by when a busy page handles it', () => {
+    const t = setup()
+    enterThatCloses(t)
+    const madeAt = t.now() + 120
+    t.paint()
+    t.busy(1500)
+    expect(t.shield.keys(keyEvent('keydown', 'Enter', madeAt))).toBe(true)
+  })
+
+  it('swallows the repeats of an Enter still held, until it comes up', () => {
+    const t = setup()
+    enterThatCloses(t)
+    t.paint()
+    t.wait(GESTURE_MS + 200)
+    expect(t.shield.keys(keyEvent('keydown', 'Enter', t.now(), { repeat: true }))).toBe(true)
+    // The keyup of the press whose keydown went through.
+    expect(t.shield.keys(keyEvent('keyup', 'Enter', t.now() + 30))).toBe(false)
+    t.wait(100)
+    expect(t.shield.keys(keyEvent('keydown', 'Enter', t.now()))).toBe(false)
+  })
+
+  it('is over at the first other key', () => {
+    const t = setup()
+    enterThatCloses(t)
+    t.paint()
+    t.wait(50)
+    expect(t.shield.keys(keyEvent('keydown', 'a', t.now()))).toBe(false)
+    t.wait(50)
+    expect(t.shield.keys(keyEvent('keydown', 'Enter', t.now()))).toBe(false)
+  })
+
+  it('never swallows a key a script sends or an Enter that confirms an IME word', () => {
+    const t = setup()
+    enterThatCloses(t)
+    t.paint()
+    t.wait(50)
+    expect(t.shield.keys(keyEvent('keydown', 'Enter', t.now(), { isTrusted: false }))).toBe(false)
+    expect(t.shield.keys(keyEvent('keydown', 'Enter', t.now(), { isComposing: true }))).toBe(false)
+    expect(t.shield.keys(keyEvent('keydown', 'Enter', t.now()))).toBe(true)
+  })
+
+  it('does nothing for a key whose handler changed nothing', () => {
+    const t = setup()
+    t.shield.keys(keyEvent('keydown', 'Enter', t.now()))
+    t.paint()
+    t.wait(80)
+    expect(t.shield.keys(keyEvent('keydown', 'Enter', t.now()))).toBe(false)
+  })
+})
 
 describe('pressShield: the rest of a gesture that changed the screen', () => {
   it('swallows a second tap on the same spot (a phone reports detail 1 for it)', () => {
@@ -215,7 +314,7 @@ describe('pressShield: the rest of a gesture that changed the screen', () => {
   it('does nothing for a change the keyboard made', () => {
     const { shield, wait, paint, pressAt } = setup()
     pressAt(100, 700)
-    shield.keyPressed()
+    shield.keys(keyEvent('keydown', 'Escape', 1050))
     shield.shieldGesture() // Escape closed the sheet
     paint()
     wait(50)

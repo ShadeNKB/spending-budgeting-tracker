@@ -5,7 +5,12 @@ import { InlineConfirm } from '../../ui/InlineConfirm'
 import { useInlineConfirm } from '../../hooks/useInlineConfirm'
 import { useToast } from '../../hooks/useToast'
 import { announce } from '../../ui/announce'
-import { isOwnRow, undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
+import {
+  UNDO_TOO_LATE,
+  isOwnRow,
+  undoOutcomeMessage,
+  useExpenseStore,
+} from '../../stores/useExpenseStore'
 import { useSyncStore } from '../../stores/useSyncStore'
 import { TypedConfirm } from './TypedConfirm'
 
@@ -70,7 +75,10 @@ export function ClearData({ onDownloadBackup }: { onDownloadBackup: () => void }
               label: 'Undo',
               onClick: () => {
                 const outcome = useExpenseStore.getState().consumeUndo(undoId)
-                if (outcome === null) return
+                if (outcome === null) {
+                  toast.info(UNDO_TOO_LATE)
+                  return
+                }
                 if (outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
                 else toast.success(`Restored ${entries(outcome.applied)}`)
               },

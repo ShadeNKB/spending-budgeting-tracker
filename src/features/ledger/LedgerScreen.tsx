@@ -5,7 +5,7 @@ import { downloadCSV } from '../../lib/download'
 import { expensesToCsv } from '../../lib/csv'
 import { DatePicker } from '../../ui/DatePicker'
 import { format } from 'date-fns'
-import { undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
+import { UNDO_TOO_LATE, undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
 import { Segmented } from '../../ui/Segmented'
 import { Input } from '../../ui/Input'
 import { Select } from '../../ui/Select'
@@ -196,6 +196,24 @@ export function LedgerScreen() {
     setSearch(urlQuery)
   }, [urlQuery])
 
+  // `?edit=<id>` (an expense picked in the palette, a row of Pulse's Today): that entry's Edit
+  // sheet opens once, and the param leaves the URL, so Back or a reload never opens it again. An
+  // id that is not there (deleted meanwhile, or made up) just goes. Focus waits on the entry's
+  // row, so the sheet hands it back there (the sheet's opener), not to the screen heading the
+  // navigation left it on (useRouteFocus leaves focus that has a home alone).
+  const editId = params.get('edit')
+  useEffect(() => {
+    if (editId === null) return
+    const target = expenses.find((e) => e.id === editId)
+    if (target) {
+      firstRowButton([target.id])?.focus({ preventScroll: true })
+      openEditor(target)
+    }
+    patchParams((n) => {
+      n.delete('edit')
+    })
+  }, [editId, expenses, openEditor, patchParams])
+
   // Typing settles into the URL after a pause.
   useEffect(() => {
     if (search === syncedQuery.current) return
@@ -254,8 +272,8 @@ export function LedgerScreen() {
                 label: 'Undo',
                 onClick: () => {
                   const outcome = useExpenseStore.getState().consumeUndo(undo)
-                  if (outcome !== null && outcome.skipped > 0)
-                    toast.warning(undoOutcomeMessage(outcome))
+                  if (outcome === null) toast.info(UNDO_TOO_LATE)
+                  else if (outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
                 },
               },
       })

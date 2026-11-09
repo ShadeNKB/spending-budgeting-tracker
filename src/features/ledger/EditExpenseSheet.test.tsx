@@ -2,7 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { EditExpenseSheet } from './EditExpenseSheet'
-import { useExpenseStore } from '../../stores/useExpenseStore'
+import { UNDO_TOO_LATE, useExpenseStore } from '../../stores/useExpenseStore'
 import { useUIStore } from '../../stores/useUIStore'
 import { addDays, shortDateYear, todayKey } from '../../lib/dates'
 import type { Expense, ExpenseView } from '../../types'
@@ -189,6 +189,27 @@ describe('EditExpenseSheet validation', () => {
     expect(useExpenseStore.getState().expenses.find((e) => e.id === 'e-1')).toMatchObject({
       amount: 1.8,
       day: '2026-10-19',
+    })
+  })
+
+  it('says so when its Undo comes too late, and keeps the change (F-115)', async () => {
+    const user = userEvent.setup()
+    render(<EditExpenseSheet expense={view('e-1')} onClose={() => {}} />)
+    await user.clear(amount())
+    await user.type(amount(), '2.5')
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+    const toast = useUIStore.getState().toasts.at(-1)
+    // Its window closed meanwhile (the toast was held open, or another Undo took it).
+    const undoId = toast?.undoId
+    expect(undoId).toBeDefined()
+    if (undoId !== undefined) useExpenseStore.getState().clearUndo(undoId)
+    act(() => {
+      toast?.action?.onClick()
+    })
+    expect(useExpenseStore.getState().expenses.find((e) => e.id === 'e-1')?.amount).toBe(2.5)
+    expect(useUIStore.getState().toasts.at(-1)).toMatchObject({
+      kind: 'info',
+      message: UNDO_TOO_LATE,
     })
   })
 

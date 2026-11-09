@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import { manyRows, row, seed, settle, waitForApp } from './support/a11y'
+import { dialog, manyRows, openPalette, row, seed, settle, waitForApp } from './support/a11y'
 
 // T7a: what only a real layout shows — headers that stick, a drill that keeps its period,
 // avatar colours the browser accepts.
@@ -64,4 +64,38 @@ test('Ledger avatars draw their tint, and an emoji name keeps its emoji (F-117, 
   await expect(avatar).toHaveText('\u{1F35C}')
   const background = await avatar.evaluate((el) => getComputedStyle(el).backgroundColor)
   expect(background).not.toBe('rgba(0, 0, 0, 0)')
+})
+
+test('A Today row on Pulse opens its entry to edit in the Ledger (F-116)', async ({ page }) => {
+  await seed(page, {
+    expenses: [row('t1', '2026-10-18', 4.5, 'kopi'), row('t2', '2026-10-18', 6, 'laksa')],
+  })
+  await page.goto('/pulse')
+  await waitForApp(page)
+  await page.getByRole('button', { name: /^Edit kopi, / }).click()
+
+  const sheet = dialog(page, 'Edit expense')
+  await expect(sheet).toBeVisible()
+  await expect(sheet.getByLabel('Item')).toHaveValue('kopi')
+  // Opened once: the request leaves the URL, so Back or a reload never opens it again.
+  await expect(page).toHaveURL(/\/ledger\?date=2026-10-18&q=kopi$/)
+  await page.keyboard.press('Escape')
+  await expect(sheet).toBeHidden()
+  await expect(page.getByRole('button', { name: /^Edit kopi, / })).toBeFocused()
+})
+
+test('An expense picked in the palette opens to edit (F-080)', async ({ page }) => {
+  await seed(page, {
+    expenses: [row('s1', '2026-10-12', 12, 'laksa'), row('o1', '2026-10-10', 5, 'kopi')],
+  })
+  await page.goto('/pulse')
+  await waitForApp(page)
+  const palette = await openPalette(page)
+  await palette.getByRole('combobox').fill('laksa')
+  await palette.getByRole('option', { name: /laksa/ }).click()
+
+  const sheet = dialog(page, 'Edit expense')
+  await expect(sheet).toBeVisible()
+  await expect(sheet.getByLabel('Item')).toHaveValue('laksa')
+  await expect(page).toHaveURL(/\/ledger\?date=2026-10-12&q=laksa$/)
 })

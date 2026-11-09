@@ -17,6 +17,7 @@ import {
   renameCategory,
   setBudget,
   setCurrency,
+  undo,
   updateExpense,
 } from './ops'
 import { maxStampRec } from './record'
@@ -224,6 +225,36 @@ describe('updateExpense', () => {
     expect(r.undo?.label).toBe('Updated expense')
   })
 
+  it('learns a corrected category for the name, as an add does (F-056)', () => {
+    const c: Hlc = { last: 0 }
+    const d = addExpense(EMPTY_DOC, mk(T0, c), { itemName: 'Grab', amount: 12 }).doc
+    const id = must([...d.expenses.keys()][0])
+    expect(mappingLookup(d, 'grab')).toBeNull() // filed under Other: nothing learned
+
+    const r = updateExpense(d, mk(T0 + 5, c), id, { category: 'Transport' })
+    expect(mappingLookup(r.doc, 'grab')).toBe('Transport')
+    expect(r.touched).toContainEqual(['map:grab', must(r.doc.mappings.get('grab')).s])
+    expect(
+      must(addExpense(r.doc, mk(T0 + 6, c, 2), { itemName: 'GRAB', amount: 9 }).created).c.v,
+    ).toBe('Transport')
+
+    // Changing anything but the category, or to Other, or to what it already knows, teaches nothing.
+    for (const patch of [{ amount: 13 }, { category: 'Other' }]) {
+      const other = updateExpense(r.doc, mk(T0 + 7, c), id, patch)
+      expect(other.doc.mappings).toBe(r.doc.mappings)
+      expect(other.touched.some(([k]) => k.startsWith('map:'))).toBe(false)
+    }
+    const back = updateExpense(r.doc, mk(T0 + 8, c), id, { category: 'Food & Dining' }).doc
+    const again = updateExpense(back, mk(T0 + 9, c), id, { category: 'Transport' })
+    expect(again.touched).toContainEqual(['map:grab', must(again.doc.mappings.get('grab')).s])
+    expect(mappingLookup(again.doc, 'grab')).toBe('Transport')
+
+    // Undo puts the entry back and keeps what was learned, as for an add.
+    const undone = undo(r.doc, mk(T0 + 10, c), must(r.undo))
+    expect(must(undone.doc.expenses.get(id)).c.v).toBe('Other')
+    expect(mappingLookup(undone.doc, 'grab')).toBe('Transport')
+  })
+
   it('validates the patch and rejects unknown ids', () => {
     const d = addOne()
     const id = must([...d.expenses.keys()][0])
@@ -337,7 +368,12 @@ describe('updateExpense', () => {
     expect([rec.c.v, rec.c.r]).toEqual(['Meals', 2])
     // the dead name is not listed again
     expect(r.doc.categories).toBe(d.categories)
-    expect(r.touched).toEqual([[`ex:${id}`, rec.c.s]])
+    // the correction is learned under the live name too (F-056)
+    expect(mappingLookup(r.doc, 'kopi')).toBe('Meals')
+    expect(r.touched).toEqual([
+      [`ex:${id}`, rec.c.s],
+      ['map:kopi', must(r.doc.mappings.get('kopi')).s],
+    ])
   })
 })
 

@@ -549,14 +549,18 @@ describe('the sticky header and the tab bar', () => {
   it('gives every header control under 44 px, and the round Add button, a 44 px touch hit area', () => {
     shell()
     const [header] = screen.getAllByRole('navigation', { name: 'Primary' })
+    // Two "Add expense" buttons, each shown at its own widths (CSS, not applied here): the top
+    // bar's pill from 768 to 1023 px (F-083), the tab bar's round + below 768 px.
+    const adds = screen.getAllByRole('button', { name: 'Add expense' })
+    expect(adds).toHaveLength(2)
     const small = [
       screen.getByRole('link', { name: 'SpendTrack' }),
       ...(header ? Array.from(header.querySelectorAll('a')) : []),
       screen.getByRole('button', { name: 'Search' }),
       screen.getByRole('button', { name: 'Settings' }),
-      screen.getByRole('button', { name: 'Add expense' }),
+      ...adds,
     ]
-    expect(small).toHaveLength(7)
+    expect(small).toHaveLength(8)
     for (const control of small) expect(control).toHaveClass('tap-target')
   })
 

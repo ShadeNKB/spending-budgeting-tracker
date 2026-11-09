@@ -5,6 +5,7 @@ import { announce } from '../../ui/announce'
 import { shieldGesture } from '../../ui/pressShield'
 import { useToast } from '../../hooks/useToast'
 import {
+  UNDO_TOO_LATE,
   undoOutcomeMessage,
   useExpenseStore,
   type ImportOutcome,
@@ -171,7 +172,10 @@ export function ImportPreview({
                 label: 'Undo',
                 onClick: () => {
                   const o = useExpenseStore.getState().consumeUndo(undoId)
-                  if (o === null) return
+                  if (o === null) {
+                    toast.info(UNDO_TOO_LATE)
+                    return
+                  }
                   if (o.skipped > 0) toast.warning(undoOutcomeMessage(o))
                   else toast.success(undoOutcomeMessage(o))
                 },

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { Link, NavLink } from 'react-router-dom'
-import { Command, Settings2 } from 'lucide-react'
+import { Command, Plus, Settings2 } from 'lucide-react'
 import clsx from 'clsx'
 import { SmartInput } from '../features/entry/SmartInput'
 import { SyncPill } from './SyncPill'
@@ -41,6 +41,7 @@ function usePublishedHeaderHeight(header: React.RefObject<HTMLElement | null>) {
 export function TopBar() {
   const setPaletteOpen = useUIStore((s) => s.setPaletteOpen)
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen)
+  const setAddSheetOpen = useUIStore((s) => s.setAddSheetOpen)
   const header = useRef<HTMLElement>(null)
   usePublishedHeaderHeight(header)
 
@@ -97,17 +98,31 @@ export function TopBar() {
             wrong. */}
         <SyncPill />
 
-        {/* Named by its visible word, so voice control ("click Search") finds it. */}
+        {/* 768 to 1023 px have neither the tab bar's + nor the quick-add field: Add gets a place
+            of its own there (F-083). It pushes the controls after it to the right edge. */}
+        <button
+          type="button"
+          onClick={() => setAddSheetOpen(true)}
+          className="tap-target ml-auto hidden h-10 items-center gap-1.5 rounded-full bg-accent px-3.5 text-[13px] font-semibold text-surface-0 transition hover:bg-accent-hover md:inline-flex lg:hidden"
+          aria-label="Add expense"
+        >
+          <Plus size={15} strokeWidth={2.5} aria-hidden />
+          Add
+        </button>
+
+        {/* Named by its visible word, so voice control ("click Search") finds it. On a phone it
+            starts the row's right-hand group (F-111); from 1024 px the quick-add field fills the
+            row before it. */}
         <button
           type="button"
           onClick={() => setPaletteOpen(true)}
-          className="tap-target inline-flex h-11 min-w-11 items-center justify-center gap-2 rounded-full border border-white/[0.06] bg-surface-1 px-3 text-[12px] text-[var(--text-secondary)] transition hover:bg-surface-2 hover:text-white md:h-10"
+          className="tap-target ml-auto inline-flex h-11 min-w-11 items-center justify-center gap-2 rounded-full border border-white/[0.06] bg-surface-1 px-3 text-[12px] text-[var(--text-secondary)] transition hover:bg-surface-2 hover:text-white md:ml-0 md:h-10"
           aria-label="Search"
           aria-keyshortcuts="Control+K Meta+K"
         >
           <Command size={13} />
           <span className="hidden sm:inline">Search</span>
-          <kbd className="hidden rounded border border-white/[0.06] bg-surface-2 px-1.5 py-0.5 text-[10px] text-[var(--text-tertiary)] sm:inline">
+          <kbd className="hidden rounded border border-white/[0.06] bg-surface-2 px-1.5 py-0.5 text-[10px] text-[var(--text-tertiary)] sm:inline [@media(pointer:coarse)]:hidden">
             Ctrl+K
           </kbd>
         </button>

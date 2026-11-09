@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.13.0 — 2026-11-09
+
+T7b, the second slice of T7 (everyday entry and the Ledger): the small open findings that were checked against the code and could ship whole, and the two items routed from T5b's review.
+
+### Added
+
+- **An entry you pick in the palette, or tap in Pulse's Today, opens to edit** in the Ledger, at its day. Before, the palette only searched for it and Today's rows did nothing. Closing the sheet puts focus on the entry's row. (F-080, F-116)
+- **Correcting a category teaches it.** Change an entry's category in the Edit sheet and the next entry of that name files there, as adding one already taught. Undo puts the entry back and keeps what was learned, as for an add. (F-056)
+- **Tablets get an Add button** in the top bar from 768 to 1023 px, which had neither the tab bar's + nor the quick-add field. (F-083)
+
+### Fixed
+
+- **A quick double Enter does one thing.** The second press landed where the first sent focus: after the palette's "Add expense" it submitted the new sheet empty, with two errors; after "Go to Ledger" it pressed Search and opened the palette again. The same holds after Enter saves the Add or Edit sheet. (Routed from T5b)
+- **Return in What goes on to Amount** while Amount is empty (the phone keyboard shows Next), instead of an "Enter a valid amount" error. With an amount, it adds. (F-071)
+- **An Undo that comes too late says so:** "Too late to undo: the change was kept." It used to do nothing in silence, for instance when a held message outlived its undo window. Ctrl+Z too. (F-115)
+- **A budget a number field cannot read** ("12,50" in some browsers reads as empty) is refused with a message. It used to be taken as an emptied field, which cleared the budget. (F-114)
+- **Settings' tabs show their names on a phone**, under their icons, as in the tab bar. (F-109)
+- On a phone, the top bar's Search and Settings sit at the right edge, not right after the logo, and the palette no longer shows keyboard hints (ESC, Enter, Ctrl+N) on touch screens. (F-111)
+- **Each screen names the page** ("Ledger · SpendTrack"), so browser tabs, history and screen readers tell them apart. (F-107)
+- A ledger row reached by Shift+Tab is no longer left half under its day's sticky header. (Routed from T5b)
+
+### Changed (engineering)
+
+- `pressShield` swallows the tail of a key press that changed the screen, as it already did for taps and clicks: `shieldKeyGesture(key)`. Script-sent keys and an IME's Enter pass.
+- Boot 557,533 / 561,580 B (4,047 B left), eager 462,232 / 466,908 B; all JS 729.3 / 740 KB.
+- Main's CI was red since 0.12.0 on the iPhone (WebKit) shard: a motion test counted painted frames, and CI's WebKit painted one only every 0.3 to 1.3 s, so a 0.2 s exit fell between two. The harness now times an exit on the clock (#42).
+- Checked against the code and already closed by earlier releases: F-076's Other and Undo points, F-084, F-107's skip link and day headings, F-115's stale Undo toast, F-116's row cursor.
+
+### Known limits
+
+- Under 360 px the Ledger's six date ranges still scroll sideways, with "Custom" past a fade; from 360 px they show whole. (F-110)
+- axe's target-size check can flag a ledger row while it passes under its sticky day header at some scroll positions. Every sticky header does this; a tap still lands on the row's visible part.
+- Still open for T7c: one add pipeline and one category matcher (F-044), more palette actions (F-055), the sheet's Add kept above the keyboard and swipe-down to close (F-071, F-113), rename that cannot merge in silence (F-076), the denser Ledger header (F-077), wide and desktop layouts (F-086, F-087), the text size policy (F-108), Theme and Currency on every Settings tab (F-109), the top bar's second Settings on a phone (F-111), the Add sheet's category suggestion and the Insights link (F-056).
+
 ## 0.12.1 — 2026-11-08
 
 T7a, the first slice of T7 (everyday entry and the Ledger): fixes from the overhaul's UX audit that earlier releases had not closed.

@@ -17,7 +17,7 @@ import {
 import clsx from 'clsx'
 import Fuse from 'fuse.js/basic'
 import { useUIStore } from '../../stores/useUIStore'
-import { undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
+import { UNDO_TOO_LATE, undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { downloadJSON } from '../../lib/download'
 import { format as fmtDate } from 'date-fns'
@@ -37,7 +37,9 @@ import { holdScrollLock, useModalLayer } from '../../ui/modalLayer'
 import { LayerAnnouncer } from '../../ui/LayerAnnouncer'
 import { useHeldWhileClosing, usePresence } from '../../ui/usePresence'
 import { announce, retract } from '../../ui/announce'
+import { shieldKeyGesture } from '../../ui/pressShield'
 import { actionErrorMessage, confirmAdded } from './expenseForm'
+import { ledgerEntryHref } from '../ledger/ledgerParams'
 import type { ExpenseView } from '../../types'
 
 type Action = {
@@ -250,8 +252,8 @@ export function CommandPalette() {
               label: 'Undo',
               onClick: () => {
                 const outcome = useExpenseStore.getState().consumeUndo(undoId)
-                if (outcome !== null && outcome.skipped > 0)
-                  toast.warning(undoOutcomeMessage(outcome))
+                if (outcome === null) toast.info(UNDO_TOO_LATE)
+                else if (outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
               },
             },
           },
@@ -384,9 +386,8 @@ export function CommandPalette() {
       if (action.selfClosing) return
     } else {
       const exp = expenseHits[idx - filteredActions.length]
-      if (exp) {
-        void navigate(`/ledger?date=${exp.day}&q=${encodeURIComponent(exp.itemName)}`)
-      }
+      // Its day, searched for its name, and open to edit (F-080).
+      if (exp) void navigate(ledgerEntryHref(exp))
     }
     setOpen(false)
   }
@@ -402,8 +403,11 @@ export function CommandPalette() {
       setActiveIdx(Math.max(0, activeIndex - 1))
     } else if (e.key === 'Enter') {
       e.preventDefault()
-      if (e.repeat || e.nativeEvent.isComposing) return
-      if (activeIndex !== -1) runAt(activeIndex, e.timeStamp)
+      if (e.repeat || e.nativeEvent.isComposing || activeIndex === -1) return
+      runAt(activeIndex, e.timeStamp)
+      // The second Enter of a double press never lands where this one sends focus: the Search
+      // button (it would reopen the palette) or the sheet it opened (pressShield).
+      shieldKeyGesture(e.key)
     }
   }
 
@@ -478,7 +482,7 @@ export function CommandPalette() {
         )}
         <kbd
           aria-hidden
-          className="shrink-0 rounded border border-white/[0.06] bg-surface-2 px-1.5 py-0.5 text-[10px] text-[var(--text-tertiary)]"
+          className="shrink-0 rounded border border-white/[0.06] bg-surface-2 px-1.5 py-0.5 text-[10px] text-[var(--text-tertiary)] [@media(pointer:coarse)]:hidden"
         >
           ESC
         </kbd>
@@ -530,7 +534,7 @@ export function CommandPalette() {
                     />
                     <span className="flex-1">{a.label}</span>
                     {a.hint && (
-                      <kbd className="rounded border border-white/[0.06] bg-surface-3 px-1.5 py-0.5 text-[10px] text-[var(--text-tertiary)]">
+                      <kbd className="rounded border border-white/[0.06] bg-surface-3 px-1.5 py-0.5 text-[10px] text-[var(--text-tertiary)] [@media(pointer:coarse)]:hidden">
                         {a.hint}
                       </kbd>
                     )}
@@ -595,7 +599,8 @@ export function CommandPalette() {
         <span className="inline-flex items-center gap-1.5">
           <Plus size={11} /> Type to add fast
         </span>
-        <span className="inline-flex items-center gap-2">
+        {/* Key hints only where there is a keyboard to press them on (F-111). */}
+        <span className="inline-flex items-center gap-2 [@media(pointer:coarse)]:hidden">
           <kbd className="rounded border border-white/[0.06] bg-surface-2 px-1.5 py-0.5 text-[10px]">
             Enter
           </kbd>
