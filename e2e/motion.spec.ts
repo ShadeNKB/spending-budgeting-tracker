@@ -302,9 +302,10 @@ function expectSlideIn(frames: readonly Frame[], axis: Axis, testInfo: TestInfo)
  * still shows the layer (`visible`), or a later one does. An exit that jumps to its end shows it
  * off-screen or see-through from that first frame (WebKit did so whenever the body's overflow
  * changed under a running CSS transition, as the page's scroll lock let go at the close). Judged
- * when that frame came within `withinMs` of the frame before it, the time the exit takes to get
- * out of sight: a machine that painted nothing for longer could have missed the whole exit, and
- * the test then says so in its report instead of passing it in silence.
+ * when the first frame after the close (one showing it leaving, else the first without it) came
+ * within `withinMs` of the frame before it, the time the exit takes to get out of sight: a
+ * machine that painted nothing for longer could have missed the whole exit, and the test then
+ * says so in its report instead of passing it in silence.
  */
 function expectSeenLeaving(
   frames: readonly Frame[],
@@ -314,7 +315,12 @@ function expectSeenLeaving(
   testInfo: TestInfo,
 ) {
   const leaving = leavingFrames(frames)
-  const first = firstOf(leaving, `frame of ${what} on its way out`)
+  const first =
+    leaving[0] ??
+    firstOf(
+      frames.filter((f) => f.layer?.dialogs === 0),
+      `frame after ${what} closed`,
+    )
   const gap = firstShownGap(frames, (f) => f.t === first.t)
   if (gap > withinMs && !leaving.some((f) => visible(f.panel))) {
     testInfo.annotations.push({
@@ -648,7 +654,12 @@ test.describe('The command palette', () => {
 
 // ─── what a closing overlay shows (AC-O4) ─────────────────────────────────────
 
-/** Starts reading what the dialog named `name` shows on every frame, until it has left. */
+/**
+ * Starts reading what the dialog named `name` shows on every frame, until it has left, and once
+ * more the moment its close takes effect: read as the DOM changes, that is what the exit's first
+ * frame shows, even when a busy WebKit paints no frame before the exit ends. An exit that was
+ * dropped (closed and removed in one go) leaves nothing to read then.
+ */
 async function startReading(page: Page, name: string): Promise<void> {
   await page.evaluate((n) => {
     const reading: { frames: Showing[]; done: boolean } = { frames: [], done: false }
@@ -659,26 +670,43 @@ async function startReading(page: Page, name: string): Promise<void> {
       const by = d.getAttribute('aria-labelledby')
       return by ? (document.getElementById(by)?.textContent ?? '') : ''
     }
+    const find = () =>
+      [...document.querySelectorAll('[role="dialog"]')].find((el) => nameOf(el) === n)
+    const showing = (d: Element): Showing => ({
+      closing: d.closest('[inert]') !== null,
+      values: [...d.querySelectorAll('input')].map((i) => i.value),
+      options: [...d.querySelectorAll('[role="option"]')].map((o) => o.textContent ?? ''),
+    })
+    const atClose = new MutationObserver(() => {
+      const d = find()
+      if (!d || d.closest('[inert]') === null) return
+      reading.frames.push(showing(d))
+      atClose.disconnect()
+    })
+    atClose.observe(document.body, {
+      subtree: true,
+      childList: true,
+      attributes: true,
+      attributeFilter: ['inert'],
+    })
     const started = performance.now()
     let gone = 0
     const tick = () => {
-      const d = [...document.querySelectorAll('[role="dialog"]')].find((el) => nameOf(el) === n)
+      const d = find()
       if (d) {
-        reading.frames.push({
-          closing: d.closest('[inert]') !== null,
-          values: [...d.querySelectorAll('input')].map((i) => i.value),
-          options: [...d.querySelectorAll('[role="option"]')].map((o) => o.textContent ?? ''),
-        })
+        reading.frames.push(showing(d))
         gone = 0
       } else gone += 1
-      if (gone >= 3 || performance.now() - started > 15_000) reading.done = true
-      else requestAnimationFrame(tick)
+      if (gone >= 3 || performance.now() - started > 15_000) {
+        atClose.disconnect()
+        reading.done = true
+      } else requestAnimationFrame(tick)
     }
     requestAnimationFrame(tick)
   }, name)
 }
 
-/** The frames on which the dialog was closing, once it has left the page. */
+/** What the dialog showed while closing (frames and the close itself), once it has left. */
 async function closingShowed(page: Page): Promise<Showing[]> {
   await page.waitForFunction(() => window.__e2eShowing?.done === true, undefined, {
     timeout: 20_000,
