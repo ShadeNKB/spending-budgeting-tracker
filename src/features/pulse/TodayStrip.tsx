@@ -2,12 +2,15 @@ import { ArrowRight, Sun } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { categoryAvatarStyle } from '../../lib/analytics'
+import { useToday } from '../../hooks/useToday'
 import { initialOf } from '../../lib/format'
 import type { Expense } from '../../types'
+import { ledgerEntryHref } from '../ledger/ledgerParams'
 
 export function TodayStrip({ entries, total }: { entries: readonly Expense[]; total: number }) {
   const navigate = useNavigate()
   const fmt = useFormatMoney()
+  const today = useToday()
 
   return (
     <div className="rounded-2xl border border-white/[0.06] bg-surface-1 p-4 md:p-5">
@@ -41,22 +44,32 @@ export function TodayStrip({ entries, total }: { entries: readonly Expense[]; to
       ) : (
         <ul className="divide-y divide-white/[0.04]">
           {entries.slice(0, 5).map((e) => (
-            <li key={e.id} className="flex items-center gap-3 py-2.5">
-              <span
-                className="cat-avatar flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-[var(--cat)]"
-                style={categoryAvatarStyle(e.category, 0.16)}
-                aria-hidden
+            <li key={e.id}>
+              {/* Opens the entry in the Ledger, its Edit sheet open, as a ledger row does (F-116). */}
+              <button
+                type="button"
+                onClick={() => navigate(ledgerEntryHref({ ...e, day: e.day ?? today }))}
+                aria-label={`Edit ${e.itemName}, ${fmt(e.amount)}, ${e.category}`}
+                className="focus-inset -mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-lg px-2 py-2.5 text-left transition hover:bg-white/[0.03]"
               >
-                {initialOf(e.itemName)}
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="truncate text-[13px] text-white">{e.itemName}</div>
-                <div className="truncate text-[11px] text-[var(--text-tertiary)]">
-                  {e.category}
-                  {e.notes ? ` · ${e.notes}` : ''}
-                </div>
-              </div>
-              <span className="font-mono text-[13px] tabular-nums text-white">{fmt(e.amount)}</span>
+                <span
+                  className="cat-avatar flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-[var(--cat)]"
+                  style={categoryAvatarStyle(e.category, 0.16)}
+                  aria-hidden
+                >
+                  {initialOf(e.itemName)}
+                </span>
+                <span className="block min-w-0 flex-1">
+                  <span className="block truncate text-[13px] text-white">{e.itemName}</span>
+                  <span className="block truncate text-[11px] text-[var(--text-tertiary)]">
+                    {e.category}
+                    {e.notes ? ` · ${e.notes}` : ''}
+                  </span>
+                </span>
+                <span className="font-mono text-[13px] tabular-nums text-white">
+                  {fmt(e.amount)}
+                </span>
+              </button>
             </li>
           ))}
           {entries.length > 5 && (
