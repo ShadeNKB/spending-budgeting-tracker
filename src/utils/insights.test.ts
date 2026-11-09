@@ -98,6 +98,11 @@ describe('computeInsights', () => {
       '2026-10-18',
     )
     expect(uncategorised.map((i) => i.id)).toContain('uncategorized')
+    // It links to the entries it counts (F-056): Other, over all time.
+    expect(uncategorised.find((i) => i.id === 'uncategorized')?.action).toEqual({
+      label: 'Review them',
+      href: '/ledger?range=all&category=Other',
+    })
     expect(run([at('2026-10-02', 5)], {}, '2026-10-18')).toEqual([
       {
         id: 'all-clear',

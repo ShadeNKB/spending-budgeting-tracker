@@ -15,6 +15,12 @@ export interface ParseContext {
   readonly categories?: readonly string[]
   /** The clock "today" is read from. Defaults to the current time. */
   readonly now?: Date
+  /**
+   * The app's own category pick for an item name (the store's `getSmartCategory`), so the quick
+   * bar and the palette suggest what the Add sheet and the add itself would pick (F-044). Without
+   * it, the learned mappings passed in are matched here.
+   */
+  readonly learned?: (itemName: string) => string | null
 }
 
 /*
@@ -763,7 +769,13 @@ export function parseExpense(
     .replace(/[,;:]+$/, '')
   if (!result.itemName || result.suggestedCategory !== undefined) return result
 
-  const learned = learnedCategory(result.itemName, mappings)
+  const picked = ctx.learned?.(result.itemName)
+  const learned =
+    ctx.learned === undefined
+      ? learnedCategory(result.itemName, mappings)
+      : picked === null || picked === undefined
+        ? null
+        : { category: picked, confidence: 1 }
   if (learned) {
     result.suggestedCategory = learned.category
     result.confidence = learned.confidence

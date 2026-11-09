@@ -22,6 +22,8 @@ export interface Insight {
   tone: InsightTone
   title: string // the headline fact
   detail?: string // secondary context
+  /** Where the owner acts on it: the Ledger filtered to the entries it counts. */
+  action?: { readonly label: string; readonly href: string }
 }
 
 /**
@@ -104,6 +106,7 @@ export function computeInsights(
       tone: 'info',
       title: `${String(uncat)} transactions need a category`,
       detail: 'Assign them to improve your breakdown',
+      action: { label: 'Review them', href: '/ledger?range=all&category=Other' },
     })
   }
 

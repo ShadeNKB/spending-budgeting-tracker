@@ -311,21 +311,28 @@ export function LedgerScreen() {
   })
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 max-md:gap-3">
       <div className="lg:hidden">
         <SmartInput />
       </div>
 
       <div className="flex flex-col gap-3">
-        <div className="flex items-center justify-between">
-          <h1
-            ref={headingRef}
-            tabIndex={-1}
-            className="text-[22px] font-semibold tracking-tight text-white"
-          >
-            Ledger
-          </h1>
-          <div className="flex items-center gap-2">
+        {/* The range the list shows sits under the heading, not on a row of its own: on a phone
+            every row of controls pushes the first entry further down (F-077). */}
+        <div className="flex items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h1
+              ref={headingRef}
+              tabIndex={-1}
+              className="text-[22px] font-semibold tracking-tight text-white"
+            >
+              Ledger
+            </h1>
+            {range !== 'custom' && (
+              <p className="truncate text-[12px] text-[var(--text-tertiary)]">{dateRangeLabel}</p>
+            )}
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
             {filtered.length > 0 && (
               <button
                 type="button"
@@ -385,13 +392,6 @@ export function LedgerScreen() {
               />
             </div>
           </div>
-          {/* Date range label */}
-          {range !== 'custom' && (
-            <div className="flex items-center gap-1 truncate pl-0.5 text-[11px] text-[var(--text-tertiary)]">
-              <span className="truncate">{dateRangeLabel}</span>
-            </div>
-          )}
-
           {range === 'custom' && (
             <div className="flex items-center gap-2">
               <div className="flex flex-1 flex-col gap-1">

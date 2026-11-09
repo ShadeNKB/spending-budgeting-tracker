@@ -1,5 +1,7 @@
 import { useId, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import {
+  ChevronRight,
   TrendingUp,
   TrendingDown,
   AlertTriangle,
@@ -131,6 +133,15 @@ export function InsightsScreen() {
                             <div className="mt-1 text-[12px] text-[var(--text-tertiary)]">
                               {ins.detail}
                             </div>
+                          )}
+                          {ins.action && (
+                            <Link
+                              to={ins.action.href}
+                              className="tap-target -ml-1 mt-2 inline-flex h-8 items-center gap-0.5 rounded-md px-1 text-[13px] font-medium text-accent transition hover:text-white"
+                            >
+                              {ins.action.label}
+                              <ChevronRight size={14} aria-hidden />
+                            </Link>
                           )}
                         </div>
                       </div>

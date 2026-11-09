@@ -4,6 +4,7 @@ import { X } from 'lucide-react'
 import { holdScrollLock, pressedWhileOnTop, useModalLayer } from './modalLayer'
 import { LayerAnnouncer } from './LayerAnnouncer'
 import { useHeldWhileClosing, usePresence } from './usePresence'
+import { useKeyboardInset } from './keyboardInset'
 
 /**
  * A modal side or bottom sheet on the shared layer stack (modalLayer.ts).
@@ -19,6 +20,10 @@ import { useHeldWhileClosing, usePresence } from './usePresence'
  * Motion is CSS (index.css, "Overlay motion"): the panel slides on framer-motion's old spring
  * and the backdrop fades, keyed on the layer box's `data-state` (usePresence). The panel is
  * placed by transform from its classes alone, never inline, so a drag can take it over.
+ *
+ * A `footer` (a sheet's Add or Save) stays in sight below the scrolling content, and the panel
+ * stands on the on-screen keyboard rather than under it (keyboardInset.ts): on an iPhone the
+ * keyboard covers the bottom of the page without resizing it.
  */
 export function Sheet({
   open,
@@ -28,10 +33,13 @@ export function Sheet({
   side = 'right',
   width = 420,
   returnFocus,
+  footer,
 }: {
   open: boolean
   onClose: () => void
   children: React.ReactNode
+  /** Kept in sight under the scrolling content, above the keyboard and any toast. */
+  footer?: React.ReactNode
   title?: string
   side?: 'right' | 'bottom'
   width?: number
@@ -47,6 +55,8 @@ export function Sheet({
   })
   // Closing, the sheet keeps showing what it showed (the entry just added, not a cleared form).
   const content = useHeldWhileClosing(open, children)
+  const footerContent = useHeldWhileClosing(open, footer)
+  useKeyboardInset(mounted, panelRef)
 
   const isBottom = side === 'bottom'
 
@@ -87,8 +97,8 @@ export function Sheet({
           className={
             'sheet-panel fixed flex flex-col overflow-hidden border-white/[0.07] bg-surface-1 shadow-[var(--shadow-overlay)] motion-reduce:!transform-none ' +
             (isBottom
-              ? 'sheet-panel--bottom bottom-0 left-0 right-0 max-h-[85dvh] rounded-t-2xl border-t pl-[env(safe-area-inset-left,0px)] pr-[env(safe-area-inset-right,0px)]'
-              : 'sheet-panel--right bottom-0 right-0 top-0 border-l pr-[env(safe-area-inset-right,0px)] pt-[env(safe-area-inset-top,0px)]')
+              ? 'sheet-panel--bottom left-0 right-0 rounded-t-2xl border-t pl-[env(safe-area-inset-left,0px)] pr-[env(safe-area-inset-right,0px)]'
+              : 'sheet-panel--right right-0 top-0 border-l pr-[env(safe-area-inset-right,0px)] pt-[env(safe-area-inset-top,0px)]')
           }
           style={!isBottom ? { width: `min(${width}px, 96vw)` } : undefined}
         >
@@ -119,13 +129,28 @@ export function Sheet({
               here by toastClearance.ts while the sheet is open), so the last controls can
               always scroll up out from under a toast. It never transitions (reduced motion
               gives every property a 10 µs one): the scroll to reveal a control needs the room
-              laid out at once, or it stops short at the old end. */}
+              laid out at once, or it stops short at the old end. With a footer, the footer
+              takes that room instead: its buttons rise above the toast, and the content above
+              them stays where it is. */}
           <div
-            data-toast-room=""
-            className="flex-1 scroll-py-6 overflow-y-auto pb-[calc(env(safe-area-inset-bottom,0px)+var(--toast-clearance,0px))] transition-none"
+            data-toast-room={footer === undefined ? '' : undefined}
+            className={
+              'flex-1 scroll-py-6 overflow-y-auto transition-none ' +
+              (footer === undefined
+                ? 'pb-[calc(env(safe-area-inset-bottom,0px)+var(--toast-clearance,0px))]'
+                : '')
+            }
           >
             {content}
           </div>
+          {footer !== undefined && (
+            <div
+              data-toast-room=""
+              className="sheet-footer flex shrink-0 gap-2 border-t border-white/[0.06] px-4 pt-3 transition-none"
+            >
+              {footerContent}
+            </div>
+          )}
           <LayerAnnouncer />
         </div>
       </div>

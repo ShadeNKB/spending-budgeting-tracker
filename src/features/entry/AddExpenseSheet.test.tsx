@@ -439,6 +439,62 @@ describe('AddExpenseSheet saving', () => {
     expect(onAdded).not.toHaveBeenCalled()
   })
 
+  it('shows the category it will file the entry under, and files it there (F-056, F-044)', async () => {
+    const user = userEvent.setup()
+    act(() => {
+      useExpenseStore
+        .getState()
+        .addExpense({ itemName: 'Grab home', amount: 12, category: 'Transportation' })
+    })
+    render(<AddExpenseSheet open onClose={() => {}} />)
+    const transport = screen.getByRole('button', { name: 'Transportation' })
+    expect(transport).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.queryByText(/suggested from your entries/)).toBeNull()
+
+    await fill(user, 'Grab home', '9.50')
+    expect(transport).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByText(/suggested from your entries/)).toBeInTheDocument()
+    // The quick bar's matcher says the same (one matcher for every way in).
+    expect(useExpenseStore.getState().getSmartCategory('Grab home')).toBe('Transportation')
+
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    expect(useExpenseStore.getState().expenses.find((e) => e.amount === 9.5)).toMatchObject({
+      itemName: 'Grab home',
+      category: 'Transportation',
+    })
+  })
+
+  it('a chip picked over the suggestion wins, and the note goes', async () => {
+    const user = userEvent.setup()
+    act(() => {
+      useExpenseStore
+        .getState()
+        .addExpense({ itemName: 'Grab home', amount: 12, category: 'Transportation' })
+    })
+    render(<AddExpenseSheet open onClose={() => {}} />)
+    await fill(user, 'Grab home', '30')
+    await user.click(screen.getByRole('button', { name: 'Shopping' }))
+    expect(screen.getByRole('button', { name: 'Transportation' })).toHaveAttribute(
+      'aria-pressed',
+      'false',
+    )
+    expect(screen.getByRole('button', { name: 'Shopping' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByText(/suggested from your entries/)).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    expect(useExpenseStore.getState().expenses.find((e) => e.amount === 30)?.category).toBe(
+      'Shopping',
+    )
+  })
+
+  it('keeps Add and Cancel in the footer, outside the part that scrolls', () => {
+    render(<AddExpenseSheet open onClose={() => {}} />)
+    const add = screen.getByRole('button', { name: 'Add' })
+    const footer = add.closest('.sheet-footer')
+    expect(footer).not.toBeNull()
+    expect(within(footer as HTMLElement).getByRole('button', { name: 'Cancel' })).toBeVisible()
+    expect(screen.getByPlaceholderText(WHAT).closest('.sheet-footer')).toBeNull()
+  })
+
   it('Undo takes it back out, and says what it had to leave', async () => {
     const user = userEvent.setup()
     render(<AddExpenseSheet open onClose={() => {}} />)

@@ -62,6 +62,8 @@ export function AddExpenseSheet({
   returnFocus,
 }: Props) {
   const categories = useExpenseStore((s) => s.categories)
+  // Subscribed so the suggestion below follows what the app learns while the sheet is open.
+  useExpenseStore((s) => s.categoryMappings)
   // The data engine did not load (bootError): nothing typed here could be saved this time.
   const cantSave = useExpenseStore((s) => s.bootError !== null)
   const toast = useToast()
@@ -166,6 +168,16 @@ export function AddExpenseSheet({
 
   const isBackdated = form.date && form.date !== today
 
+  // The category the app files the entry under when none is picked: the same matcher as the
+  // add itself (and the quick bar's), shown before Add rather than found out after it. The
+  // matcher keeps its index between calls, so a call per keystroke is a lookup.
+  const itemName = form.itemName.trim()
+  const suggestion =
+    form.category === '' && itemName !== ''
+      ? useExpenseStore.getState().getSmartCategory(itemName)
+      : null
+  const shown = form.category || suggestion || ''
+
   // Calendar days, not 24 h steps: the day after a DST change is 23 or 25 hours long.
   const presets = [
     { id: 'today', label: 'Today', val: today },
@@ -207,6 +219,16 @@ export function AddExpenseSheet({
       title="Add expense"
       side="bottom"
       returnFocus={returnFocus}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} className="flex-1">
+            Cancel
+          </Button>
+          <Button onClick={submit} className="flex-1">
+            Add{isBackdated ? ` for ${dayLabel(form.date)}` : ''}
+          </Button>
+        </>
+      }
     >
       {/* WebKit reveals only the caret line of a text field when the sheet itself scrolls:
           focus brings the whole control, ring included (its scroll-margin), into view. */}
@@ -292,6 +314,12 @@ export function AddExpenseSheet({
             className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]"
           >
             Category
+            {suggestion !== null && (
+              <span className="normal-case tracking-normal text-[var(--text-tertiary)]">
+                {' '}
+                · suggested from your entries
+              </span>
+            )}
           </span>
           {/* 36 px chips 8 px apart: each gets a 44 px hit area on touch, none overlapping. */}
           <div role="group" aria-labelledby={categoryLabelId} className="flex flex-wrap gap-2">
@@ -299,14 +327,22 @@ export function AddExpenseSheet({
               <button
                 type="button"
                 key={c}
-                aria-pressed={form.category === c}
+                aria-pressed={shown === c}
                 onClick={() => set('category', form.category === c ? '' : c)}
                 className={`tap-target inline-flex h-9 items-center gap-1 rounded-full border px-3 text-[12px] font-medium transition ${
                   form.category === c
                     ? 'border-transparent text-surface-0'
-                    : 'border-white/[0.08] text-[var(--text-secondary)] hover:text-white'
+                    : suggestion === c
+                      ? 'border-dashed text-white'
+                      : 'border-white/[0.08] text-[var(--text-secondary)] hover:text-white'
                 }`}
-                style={form.category === c ? { background: chosenChipFill(c) } : undefined}
+                style={
+                  form.category === c
+                    ? { background: chosenChipFill(c) }
+                    : suggestion === c
+                      ? { borderColor: chosenChipFill(c) }
+                      : undefined
+                }
               >
                 {c}
               </button>
@@ -319,11 +355,11 @@ export function AddExpenseSheet({
               // select's focus ring.
               <div className="field-focus relative inline-flex h-9 max-w-full items-center rounded-full border border-white/[0.08] bg-surface-2 pl-3 pr-6 text-[12px] text-[var(--text-secondary)]">
                 <span aria-hidden className="min-w-0 truncate">
-                  {categories.slice(8).includes(form.category) ? form.category : 'More…'}
+                  {categories.slice(8).includes(shown) ? shown : 'More…'}
                 </span>
                 <select
                   aria-label="More categories"
-                  value={form.category}
+                  value={categories.slice(8).includes(shown) ? shown : ''}
                   onChange={(e) => set('category', e.target.value)}
                   className="field-control absolute inset-0 h-full w-full cursor-pointer appearance-none rounded-full opacity-0 [@media(pointer:coarse)]:-inset-y-1 [@media(pointer:coarse)]:h-auto"
                 >
@@ -349,15 +385,6 @@ export function AddExpenseSheet({
           value={form.notes}
           onChange={(e) => set('notes', e.target.value)}
         />
-
-        <div className="flex gap-2 pt-1">
-          <Button variant="ghost" onClick={onClose} className="flex-1">
-            Cancel
-          </Button>
-          <Button onClick={submit} className="flex-1">
-            Add{isBackdated ? ` for ${dayLabel(form.date)}` : ''}
-          </Button>
-        </div>
       </div>
     </Sheet>
   )

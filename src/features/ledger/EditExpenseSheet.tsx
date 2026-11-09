@@ -161,6 +161,16 @@ export function EditExpenseSheet({
       side={isMobile ? 'bottom' : 'right'}
       width={420}
       returnFocus={returnFocus}
+      footer={
+        <>
+          <Button variant="ghost" onClick={onClose} className="flex-1">
+            Cancel
+          </Button>
+          <Button onClick={save} className="flex-1">
+            Save changes
+          </Button>
+        </>
+      }
     >
       {/* The sheet scrolls on a phone. WebKit reveals only the caret line of a text field that
           Tab lands on, leaving its frame and ring under the sheet's edge: focus brings the whole
@@ -322,15 +332,6 @@ export function EditExpenseSheet({
             rows={2}
             className="resize-none rounded-[10px] border border-white/[0.06] bg-surface-2 px-3 py-2.5 text-[14px] text-white [color-scheme:dark] placeholder:text-[var(--text-tertiary)]"
           />
-        </div>
-
-        <div className="flex gap-2 pt-1">
-          <Button variant="ghost" onClick={onClose} className="flex-1">
-            Cancel
-          </Button>
-          <Button onClick={save} className="flex-1">
-            Save changes
-          </Button>
         </div>
 
         {expense && <DeleteExpense key={session} expense={expense} onDeleted={onClose} />}
