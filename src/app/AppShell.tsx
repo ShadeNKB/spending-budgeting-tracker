@@ -10,6 +10,7 @@ import { useAppliedTheme } from './useAppliedTheme'
 import { useLaunchActions } from './useLaunchActions'
 import { ToastAnnouncer } from './ToastAnnouncer'
 import { useRouteFocus } from './useRouteFocus'
+import { useScreenTitle } from './useScreenTitle'
 import { SAFE_GUTTER_X } from './safeArea'
 import {
   IS_DEMO,
@@ -128,6 +129,7 @@ export function AppShell() {
   useAppliedTheme(theme)
   useLaunchActions()
   useRouteFocus()
+  useScreenTitle()
 
   // Surface storage quota errors to the user — without this the app would
   // silently fail to persist, which is the worst possible UX for a finance

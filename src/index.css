@@ -267,6 +267,11 @@
   main :where(a[href], button, input, select, textarea, summary, [tabindex]) {
     scroll-margin-top: calc(var(--app-header-h, 72px) + 24px);
   }
+  /* A ledger row's controls also clear its day's header, which sticks under the app header
+     (37 px): a row reached by Shift+Tab is never left half under it. */
+  main [data-ledger-row] :where(button, [tabindex]) {
+    scroll-margin-top: calc(var(--app-header-h, 72px) + 48px);
+  }
   /* ...and clear of the fixed TabBar on phones (61 px above the home indicator; hidden from
      768 px), with room for a text field's caret line and ring. */
   @media (max-width: 767px) {
