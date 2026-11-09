@@ -50,7 +50,7 @@ export function TodayStrip({ entries, total }: { entries: readonly Expense[]; to
                 type="button"
                 onClick={() => navigate(ledgerEntryHref({ ...e, day: e.day ?? today }))}
                 aria-label={`Edit ${e.itemName}, ${fmt(e.amount)}, ${e.category}`}
-                className="focus-inset -mx-2 flex w-[calc(100%+1rem)] items-center gap-3 rounded-lg px-2 py-2.5 text-left transition hover:bg-white/[0.03]"
+                className="focus-inset flex w-full items-center gap-3 py-2.5 text-left transition md:hover:bg-surface-2"
               >
                 <span
                   className="cat-avatar flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-[var(--cat)]"
