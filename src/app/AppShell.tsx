@@ -15,6 +15,7 @@ import {
   IS_DEMO,
   installPersistence,
   isOwnRow,
+  UNDO_TOO_LATE,
   undoOutcomeMessage,
   useExpenseStore,
   whenHydrated,
@@ -159,8 +160,8 @@ export function AppShell() {
       if (!last) return
       // Said every time: unlike an Undo button, the key press has nothing on screen to answer it.
       const outcome = store.consumeUndo(last.id)
-      if (outcome === null) return
-      if (outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
+      if (outcome === null) toast.info(UNDO_TOO_LATE)
+      else if (outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
       else toast.info(undoOutcomeMessage(outcome))
     },
     // No Escape here: each sheet, the palette and the date picker close on it themselves, top

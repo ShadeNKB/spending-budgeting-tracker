@@ -5,7 +5,7 @@ import { downloadCSV } from '../../lib/download'
 import { expensesToCsv } from '../../lib/csv'
 import { DatePicker } from '../../ui/DatePicker'
 import { format } from 'date-fns'
-import { undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
+import { UNDO_TOO_LATE, undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
 import { Segmented } from '../../ui/Segmented'
 import { Input } from '../../ui/Input'
 import { Select } from '../../ui/Select'
@@ -272,8 +272,8 @@ export function LedgerScreen() {
                 label: 'Undo',
                 onClick: () => {
                   const outcome = useExpenseStore.getState().consumeUndo(undo)
-                  if (outcome !== null && outcome.skipped > 0)
-                    toast.warning(undoOutcomeMessage(outcome))
+                  if (outcome === null) toast.info(UNDO_TOO_LATE)
+                  else if (outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
                 },
               },
       })

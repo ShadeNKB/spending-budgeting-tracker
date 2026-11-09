@@ -17,7 +17,7 @@ import {
 import clsx from 'clsx'
 import Fuse from 'fuse.js/basic'
 import { useUIStore } from '../../stores/useUIStore'
-import { undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
+import { UNDO_TOO_LATE, undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { downloadJSON } from '../../lib/download'
 import { format as fmtDate } from 'date-fns'
@@ -252,8 +252,8 @@ export function CommandPalette() {
               label: 'Undo',
               onClick: () => {
                 const outcome = useExpenseStore.getState().consumeUndo(undoId)
-                if (outcome !== null && outcome.skipped > 0)
-                  toast.warning(undoOutcomeMessage(outcome))
+                if (outcome === null) toast.info(UNDO_TOO_LATE)
+                else if (outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
               },
             },
           },

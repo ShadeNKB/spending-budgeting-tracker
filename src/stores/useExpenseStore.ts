@@ -166,6 +166,13 @@ export function installPersistence(): void {
 }
 
 /** "Undone", or how many entries kept a change made on another device (all of them: nothing undone). */
+/**
+ * Said when an Undo comes too late: its window closed (a toast held open by a pointer outlives
+ * it) or another Undo took it first. Nothing changed, and the press must not pass in silence
+ * (F-115).
+ */
+export const UNDO_TOO_LATE = 'Too late to undo: the change was kept.'
+
 export function undoOutcomeMessage(o: UndoOutcome): string {
   if (o.skipped === 0) return 'Undone'
   const kept = `${o.skipped.toLocaleString()} ${o.skipped === 1 ? 'entry' : 'entries'}`

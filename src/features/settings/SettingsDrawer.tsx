@@ -187,8 +187,9 @@ export function SettingsDrawer() {
             {synced && ' Applies on all your synced devices.'}
           </p>
         </div>
-        {/* Icons only on a phone, so each tab is named by aria-label. 36 px tall inside the 4 px
-            track: a 44 px touch area that stays within it. */}
+        {/* Every tab shows its name (F-109): on a phone under its icon, as in the tab bar, so
+            four fit at 320 px. 36 px tall inside the 4 px track: a 44 px touch area that stays
+            within it. */}
         <div
           role="tablist"
           aria-label="Settings sections"
@@ -205,17 +206,15 @@ export function SettingsDrawer() {
               tabIndex={tab === key ? 0 : -1}
               onClick={() => setTab(key)}
               onKeyDown={(e) => onTabKeyDown(e, index)}
-              aria-label={label}
-              title={label}
               className={
-                'tap-target inline-flex h-9 flex-1 items-center justify-center gap-1.5 rounded-full px-2 text-[12px] font-medium transition sm:px-3 ' +
+                'tap-target inline-flex h-9 min-w-0 flex-1 flex-col items-center justify-center gap-0.5 rounded-full px-1 text-[10px] font-medium leading-none transition sm:flex-row sm:gap-1.5 sm:px-3 sm:text-[12px] ' +
                 (tab === key
                   ? 'bg-accent/12 text-accent shadow-[inset_0_0_0_1px_rgba(34,211,238,0.18)]'
                   : 'text-[var(--text-secondary)] hover:text-white')
               }
             >
               <Icon size={13} aria-hidden />
-              <span className="hidden sm:inline">{label}</span>
+              <span>{label}</span>
             </button>
           ))}
         </div>
@@ -491,6 +490,14 @@ function BudgetsPanel() {
                   className="h-8 w-24 rounded-md border border-white/[0.06] bg-surface-2 px-2 text-right font-mono text-[13px] tabular-nums text-white [color-scheme:dark] [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:w-28"
                   onBlur={(e) => {
                     const field = e.target
+                    // A number field reads "" for what it cannot parse ("12,50" in some
+                    // browsers): a typo to refuse, never an emptied field that clears the
+                    // budget (F-114).
+                    if (field.validity.badInput) {
+                      field.value = current === undefined ? '' : String(current)
+                      toast.error('Enter the budget as a number, like 250 or 99.50.')
+                      return
+                    }
                     const raw = field.value.trim()
                     const store = useExpenseStore.getState()
                     try {

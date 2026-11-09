@@ -5,7 +5,7 @@ import { Sheet } from '../../ui/Sheet'
 import { Input } from '../../ui/Input'
 import { Button } from '../../ui/Button'
 import { InlineConfirm } from '../../ui/InlineConfirm'
-import { undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
+import { UNDO_TOO_LATE, undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
 import { useToast } from '../../hooks/useToast'
 import { useInlineConfirm } from '../../hooks/useInlineConfirm'
 import { useCurrencySymbol, useFormatMoney } from '../../hooks/useFormatMoney'
@@ -346,7 +346,8 @@ function undoAction(toast: ReturnType<typeof useToast>, undo: string | undefined
     label: 'Undo',
     onClick: () => {
       const outcome = useExpenseStore.getState().consumeUndo(undo)
-      if (outcome !== null && outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
+      if (outcome === null) toast.info(UNDO_TOO_LATE)
+      else if (outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
     },
   }
 }
