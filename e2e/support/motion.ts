@@ -84,6 +84,20 @@ export interface LayerLook {
   focused: boolean
   /** The dialog carries the mark `markLayer` set: it is the same element as then. */
   marked: boolean
+  /** When the recording saw the layer close and leave, as of this frame (see LayerClock). */
+  clock: LayerClock
+}
+
+/**
+ * When a layer's close took effect (its dialog turned inert or closed) and when its dialog left
+ * the page, on the frames' timeline (ms), null until seen. Read as the DOM changes, not on
+ * painted frames: a busy WebKit can paint nothing for 500 ms or more, longer than a whole exit,
+ * while the exit still runs on the clock. A close and a removal in the same moment (an exit
+ * that was dropped) read as the same time.
+ */
+export interface LayerClock {
+  closing: number | null
+  gone: number | null
 }
 
 export interface ToastLook extends Look {
@@ -180,13 +194,47 @@ export async function startRecording(page: Page, watch: Watch): Promise<string> 
         const by = d.getAttribute('aria-labelledby')
         return by ? (document.getElementById(by)?.textContent ?? '') : ''
       }
+      const dialogsNamed = (name: string) =>
+        [...document.querySelectorAll('[role="dialog"]')].filter((d) => nameOf(d) === name)
+      const clock: LayerClock = { closing: null, gone: null }
+      let present = false
+      const clockLayer = () => {
+        if (w.layer === undefined) return
+        const d = dialogsNamed(w.layer)[0]
+        const now = performance.now()
+        if (d) {
+          present = true
+          if (d.closest('[inert], [data-state="closed"]') !== null) clock.closing ??= now
+          else {
+            clock.closing = null
+            clock.gone = null
+          }
+        } else if (present) {
+          present = false
+          clock.closing ??= now
+          clock.gone ??= now
+        }
+      }
+      clockLayer()
+      const observer = w.layer === undefined ? null : new MutationObserver(clockLayer)
+      observer?.observe(document.body, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ['inert', 'data-state', 'aria-label', 'aria-labelledby'],
+      })
       const layerLook = (name: string): LayerLook => {
-        const dialogs = [...document.querySelectorAll('[role="dialog"]')].filter(
-          (d) => nameOf(d) === name,
-        )
+        const dialogs = dialogsNamed(name)
         const d = dialogs[0]
         if (!d) {
-          return { dialogs: 0, panel: null, backdrop: null, focused: false, marked: false }
+          return {
+            dialogs: 0,
+            panel: null,
+            backdrop: null,
+            focused: false,
+            marked: false,
+            clock: { ...clock },
+          }
         }
         const backdrop = d.previousElementSibling
         return {
@@ -195,6 +243,7 @@ export async function startRecording(page: Page, watch: Watch): Promise<string> 
           backdrop: backdrop ? look(backdrop) : null,
           focused: d.contains(document.activeElement),
           marked: d.hasAttribute('data-e2e-mark'),
+          clock: { ...clock },
         }
       }
       const toastLooks = (): ToastLook[] => {
@@ -295,9 +344,10 @@ export async function startRecording(page: Page, watch: Watch): Promise<string> 
           held = holds ? held + 1 : 0
           const elapsed = performance.now() - started
           const enough = elapsed >= (w.minMs ?? 0) && held >= 3
-          if (elapsed >= w.maxMs || enough || window.__e2eMotionStop?.[key] === true)
+          if (elapsed >= w.maxMs || enough || window.__e2eMotionStop?.[key] === true) {
+            observer?.disconnect()
             resolve(frames)
-          else requestAnimationFrame(tick)
+          } else requestAnimationFrame(tick)
         }
         requestAnimationFrame(tick)
       })
@@ -416,15 +466,14 @@ export function firstShownGap(
 }
 
 /**
- * How long a closing layer was seen to stay in the page (ms): from the first frame that shows
- * its close to the first frame without its dialog (Infinity when it never left, 0 when no frame
- * showed it closing). Time, not frames: frames can be far apart on a loaded machine.
+ * How long a closing layer stayed in the page (ms): from its close to its dialog leaving, on
+ * the recording's clock (see LayerClock), so frames a loaded machine never painted still count.
+ * Infinity when it never left; 0 when it never closed, or left in the moment it closed.
  */
 export function stayedFor(frames: readonly Frame[]): number {
-  const first = leavingFrames(frames)[0]
-  if (!first) return 0
-  const gone = frames.find((f) => f.t > first.t && f.layer?.dialogs === 0)
-  return gone ? gone.t - first.t : Infinity
+  const clock = frames.at(-1)?.layer?.clock
+  if (!clock || clock.closing === null) return 0
+  return clock.gone === null ? Infinity : clock.gone - clock.closing
 }
 
 /** Vertical shift of a box's centre from `to` (transform-origin centre: scale-free), px. */
