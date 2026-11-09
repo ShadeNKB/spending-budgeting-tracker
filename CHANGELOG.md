@@ -24,6 +24,7 @@ T7b, the second slice of T7 (everyday entry and the Ledger): the small open find
 ### Changed (engineering)
 
 - `pressShield` swallows the tail of a key press that changed the screen, as it already did for taps and clicks: `shieldKeyGesture(key)`. Script-sent keys and an IME's Enter pass.
+- Boot 557,533 / 561,580 B (4,047 B left), eager 462,232 / 466,908 B; all JS 729.3 / 740 KB.
 - Main's CI was red since 0.12.0 on the iPhone (WebKit) shard: a motion test counted painted frames, and CI's WebKit painted one only every 0.3 to 1.3 s, so a 0.2 s exit fell between two. The harness now times an exit on the clock (#42).
 - Checked against the code and already closed by earlier releases: F-076's Other and Undo points, F-084, F-107's skip link and day headings, F-115's stale Undo toast, F-116's row cursor.
 
