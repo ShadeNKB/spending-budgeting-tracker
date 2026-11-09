@@ -15,6 +15,17 @@ export type Range = (typeof RANGES)[number]
 
 export const isRange = (v: string | null): v is Range => RANGES.some((r) => r === v)
 
+/** A Pulse period the Ledger can show: this month (null), this year, or a span of days. */
+export type LedgerPeriod = null | 'year' | { readonly start: string; readonly end: string }
+
+/** The Ledger filtered to `category` over the period Pulse shows, as Pulse drills into it. */
+export function ledgerCategoryHref(category: string, period: LedgerPeriod): string {
+  const base = `/ledger?category=${encodeURIComponent(category)}`
+  if (period === null) return base
+  if (period === 'year') return `${base}&range=year`
+  return `${base}&range=custom&customStart=${period.start}&customEnd=${period.end}`
+}
+
 /** True for a real calendar date written as `yyyy-MM-dd`. */
 export const isValidYmd = (v: string | null): v is string =>
   v !== null && /^\d{4}-\d{2}-\d{2}$/.test(v) && dayKeyOfStored(v) === v

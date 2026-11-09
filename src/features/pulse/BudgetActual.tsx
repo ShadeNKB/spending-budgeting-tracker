@@ -3,6 +3,7 @@ import { AlertTriangle, TrendingUp } from 'lucide-react'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { colorFromString } from '../../lib/analytics'
 import type { CategoryBudgetStat } from '../../lib/analytics'
+import { ledgerCategoryHref, type LedgerPeriod } from '../ledger/ledgerParams'
 
 /**
  * Per-category budget rows. Current month: a marker where spending would be at an even pace,
@@ -13,9 +14,12 @@ import type { CategoryBudgetStat } from '../../lib/analytics'
 export function BudgetActual({
   items,
   isFinal,
+  period,
 }: {
   items: readonly CategoryBudgetStat[]
   isFinal: boolean
+  /** The month on screen: a category opens the Ledger over it. */
+  period: LedgerPeriod
 }) {
   const navigate = useNavigate()
   const fmt = useFormatMoney()
@@ -52,7 +56,7 @@ export function BudgetActual({
           <li key={it.category}>
             <button
               type="button"
-              onClick={() => navigate(`/ledger?category=${encodeURIComponent(it.category)}`)}
+              onClick={() => navigate(ledgerCategoryHref(it.category, period))}
               // Named by its visible text plus the status word: "Shopping, Over budget,
               // S$300.00 of S$200.00 Over by S$100.00".
               className="group w-full rounded-lg px-1.5 py-1 text-left transition hover:bg-white/[0.03]"

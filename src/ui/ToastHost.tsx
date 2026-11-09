@@ -45,12 +45,23 @@ function ToastItem({
   // setting changes while the toast shows, as index.css then holds the toast still).
   const [countdown] = useState(() => !prefersReducedMotion())
 
+  // The countdown holds while the mouse is on the toast or focus is in it (WCAG 2.2.1), so
+  // reaching for Undo never races the timer; it runs on with the time that was left.
+  const [held, setHeld] = useState({ pointer: false, focus: false })
+  const paused = held.pointer || held.focus
+  const lastMove = useRef<{ x: number; y: number } | null>(null)
+  const left = useRef(duration)
+
   // A leaving toast has been dismissed already: its own timer is done with.
   useEffect(() => {
-    if (sticky || !present) return undefined
-    const t = setTimeout(() => dismiss(toast.id), duration)
-    return () => clearTimeout(t)
-  }, [toast.id, dismiss, duration, sticky, present])
+    if (sticky || !present || paused) return undefined
+    const started = Date.now()
+    const t = setTimeout(() => dismiss(toast.id), left.current)
+    return () => {
+      clearTimeout(t)
+      left.current -= Date.now() - started
+    }
+  }, [toast.id, dismiss, sticky, present, paused])
 
   const box = useRef<HTMLDivElement>(null)
   const { state } = usePresence(present, {
@@ -86,6 +97,23 @@ function ToastItem({
       // import or a category delete is reachable by keyboard while Settings stays open.
       data-layer-tab={action ? '' : undefined}
       data-state={state}
+      // A mouse that moves on it, never one it appeared under (where Add or Save was clicked):
+      // browsers re-send a still mouse's position when the layout changes. Never a finger.
+      onPointerMove={(e) => {
+        if (e.pointerType !== 'mouse' || held.pointer) return
+        const from = lastMove.current
+        lastMove.current = { x: e.clientX, y: e.clientY }
+        if (from !== null && (from.x !== e.clientX || from.y !== e.clientY))
+          setHeld((h) => ({ ...h, pointer: true }))
+      }}
+      onPointerLeave={() => {
+        lastMove.current = null
+        setHeld((h) => ({ ...h, pointer: false }))
+      }}
+      onFocus={() => setHeld((h) => ({ ...h, focus: true }))}
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget)) setHeld((h) => ({ ...h, focus: false }))
+      }}
       className={clsx(
         'toast-box pointer-events-auto relative flex w-full min-w-0 max-w-[380px] items-start gap-3 overflow-hidden rounded-xl border bg-surface-1/95 px-4 py-3 shadow-[0_16px_40px_-12px_rgba(0,0,0,0.6)] backdrop-blur-md motion-reduce:!transform-none',
         TOAST_TONE[toast.kind],
@@ -121,7 +149,10 @@ function ToastItem({
       {!sticky && countdown && (
         <div
           className="toast-countdown absolute bottom-0 left-0 right-0 h-[2px] bg-current opacity-40 motion-reduce:hidden"
-          style={{ animationDuration: `${String(duration)}ms` }}
+          style={{
+            animationDuration: `${String(duration)}ms`,
+            animationPlayState: paused ? 'paused' : 'running',
+          }}
         />
       )}
     </div>

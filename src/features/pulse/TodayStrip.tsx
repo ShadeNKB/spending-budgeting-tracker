@@ -1,7 +1,8 @@
 import { ArrowRight, Sun } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
-import { colorFromString } from '../../lib/analytics'
+import { categoryAvatarStyle } from '../../lib/analytics'
+import { initialOf } from '../../lib/format'
 import type { Expense } from '../../types'
 
 export function TodayStrip({ entries, total }: { entries: readonly Expense[]; total: number }) {
@@ -42,15 +43,11 @@ export function TodayStrip({ entries, total }: { entries: readonly Expense[]; to
           {entries.slice(0, 5).map((e) => (
             <li key={e.id} className="flex items-center gap-3 py-2.5">
               <span
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold"
-                style={{
-                  background: `${colorFromString(e.category)}1E`,
-                  color: colorFromString(e.category),
-                  boxShadow: `0 0 0 1px ${colorFromString(e.category)}28`,
-                }}
+                className="cat-avatar flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold text-[var(--cat)]"
+                style={categoryAvatarStyle(e.category, 0.16)}
                 aria-hidden
               >
-                {e.itemName.charAt(0).toUpperCase()}
+                {initialOf(e.itemName)}
               </span>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-[13px] text-white">{e.itemName}</div>

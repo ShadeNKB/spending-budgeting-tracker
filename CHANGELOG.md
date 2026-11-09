@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.12.1 — 2026-11-08
+
+T7a, the first slice of T7 (everyday entry and the Ledger): fixes from the overhaul's UX audit that earlier releases had not closed.
+
+### Fixed
+
+- **Saving an edit can be undone.** "Expense updated" offers Undo, as a delete does. A save that changed nothing offers none, so it never undoes an older edit. (F-072)
+- **The Ledger's day headings stay on screen** under the app header as you scroll, instead of scrolling away. (F-081)
+- **A category on Pulse opens the Ledger over the period you were looking at:** a past month or year as its days, this year as Year. Before, it always showed this month. (F-085)
+- **Category avatars show their colour.** The tint and ring beside each entry, and the glow in Top categories, were invalid CSS and never drawn. On a light screen the letter is darker, so it reads. (F-117)
+- **An item that starts with an emoji or a flag** shows it whole in its avatar, not a broken box. (F-112)
+- **A message waits while you point at it or Tab into it**, so reaching for Undo never races its timer. A finger touching it, or a mouse it appeared under, does not hold it. (F-073, WCAG 2.2.1)
+- The arrow on Top categories rows shows without hovering, so touch and keyboard users see that a row opens the Ledger.
+- **"Remove from this device" leaves nothing behind**, even when another open tab changes the currency before it notices the removal: that tab wrote the currency choice back. It now makes the check a save makes first. This was the rare `guards.test.ts` failure seen under full test load since 0.12.0.
+
+### Changed (engineering)
+
+- **Startup is 6,189 B lighter:** Fuse's basic build (same package, same version); the app uses no extended search or logical queries. Boot 556,139 / 561,580 B (5,441 B left, was 21 B), eager 461,077 / 466,908 B; all JS 726.7 / 740 KB.
+- New `e2e/ledger-pulse.spec.ts` on Chromium and iPhone WebKit: sticky day headings (it fails on 0.12.0), the Pulse drill period, the avatar tint and an emoji initial.
+- Already closed by earlier releases, so not touched: F-074 (heatmap rows), F-075 (iOS focus zoom), F-079 (palette under a sheet), F-088 (armed delete). F-078 has Alt+N beside Ctrl+N.
+
+### Known limits
+
+- Safari before 16 draws the Ledger card's corners square (no `overflow: clip`).
+- On a phone, only keyboard focus holds a message's countdown, not a touch.
+
 ## 0.12.0 — 2026-11-08
 
 PR-4 of the data-engine overhaul: the Recovery centre. Settings › Backup › Recovery lists the safety copies SpendTrack takes before big changes, the changes a sync made to what you had, and the entries that need attention, and brings any of them back. A new device opens with a short welcome, and a device that hasn't been backed up for a while says so.

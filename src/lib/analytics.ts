@@ -1,3 +1,4 @@
+import type { CSSProperties } from 'react'
 import {
   addDays,
   addMonths,
@@ -536,10 +537,35 @@ export function computeWeekAnalytics(index: LedgerIndex, today: DayKey): WeekAna
 
 // ─── Utility ──────────────────────────────────────────────────────────────────
 
-export function colorFromString(str: string): string {
-  if (!str) return '#5A6478'
+function hueOf(str: string): number {
   let hash = 0
   for (let i = 0; i < str.length; i++) hash = str.charCodeAt(i) + ((hash << 5) - hash)
-  const hue = Math.abs(hash) % 360
-  return `hsl(${hue}, 65%, 62%)`
+  return Math.abs(hash) % 360
+}
+
+export function colorFromString(str: string): string {
+  if (!str) return '#5A6478'
+  return `hsl(${hueOf(str)}, 65%, 62%)`
+}
+
+/**
+ * The same colour at `alpha` (0-1), for a tint or a glow. Hex alpha appended to an hsl() colour
+ * is invalid CSS, and the browser drops the whole declaration.
+ */
+export function colorWithAlpha(str: string, alpha: number): string {
+  if (!str) return `rgb(90 100 120 / ${alpha})`
+  return `hsl(${hueOf(str)} 65% 62% / ${alpha})`
+}
+
+/**
+ * A category avatar's inline style: its tint, a ring at `ring` alpha, and its colour as `--cat`
+ * for the letter (`.cat-avatar` in index.css darkens it on light surfaces).
+ */
+export function categoryAvatarStyle(category: string, ring: number): CSSProperties {
+  const style: CSSProperties & Record<'--cat', string> = {
+    '--cat': colorFromString(category),
+    background: colorWithAlpha(category, 0.12),
+    boxShadow: `0 0 0 1px ${colorWithAlpha(category, ring)}`,
+  }
+  return style
 }

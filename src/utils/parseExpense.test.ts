@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { format } from 'date-fns'
-import Fuse from 'fuse.js'
+import Fuse from 'fuse.js/basic'
 import { DEFAULT_CATEGORIES } from '../constants'
 import { parseExpense, quickAddDateLabel } from './parseExpense'
 

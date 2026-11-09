@@ -90,6 +90,67 @@ describe('ToastHost durations', () => {
     expect(messages()).toEqual([])
   })
 
+  it('holds the countdown while the mouse is on it, then runs on with the time left', () => {
+    render(<ToastHost />)
+    push('Deleted "Kopi O"')
+    const box = screen.getByText('Deleted "Kopi O"').closest('[data-toast]')
+    if (!box) throw new Error('no toast box')
+    act(() => {
+      vi.advanceTimersByTime(3000)
+    })
+    fireEvent.pointerMove(box, { pointerType: 'mouse', clientX: 40, clientY: 10 })
+    fireEvent.pointerMove(box, { pointerType: 'mouse', clientX: 44, clientY: 12 })
+    act(() => {
+      vi.advanceTimersByTime(20_000)
+    })
+    expect(messages()).toEqual(['Deleted "Kopi O"'])
+    fireEvent.pointerLeave(box)
+    act(() => {
+      vi.advanceTimersByTime(999)
+    })
+    expect(messages()).toEqual(['Deleted "Kopi O"'])
+    act(() => {
+      vi.advanceTimersByTime(1)
+    })
+    expect(messages()).toEqual([])
+  })
+
+  it('never holds for a mouse it appeared under, nor for a finger', () => {
+    render(<ToastHost />)
+    push('Expense updated')
+    const box = screen.getByText('Expense updated').closest('[data-toast]')
+    if (!box) throw new Error('no toast box')
+    fireEvent.pointerEnter(box, { pointerType: 'mouse' })
+    // The browser re-sends the still mouse's position as the layout settles.
+    fireEvent.pointerMove(box, { pointerType: 'mouse', clientX: 40, clientY: 10 })
+    fireEvent.pointerMove(box, { pointerType: 'mouse', clientX: 40, clientY: 10 })
+    fireEvent.pointerMove(box, { pointerType: 'touch', clientX: 60, clientY: 10 })
+    act(() => {
+      vi.advanceTimersByTime(4000)
+    })
+    expect(messages()).toEqual([])
+  })
+
+  it('holds the countdown while focus is in it (Tab to Undo), and runs on when focus leaves', () => {
+    render(<ToastHost />)
+    push('Deleted "Kopi O"')
+    const dismissButton = screen.getByRole('button', { name: 'Dismiss' })
+    act(() => {
+      dismissButton.focus()
+    })
+    act(() => {
+      vi.advanceTimersByTime(20_000)
+    })
+    expect(messages()).toEqual(['Deleted "Kopi O"'])
+    act(() => {
+      dismissButton.blur()
+    })
+    act(() => {
+      vi.advanceTimersByTime(4000)
+    })
+    expect(messages()).toEqual([])
+  })
+
   it.each([0, -1])('keeps a toast with duration %s until the user closes it', (duration) => {
     render(<ToastHost />)
     push('Storage is full', duration)

@@ -15,7 +15,7 @@ import {
   AlertTriangle,
 } from 'lucide-react'
 import clsx from 'clsx'
-import Fuse from 'fuse.js'
+import Fuse from 'fuse.js/basic'
 import { useUIStore } from '../../stores/useUIStore'
 import { undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
 import { useFormatMoney } from '../../hooks/useFormatMoney'

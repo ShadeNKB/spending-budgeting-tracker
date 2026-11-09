@@ -4,6 +4,7 @@ import {
   currencySymbol,
   formatInt,
   formatMoney,
+  initialOf,
   isSupportedCurrency,
   resolveDefaultCurrency,
 } from './format'
@@ -244,5 +245,19 @@ describe('formatMoney performance', () => {
       bestPerCall = Math.min(bestPerCall, (performance.now() - t1) / 200)
     }
     expect(bestCached * 10).toBeLessThan(bestPerCall)
+  })
+})
+
+describe('initialOf', () => {
+  it('upper-cases the first letter', () => {
+    expect(initialOf('kopi o')).toBe('K')
+    expect(initialOf('  grab')).toBe('G')
+    expect(initialOf('')).toBe('')
+  })
+
+  it('keeps an emoji, a flag and an accented letter whole (charAt(0) split them)', () => {
+    expect(initialOf('\u{1F35C} laksa')).toBe('\u{1F35C}')
+    expect(initialOf('\u{1F1F8}\u{1F1EC} trip')).toBe('\u{1F1F8}\u{1F1EC}')
+    expect(initialOf('éclair')).toBe('É')
   })
 })

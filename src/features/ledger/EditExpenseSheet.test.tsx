@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { EditExpenseSheet } from './EditExpenseSheet'
 import { useExpenseStore } from '../../stores/useExpenseStore'
@@ -171,6 +171,39 @@ describe('EditExpenseSheet validation', () => {
     await user.click(screen.getByRole('button', { name: 'Save changes' }))
     expect(onClose).toHaveBeenCalledTimes(1)
     expect(useExpenseStore.getState().expenses.find((e) => e.id === 'e-1')?.itemName).toBe('Kopi C')
+  })
+
+  it('offers Undo in the message, which puts the old values back', async () => {
+    const user = userEvent.setup()
+    render(<EditExpenseSheet expense={view('e-1')} onClose={() => {}} />)
+    await user.clear(amount())
+    await user.type(amount(), '2.5')
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+    const toast = useUIStore.getState().toasts.at(-1)
+    expect(toast).toMatchObject({ kind: 'success', message: 'Expense updated' })
+    expect(toast?.action?.label).toBe('Undo')
+    expect(useExpenseStore.getState().expenses.find((e) => e.id === 'e-1')?.amount).toBe(2.5)
+    act(() => {
+      toast?.action?.onClick()
+    })
+    expect(useExpenseStore.getState().expenses.find((e) => e.id === 'e-1')).toMatchObject({
+      amount: 1.8,
+      day: '2026-10-19',
+    })
+  })
+
+  it('offers no Undo for a save that changed nothing, so an older edit is never undone', async () => {
+    const user = userEvent.setup()
+    render(<EditExpenseSheet expense={view('e-1')} onClose={() => {}} />)
+    await user.clear(amount())
+    await user.type(amount(), '2.5')
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+    cleanup()
+    render(<EditExpenseSheet expense={view('e-1')} onClose={() => {}} />)
+    await user.click(screen.getByRole('button', { name: 'Save changes' }))
+    const toast = useUIStore.getState().toasts.at(-1)
+    expect(toast).toMatchObject({ kind: 'success', message: 'Expense updated' })
+    expect(toast?.action).toBeUndefined()
   })
 })
 

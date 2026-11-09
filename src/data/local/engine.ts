@@ -1368,7 +1368,9 @@ export function createEngine(host: EngineHost): Engine {
     setCurrency(code: string): void {
       const r = need()
       run(r, (doc, ctx) => ops.setCurrency(doc, ctx, code), revId('cur'))
-      if (!r.memoryOnly) r.io?.write(CURRENCY_PREF_KEY, code)
+      // Never after "Remove from this device", here or in another tab that has not flushed
+      // since: the check flush() makes before it writes (§9.9).
+      if (!r.memoryOnly && !r.wiped && absorbIfForeign(r)) r.io?.write(CURRENCY_PREF_KEY, code)
       if (r.currency !== code && isSupportedCurrency(code)) {
         r.currency = code
         host.showCurrency(code)
