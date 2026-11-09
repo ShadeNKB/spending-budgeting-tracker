@@ -467,6 +467,22 @@ describe('Categories', () => {
     )
   })
 
+  it.each([
+    [{ Gaming: 50 }, "Shopping takes Gaming's budget · 1 expense moves to Shopping"],
+    [
+      { Gaming: 50, Shopping: 80 },
+      "Shopping keeps its own budget, not Gaming's · 1 expense moves to Shopping",
+    ],
+  ])('a merge question says what happens to the budget first (%o)', async (budgets, detail) => {
+    await hydrateFrom({ ...gamingAndShopping, categoryBudgets: budgets })
+    vi.useFakeTimers()
+    openOn('categories')
+    const field = screen.getByRole('textbox', { name: 'Rename category Gaming' })
+    fireEvent.change(field, { target: { value: 'Shopping' } })
+    fireEvent.blur(field)
+    expect(screen.getByText(detail)).toBeInTheDocument()
+  })
+
   it('Return renames like a blur', async () => {
     await hydrateFrom({ categories: ['Other', 'Meals'] })
     vi.useFakeTimers()

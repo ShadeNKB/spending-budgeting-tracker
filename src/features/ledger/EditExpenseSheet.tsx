@@ -163,10 +163,14 @@ export function EditExpenseSheet({
       returnFocus={returnFocus}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose} className="flex-1">
+          <Button
+            variant="ghost"
+            onClick={onClose}
+            className="flex-1 md:min-w-[120px] md:flex-none"
+          >
             Cancel
           </Button>
-          <Button onClick={save} className="flex-1">
+          <Button onClick={save} className="flex-1 md:min-w-[120px] md:flex-none">
             Save changes
           </Button>
         </>

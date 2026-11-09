@@ -217,7 +217,7 @@ describe('Settings category delete', () => {
     render(<SettingsDrawer />)
     await user.click(screen.getByRole('button', { name: 'Delete category Food' }))
     expect(screen.getByRole('group', { name: 'Delete Food?' })).toHaveAccessibleDescription(
-      '1 expense moves to Other · its budget goes too',
+      'Its budget is deleted · 1 expense moves to Other',
     )
     await user.click(screen.getByRole('button', { name: 'Keep Food' }))
     await user.click(screen.getByRole('button', { name: 'Delete category Gifts' }))

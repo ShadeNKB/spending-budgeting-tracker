@@ -452,7 +452,9 @@ describe('AddExpenseSheet saving', () => {
     expect(screen.queryByText(/suggested from your entries/)).toBeNull()
 
     await fill(user, 'Grab home', '9.50')
-    expect(transport).toHaveAttribute('aria-pressed', 'true')
+    // Marked, and named as suggested, but not pressed: pressing it picks it.
+    expect(transport).toHaveAccessibleName('Transportation, suggested')
+    expect(transport).toHaveAttribute('aria-pressed', 'false')
     expect(screen.getByText(/suggested from your entries/)).toBeInTheDocument()
     // The quick bar's matcher says the same (one matcher for every way in).
     expect(useExpenseStore.getState().getSmartCategory('Grab home')).toBe('Transportation')

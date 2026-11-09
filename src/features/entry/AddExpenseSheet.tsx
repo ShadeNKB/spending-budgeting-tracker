@@ -221,10 +221,14 @@ export function AddExpenseSheet({
       returnFocus={returnFocus}
       footer={
         <>
-          <Button variant="ghost" onClick={onClose} className="flex-1">
+          <Button
+            variant="ghost"
+            onClick={onClose}
+            className="flex-1 md:min-w-[120px] md:flex-none"
+          >
             Cancel
           </Button>
-          <Button onClick={submit} className="flex-1">
+          <Button onClick={submit} className="flex-1 md:min-w-[120px] md:flex-none">
             Add{isBackdated ? ` for ${dayLabel(form.date)}` : ''}
           </Button>
         </>
@@ -327,7 +331,7 @@ export function AddExpenseSheet({
               <button
                 type="button"
                 key={c}
-                aria-pressed={shown === c}
+                aria-pressed={form.category === c}
                 onClick={() => set('category', form.category === c ? '' : c)}
                 className={`tap-target inline-flex h-9 items-center gap-1 rounded-full border px-3 text-[12px] font-medium transition ${
                   form.category === c
@@ -345,6 +349,7 @@ export function AddExpenseSheet({
                 }
               >
                 {c}
+                {suggestion === c && <span className="sr-only">, suggested</span>}
               </button>
             ))}
             {categories.length > 8 && (
@@ -359,7 +364,7 @@ export function AddExpenseSheet({
                 </span>
                 <select
                   aria-label="More categories"
-                  value={categories.slice(8).includes(shown) ? shown : ''}
+                  value={form.category}
                   onChange={(e) => set('category', e.target.value)}
                   className="field-control absolute inset-0 h-full w-full cursor-pointer appearance-none rounded-full opacity-0 [@media(pointer:coarse)]:-inset-y-1 [@media(pointer:coarse)]:h-auto"
                 >

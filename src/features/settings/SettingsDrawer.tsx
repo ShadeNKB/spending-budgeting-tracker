@@ -387,12 +387,7 @@ function CategoriesPanel() {
                   layout="row"
                   tone="warning"
                   question={`Merge into ${merge.pending.to}?`}
-                  detail={
-                    (count === 0
-                      ? `${c} has no expenses`
-                      : `${count.toLocaleString()} ${noun} ${one ? 'moves' : 'move'} to ${merge.pending.to}`) +
-                    (Object.hasOwn(budgets, c) ? ` · ${c}'s budget goes too` : '')
-                  }
+                  detail={mergeDetail(c, merge.pending.to, count, budgets)}
                   confirmLabel={<Check size={14} aria-hidden />}
                   confirmName={`Merge ${c} into ${merge.pending.to}`}
                   cancelLabel={<X size={14} aria-hidden />}
@@ -416,10 +411,10 @@ function CategoriesPanel() {
                   question={`Delete ${c}?`}
                   detail={
                     // Its expenses are refiled to Other.
+                    (Object.hasOwn(budgets, c) ? 'Its budget is deleted · ' : '') +
                     (count === 0
                       ? 'No expenses use it'
-                      : `${count.toLocaleString()} ${noun} ${one ? 'moves' : 'move'} to Other`) +
-                    (Object.hasOwn(budgets, c) ? ' · its budget goes too' : '')
+                      : `${count.toLocaleString()} ${noun} ${one ? 'moves' : 'move'} to Other`)
                   }
                   confirmLabel={<Check size={14} aria-hidden />}
                   confirmName={`Delete category ${c}`}
@@ -471,7 +466,7 @@ function CategoriesPanel() {
                     onBlur={(e) => {
                       renameTo(e.target, c)
                     }}
-                    className="-mx-1 h-9 min-w-0 flex-1 rounded-none border-b border-dashed border-white/[0.14] bg-transparent px-1 text-[13px] text-white transition-colors hover:border-white/30 focus:border-accent/60 [@media(pointer:coarse)]:h-11"
+                    className="-mx-1 h-9 min-w-0 flex-1 rounded-none border-b border-dashed border-white/20 bg-transparent px-1 text-[13px] text-white [@media(pointer:coarse)]:h-11"
                   />
                   <Pill tone="default">
                     {count}
@@ -495,6 +490,27 @@ function CategoriesPanel() {
       </ul>
     </div>
   )
+}
+
+/**
+ * What a merge of `from` into `to` does, the budget first (a cut-off line still says it): the
+ * category merged into keeps its own budget, else takes the merged one's (budgetView).
+ */
+function mergeDetail(
+  from: string,
+  to: string,
+  count: number,
+  budgets: Readonly<Record<string, number>>,
+): string {
+  const moves =
+    count === 0
+      ? `${from} has no expenses`
+      : `${count.toLocaleString()} ${count === 1 ? 'expense moves' : 'expenses move'} to ${to}`
+  if (!Object.hasOwn(budgets, from)) return moves
+  const budget = Object.hasOwn(budgets, to)
+    ? `${to} keeps its own budget, not ${from}'s`
+    : `${to} takes ${from}'s budget`
+  return `${budget} · ${moves}`
 }
 
 function BudgetsPanel() {

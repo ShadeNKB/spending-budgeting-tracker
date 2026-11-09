@@ -146,7 +146,7 @@ export function Sheet({
           {footer !== undefined && (
             <div
               data-toast-room=""
-              className="sheet-footer flex shrink-0 gap-2 border-t border-white/[0.06] px-4 pt-3 transition-none"
+              className="sheet-footer flex shrink-0 gap-2 border-t border-white/[0.06] px-4 pt-3 transition-none md:justify-end"
             >
               {footerContent}
             </div>
