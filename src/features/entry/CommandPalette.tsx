@@ -37,6 +37,7 @@ import { holdScrollLock, useModalLayer } from '../../ui/modalLayer'
 import { LayerAnnouncer } from '../../ui/LayerAnnouncer'
 import { useHeldWhileClosing, usePresence } from '../../ui/usePresence'
 import { announce, retract } from '../../ui/announce'
+import { shieldKeyGesture } from '../../ui/pressShield'
 import { actionErrorMessage, confirmAdded } from './expenseForm'
 import type { ExpenseView } from '../../types'
 
@@ -402,8 +403,11 @@ export function CommandPalette() {
       setActiveIdx(Math.max(0, activeIndex - 1))
     } else if (e.key === 'Enter') {
       e.preventDefault()
-      if (e.repeat || e.nativeEvent.isComposing) return
-      if (activeIndex !== -1) runAt(activeIndex, e.timeStamp)
+      if (e.repeat || e.nativeEvent.isComposing || activeIndex === -1) return
+      runAt(activeIndex, e.timeStamp)
+      // The second Enter of a double press never lands where this one sends focus: the Search
+      // button (it would reopen the palette) or the sheet it opened (pressShield).
+      shieldKeyGesture(e.key)
     }
   }
 

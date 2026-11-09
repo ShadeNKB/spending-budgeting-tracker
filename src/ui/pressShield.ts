@@ -34,6 +34,14 @@ import { CONFIRM_DELAY_MS } from '../utils/amountGuard'
  *
  * Clicks from the keyboard (detail 0) always pass. Place and time count only for presses a
  * person makes (`isTrusted`): a test library's presses all land at 0,0 a few ms apart.
+ *
+ * Keys have the same tail. An Enter that runs a palette option or saves a sheet moves focus
+ * (back to the button that opened the layer, or into the sheet it opened), and the second
+ * Enter of a quick double press would land there: it reopened the palette from its Search
+ * button, or submitted the Add sheet it had just opened, empty. So a handler whose key changes
+ * the screen calls `shieldKeyGesture(key)`: the same key pressed again before the change has
+ * been painted and on screen for GESTURE_MS is swallowed, and so are the repeats of a key still
+ * held. Any other key ends it. A key's composition (an IME word confirmed with Enter) passes.
  */
 
 /** A second press this soon after the change it follows is on screen is the same gesture. */
@@ -54,6 +62,16 @@ export interface PressEvent {
   /** Set on pointer events. */
   readonly pointerType?: string
   /** When the press was made, on the clock every event is stamped with. */
+  readonly timeStamp: number
+}
+
+/** What the shield reads of a keydown or keyup (a DOM KeyboardEvent has it all). */
+export interface KeyEvent {
+  readonly type: string
+  readonly key: string
+  readonly repeat: boolean
+  readonly isComposing: boolean
+  readonly isTrusted: boolean
   readonly timeStamp: number
 }
 
@@ -126,13 +144,28 @@ interface Press {
 export interface PressShield {
   /** Feeds one pointer or mouse event through; true when it is to be swallowed. */
   readonly swallows: (event: PressEvent) => boolean
-  /** A key went down: whatever changes next, the keyboard did it. */
-  readonly keyPressed: () => void
+  /**
+   * Feeds one keydown or keyup through (a keydown also means whatever changes next, the
+   * keyboard did it); true when it is to be swallowed.
+   */
+  readonly keys: (event: KeyEvent) => boolean
   /**
    * Ends the gesture of the press in progress or just ended (a no-op after a key: the keyboard
    * did it). `click`, when the caller is handling one, is evidence enough of a press.
    */
   readonly shieldGesture: (click?: { readonly detail: number; readonly timeStamp: number }) => void
+  /** Ends the gesture of `key`, whose keydown is being handled now and changes the screen. */
+  readonly shieldKeyGesture: (key: string) => void
+}
+
+/** The tail of a key press that changed the screen (see shieldKeyGesture). */
+interface KeyZone {
+  readonly key: string
+  /** Only keydowns numbered after this one can be swallowed. */
+  readonly after: number
+  readonly unseen: Unseen
+  /** The key that made it has not come up yet: its repeats are swallowed meanwhile. */
+  held: boolean
 }
 
 const nowhere = () => false
@@ -278,11 +311,40 @@ export function createPressShield(clock: ShieldClock): PressShield {
     })
   }
 
-  const keyPressed = () => {
+  let keySeq = 0
+  let keyZone: KeyZone | null = null
+  // Keys whose keydown was swallowed: their keyup goes the same way.
+  const swallowedKeys = new Set<string>()
+
+  const keyDown = (event: KeyEvent): boolean => {
     press = null
+    keySeq += 1
+    const zone = keyZone
+    if (zone === null || !event.isTrusted || event.isComposing) return false
+    const tail =
+      event.key === zone.key &&
+      ((event.repeat && zone.held) || (keySeq > zone.after && covers(zone.unseen, event.timeStamp)))
+    if (!tail) {
+      keyZone = null
+      return false
+    }
+    // A repeat belongs to a press whose keydown went through: its keyup goes through too.
+    if (!event.repeat) swallowedKeys.add(event.key)
+    return true
   }
 
-  return { swallows, keyPressed, shieldGesture }
+  const keys = (event: KeyEvent): boolean => {
+    if (event.type === 'keydown') return keyDown(event)
+    if (event.type !== 'keyup') return false
+    if (keyZone?.key === event.key) keyZone.held = false
+    return swallowedKeys.delete(event.key)
+  }
+
+  const shieldKeyGesture = (key: string) => {
+    keyZone = { key, after: keySeq, unseen: unseenFrom(clock, GESTURE_MS), held: true }
+  }
+
+  return { swallows, keys, shieldGesture, shieldKeyGesture }
 }
 
 const pageClock: ShieldClock = {
@@ -321,10 +383,21 @@ for (const type of [
   'dblclick',
 ] as const)
   window.addEventListener(type, onPress, true)
-window.addEventListener('keydown', shield.keyPressed, true)
+
+function onKey(event: KeyboardEvent): void {
+  if (!shield.keys(event)) return
+  // Default prevented: an Enter activates no button and submits no form.
+  event.preventDefault()
+  event.stopImmediatePropagation()
+}
+window.addEventListener('keydown', onKey, true)
+window.addEventListener('keyup', onKey, true)
 
 /** Swallow the rest of the gesture whose press is changing the screen now. */
 export const shieldGesture = shield.shieldGesture
+
+/** Swallow the tail of the key press (`key`, being handled now) that is changing the screen. */
+export const shieldKeyGesture = shield.shieldKeyGesture
 
 /** A change on its way onto the screen. */
 export interface Change {

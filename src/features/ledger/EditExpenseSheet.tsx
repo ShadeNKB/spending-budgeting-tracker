@@ -13,6 +13,7 @@ import { useToday } from '../../hooks/useToday'
 import { addDays, type DayKey } from '../../lib/dates'
 import { entryDay } from '../../lib/ledgerIndex'
 import { DatePicker } from '../../ui/DatePicker'
+import { shieldKeyGesture } from '../../ui/pressShield'
 import {
   actionErrorMessage,
   chosenChipFill,
@@ -144,9 +145,12 @@ export function EditExpenseSheet({
     onClose()
   }
 
-  // A held Enter (key repeat) or the Enter that confirms an IME word must not save twice.
+  // A held Enter (key repeat) or the Enter that confirms an IME word must not save twice, and the
+  // second Enter of a double press never lands where the first one sent focus (pressShield).
   const saveOnEnter = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && !e.repeat && !e.nativeEvent.isComposing) save()
+    if (e.key !== 'Enter' || e.repeat || e.nativeEvent.isComposing) return
+    save()
+    shieldKeyGesture(e.key)
   }
 
   return (
@@ -175,6 +179,7 @@ export function EditExpenseSheet({
           error={errors.itemName}
           // Read as Item mounts, once per opening (the sheet mounts its content as it opens).
           autoFocus={hasFinePointer()}
+          enterKeyHint="done"
           onKeyDown={saveOnEnter}
         />
         <Input
@@ -187,6 +192,7 @@ export function EditExpenseSheet({
           value={form.amount}
           onChange={(e) => setField('amount', e.target.value)}
           error={errors.amount}
+          enterKeyHint="done"
           onKeyDown={saveOnEnter}
         />
 

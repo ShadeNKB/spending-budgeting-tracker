@@ -11,6 +11,7 @@ import { useCurrencySymbol, useFormatMoney } from '../../hooks/useFormatMoney'
 import { useToday } from '../../hooks/useToday'
 import { addDays, formatKey, keyYear, shortDate, shortDateYear, type DayKey } from '../../lib/dates'
 import { DatePicker } from '../../ui/DatePicker'
+import { shieldKeyGesture } from '../../ui/pressShield'
 import { DataUnavailable } from '../../app/DataNotices'
 import {
   actionErrorMessage,
@@ -149,9 +150,17 @@ export function AddExpenseSheet({
     onClose()
   }
 
-  // A held Enter (key repeat) or the Enter that confirms an IME word must not add a second row.
-  const submitOnEnter = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && !e.repeat && !e.nativeEvent.isComposing) submit()
+  // Enter in What goes on to Amount while it is empty (the phone's Next key), never to an "Enter
+  // a valid amount" error; anywhere else it adds. A held Enter (key repeat) or the Enter that
+  // confirms an IME word does nothing, and the second Enter of a double press never lands where
+  // the first one sent focus (pressShield).
+  const onEnter = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key !== 'Enter' || e.repeat || e.nativeEvent.isComposing) return
+    if (e.currentTarget === fields.itemName.current && form.amount.trim() === '') {
+      e.preventDefault()
+      fields.amount.current?.focus()
+    } else submit()
+    shieldKeyGesture(e.key)
   }
 
   const isBackdated = form.date && form.date !== today
@@ -257,7 +266,8 @@ export function AddExpenseSheet({
           onChange={(e) => set('itemName', e.target.value)}
           error={errors.itemName}
           autoFocus
-          onKeyDown={submitOnEnter}
+          enterKeyHint={form.amount.trim() === '' ? 'next' : 'done'}
+          onKeyDown={onEnter}
         />
 
         <Input
@@ -271,7 +281,8 @@ export function AddExpenseSheet({
           value={form.amount}
           onChange={(e) => set('amount', e.target.value)}
           error={errors.amount}
-          onKeyDown={submitOnEnter}
+          enterKeyHint="done"
+          onKeyDown={onEnter}
         />
 
         <div className="flex flex-col gap-1.5">
