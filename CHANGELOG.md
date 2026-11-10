@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.15.0 — 2026-11-10
+
+T7d, the fourth slice of T7 (everyday entry and the Ledger): sheets and Settings on a phone, and the Add sheet on a desktop.
+
+### Added
+
+- **Pull a sheet down to close it.** The Add, Edit and Settings sheets show a handle on a phone, and it did nothing. Pulled by the handle or the title bar, the sheet now follows the finger: let go past about a third of its height (or flick it down) and it closes; let go sooner and it springs back with everything typed still there. Close, Escape and a tap outside still close it. (F-113)
+
+### Fixed
+
+- **Settings on a phone starts with the section, not with Theme and Currency.** The two took most of the first screen on every tab. They fold into one "Display" row that says what is set ("Dark · SGD"); a tap opens them. From 768 px they are always shown, as before. (F-109)
+- **One Settings button on a phone:** the tab bar's, under the thumb. The second one in the top bar was a desktop leftover; it shows from 768 px, where there is no tab bar. (F-111)
+- **On a desktop the Add sheet is a column in the middle,** 560 px wide, not the whole width of the screen with fields over a thousand pixels long. Keyboard shortcuts likewise. It also keeps Add clear of the messages in the bottom corner. (F-086)
+
+### Changed (engineering)
+
+- `sheetDrag.ts`: the drag sets the panel's transform inline while a finger holds it and hands it back to the classes on release, so the exit (or the return) is the stylesheet's transition from where the finger left it. Under Reduce Motion the sheet still follows while held, and is back in place or gone at once. A finger or a pen pulls a sheet, at any width; a mouse does not, so the handle shows on touch screens only, in a colour of its own that reads in both themes.
+- The tab bar's button is named "Settings" (it was "Open settings"), the name of the top bar's.
+- Boot 557,626 / 561,580 B (3,954 B left), eager 462,325 / 466,908 B; all JS 734.5 / 740 KB (5.5 KB left: T7e starts by making room).
+
+### Known limits
+
+- Only the handle and the title bar pull a sheet down, not its content (which scrolls).
+- No test device has a touch screen to drive: the pull is tested with touch events sent in the page, on Chromium and iPhone WebKit. The first check with a finger is the owner's iPhone.
+- Still open for T7e: more palette actions (F-055), wide layouts (F-087), the text size policy (F-108), one add pipeline in code (F-044's shared hook), the date ranges under 360 px (F-110).
+
 ## 0.14.0 — 2026-11-10
 
 T7c, the third slice of T7 (everyday entry and the Ledger): the open P2 findings on adding an entry and managing categories.
