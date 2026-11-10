@@ -1679,6 +1679,14 @@
   .sheet-panel--bottom {
     max-height: min(85dvh, calc(var(--vv-h, 100dvh) - 12px));
   }
+  /* The grip a bottom sheet is pulled down by (F-113): it works, so it is plain to see in both
+     themes, not the faint decoration it was. */
+  .sheet-handle {
+    background-color: rgba(255, 255, 255, 0.32);
+  }
+  [data-theme='light'] .sheet-handle {
+    background-color: rgba(0, 0, 0, 0.3);
+  }
   /* From 768 px a bottom sheet is a column in the middle, not the whole width (F-086): its fields
      and buttons keep a width a form reads at, and stay clear of the toasts in the corner. It
      still rises from the bottom edge, so its motion is the phone's. */

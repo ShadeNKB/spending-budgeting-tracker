@@ -156,7 +156,28 @@ describe('a bottom sheet pulled down', () => {
     const { handle, title } = open()
     expect(handle.parentElement).toHaveClass('touch-none')
     expect(handle.parentElement).toContainElement(title)
-    // From 768 px the sheet is a column closed by Close, Escape or the backdrop: no handle.
-    expect(handle).toHaveClass('md:hidden')
+    // A mouse does not pull a sheet: the handle shows on touch screens only.
+    expect(handle).toHaveClass('[@media(pointer:fine)]:hidden')
+  })
+
+  it('a mouse does not pull a sheet', () => {
+    const { panel, handle, onClose } = open()
+    const mouse = (y: number) => ({ ...at(y), pointerId: 1, pointerType: 'mouse' })
+    fireEvent.pointerDown(handle, mouse(100))
+    for (const y of [200, 300, 400]) {
+      clock += 200
+      fireEvent.pointerMove(handle, mouse(y))
+    }
+    expect(panel.style.transform).toBe('')
+    fireEvent.pointerUp(handle, mouse(400))
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('a pen pulls it as a finger does', () => {
+    const { panel, handle } = open()
+    fireEvent.pointerDown(handle, { ...at(100), pointerType: 'pen' })
+    clock += 16
+    fireEvent.pointerMove(handle, { ...at(160), pointerType: 'pen' })
+    expect(panel.style.transform).toBe('translateY(60px)')
   })
 })

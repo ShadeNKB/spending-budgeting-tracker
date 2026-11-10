@@ -27,7 +27,8 @@ import { useSheetDrag } from './sheetDrag'
  * keyboard covers the bottom of the page without resizing it.
  *
  * A bottom sheet is closed by pulling it down by its handle or title bar too (sheetDrag.ts).
- * From 768 px it is a column in the middle of the screen, not its whole width (index.css).
+ * From 768 px it is a column in the middle of the screen, not its whole width (index.css): the
+ * safe-area padding at its sides is for the full-width sheet below that.
  */
 export function Sheet({
   open,
@@ -102,22 +103,25 @@ export function Sheet({
           className={
             'sheet-panel fixed flex flex-col overflow-hidden border-white/[0.07] bg-surface-1 shadow-[var(--shadow-overlay)] motion-reduce:!transform-none ' +
             (isBottom
-              ? 'sheet-panel--bottom left-0 right-0 rounded-t-2xl border-t pl-[env(safe-area-inset-left,0px)] pr-[env(safe-area-inset-right,0px)]'
+              ? 'sheet-panel--bottom left-0 right-0 rounded-t-2xl border-t max-md:pl-[env(safe-area-inset-left,0px)] max-md:pr-[env(safe-area-inset-right,0px)]'
               : 'sheet-panel--right right-0 top-0 border-l pr-[env(safe-area-inset-right,0px)] pt-[env(safe-area-inset-top,0px)]')
           }
           style={!isBottom ? { width: `min(${width}px, 96vw)` } : undefined}
         >
           {/* What a bottom sheet is pulled down by: the handle and the title bar, not the
               content, which scrolls. touch-action none: the pull is the sheet's, never a page
-              scroll or the browser's pull-to-refresh. The handle shows on a phone or tablet
-              only: from 768 px the sheet is a column, closed by Close, Escape or the backdrop. */}
+              scroll or the browser's pull-to-refresh. A finger pulls it, at any width; a mouse
+              does not (sheetDrag.ts), so the handle shows on touch screens only. */}
           <div
             className={isBottom ? 'shrink-0 touch-none' : 'shrink-0'}
             {...(isBottom ? drag : undefined)}
           >
             {isBottom && (
-              <div data-sheet-handle="" className="flex justify-center pb-1 pt-3 md:hidden">
-                <div className="h-1 w-10 rounded-full bg-white/20" />
+              <div
+                data-sheet-handle=""
+                className="flex justify-center pb-1 pt-3 [@media(pointer:fine)]:hidden"
+              >
+                <div className="sheet-handle h-1 w-10 rounded-full" />
               </div>
             )}
             {title !== undefined && (

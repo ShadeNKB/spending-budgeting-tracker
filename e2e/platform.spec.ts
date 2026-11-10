@@ -200,13 +200,17 @@ test.describe('Content Security Policy', () => {
     await ready(page)
     await addExpense(page, 'CSP settings coffee', '4.50')
 
-    await page.getByRole('button', { name: 'Settings' }).first().click()
+    // Exact: the expense just added has "settings" in its name, and so in its row's.
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
     for (const tab of ['Categories', 'Budgets', 'Sync', 'Backup']) {
       await page.getByRole('tab', { name: tab, exact: true }).click()
     }
     const download = page.waitForEvent('download')
     await page.getByRole('button', { name: /download json backup/i }).click()
     expect((await download).suggestedFilename()).toMatch(/\.json$/)
+    // On a phone Theme is under "Display" (F-109).
+    const display = page.getByRole('button', { name: /^Display/ })
+    if ((await display.count()) > 0) await display.click()
     for (const theme of ['Light', 'Dark', 'System']) {
       await page.getByRole('radio', { name: theme }).click()
     }

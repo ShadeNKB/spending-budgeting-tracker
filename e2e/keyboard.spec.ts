@@ -21,6 +21,7 @@ import {
   searchButton,
   seed,
   settle,
+  showDisplay,
   storedExpenses,
   switchTheme,
   tabWalk,
@@ -435,6 +436,7 @@ test.describe('Modal layers', () => {
     await page.keyboard.press('Control+,')
     const settings = dialog(page, 'Settings')
     await expect(settings).toBeVisible()
+    await showDisplay(settings)
     await settings
       .getByRole('radiogroup', { name: 'Theme' })
       .getByRole('radio', { name: 'Light' })

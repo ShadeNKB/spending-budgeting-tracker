@@ -5,8 +5,8 @@ import { flushStyle, prefersReducedMotion } from './motion'
 // the finger, and on release it closes or springs back (F-113). The panel is placed by transform
 // from its classes alone (Sheet.tsx), so while a finger holds it the drag takes the transform
 // over inline, and hands it back on release: the class's transition then runs from where the
-// finger left it, down and out (closed) or back up (open). Close and Escape remain for anyone
-// who does not drag.
+// finger left it, down and out (closed) or back up (open). Close, Escape and the backdrop remain
+// for anyone who does not drag, and are a mouse's way.
 
 /** Movement before a press counts as a drag, so a tap on the title bar moves nothing. */
 const SLOP_PX = 6
@@ -89,8 +89,9 @@ export function useSheetDrag(panel: RefObject<HTMLElement | null>, onClose: () =
   return {
     onPointerDown: (e) => {
       dragged.current = false
-      if (drag.current !== null) return
-      if (e.pointerType === 'mouse' ? e.button !== 0 : !e.isPrimary) return
+      // A finger or a pen pulls a sheet. A mouse does not: it has Close and the backdrop, and a
+      // press-drag on a title bar is how text is selected.
+      if (drag.current !== null || e.pointerType === 'mouse' || !e.isPrimary) return
       // A press on Close (or any control in the title bar) is that control's.
       if (e.target instanceof Element && e.target.closest('button, a, input, select, textarea')) {
         return

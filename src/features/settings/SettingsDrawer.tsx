@@ -204,7 +204,7 @@ export function SettingsDrawer() {
                   const next = e.target.value
                   if (isSupportedCurrency(next)) setCurrency(next)
                 }}
-                className="h-10 w-full appearance-none rounded-lg border border-white/[0.08] bg-surface-2 pl-3 pr-9 text-[13px] font-medium text-[var(--text-primary)] transition [color-scheme:dark] hover:border-white/[0.14] [@media(pointer:coarse)]:h-11"
+                className="h-10 w-full appearance-none rounded-lg border border-white/[0.08] bg-surface-2 pl-3 pr-9 text-[13px] font-medium text-[var(--text-primary)] transition [color-scheme:dark] hover:border-white/20 [@media(pointer:coarse)]:h-11"
               >
                 {CURRENCIES.map((c) => (
                   <option key={c.code} value={c.code}>
