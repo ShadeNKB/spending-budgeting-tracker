@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.14.0 — 2026-11-10
+
+T7c, the third slice of T7 (everyday entry and the Ledger): the open P2 findings on adding an entry and managing categories.
+
+### Added
+
+- **The Add sheet shows the category it will use** before you add: the chip it picks gets a dashed outline in its colour (a screen reader hears "suggested"), and the label says "suggested from your entries". Pick another chip and that one is used. Before, the pick was applied in silence at Add. (F-056)
+- **Insights' "transactions need a category" opens them:** "Review them" goes to the Ledger, all time, filtered to Other. (F-056)
+
+### Fixed
+
+- **Add stays in sight above the iPhone keyboard.** The keyboard covered the bottom of the Add and Edit sheets, Add and Save included, and the iPhone's number pad has no Return key to add with. On a phone, Cancel and Add (or Save) now sit in a footer under the fields, and the sheet stands on the keyboard while it is up, with the field being typed in kept in sight. A toast lifts the footer above it. (F-071)
+- **Every way in files an entry the same.** The quick bar and the palette guessed the category with a matcher of their own, so "grab home" could be Transportation from the quick bar and Other from the Add sheet. All of them now use the one the add itself uses. (F-044)
+- **Renaming a category onto a name already listed asks first:** "Merge into Shopping? 1 expense moves to Shopping". Before, a tap anywhere else merged the two at once. Keep leaves the name as it was; a merge still has Undo. The question says first which budget stays ("Shopping takes Gaming's budget"), and so does the delete question ("Its budget is deleted"), so a line cut short on a phone still says it. Return renames and keeps focus on the field, and a dashed rule marks the field in both themes. (F-076)
+- **The Ledger's entries start higher on a phone:** the range ("October 2026") sits under the heading instead of on a row of its own, with tighter gaps. On an iPhone 13 the first entry moves from 385 to 363 px down. (F-077, part)
+
+### Changed (engineering)
+
+- `Sheet` takes a `footer`, and its panel follows the visual viewport while it is open (`keyboardInset.ts`: `--kb-inset`, `--vv-h`). A pinch zoom or a scrollbar-sized gap is not taken for a keyboard.
+- `parseExpense` takes the app's pick through `ctx.learned`; the quick bar and the palette pass the store's `getSmartCategory`. Its own matcher stays for callers without one.
+- Boot 557,661 / 561,580 B (3,919 B left), eager 462,360 / 466,908 B; all JS 732.2 / 740 KB.
+
+### Known limits
+
+- The Ledger keeps its quick-add bar on a phone. Dropping it would show about two more rows, but it is the two-tap way to add, and many flows (and tests) use it there.
+- A toast shown while the keyboard is up sits under the keyboard, as before.
+- On a desktop the Edit panel keeps Save and Cancel after Notes, and the Add sheet's buttons stay full width: a footer in the panel's corner would put Save where the "Expense updated" toast opens. Desktop sheets are F-086's.
+- No test device has an on-screen keyboard: the tests drive a stand-in for the browser's visual viewport. The first check on a real one is the owner's iPhone.
+- Still open for T7d: one add pipeline in code (F-044's shared hook), more palette actions (F-055), swipe-down to close a sheet (F-113), wide and desktop layouts (F-086, F-087), the text size policy (F-108), Theme and Currency on every Settings tab (F-109), the top bar's second Settings on a phone (F-111), the date ranges under 360 px (F-110).
+
 ## 0.13.0 — 2026-11-09
 
 T7b, the second slice of T7 (everyday entry and the Ledger): the small open findings that were checked against the code and could ship whole, and the two items routed from T5b's review.
