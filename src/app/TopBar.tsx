@@ -127,10 +127,12 @@ export function TopBar() {
           </kbd>
         </button>
 
+        {/* From 768 px, where there is no tab bar. On a phone Settings is in the tab bar, under
+            the thumb: a second one up here was a desktop leftover (F-111). */}
         <button
           type="button"
           onClick={() => setSettingsOpen(true)}
-          className="tap-target inline-flex h-11 w-11 items-center justify-center rounded-full text-[var(--text-secondary)] transition hover:bg-surface-2 hover:text-white md:h-10 md:w-10"
+          className="tap-target hidden h-10 w-10 items-center justify-center rounded-full text-[var(--text-secondary)] transition hover:bg-surface-2 hover:text-white md:inline-flex"
           aria-label="Settings"
         >
           <Settings2 size={16} />

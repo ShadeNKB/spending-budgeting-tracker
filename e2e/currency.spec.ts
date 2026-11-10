@@ -110,6 +110,9 @@ async function openSettings(page: Page) {
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   const drawer = page.getByRole('dialog', { name: 'Settings' })
   await expect(drawer).toBeVisible()
+  // On a phone Theme and Currency fold under "Display" (F-109): open the row when it is there.
+  const display = drawer.getByRole('button', { name: /^Display/ })
+  if ((await display.count()) > 0) await display.click()
   return drawer
 }
 

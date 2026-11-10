@@ -21,6 +21,7 @@ import {
   searchButton,
   seed,
   settle,
+  showDisplay,
   storedExpenses,
   switchTheme,
   tabWalk,
@@ -274,7 +275,9 @@ test.describe('Modal layers', () => {
       closes: ['Escape', 'Cancel', 'Save', 'backdrop'],
     },
     {
+      // From 768 px; a phone has the tab bar's alone (F-111).
       title: 'Settings in the top bar',
+      only: 'chromium',
       path: '/pulse',
       trigger: (page) => page.getByRole('button', { name: 'Settings', exact: true }),
       open: openWith('Settings'),
@@ -284,9 +287,9 @@ test.describe('Modal layers', () => {
       title: 'Settings in the tab bar',
       only: 'mobile',
       path: '/pulse',
-      trigger: (page) => page.getByRole('button', { name: 'Open settings', exact: true }),
+      trigger: (page) => page.getByRole('button', { name: 'Settings', exact: true }),
       open: openWith('Settings'),
-      closes: ['Close', 'backdrop'],
+      closes: ['Escape', 'Close', 'backdrop'],
     },
     {
       title: '"Add expense" in the palette',
@@ -433,6 +436,7 @@ test.describe('Modal layers', () => {
     await page.keyboard.press('Control+,')
     const settings = dialog(page, 'Settings')
     await expect(settings).toBeVisible()
+    await showDisplay(settings)
     await settings
       .getByRole('radiogroup', { name: 'Theme' })
       .getByRole('radio', { name: 'Light' })

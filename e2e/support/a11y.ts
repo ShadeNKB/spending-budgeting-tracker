@@ -327,6 +327,17 @@ export async function openSettings(page: Page, tab?: string): Promise<Locator> {
   return sheet
 }
 
+/**
+ * On a phone Theme and Currency fold under "Display" in Settings (F-109): opens the row when it
+ * is there and closed. From 768 px there is no row, and this does nothing.
+ */
+export async function showDisplay(settings: Locator): Promise<void> {
+  const row = settings.getByRole('button', { name: /^Display/ })
+  if ((await row.count()) > 0 && (await row.getAttribute('aria-expanded')) === 'false') {
+    await row.click()
+  }
+}
+
 export async function openPalette(page: Page): Promise<Locator> {
   await searchButton(page).click()
   const palette = dialog(page, 'Command palette')

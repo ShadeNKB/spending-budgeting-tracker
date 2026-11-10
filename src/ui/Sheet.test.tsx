@@ -583,15 +583,17 @@ describe('Sheet motion', () => {
 // An installed iPhone app in landscape draws under the side notches (viewport-fit=cover), and an
 // iPad app under the status bar. Geometry is checked in e2e with Chromium's inset override.
 describe('Sheet safe areas', () => {
-  it('pads a bottom sheet clear of the side notches', () => {
+  // Below 768 px, where it spans the screen. From there it is a 560 px column in the middle,
+  // well clear of a notch (F-086): padding there would only narrow the form.
+  it('pads a full-width bottom sheet clear of the side notches', () => {
     render(
       <Sheet open onClose={() => {}} title="Add expense" side="bottom">
         <p>body</p>
       </Sheet>,
     )
     expect(screen.getByRole('dialog')).toHaveClass(
-      'pl-[env(safe-area-inset-left,0px)]',
-      'pr-[env(safe-area-inset-right,0px)]',
+      'max-md:pl-[env(safe-area-inset-left,0px)]',
+      'max-md:pr-[env(safe-area-inset-right,0px)]',
     )
   })
 
