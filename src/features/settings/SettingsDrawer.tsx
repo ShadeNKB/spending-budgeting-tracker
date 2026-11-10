@@ -21,6 +21,7 @@ import { Input } from '../../ui/Input'
 import { Pill } from '../../ui/Pill'
 import { InlineConfirm } from '../../ui/InlineConfirm'
 import { useInlineConfirm } from '../../hooks/useInlineConfirm'
+import { shieldKeyGesture } from '../../ui/pressShield'
 import { useUIStore, type Theme } from '../../stores/useUIStore'
 import { CURRENCIES, isSupportedCurrency } from '../../lib/format'
 import { undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
@@ -256,6 +257,8 @@ function CategoriesPanel() {
   const toast = useToast()
   const [newCat, setNewCat] = useState('')
   const confirm = useInlineConfirm<string>()
+  // A rename onto a name already listed would merge the two: it is asked first (F-076).
+  const merge = useInlineConfirm<{ readonly from: string; readonly to: string }>()
 
   // A name the store refuses (reserved, too long) is said, never dropped in silence; a name it
   // already lists changes nothing, and is said too (the text stays, to be changed).
@@ -299,19 +302,33 @@ function CategoriesPanel() {
   }
 
   // A rename onto a name that is listed already merges the two (its entries, budget and item
-  // picks move): a blur can do that by accident, so it says so, with an Undo like a delete's.
-  const renameTo = (field: HTMLInputElement, from: string) => {
-    const to = field.value.trim()
-    if (!to || to === from) return
+  // picks move). A blur (a tap anywhere else) must not do that by accident: it asks first, in
+  // the row, and Keep leaves the name as it was. Either way the toast has an Undo.
+  const rename = (from: string, to: string): boolean => {
     const merging = useExpenseStore.getState().categories.includes(to)
     try {
       useExpenseStore.getState().renameCategory(from, to)
     } catch (err) {
-      field.value = from
       toast.error(errorMessage(err))
-      return
+      return false
     }
     changedToast(merging ? `Merged "${from}" into "${to}"` : 'Renamed')
+    return true
+  }
+  /** `byKey`: Return did it, so focus stays on the field, in the row under its new name. */
+  const renameTo = (field: HTMLInputElement, from: string, byKey = false) => {
+    const to = field.value.trim()
+    if (!to || to === from) {
+      field.value = from
+      return
+    }
+    if (useExpenseStore.getState().categories.includes(to)) {
+      merge.ask({ from, to }, from)
+      return
+    }
+    if (!rename(from, to)) field.value = from
+    // The row re-mounts under its new name: nothing is asked, but focus goes on to its field.
+    else if (byKey) merge.close(merge.triggerId(to))
   }
 
   const removeOne = (name: string) => {
@@ -369,16 +386,39 @@ function CategoriesPanel() {
                 className="h-2 w-2 shrink-0 rounded-full"
                 style={{ background: colorFromString(c) }}
               />
-              {confirm.pending === c ? (
+              {merge.pending?.from === c ? (
+                <InlineConfirm
+                  layout="row"
+                  tone="warning"
+                  question={`Merge into ${merge.pending.to}?`}
+                  detail={mergeDetail(c, merge.pending.to, count, budgets)}
+                  confirmLabel={<Check size={14} aria-hidden />}
+                  confirmName={`Merge ${c} into ${merge.pending.to}`}
+                  cancelLabel={<X size={14} aria-hidden />}
+                  cancelName={`Keep ${c}`}
+                  onConfirm={() => {
+                    const { to } = merge.pending ?? { to: c }
+                    // Focus goes on to the row it merged into (Other has no field: Add, then).
+                    merge.close(
+                      rename(c, to)
+                        ? to === OTHER
+                          ? ADD_CATEGORY_ID
+                          : merge.triggerId(to)
+                        : undefined,
+                    )
+                  }}
+                  onCancel={() => merge.close()}
+                />
+              ) : confirm.pending === c ? (
                 <InlineConfirm
                   layout="row"
                   question={`Delete ${c}?`}
                   detail={
                     // Its expenses are refiled to Other.
+                    (Object.hasOwn(budgets, c) ? 'Its budget is deleted · ' : '') +
                     (count === 0
                       ? 'No expenses use it'
-                      : `${count.toLocaleString()} ${noun} ${one ? 'moves' : 'move'} to Other`) +
-                    (Object.hasOwn(budgets, c) ? ' · its budget goes too' : '')
+                      : `${count.toLocaleString()} ${noun} ${one ? 'moves' : 'move'} to Other`)
                   }
                   confirmLabel={<Check size={14} aria-hidden />}
                   confirmName={`Delete category ${c}`}
@@ -417,13 +457,26 @@ function CategoriesPanel() {
                 </>
               ) : (
                 <>
+                  {/* Renames as focus leaves it, or on Return. The dashed rule marks it as a field
+                      on a touch screen, where there is no hover to show it. */}
                   <input
+                    id={merge.triggerId(c)}
                     aria-label={`Rename category ${c}`}
                     defaultValue={c}
+                    enterKeyHint="done"
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter' || e.repeat || e.nativeEvent.isComposing) return
+                      // Not the browser's own Enter as well: the merge question's Keep takes
+                      // focus as it shows, and the same key press would answer it at once. Nor
+                      // the second Enter of a double press (pressShield).
+                      e.preventDefault()
+                      shieldKeyGesture(e.key)
+                      renameTo(e.currentTarget, c, true)
+                    }}
                     onBlur={(e) => {
                       renameTo(e.target, c)
                     }}
-                    className="-mx-1 h-9 min-w-0 flex-1 rounded-md bg-transparent px-1 text-[13px] text-white [@media(pointer:coarse)]:h-11"
+                    className="-mx-1 h-9 min-w-0 flex-1 rounded-none border-b border-dashed border-white/20 bg-transparent px-1 text-[13px] text-white [@media(pointer:coarse)]:h-11"
                   />
                   <Pill tone="default">
                     {count}
@@ -447,6 +500,27 @@ function CategoriesPanel() {
       </ul>
     </div>
   )
+}
+
+/**
+ * What a merge of `from` into `to` does, the budget first (a cut-off line still says it): the
+ * category merged into keeps its own budget, else takes the merged one's (budgetView).
+ */
+function mergeDetail(
+  from: string,
+  to: string,
+  count: number,
+  budgets: Readonly<Record<string, number>>,
+): string {
+  const moves =
+    count === 0
+      ? `${from} has no expenses`
+      : `${count.toLocaleString()} ${count === 1 ? 'expense moves' : 'expenses move'} to ${to}`
+  if (!Object.hasOwn(budgets, from)) return moves
+  const budget = Object.hasOwn(budgets, to)
+    ? `${to} keeps its own budget, not ${from}'s`
+    : `${to} takes ${from}'s budget`
+  return `${budget} · ${moves}`
 }
 
 function BudgetsPanel() {

@@ -111,6 +111,31 @@ describe('parseExpense — context and categories', () => {
   })
 })
 
+describe("parseExpense — the app's own pick (F-044)", () => {
+  it('takes the category from ctx.learned, not from its own match of the mappings', () => {
+    const learned = vi.fn((name: string) => (name === 'grab home' ? 'Transportation' : null))
+    const parsed = parseExpense('grab home 12.40', { 'grab home': 'Travel' }, { learned })
+    expect(parsed).toMatchObject({ itemName: 'grab home', suggestedCategory: 'Transportation' })
+    expect(learned).toHaveBeenCalledWith('grab home')
+  })
+
+  it('suggests nothing when ctx.learned has no pick, whatever the mappings say', () => {
+    const parsed = parseExpense(
+      'grab home 12.40',
+      { 'grab home': 'Travel' },
+      { learned: () => null },
+    )
+    expect(parsed.suggestedCategory).toBeUndefined()
+  })
+
+  it('a category word typed after the amount still wins, without asking', () => {
+    const learned = vi.fn(() => 'Travel')
+    const parsed = parseExpense('lunch 8.50 food', {}, { categories: DEFAULT_CATEGORIES, learned })
+    expect(parsed.suggestedCategory).toBe('Food & Dining')
+    expect(learned).not.toHaveBeenCalled()
+  })
+})
+
 describe('parseExpense — day and month without a year', () => {
   const parse = (input: string, now: Date) => parseExpense(input, {}, { now })
 

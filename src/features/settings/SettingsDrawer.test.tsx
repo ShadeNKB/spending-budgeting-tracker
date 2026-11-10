@@ -429,25 +429,99 @@ describe('Categories', () => {
     expect(field).toHaveValue(' Food & Dining ')
   })
 
-  it('a rename onto a listed name says it merged them, and Undo takes the merge back', async () => {
-    await hydrateFrom({
-      categories: ['Other', 'Gaming', 'Shopping'],
-      expenses: [
-        {
-          id: 'g1',
-          itemName: 'Controller',
-          amount: 89,
-          category: 'Gaming',
-          date: '2026-10-01T12:00:00',
-          createdAt: T1,
-        },
-      ],
-    })
+  const gamingAndShopping = {
+    categories: ['Other', 'Gaming', 'Shopping'],
+    expenses: [
+      {
+        id: 'g1',
+        itemName: 'Controller',
+        amount: 89,
+        category: 'Gaming',
+        date: '2026-10-01T12:00:00',
+        createdAt: T1,
+      },
+    ],
+  }
+
+  it('a rename onto a listed name asks first; Keep merges nothing and keeps the name (F-076)', async () => {
+    await hydrateFrom(gamingAndShopping)
+    vi.useFakeTimers()
+    openOn('categories')
+    const field = screen.getByRole('textbox', { name: 'Rename category Gaming' })
+    fireEvent.change(field, { target: { value: ' Shopping ' } })
+    fireEvent.blur(field)
+    // Nothing merged by the blur: the row asks, with what would move.
+    expect(useExpenseStore.getState().categories).toContain('Gaming')
+    expect(useExpenseStore.getState().expenses[0]?.category).toBe('Gaming')
+    expect(screen.getByText('Merge into Shopping?')).toBeInTheDocument()
+    expect(screen.getByText('1 expense moves to Shopping')).toBeInTheDocument()
+    const keep = screen.getByRole('button', { name: 'Keep Gaming' })
+    expect(keep).toHaveFocus()
+    fireEvent.click(keep)
+    expect(useExpenseStore.getState().categories).toContain('Gaming')
+    const again = screen.getByRole('textbox', { name: 'Rename category Gaming' })
+    expect(again).toHaveValue('Gaming')
+    expect(again).toHaveFocus()
+    expect(useUIStore.getState().toasts.map((t) => t.message)).not.toContain(
+      'Merged "Gaming" into "Shopping"',
+    )
+  })
+
+  it.each([
+    [{ Gaming: 50 }, "Shopping takes Gaming's budget · 1 expense moves to Shopping"],
+    [
+      { Gaming: 50, Shopping: 80 },
+      "Shopping keeps its own budget, not Gaming's · 1 expense moves to Shopping",
+    ],
+  ])('a merge question says what happens to the budget first (%o)', async (budgets, detail) => {
+    await hydrateFrom({ ...gamingAndShopping, categoryBudgets: budgets })
     vi.useFakeTimers()
     openOn('categories')
     const field = screen.getByRole('textbox', { name: 'Rename category Gaming' })
     fireEvent.change(field, { target: { value: 'Shopping' } })
     fireEvent.blur(field)
+    expect(screen.getByText(detail)).toBeInTheDocument()
+  })
+
+  it('Return renames, and focus stays on the field under its new name', async () => {
+    await hydrateFrom({ categories: ['Other', 'Meals'] })
+    vi.useFakeTimers()
+    openOn('categories')
+    const field = screen.getByRole('textbox', { name: 'Rename category Meals' })
+    field.focus()
+    fireEvent.change(field, { target: { value: 'Food' } })
+    // Its own Enter is cancelled: the browser's would press whatever took focus meanwhile.
+    expect(fireEvent.keyDown(field, { key: 'Enter' })).toBe(false)
+    expect(useExpenseStore.getState().categories).toContain('Food')
+    expect(useExpenseStore.getState().categories).not.toContain('Meals')
+    expect(screen.getByRole('textbox', { name: 'Rename category Food' })).toHaveFocus()
+  })
+
+  it('Return onto a listed name asks, and a held or IME Enter does nothing', async () => {
+    await hydrateFrom(gamingAndShopping)
+    vi.useFakeTimers()
+    openOn('categories')
+    const field = screen.getByRole('textbox', { name: 'Rename category Gaming' })
+    field.focus()
+    fireEvent.change(field, { target: { value: 'Shopping' } })
+    fireEvent.keyDown(field, { key: 'Enter', repeat: true })
+    fireEvent.keyDown(field, { key: 'Enter', isComposing: true })
+    expect(screen.queryByText('Merge into Shopping?')).toBeNull()
+    expect(fireEvent.keyDown(field, { key: 'Enter' })).toBe(false)
+    expect(screen.getByText('Merge into Shopping?')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Keep Gaming' })).toHaveFocus()
+    expect(useExpenseStore.getState().categories).toContain('Gaming')
+  })
+
+  it('a merge confirmed says it merged them, and Undo takes the merge back', async () => {
+    await hydrateFrom(gamingAndShopping)
+    vi.useFakeTimers()
+    openOn('categories')
+    const field = screen.getByRole('textbox', { name: 'Rename category Gaming' })
+    fireEvent.change(field, { target: { value: 'Shopping' } })
+    fireEvent.blur(field)
+    fireEvent.click(screen.getByRole('button', { name: 'Merge Gaming into Shopping' }))
+    expect(screen.getByRole('textbox', { name: 'Rename category Shopping' })).toHaveFocus()
     expect(useExpenseStore.getState().categories).not.toContain('Gaming')
     expect(useExpenseStore.getState().expenses[0]?.category).toBe('Shopping')
     const toast = useUIStore.getState().toasts.at(-1)

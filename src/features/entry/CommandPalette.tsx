@@ -186,7 +186,12 @@ export function CommandPalette() {
   })
 
   const parsedQuery = useMemo(
-    () => parseExpense(query, categoryMappings, { categories, now: keyToLocalNoon(today) }),
+    () =>
+      parseExpense(query, categoryMappings, {
+        categories,
+        now: keyToLocalNoon(today),
+        learned: (name) => useExpenseStore.getState().getSmartCategory(name),
+      }),
     [query, categoryMappings, categories, today],
   )
   const quickAddAmount =

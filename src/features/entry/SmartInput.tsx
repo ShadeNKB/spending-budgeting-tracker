@@ -70,7 +70,12 @@ export function SmartInput({
   }, [autoFocus])
 
   const parsed = useMemo(
-    () => parseExpense(value, categoryMappings, { categories, now: keyToLocalNoon(today) }),
+    () =>
+      parseExpense(value, categoryMappings, {
+        categories,
+        now: keyToLocalNoon(today),
+        learned: (name) => useExpenseStore.getState().getSmartCategory(name),
+      }),
     [value, categoryMappings, categories, today],
   )
   const amount = parsed.amount !== null && parsed.amount > 0 ? parsed.amount : null

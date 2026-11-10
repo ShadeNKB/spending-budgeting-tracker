@@ -1671,6 +1671,26 @@
   .sheet-panel {
     transition: transform var(--motion-sheet-ms) var(--motion-sheet-ease);
   }
+  /* Standing on the on-screen keyboard, never under it (keyboardInset.ts sets both values while
+     a keyboard is up). A bottom sheet fits what is left in sight, 12 px short of its top. */
+  .sheet-panel {
+    bottom: var(--kb-inset, 0px);
+  }
+  .sheet-panel--bottom {
+    max-height: min(85dvh, calc(var(--vv-h, 100dvh) - 12px));
+  }
+  /* A sheet's Add or Save: the home indicator's room, or, when a toast covers the bottom, room to
+     stand above it. The keyboard already covers both, so what it covers is taken off. */
+  .sheet-footer {
+    padding-bottom: calc(
+      12px +
+        max(
+          0px,
+          env(safe-area-inset-bottom, 0px) - var(--kb-inset, 0px),
+          var(--toast-clearance, 0px) - var(--kb-inset, 0px)
+        )
+    );
+  }
   .sheet-panel--bottom {
     transform: translateY(100%);
   }

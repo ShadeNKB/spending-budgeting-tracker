@@ -376,6 +376,33 @@ describe('EditExpenseSheet Escape in the delete question', () => {
 
 // P2-2: the sheet edits an entry's day, the one the Ledger lists it under, and saves a new day as
 // that day. Run in Asia/Singapore, Pacific/Honolulu and Pacific/Kiritimati (PowerShell $env:TZ).
+describe('EditExpenseSheet Save and Cancel', () => {
+  const width = window.innerWidth
+  afterEach(() => {
+    window.innerWidth = width
+  })
+
+  it('on a phone they sit in the footer, in sight above the keyboard (F-071)', () => {
+    window.innerWidth = 390
+    render(<EditExpenseSheet expense={KOPI} onClose={() => {}} />)
+    const footer = screen.getByRole('button', { name: 'Save changes' }).closest('.sheet-footer')
+    expect(footer).not.toBeNull()
+    expect(footer).toContainElement(screen.getByRole('button', { name: 'Cancel' }))
+    expect(footer).not.toContainElement(screen.getByRole('button', { name: 'Delete expense' }))
+  })
+
+  it('in the side panel they stay after Notes, before Delete: no footer in the corner', () => {
+    window.innerWidth = 1280
+    render(<EditExpenseSheet expense={KOPI} onClose={() => {}} />)
+    const save = screen.getByRole('button', { name: 'Save changes' })
+    expect(save.closest('.sheet-footer')).toBeNull()
+    const after = (a: Element, b: Element) =>
+      (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0
+    expect(after(screen.getByRole('textbox', { name: 'Notes' }), save)).toBe(true)
+    expect(after(save, screen.getByRole('button', { name: 'Delete expense' }))).toBe(true)
+  })
+})
+
 describe('EditExpenseSheet day contract', () => {
   /** A local wall time as 0.9.x stored it: the instant, in UTC with a Z. */
   const instant = (y: number, m: number, d: number, h: number, min = 0) =>
