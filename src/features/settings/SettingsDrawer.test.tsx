@@ -257,6 +257,65 @@ describe('the data tabs without data', () => {
   })
 })
 
+describe('Display on a phone (F-109)', () => {
+  const phone = () =>
+    vi.stubGlobal('matchMedia', (media: string) => ({
+      matches: media.includes('max-width: 767px'),
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }))
+
+  it('folds Theme and Currency into one row that says what is set', () => {
+    phone()
+    vi.useFakeTimers()
+    useUIStore.setState({ theme: 'dark', currency: 'SGD' })
+    openOn('categories')
+    const row = screen.getByRole('button', { name: /^Display/ })
+    expect(row).toHaveAttribute('aria-expanded', 'false')
+    expect(row).toHaveTextContent('Dark · SGD')
+    expect(screen.queryByRole('radiogroup', { name: 'Theme' })).toBeNull()
+    expect(screen.queryByRole('combobox', { name: 'Currency' })).toBeNull()
+    // The tabs and their section are what shows.
+    expect(screen.getByRole('tab', { name: 'Categories' })).toBeVisible()
+
+    fireEvent.click(row)
+    expect(row).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getByRole('radiogroup', { name: 'Theme' })).toBeVisible()
+    fireEvent.change(screen.getByRole('combobox', { name: 'Currency' }), {
+      target: { value: 'USD' },
+    })
+    expect(row).toHaveTextContent('Dark · USD')
+  })
+
+  it('is folded again each time the drawer opens', () => {
+    phone()
+    vi.useFakeTimers()
+    openOn('categories')
+    fireEvent.click(screen.getByRole('button', { name: /^Display/ }))
+    act(() => {
+      useUIStore.setState({ settingsOpen: false })
+    })
+    act(() => {
+      vi.advanceTimersByTime(1000)
+    })
+    act(() => {
+      useUIStore.setState({ settingsOpen: true })
+    })
+    expect(screen.getByRole('button', { name: /^Display/ })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    )
+  })
+
+  it('from 768 px there is no row: Theme and Currency are always there', () => {
+    vi.useFakeTimers()
+    openOn('categories')
+    expect(screen.queryByRole('button', { name: /^Display/ })).toBeNull()
+    expect(screen.getByRole('radiogroup', { name: 'Theme' })).toBeVisible()
+    expect(screen.getByRole('combobox', { name: 'Currency' })).toBeVisible()
+  })
+})
+
 describe('Currency hint', () => {
   beforeEach(() => {
     vi.useFakeTimers()

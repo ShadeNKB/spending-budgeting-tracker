@@ -55,7 +55,6 @@ export function TabBar() {
           type="button"
           onClick={() => useUIStore.getState().setSettingsOpen(true)}
           className="focus-inset flex flex-1 flex-col items-center justify-center gap-0.5 py-1.5 text-[var(--text-tertiary)] transition hover:text-white"
-          aria-label="Open settings"
         >
           <div className="rounded-full px-3 py-1">
             <Settings2 size={18} />

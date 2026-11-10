@@ -420,10 +420,10 @@ test.describe('iOS safe area (Chromium CDP inset override)', () => {
     expect(await cssInset(page, 'top')).toBe('47px')
 
     const header = page.locator('header')
+    // A phone's header: the logo and Search (Settings is in the tab bar, F-111).
     const targets = [
       header.getByRole('link', { name: 'SpendTrack' }),
       header.getByRole('button', { name: 'Search', exact: true }),
-      header.getByRole('button', { name: 'Settings' }),
     ]
     for (const target of targets) {
       const box = await target.boundingBox()
@@ -464,7 +464,7 @@ test.describe('iOS safe area (Chromium CDP inset override)', () => {
       expect((box?.x ?? 9999) + (box?.width ?? 0), where).toBeLessThanOrEqual(844 - 47)
     }
 
-    // The add sheet spans the full width from the bottom.
+    // The add sheet rises from the bottom: a 560 px column at this width (F-086).
     await page
       .getByRole('button', { name: 'Full entry form' })
       .filter({ visible: true })

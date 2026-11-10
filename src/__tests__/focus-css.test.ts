@@ -553,11 +553,16 @@ describe('the sticky header and the tab bar', () => {
     // bar's pill from 768 to 1023 px (F-083), the tab bar's round + below 768 px.
     const adds = screen.getAllByRole('button', { name: 'Add expense' })
     expect(adds).toHaveLength(2)
+    // Two "Settings" buttons likewise: the top bar's from 768 px, the tab bar's below (F-111).
+    // The tab bar's is a tab-sized item, not a small control: the top bar's is the one here.
+    const [topSettings, ...otherSettings] = screen.getAllByRole('button', { name: 'Settings' })
+    expect(otherSettings).toHaveLength(1)
+    expect(topSettings).toHaveClass('hidden', 'md:inline-flex')
     const small = [
       screen.getByRole('link', { name: 'SpendTrack' }),
       ...(header ? Array.from(header.querySelectorAll('a')) : []),
       screen.getByRole('button', { name: 'Search' }),
-      screen.getByRole('button', { name: 'Settings' }),
+      ...(topSettings ? [topSettings] : []),
       ...adds,
     ]
     expect(small).toHaveLength(8)
@@ -571,7 +576,9 @@ describe('the sticky header and the tab bar', () => {
     const [, tabBar] = screen.getAllByRole('navigation', { name: 'Primary' })
     const items = [
       ...(tabBar ? Array.from(tabBar.querySelectorAll('a')) : []),
-      screen.getByRole('button', { name: 'Open settings' }),
+      ...(tabBar ? Array.from(tabBar.querySelectorAll('button')) : []).filter(
+        (button) => button.textContent === 'Settings',
+      ),
     ]
     expect(items).toHaveLength(4)
     for (const item of items) expect(item).toHaveClass('focus-inset')

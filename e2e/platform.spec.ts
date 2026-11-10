@@ -516,7 +516,7 @@ test.describe('Text controls and iOS focus zoom', () => {
     await sweep('add sheet')
     await closeOverlay(page)
 
-    await page.getByRole('button', { name: 'Open settings' }).click()
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await expect(page.getByRole('dialog')).toBeVisible()
     await sweep('settings categories')
     await page.getByRole('tab', { name: 'Budgets', exact: true }).click()
@@ -539,7 +539,7 @@ test.describe('Text controls and iOS focus zoom', () => {
     await page.setViewportSize({ width: 320, height: 700 })
     await page.goto('/pulse')
     await ready(page)
-    await page.getByRole('button', { name: 'Open settings' }).click()
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await expect(page.getByRole('dialog')).toBeVisible()
     await page.getByRole('tab', { name: 'Budgets', exact: true }).click()
 

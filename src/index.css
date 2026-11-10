@@ -1679,6 +1679,16 @@
   .sheet-panel--bottom {
     max-height: min(85dvh, calc(var(--vv-h, 100dvh) - 12px));
   }
+  /* From 768 px a bottom sheet is a column in the middle, not the whole width (F-086): its fields
+     and buttons keep a width a form reads at, and stay clear of the toasts in the corner. It
+     still rises from the bottom edge, so its motion is the phone's. */
+  @media (min-width: 768px) {
+    .sheet-panel--bottom {
+      max-width: 560px;
+      margin-inline: auto;
+      border-inline-width: 1px;
+    }
+  }
   /* A sheet's Add or Save: the home indicator's room, or, when a toast covers the bottom, room to
      stand above it. The keyboard already covers both, so what it covers is taken off. */
   .sheet-footer {

@@ -5,6 +5,7 @@ import { holdScrollLock, pressedWhileOnTop, useModalLayer } from './modalLayer'
 import { LayerAnnouncer } from './LayerAnnouncer'
 import { useHeldWhileClosing, usePresence } from './usePresence'
 import { useKeyboardInset } from './keyboardInset'
+import { useSheetDrag } from './sheetDrag'
 
 /**
  * A modal side or bottom sheet on the shared layer stack (modalLayer.ts).
@@ -24,6 +25,9 @@ import { useKeyboardInset } from './keyboardInset'
  * A `footer` (a sheet's Add or Save) stays in sight below the scrolling content, and the panel
  * stands on the on-screen keyboard rather than under it (keyboardInset.ts): on an iPhone the
  * keyboard covers the bottom of the page without resizing it.
+ *
+ * A bottom sheet is closed by pulling it down by its handle or title bar too (sheetDrag.ts).
+ * From 768 px it is a column in the middle of the screen, not its whole width (index.css).
  */
 export function Sheet({
   open,
@@ -57,6 +61,7 @@ export function Sheet({
   const content = useHeldWhileClosing(open, children)
   const footerContent = useHeldWhileClosing(open, footer)
   useKeyboardInset(mounted, panelRef)
+  const drag = useSheetDrag(panelRef, onClose)
 
   const isBottom = side === 'bottom'
 
@@ -102,26 +107,35 @@ export function Sheet({
           }
           style={!isBottom ? { width: `min(${width}px, 96vw)` } : undefined}
         >
-          {isBottom && (
-            <div className="flex shrink-0 justify-center pb-1 pt-3">
-              <div className="h-1 w-10 rounded-full bg-white/20" />
-            </div>
-          )}
-          {title !== undefined && (
-            <div className="flex shrink-0 items-center justify-between border-b border-white/[0.06] px-5 py-3.5">
-              <h2 id={titleId} className="text-[15px] font-semibold text-white">
-                {title}
-              </h2>
-              <button
-                type="button"
-                onClick={onClose}
-                className="tap-target inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-secondary)] transition hover:bg-surface-2 hover:text-white"
-                aria-label="Close"
-              >
-                <X size={16} aria-hidden />
-              </button>
-            </div>
-          )}
+          {/* What a bottom sheet is pulled down by: the handle and the title bar, not the
+              content, which scrolls. touch-action none: the pull is the sheet's, never a page
+              scroll or the browser's pull-to-refresh. The handle shows on a phone or tablet
+              only: from 768 px the sheet is a column, closed by Close, Escape or the backdrop. */}
+          <div
+            className={isBottom ? 'shrink-0 touch-none' : 'shrink-0'}
+            {...(isBottom ? drag : undefined)}
+          >
+            {isBottom && (
+              <div data-sheet-handle="" className="flex justify-center pb-1 pt-3 md:hidden">
+                <div className="h-1 w-10 rounded-full bg-white/20" />
+              </div>
+            )}
+            {title !== undefined && (
+              <div className="flex items-center justify-between border-b border-white/[0.06] px-5 py-3.5">
+                <h2 id={titleId} className="text-[15px] font-semibold text-white">
+                  {title}
+                </h2>
+                <button
+                  type="button"
+                  onClick={onClose}
+                  className="tap-target inline-flex h-8 w-8 items-center justify-center rounded-lg text-[var(--text-secondary)] transition hover:bg-surface-2 hover:text-white"
+                  aria-label="Close"
+                >
+                  <X size={16} aria-hidden />
+                </button>
+              </div>
+            )}
+          </div>
           {/* Scroll padding: a control tabbed to at the scroller's edge is scrolled clear of
               it, focus ring included (the scroller would cut the ring off). 24 px, as on the
               page: WebKit brings a text field's caret line into view, not the field's box.
