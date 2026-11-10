@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import { keyboardCover } from './keyboardInset'
 import { Sheet } from './Sheet'
@@ -71,6 +71,39 @@ describe('a bottom sheet over the on-screen keyboard', () => {
     })
     expect(panel.style.getPropertyValue('--kb-inset')).toBe('0px')
     expect(panel.style.getPropertyValue('--vv-h')).toBe('')
+  })
+
+  it('brings the field being typed in back into sight as the keyboard comes up', () => {
+    const viewport = new FakeViewport()
+    Object.defineProperty(window, 'visualViewport', { value: viewport, configurable: true })
+    const scrollIntoView = vi.fn()
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      value: scrollIntoView,
+      configurable: true,
+    })
+    try {
+      render(
+        <Sheet open onClose={() => {}} title="Add expense" side="bottom">
+          <input aria-label="Notes" />
+        </Sheet>,
+      )
+      const notes = screen.getByRole('textbox', { name: 'Notes' })
+      notes.focus()
+      scrollIntoView.mockClear()
+      act(() => {
+        viewport.set(window.innerHeight - 300)
+      })
+      expect(scrollIntoView).toHaveBeenCalledOnce()
+      expect(scrollIntoView.mock.contexts[0]).toBe(notes)
+      // The viewport moving again with the keyboard as it was scrolls nothing: the owner may
+      // have scrolled the sheet since.
+      act(() => {
+        viewport.dispatchEvent(new Event('scroll'))
+      })
+      expect(scrollIntoView).toHaveBeenCalledOnce()
+    } finally {
+      Reflect.deleteProperty(Element.prototype, 'scrollIntoView')
+    }
   })
 
   it('gives the footer, not the content, the room a toast takes', () => {

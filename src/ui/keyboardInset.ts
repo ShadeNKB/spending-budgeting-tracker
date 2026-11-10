@@ -27,12 +27,21 @@ export function useKeyboardInset(active: boolean, ref: RefObject<HTMLElement | n
     const viewport = window.visualViewport
     const el = ref.current
     if (!active || !viewport || !el) return
+    let shown = -1
     const update = () => {
       const cover = keyboardCover(window.innerHeight, viewport)
       el.style.setProperty('--kb-inset', `${String(cover)}px`)
       // A zoomed-in viewport is small too, but the sheet keeps its size then.
       if (cover === 0) el.style.removeProperty('--vv-h')
       else el.style.setProperty('--vv-h', `${String(Math.round(viewport.height))}px`)
+      if (cover === shown) return
+      shown = cover
+      // The sheet has just got shorter around the field being typed in (Notes, at its end): the
+      // field took focus, and was scrolled to, before the keyboard came up.
+      const focused = document.activeElement
+      if (cover > 0 && focused instanceof HTMLElement && el.contains(focused) && focused !== el) {
+        focused.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      }
     }
     update()
     viewport.addEventListener('resize', update)

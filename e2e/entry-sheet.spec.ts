@@ -4,13 +4,15 @@ import {
   isPhone,
   manyRows,
   openAddSheet,
+  openSettings,
   row,
   seed,
   settle,
   waitForApp,
 } from './support/a11y'
 
-// T7c: what only a real layout shows: a sheet standing on the on-screen keyboard (F-071), the
+// T7c: what only a real browser shows: a sheet standing on the on-screen keyboard (F-071), a
+// merge question that the key which raised it does not answer (F-076), the
 // Ledger's first rows higher on a phone (F-077), and the Insights link to Other (F-056).
 
 /**
@@ -80,6 +82,22 @@ test('The Add sheet stands on the on-screen keyboard, with Add in sight (F-071)'
   const box = await again.boundingBox()
   const bottom = await page.evaluate(() => window.innerHeight)
   expect(Math.round((box?.y ?? 0) + (box?.height ?? 0))).toBe(bottom)
+
+  // Notes, the last field, takes focus before the keyboard is up: as the sheet gets shorter
+  // around it, it stays in sight, above the footer.
+  const notes = again.getByRole('textbox', { name: 'Notes (optional)' })
+  await notes.focus()
+  await raiseKeyboard(page, cover)
+  await expect
+    .poll(async () => {
+      const [field, footer] = await Promise.all([
+        notes.boundingBox(),
+        again.getByRole('button', { name: 'Add', exact: true }).boundingBox(),
+      ])
+      if (!field || !footer) return false
+      return field.y >= 0 && field.y + field.height <= footer.y
+    })
+    .toBe(true)
 })
 
 test('The Ledger shows its first entry higher on a phone (F-077)', async ({ page }, testInfo) => {
@@ -103,6 +121,47 @@ test('The Ledger shows its first entry higher on a phone (F-077)', async ({ page
   })
   // 0.13.0 put it at 385 px here (the range on its own row, 16 px gaps).
   expect(top).toBeLessThan(366)
+})
+
+test('A rename onto a listed category asks before merging, by Return and by a tap elsewhere (F-076)', async ({
+  page,
+}) => {
+  await seed(page, { expenses: [row('g1', '2026-10-17', 89, 'controller', 'Gaming')] })
+  await page.goto('/ledger')
+  await waitForApp(page)
+  const settings = await openSettings(page, 'Categories')
+  const field = settings.getByRole('textbox', { name: 'Rename category Gaming' })
+  const question = settings.getByText('Merge into Shopping?')
+
+  // Return: the question shows and stays. Its Keep takes focus as it shows, and the browser's
+  // own Enter (cancelled) would press it at once, the question gone before it was read.
+  await field.fill('Shopping')
+  await field.press('Enter')
+  const keep = settings.getByRole('button', { name: 'Keep Gaming' })
+  await expect(keep).toBeFocused()
+  await page.waitForTimeout(500)
+  await expect(question).toBeVisible()
+  await expect(settings.getByText('1 expense moves to Shopping')).toBeVisible()
+  await keep.click()
+  await expect(question).toHaveCount(0)
+  await expect(field).toHaveValue('Gaming')
+  await expect(field).toBeFocused()
+
+  // A tap elsewhere used to merge the two at once: it asks too, and nothing has moved.
+  await page.waitForTimeout(600)
+  await field.fill('Shopping')
+  await settings.getByRole('textbox', { name: 'Add category' }).click()
+  await expect(question).toBeVisible()
+  await expect(page.locator('[data-toast]').filter({ hasText: 'Merged' })).toHaveCount(0)
+
+  // Confirmed, it merges, says so with an Undo, and focus goes to the row it merged into.
+  await page.waitForTimeout(600)
+  await settings.getByRole('button', { name: 'Merge Gaming into Shopping' }).click()
+  await expect(
+    page.locator('[data-toast]').filter({ hasText: 'Merged "Gaming" into "Shopping"' }),
+  ).toBeVisible()
+  await expect(field).toHaveCount(0)
+  await expect(settings.getByRole('textbox', { name: 'Rename category Shopping' })).toBeFocused()
 })
 
 test('Insights links "need a category" to those entries in the Ledger (F-056)', async ({

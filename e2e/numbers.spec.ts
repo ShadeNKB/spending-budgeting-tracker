@@ -70,9 +70,9 @@ async function waitForApp(page: Page) {
 /** The Pulse hero total (reduced motion: the final value from the first paint). */
 const heroTotal = (page: Page) => page.locator('[class*="clamp(1.75rem"]')
 
-/** The Ledger header block: total and entry count. */
+/** The Ledger header block: heading and range, total and entry count. */
 const ledgerSummary = (page: Page) =>
-  page.getByRole('heading', { name: 'Ledger' }).locator('xpath=..')
+  page.getByRole('heading', { name: 'Ledger' }).locator('xpath=../..')
 
 /** Item names of the listed rows ("Edit kopi, S$1.25, Food & Dining" → "kopi"). */
 const ledgerItemNames = (page: Page) =>

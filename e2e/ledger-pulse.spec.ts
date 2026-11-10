@@ -16,9 +16,13 @@ test('Ledger day headers stick under the app header as the page scrolls (F-081)'
   )
   expect(headerHeight).toBeGreaterThan(0)
 
-  await page.evaluate(() => {
-    window.scrollBy(0, 1600)
-  })
+  // To 100 px inside the fourth day, where its header is the one that sticks. A fixed distance
+  // can land where one header hands over to the next, and neither is at the top just then.
+  await page.evaluate((h) => {
+    const day = document.querySelectorAll('main section')[3]
+    if (!day) throw new Error('no fourth day')
+    window.scrollBy(0, day.getBoundingClientRect().top - h + 100)
+  }, headerHeight)
   await expect
     .poll(() =>
       page.evaluate((h) => {

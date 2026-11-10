@@ -221,14 +221,10 @@ export function AddExpenseSheet({
       returnFocus={returnFocus}
       footer={
         <>
-          <Button
-            variant="ghost"
-            onClick={onClose}
-            className="flex-1 md:min-w-[120px] md:flex-none"
-          >
+          <Button variant="ghost" onClick={onClose} className="flex-1">
             Cancel
           </Button>
-          <Button onClick={submit} className="flex-1 md:min-w-[120px] md:flex-none">
+          <Button onClick={submit} className="flex-1">
             Add{isBackdated ? ` for ${dayLabel(form.date)}` : ''}
           </Button>
         </>

@@ -153,6 +153,20 @@ export function EditExpenseSheet({
     shieldKeyGesture(e.key)
   }
 
+  // On a phone the sheet keeps these in its footer, above the keyboard (F-071). In the side
+  // panel they stay after Notes: a footer there would put Save in the screen's bottom corner,
+  // where the "Expense updated" toast then opens under the pointer.
+  const actions = (
+    <>
+      <Button variant="ghost" onClick={onClose} className="flex-1">
+        Cancel
+      </Button>
+      <Button onClick={save} className="flex-1">
+        Save changes
+      </Button>
+    </>
+  )
+
   return (
     <Sheet
       open={!!expense}
@@ -161,20 +175,7 @@ export function EditExpenseSheet({
       side={isMobile ? 'bottom' : 'right'}
       width={420}
       returnFocus={returnFocus}
-      footer={
-        <>
-          <Button
-            variant="ghost"
-            onClick={onClose}
-            className="flex-1 md:min-w-[120px] md:flex-none"
-          >
-            Cancel
-          </Button>
-          <Button onClick={save} className="flex-1 md:min-w-[120px] md:flex-none">
-            Save changes
-          </Button>
-        </>
-      }
+      footer={isMobile ? actions : undefined}
     >
       {/* The sheet scrolls on a phone. WebKit reveals only the caret line of a text field that
           Tab lands on, leaving its frame and ring under the sheet's edge: focus brings the whole
@@ -337,6 +338,8 @@ export function EditExpenseSheet({
             className="resize-none rounded-[10px] border border-white/[0.06] bg-surface-2 px-3 py-2.5 text-[14px] text-white [color-scheme:dark] placeholder:text-[var(--text-tertiary)]"
           />
         </div>
+
+        {!isMobile && <div className="flex gap-2 pt-1">{actions}</div>}
 
         {expense && <DeleteExpense key={session} expense={expense} onDeleted={onClose} />}
       </div>

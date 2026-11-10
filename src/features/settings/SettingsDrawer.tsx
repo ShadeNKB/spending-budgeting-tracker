@@ -21,6 +21,7 @@ import { Input } from '../../ui/Input'
 import { Pill } from '../../ui/Pill'
 import { InlineConfirm } from '../../ui/InlineConfirm'
 import { useInlineConfirm } from '../../hooks/useInlineConfirm'
+import { shieldKeyGesture } from '../../ui/pressShield'
 import { useUIStore, type Theme } from '../../stores/useUIStore'
 import { CURRENCIES, isSupportedCurrency } from '../../lib/format'
 import { undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
@@ -314,7 +315,8 @@ function CategoriesPanel() {
     changedToast(merging ? `Merged "${from}" into "${to}"` : 'Renamed')
     return true
   }
-  const renameTo = (field: HTMLInputElement, from: string) => {
+  /** `byKey`: Return did it, so focus stays on the field, in the row under its new name. */
+  const renameTo = (field: HTMLInputElement, from: string, byKey = false) => {
     const to = field.value.trim()
     if (!to || to === from) {
       field.value = from
@@ -325,6 +327,8 @@ function CategoriesPanel() {
       return
     }
     if (!rename(from, to)) field.value = from
+    // The row re-mounts under its new name: nothing is asked, but focus goes on to its field.
+    else if (byKey) merge.close(merge.triggerId(to))
   }
 
   const removeOne = (name: string) => {
@@ -461,7 +465,13 @@ function CategoriesPanel() {
                     defaultValue={c}
                     enterKeyHint="done"
                     onKeyDown={(e) => {
-                      if (e.key === 'Enter' && !e.nativeEvent.isComposing) e.currentTarget.blur()
+                      if (e.key !== 'Enter' || e.repeat || e.nativeEvent.isComposing) return
+                      // Not the browser's own Enter as well: the merge question's Keep takes
+                      // focus as it shows, and the same key press would answer it at once. Nor
+                      // the second Enter of a double press (pressShield).
+                      e.preventDefault()
+                      shieldKeyGesture(e.key)
+                      renameTo(e.currentTarget, c, true)
                     }}
                     onBlur={(e) => {
                       renameTo(e.target, c)

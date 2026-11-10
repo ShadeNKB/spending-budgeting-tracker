@@ -483,16 +483,34 @@ describe('Categories', () => {
     expect(screen.getByText(detail)).toBeInTheDocument()
   })
 
-  it('Return renames like a blur', async () => {
+  it('Return renames, and focus stays on the field under its new name', async () => {
     await hydrateFrom({ categories: ['Other', 'Meals'] })
     vi.useFakeTimers()
     openOn('categories')
     const field = screen.getByRole('textbox', { name: 'Rename category Meals' })
     field.focus()
     fireEvent.change(field, { target: { value: 'Food' } })
-    fireEvent.keyDown(field, { key: 'Enter' })
+    // Its own Enter is cancelled: the browser's would press whatever took focus meanwhile.
+    expect(fireEvent.keyDown(field, { key: 'Enter' })).toBe(false)
     expect(useExpenseStore.getState().categories).toContain('Food')
     expect(useExpenseStore.getState().categories).not.toContain('Meals')
+    expect(screen.getByRole('textbox', { name: 'Rename category Food' })).toHaveFocus()
+  })
+
+  it('Return onto a listed name asks, and a held or IME Enter does nothing', async () => {
+    await hydrateFrom(gamingAndShopping)
+    vi.useFakeTimers()
+    openOn('categories')
+    const field = screen.getByRole('textbox', { name: 'Rename category Gaming' })
+    field.focus()
+    fireEvent.change(field, { target: { value: 'Shopping' } })
+    fireEvent.keyDown(field, { key: 'Enter', repeat: true })
+    fireEvent.keyDown(field, { key: 'Enter', isComposing: true })
+    expect(screen.queryByText('Merge into Shopping?')).toBeNull()
+    expect(fireEvent.keyDown(field, { key: 'Enter' })).toBe(false)
+    expect(screen.getByText('Merge into Shopping?')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Keep Gaming' })).toHaveFocus()
+    expect(useExpenseStore.getState().categories).toContain('Gaming')
   })
 
   it('a merge confirmed says it merged them, and Undo takes the merge back', async () => {
