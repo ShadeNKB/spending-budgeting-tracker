@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.16.0 — 2026-11-11
+
+T7e, the fifth and last slice of T7 (everyday entry and the Ledger): one way to add, more for the palette to find, and reading text on a phone.
+
+### Added
+
+- **The palette finds more by typing:** Settings' four sections (opened on that tab), the Ledger on today, the last 7 days, this year, all time or the entries without a category, the theme switch, and the keyboard shortcuts. Each answers to its name and to a few other words ("limit" finds Budgets). It still opens on the six everyday actions. (F-055)
+
+### Fixed
+
+- **Larger reading text on a phone.** The rows read all day go up one step from 360 px wide: Ledger entries 15 and 12 px (were 14 and 11), Pulse's Today, Top categories and Budget rows 14 and 12 px (were 13 and 11), the note under a budget bar 12 px (was 10). (F-108, part)
+- **The Ledger's six date ranges show whole on every phone.** Under 360 px "Custom" was past a fade, to be scrolled to. They are packed there (each still 44 px wide to touch) and fit 320 px. (F-110)
+- **The backup reminder takes less of the screen on a phone:** its two buttons share a row. Stacked, the card took a third of the screen above every list.
+- **One way to add an entry, one matcher for its category.** The quick bar, the palette and the Add sheet shared neither their add nor their Undo, and 0.14.0's shared category matcher ran a full fuzzy search on every key typed in the quick bar. They now share one add, one Undo and one matcher, which is the fast one: it gives the same answer as the full search (checked on 3,000 seeded queries) without doing it. An Undo that comes too late says so everywhere now, Recovery and Categories included. (F-044)
+- On a wide screen, Pulse's trend line takes the room its card has (it was a 384 px strip in a 900 px column), and its line and dots keep their shape when stretched. (F-087, part)
+- On a phone narrower than 360 px, a budget row keeps its category's name: "/ budget" leaves the line there (the note under the bar says what is left).
+
+### Changed (engineering)
+
+- `addAndConfirm` (the store's add, the tick, the confirmation and its Undo), `undoAction` (the Undo of a toast, at nine sites) and `useLearnedCategory` (the app's pick, shown before the add). An add sends only the category the owner typed or picked; the engine makes the learned pick itself.
+- `src/data/local/fuzzy.ts`: Fuse's own ranking without a full Fuse search (Myers' bit-vector bound, then `Fuse.match` best-first). It was the quick-add parser's; the engine's `smartCategory` uses it now, and `parseExpense(raw, ctx)` only parses (`suggestedCategory` is a category word typed after the amount; `confidence`, never read, is gone).
+- The quick bar's own 6 s `clearUndo` timer is gone: the engine's undo window (5 s) already closes it.
+- Boot 557,974 / 561,580 B (3,606 B left), eager 461,327 / 466,908 B; all JS 735.4 / 740 KB.
+
+### Known limits
+
+- The palette's search of past entries is unchanged: the audit called its matches noisy without saying which, so that waits for real examples. (F-055, part)
+- Chart labels and control labels on a phone stay at 10 to 13 px: a step up there costs names and tap room. (F-108, part)
+- Wide screens beyond the trend line (the budget card's place on Pulse, the Ledger's width) are unchanged. (F-087, part)
+
 ## 0.15.0 — 2026-11-10
 
 T7d, the fourth slice of T7 (everyday entry and the Ledger): sheets and Settings on a phone, and the Add sheet on a desktop.
