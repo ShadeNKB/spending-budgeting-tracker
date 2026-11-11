@@ -125,10 +125,12 @@ export const LedgerRow = memo(function LedgerRow({
           </span>
 
           <span className="block min-w-0 flex-1">
-            <span className="block truncate text-[14px] text-white">{expense.itemName}</span>
+            <span className="block truncate text-[14px] text-white max-md:text-[15px]">
+              {expense.itemName}
+            </span>
             {/* On a narrow row the notes give way first (they only take the space left over),
                 then the category; the date never does, so "Aug 19, 2025" is never cut to "Aug 1…". */}
-            <span className="flex min-w-0 text-[11px] text-[var(--text-tertiary)]">
+            <span className="flex min-w-0 text-[11px] text-[var(--text-tertiary)] max-md:text-[12px]">
               <span className="truncate">{expense.category}</span>
               <span className="shrink-0 whitespace-nowrap">&nbsp;· {dateLabel}</span>
               {expense.notes && (
@@ -139,7 +141,9 @@ export const LedgerRow = memo(function LedgerRow({
             </span>
           </span>
 
-          <span className="shrink-0 font-mono text-[14px] tabular-nums text-white">{amount}</span>
+          <span className="shrink-0 font-mono text-[14px] tabular-nums text-white max-md:text-[15px]">
+            {amount}
+          </span>
         </button>
 
         {/* Always shown on touch screens; with a mouse it appears on hover and while the row

@@ -48,12 +48,14 @@ export function TopCategories({
                     }}
                     aria-hidden="true"
                   />
-                  <span className="truncate text-[13px] font-medium text-white">{it.category}</span>{' '}
-                  <span className="text-[11px] text-[var(--text-tertiary)]">
+                  <span className="truncate text-[13px] font-medium text-white max-md:text-[14px]">
+                    {it.category}
+                  </span>{' '}
+                  <span className="text-[11px] text-[var(--text-tertiary)] max-md:text-[12px]">
                     {Math.round(it.share * 100)}%
                   </span>
                 </div>{' '}
-                <div className="flex items-center gap-1 font-mono text-[13px] tabular-nums text-white">
+                <div className="flex items-center gap-1 font-mono text-[13px] tabular-nums text-white max-md:text-[14px]">
                   {fmt(it.total)}
                   <ArrowRight
                     size={12}

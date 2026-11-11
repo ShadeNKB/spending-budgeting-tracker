@@ -68,12 +68,14 @@ export function BudgetActual({
                     style={{ background: barColor }}
                     aria-hidden="true"
                   />
-                  <span className="truncate text-[13px] text-white">{it.category}</span>
+                  <span className="truncate text-[13px] text-white max-md:text-[14px]">
+                    {it.category}
+                  </span>
                   <span className="sr-only">, {status},</span>
                   {over && <AlertTriangle size={11} className="shrink-0 text-negative" />}
                   {ahead && <TrendingUp size={11} className="shrink-0 text-warning" />}
                 </div>{' '}
-                <div className="flex shrink-0 items-center gap-2 font-mono text-[12px] tabular-nums">
+                <div className="flex shrink-0 items-center gap-2 font-mono text-[12px] tabular-nums max-md:text-[13px]">
                   <span className={over ? 'text-negative' : ahead ? 'text-warning' : 'text-white'}>
                     {fmt(it.total)}
                   </span>{' '}
@@ -103,7 +105,7 @@ export function BudgetActual({
               </div>
 
               <div
-                className={`mt-1 text-[10px] ${
+                className={`mt-1 text-[10px] max-md:text-[12px] ${
                   over ? 'text-negative' : ahead ? 'text-warning' : 'text-[var(--text-tertiary)]'
                 }`}
               >

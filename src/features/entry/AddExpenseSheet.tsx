@@ -307,6 +307,9 @@ export function AddExpenseSheet({
                 type="button"
                 key={c}
                 aria-pressed={form.category === c}
+                // Named as suggested, in one piece (a hidden span beside the text is read with
+                // a stray space before its comma).
+                aria-label={suggestion === c ? `${c}, suggested` : undefined}
                 onClick={() => set('category', form.category === c ? '' : c)}
                 className={`tap-target inline-flex h-9 items-center gap-1 rounded-full border px-3 text-[12px] font-medium transition ${
                   form.category === c
@@ -324,7 +327,6 @@ export function AddExpenseSheet({
                 }
               >
                 {c}
-                {suggestion === c && <span className="sr-only">, suggested</span>}
               </button>
             ))}
             {categories.length > 8 && (

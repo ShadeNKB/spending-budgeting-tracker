@@ -40,7 +40,7 @@ import { LayerAnnouncer } from '../../ui/LayerAnnouncer'
 import { useHeldWhileClosing, usePresence } from '../../ui/usePresence'
 import { announce, retract } from '../../ui/announce'
 import { shieldKeyGesture } from '../../ui/pressShield'
-import { addAndConfirm, useLearnedCategory } from './expenseForm'
+import { addAndConfirm } from './expenseForm'
 import { ledgerEntryHref } from '../ledger/ledgerParams'
 import type { ExpenseView } from '../../types'
 
@@ -215,9 +215,6 @@ export function CommandPalette() {
     () => parseExpense(query, { categories, now: keyToLocalNoon(today) }),
     [query, categories, today],
   )
-  // A category typed after the amount, else the app's pick from past entries.
-  const learned = useLearnedCategory(parsedQuery.itemName)
-  const quickAddCategory = parsedQuery.suggestedCategory ?? learned ?? undefined
   const quickAddAmount =
     parsedQuery.itemName !== '' && parsedQuery.amount !== null && parsedQuery.amount > 0
       ? parsedQuery.amount
@@ -228,7 +225,8 @@ export function CommandPalette() {
 
   const quickAddAction: Action | null = useMemo(() => {
     if (quickAddAmount === null || tooLarge) return null
-    const { itemName, parsedDate } = parsedQuery
+    // A category typed after the amount goes with the add; without one the engine picks.
+    const { itemName, suggestedCategory, parsedDate } = parsedQuery
     const dateLabel = quickAddDateLabel(parsedDate, keyToLocalNoon(today))
     const summary = `"${itemName}" · ${fmt(quickAddAmount)}${dateLabel ? ` · ${dateLabel}` : ''}`
 
@@ -259,7 +257,7 @@ export function CommandPalette() {
           toast,
           vibrate,
           // No date in the text: the store files it under today's local day (P2-2).
-          { itemName, amount: quickAddAmount, category: quickAddCategory, day: parsedDate },
+          { itemName, amount: quickAddAmount, category: suggestedCategory, day: parsedDate },
           (added) =>
             `Added "${added.itemName}" · ${fmt(added.amount)}${dateLabel ? ` · ${dateLabel}` : ''}`,
         )
@@ -279,7 +277,6 @@ export function CommandPalette() {
     parsedQuery,
     query,
     quickAddAmount,
-    quickAddCategory,
     setOpen,
     today,
     toast,

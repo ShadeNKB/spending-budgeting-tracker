@@ -347,21 +347,18 @@ export function LedgerScreen() {
 
         <div className="flex flex-col gap-2">
           <div className="flex items-center gap-2">
-            {/* On a narrow phone the six ranges can be wider than the column: the row scrolls
-                sideways out to the screen edge (through the page gutter), so the control is never
-                cut off in mid-gutter. Under 390 px the options take 2 px less padding a side, so
-                it shows whole from 360 px; under 360 px it still scrolls, and its right edge fades
-                (over the end padding, so the last option shows whole once scrolled to). The
-                arrow keys move focus by script, which browsers do not scroll into a part-hidden
-                spot: focus brings the whole option, ring included (its scroll-margin), into
-                view, and under 360 px the scroll padding keeps it, ring and all, clear of the
-                fade: the last option scrolls all the way to the end. */}
+            {/* The six ranges show whole on every phone (F-110): under 390 px the options take
+                2 px less padding a side, and under 360 px they are packed (4 px a side, no gaps,
+                each still 44 px wide to touch), which fits 320 px. Should a wider font ever not
+                fit, the row scrolls sideways out to the screen edge (through the page gutter)
+                rather than being cut off; the arrow keys move focus by script, which browsers do
+                not scroll into a part-hidden spot, so focus brings the whole option into view. */}
             <div
               onFocus={(e) => {
                 e.target.scrollIntoView({ block: 'nearest', inline: 'nearest' })
               }}
               data-scroll-x=""
-              className="no-scrollbar flex-1 overflow-x-auto max-md:-mx-4 max-md:px-4 max-[359px]:scroll-pr-5 max-[359px]:[-webkit-mask-image:linear-gradient(to_right,#000_calc(100%-16px),transparent)] max-[359px]:[mask-image:linear-gradient(to_right,#000_calc(100%-16px),transparent)] max-[389px]:[&_[role=radio]]:px-2.5"
+              className="no-scrollbar flex-1 overflow-x-auto max-md:-mx-4 max-md:px-4 max-[359px]:[&_[role=radio]]:px-1 min-[360px]:max-[389px]:[&_[role=radio]]:px-2.5 max-[359px]:[&_[role=radiogroup]]:gap-0"
             >
               <Segmented<Range>
                 value={tappedRange ?? range}

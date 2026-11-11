@@ -65,7 +65,9 @@ export function SmartInput({
     () => parseExpense(value, { categories, now: keyToLocalNoon(today) }),
     [value, categories, today],
   )
-  // A category typed after the amount, else the app's pick from past entries.
+  // Shown before the add: a category typed after the amount, else the app's pick from past
+  // entries. Only the typed one is sent with the add: the engine makes the same pick itself
+  // (one matcher, one place that decides), and the Add sheet marks it as its suggestion.
   const learned = useLearnedCategory(parsed.itemName)
   const category = parsed.suggestedCategory ?? learned ?? undefined
   const amount = parsed.amount !== null && parsed.amount > 0 ? parsed.amount : null
@@ -120,7 +122,7 @@ export function SmartInput({
       {
         itemName: parsed.itemName,
         amount,
-        category,
+        category: parsed.suggestedCategory,
         day: parsed.parsedDate,
       },
       (added) =>
@@ -280,7 +282,7 @@ export function SmartInput({
               ? {
                   itemName: parsed.itemName,
                   amount: parsed.amount ?? undefined,
-                  category,
+                  category: parsed.suggestedCategory,
                   date: parsed.parsedDate ?? today,
                 }
               : undefined
