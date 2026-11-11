@@ -5,12 +5,7 @@ import { InlineConfirm } from '../../ui/InlineConfirm'
 import { useInlineConfirm } from '../../hooks/useInlineConfirm'
 import { useToast } from '../../hooks/useToast'
 import { announce } from '../../ui/announce'
-import {
-  UNDO_TOO_LATE,
-  isOwnRow,
-  undoOutcomeMessage,
-  useExpenseStore,
-} from '../../stores/useExpenseStore'
+import { isOwnRow, undoAction, useExpenseStore } from '../../stores/useExpenseStore'
 import { useSyncStore } from '../../stores/useSyncStore'
 import { TypedConfirm } from './TypedConfirm'
 
@@ -71,18 +66,10 @@ export function ClearData({ onDownloadBackup }: { onDownloadBackup: () => void }
       action:
         undoId === null
           ? undefined
-          : {
-              label: 'Undo',
-              onClick: () => {
-                const outcome = useExpenseStore.getState().consumeUndo(undoId)
-                if (outcome === null) {
-                  toast.info(UNDO_TOO_LATE)
-                  return
-                }
-                if (outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
-                else toast.success(`Restored ${entries(outcome.applied)}`)
-              },
-            },
+          : undoAction(toast, undoId, (outcome) => {
+              // The ledger filling again may be off screen (Settings is open over it): said.
+              if (outcome.skipped === 0) toast.success(`Restored ${entries(outcome.applied)}`)
+            }),
     })
     confirm.close()
   }

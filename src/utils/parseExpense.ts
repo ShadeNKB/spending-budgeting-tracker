@@ -1,11 +1,10 @@
-import Fuse from 'fuse.js/basic'
 import { format } from 'date-fns'
 
 export interface ParsedExpense {
   itemName: string
   amount: number | null
+  /** A category word typed after the amount ("lunch 8.5 food"). */
   suggestedCategory?: string
-  confidence?: number
   parsedDate?: string // the day to store, yyyy-MM-dd; undefined = no date in the text (today)
   raw: string
 }
@@ -15,12 +14,6 @@ export interface ParseContext {
   readonly categories?: readonly string[]
   /** The clock "today" is read from. Defaults to the current time. */
   readonly now?: Date
-  /**
-   * The app's own category pick for an item name (the store's `getSmartCategory`), so the quick
-   * bar and the palette suggest what the Add sheet and the add itself would pick (F-044). Without
-   * it, the learned mappings passed in are matched here.
-   */
-  readonly learned?: (itemName: string) => string | null
 }
 
 /*
@@ -42,7 +35,8 @@ export interface ParseContext {
  *    a place ("blk 123", "bus 190", "junction 8") and a year after a month word ("18 oct 2026",
  *    "dec 2025"; 19xx/20xx within ten years of today) are never the amount. The day of a day-month phrase that is not
  *    a date is the amount only when no other number can be.
- * 5. Learned mappings are read through own keys only, so "constructor" or "__proto__" never match.
+ * 5. A suggested category is one typed after the amount, nothing else: what was learned from
+ *    past entries is the app's to match (`useLearnedCategory`), never the parser's (F-044).
  */
 
 interface Token {
@@ -566,153 +560,9 @@ function categoryIndex(categories: readonly string[]): ReadonlyMap<string, strin
   return index
 }
 
-// ─── learned mappings ────────────────────────────────────────────────────────
-
-/*
- * The fuzzy fallback returns exactly the top hit of `new Fuse(Object.keys(mappings), { threshold:
- * 0.4 }).search(item)` (same key, same score; a seeded test checks this against Fuse) without
- * running Fuse's bitap over every key on every keystroke:
- *
- * - Fuse accepts a key only when part of it is within `floor(0.4 × length)` edits of the query
- *   (score = edits / length + start / 100 ≤ 0.4). Myers' bit-vector algorithm gives the fewest
- *   edits against any part of a key in one pass, which rules most keys out and gives a floor for
- *   the rest. Queries longer than Fuse's 32-character word are not pruned.
- * - The rest are scored best-first with `Fuse.match` (the same bitap) and Fuse's field-length norm
- *   (`score ^ (1 / √words)`), stopping once no remaining key can beat the best. Ties keep the
- *   earlier key, as Fuse does.
- */
-
-interface MappingKey {
-  readonly key: string
-  readonly lower: string
-  readonly norm: number
-}
-
-const FUSE_THRESHOLD = 0.4
-const FUSE_MAX_PATTERN = 32
-const FUSE_OPTIONS = { threshold: FUSE_THRESHOLD }
-
-const mappingKeysCache = new WeakMap<Readonly<Record<string, string>>, readonly MappingKey[]>()
-// Myers' match masks: bit i is set for the query's i-th character, by UTF-16 code unit. 256 KB,
-// so it is allocated on the first fuzzy lookup rather than when the app loads.
-let queryMasks: Int32Array | null = null
-
-/** Fuse's field-length norm: 1 / √(word count), words split on runs of spaces, 3 decimals. */
-function fuseNorm(text: string): number {
-  return Math.round(1000 / Math.sqrt(text.split(/ +/).length)) / 1000
-}
-
-function mappingKeys(mappings: Readonly<Record<string, string>>): readonly MappingKey[] {
-  let keys = mappingKeysCache.get(mappings)
-  if (!keys) {
-    keys = Object.keys(mappings).map((key) => {
-      const lower = key.toLowerCase()
-      return { key, lower, norm: fuseNorm(lower) }
-    })
-    mappingKeysCache.set(mappings, keys)
-  }
-  return keys
-}
-
-/** Fewest edits between the query loaded in `masks` (length 1-32) and any part of `text`. */
-function fewestEdits(masks: Int32Array, text: string, length: number): number {
-  const last = 1 << (length - 1)
-  let pv = -1
-  let mv = 0
-  let edits = length
-  let fewest = length
-  for (let j = 0; j < text.length; j++) {
-    const eq = masks[text.charCodeAt(j)] ?? 0
-    const xv = eq | mv
-    const xh = (((eq & pv) + pv) ^ pv) | eq
-    let ph = mv | ~(xh | pv)
-    let mh = pv & xh
-    if (ph & last) edits++
-    else if (mh & last) edits--
-    fewest = Math.min(fewest, edits)
-    ph <<= 1
-    mh <<= 1
-    pv = mh | ~(xv | ph)
-    mv = ph & xv
-  }
-  return fewest
-}
-
-/** The lowest final score Fuse could give this key, or null when Fuse cannot match it. */
-function scoreFloor(
-  masks: Int32Array,
-  entry: MappingKey,
-  query: string,
-  maxEdits: number,
-): number | null {
-  if (entry.lower === query || query.length > FUSE_MAX_PATTERN) return 0
-  const edits = fewestEdits(masks, entry.lower, query.length)
-  if (edits > maxEdits) return null
-  if (maxEdits > 0) return Math.pow(Math.max(0.001, edits / query.length), entry.norm)
-  // One or two characters allow no edits: Fuse scores the first exact occurrence by its start.
-  const start = entry.lower.indexOf(query) / 100
-  return start > FUSE_THRESHOLD ? null : Math.pow(Math.max(0.001, start), entry.norm)
-}
-
-function closestMappingKey(
-  keys: readonly MappingKey[],
-  query: string,
-): { key: string; score: number } | null {
-  const maxEdits = Math.floor(query.length * FUSE_THRESHOLD)
-  const candidates: { entry: MappingKey; order: number; floor: number }[] = []
-  const loaded = query.length <= FUSE_MAX_PATTERN
-  const masks = (queryMasks ??= new Int32Array(65536))
-  try {
-    if (loaded) {
-      for (let i = 0; i < query.length; i++) {
-        const c = query.charCodeAt(i)
-        masks[c] = (masks[c] ?? 0) | (1 << i)
-      }
-    }
-    keys.forEach((entry, order) => {
-      const floor = scoreFloor(masks, entry, query, maxEdits)
-      if (floor !== null) candidates.push({ entry, order, floor })
-    })
-  } finally {
-    if (loaded) for (let i = 0; i < query.length; i++) masks[query.charCodeAt(i)] = 0
-  }
-
-  candidates.sort((a, b) => a.floor - b.floor || a.order - b.order)
-  let best: { key: string; score: number; order: number } | null = null
-  for (const { entry, order, floor } of candidates) {
-    if (best && (floor > best.score || (floor === best.score && order > best.order))) break
-    const match = Fuse.match(query, entry.key, FUSE_OPTIONS)
-    if (!match.isMatch) continue
-    const score = Math.pow(match.score, entry.norm)
-    if (!best || score < best.score || (score === best.score && order < best.order)) {
-      best = { key: entry.key, score, order }
-    }
-  }
-  return best
-}
-
-function learnedCategory(
-  item: string,
-  mappings: Readonly<Record<string, string>>,
-): { category: string; confidence: number } | null {
-  const lower = item.toLowerCase()
-  if (Object.hasOwn(mappings, lower)) {
-    const exact = mappings[lower]
-    if (typeof exact === 'string') return { category: exact, confidence: 1 }
-  }
-
-  const hit = closestMappingKey(mappingKeys(mappings), lower)
-  const category = hit ? mappings[hit.key] : undefined
-  return hit && typeof category === 'string' ? { category, confidence: 1 - hit.score } : null
-}
-
 // ─── parse ───────────────────────────────────────────────────────────────────
 
-export function parseExpense(
-  raw: string,
-  mappings: Readonly<Record<string, string>>,
-  ctx: ParseContext = {},
-): ParsedExpense {
+export function parseExpense(raw: string, ctx: ParseContext = {}): ParsedExpense {
   const text = raw.trim()
   const result: ParsedExpense = { itemName: '', amount: null, raw: text }
   if (!text) return result
@@ -759,7 +609,6 @@ export function parseExpense(
         : undefined
     if (category === undefined) break
     result.suggestedCategory = category
-    result.confidence = 1
     item.pop()
   }
 
@@ -769,17 +618,6 @@ export function parseExpense(
     .replace(/[,;:]+$/, '')
   if (!result.itemName || result.suggestedCategory !== undefined) return result
 
-  const picked = ctx.learned?.(result.itemName)
-  const learned =
-    ctx.learned === undefined
-      ? learnedCategory(result.itemName, mappings)
-      : picked === null || picked === undefined
-        ? null
-        : { category: picked, confidence: 1 }
-  if (learned) {
-    result.suggestedCategory = learned.category
-    result.confidence = learned.confidence
-  }
   return result
 }
 

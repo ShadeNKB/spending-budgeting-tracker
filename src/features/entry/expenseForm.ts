@@ -1,7 +1,8 @@
 import { colorFromString } from '../../lib/analytics'
 import { MAX_AMOUNT, isAmountTooLarge } from '../../utils/amountGuard'
 import type { useToast } from '../../hooks/useToast'
-import { useExpenseStore, type LocalStatus } from '../../stores/useExpenseStore'
+import { undoAction, useExpenseStore, type LocalStatus } from '../../stores/useExpenseStore'
+import type { ExpenseView } from '../../types'
 
 /** The two fields both expense sheets check before saving, as typed. */
 export interface ExpenseFormValues {
@@ -75,6 +76,44 @@ export function confirmAdded(
   const note = unsavedNote(useExpenseStore.getState().saveNow())
   if (note === null) toast.success(message, opts)
   else toast.warning(`${message} · ${note}`, opts)
+}
+
+/**
+ * The category an entry named `itemName` is filed under when none is given: the app's pick from
+ * past entries, from the one matcher the add itself uses (F-044). The quick bar, the palette and
+ * the Add sheet all show it before the add. It follows what the app learns: the component
+ * renders again when the learned picks change.
+ */
+export function useLearnedCategory(itemName: string): string | null {
+  useExpenseStore((s) => s.categoryMappings)
+  const name = itemName.trim()
+  return name === '' ? null : useExpenseStore.getState().getSmartCategory(name)
+}
+
+/**
+ * The one way the UI adds an entry (F-044): the store's add, the tick, and the confirmation with
+ * its Undo, for the quick bar, the palette and the Add sheet alike. Null when the store refused
+ * it: that is said in a toast, and the caller keeps what was typed.
+ */
+export function addAndConfirm(
+  toast: ToastApi,
+  vibrate: (pattern: number) => void,
+  input: Parameters<ReturnType<typeof useExpenseStore.getState>['addExpense']>[0],
+  message: (created: ExpenseView) => string,
+  onAdded?: (created: ExpenseView) => void,
+): ExpenseView | null {
+  let created: ExpenseView
+  try {
+    created = useExpenseStore.getState().addExpense(input)
+  } catch (err) {
+    toast.error(actionErrorMessage(err))
+    return null
+  }
+  vibrate(10)
+  onAdded?.(created)
+  const undoId = `add-${created.id}`
+  confirmAdded(toast, message(created), { undoId, action: undoAction(toast, undoId) })
+  return created
 }
 
 /**

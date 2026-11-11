@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { format } from 'date-fns'
-import Fuse from 'fuse.js/basic'
 import { DEFAULT_CATEGORIES } from '../constants'
 import { parseExpense, quickAddDateLabel } from './parseExpense'
 
@@ -9,39 +8,34 @@ describe('parseExpense', () => {
     vi.useRealTimers()
   })
 
-  it('extracts item, amount, learned category, and yesterday date', () => {
+  it('extracts item, amount and yesterday date', () => {
     vi.setSystemTime(new Date('2026-05-01T12:00:00'))
 
-    const parsed = parseExpense('coffee 4.50 yesterday', {
-      coffee: 'Food & Drink',
-    })
+    const parsed = parseExpense('coffee 4.50 yesterday')
 
     expect(parsed).toMatchObject({
       itemName: 'coffee',
       amount: 4.5,
-      suggestedCategory: 'Food & Drink',
-      confidence: 1,
       parsedDate: '2026-04-30',
     })
   })
 
   it('returns an incomplete result for empty input', () => {
-    expect(parseExpense('   ', {})).toEqual({
+    expect(parseExpense('   ')).toEqual({
       itemName: '',
       amount: null,
       raw: '',
     })
   })
 
-  it('keeps uncategorized parsed entries usable when no mapping matches', () => {
-    const parsed = parseExpense('spotify premium 15', {
-      coffee: 'Food & Drink',
-    })
+  // What was learned from past entries is the app's to match, with the one matcher (F-044):
+  // useLearnedCategory, over the engine's smartCategory.
+  it('suggests no category of its own for a plain entry', () => {
+    const parsed = parseExpense('spotify premium 15')
 
     expect(parsed.itemName).toBe('spotify premium')
     expect(parsed.amount).toBe(15)
     expect(parsed.suggestedCategory).toBeUndefined()
-    expect(parsed.confidence).toBeUndefined()
   })
 })
 
@@ -51,93 +45,47 @@ const todayKey = (now: Date) => format(now, 'yyyy-MM-dd')
 
 describe('parseExpense — context and categories', () => {
   it('uses ctx.now instead of the system clock', () => {
-    const parsed = parseExpense('grab 12 yesterday', {}, { now: new Date(2027, 0, 1, 0, 5) })
+    const parsed = parseExpense('grab 12 yesterday', { now: new Date(2027, 0, 1, 0, 5) })
     expect(parsed.parsedDate).toBe('2026-12-31')
   })
 
   it('reads a trailing category word only when categories are given', () => {
-    expect(parseExpense('lunch 8.5 food', {}, { now: NOW }).itemName).toBe('lunch food')
-    const withCategories = parseExpense('lunch 8.5 food', {}, { now: NOW, categories: ['Food'] })
+    expect(parseExpense('lunch 8.5 food', { now: NOW }).itemName).toBe('lunch food')
+    const withCategories = parseExpense('lunch 8.5 food', { now: NOW, categories: ['Food'] })
     expect(withCategories).toMatchObject({
       itemName: 'lunch',
       suggestedCategory: 'Food',
-      confidence: 1,
     })
   })
 
   it('maps an alias only to a category the user has', () => {
     const ctx = { now: NOW, categories: ['Food & Dining', 'Other'] }
-    expect(parseExpense('grab 15 transport', {}, ctx)).toMatchObject({
+    expect(parseExpense('grab 15 transport', ctx)).toMatchObject({
       itemName: 'grab transport',
       amount: 15,
     })
-    expect(parseExpense('grab 15 transport', {}, ctx).suggestedCategory).toBeUndefined()
-    expect(parseExpense('cold storage 30 groceries', {}, ctx).suggestedCategory).toBe(
-      'Food & Dining',
-    )
+    expect(parseExpense('grab 15 transport', ctx).suggestedCategory).toBeUndefined()
+    expect(parseExpense('cold storage 30 groceries', ctx).suggestedCategory).toBe('Food & Dining')
   })
 
   it('prefers a Groceries category over Food & Dining for the groceries alias', () => {
     const ctx = { now: NOW, categories: ['Food & Dining', 'Groceries'] }
-    expect(parseExpense('fairprice 45 groceries', {}, ctx).suggestedCategory).toBe('Groceries')
+    expect(parseExpense('fairprice 45 groceries', ctx).suggestedCategory).toBe('Groceries')
   })
 
   it('ignores a first word shared by two categories', () => {
     const ctx = { now: NOW, categories: ['Food & Dining', 'Food Delivery'] }
-    expect(parseExpense('lunch 8 food', {}, ctx)).toMatchObject({ itemName: 'lunch food' })
+    expect(parseExpense('lunch 8 food', ctx)).toMatchObject({ itemName: 'lunch food' })
   })
 
-  it('lets an explicit category word win over a learned mapping', () => {
-    const parsed = parseExpense(
-      'coffee 4 shopping',
-      { coffee: 'Food & Dining' },
-      { now: NOW, categories: DEFAULT_CATEGORIES },
-    )
+  it('takes a category word typed after the amount as the category', () => {
+    const parsed = parseExpense('coffee 4 shopping', { now: NOW, categories: DEFAULT_CATEGORIES })
     expect(parsed).toMatchObject({ itemName: 'coffee', suggestedCategory: 'Shopping' })
-  })
-
-  it('still suggests a fuzzy learned category', () => {
-    const parsed = parseExpense('coffe 4', { coffee: 'Food & Dining' }, { now: NOW })
-    expect(parsed.suggestedCategory).toBe('Food & Dining')
-    expect(parsed.confidence).toBeGreaterThan(0)
-    expect(parsed.confidence).toBeLessThan(1)
-  })
-
-  it('rebuilds the fuzzy index when the mappings object changes', () => {
-    expect(parseExpense('kopi-o 2', {}, { now: NOW }).suggestedCategory).toBeUndefined()
-    expect(
-      parseExpense('kopi-o 2', { 'kopi o': 'Food & Dining' }, { now: NOW }).suggestedCategory,
-    ).toBe('Food & Dining')
-  })
-})
-
-describe("parseExpense — the app's own pick (F-044)", () => {
-  it('takes the category from ctx.learned, not from its own match of the mappings', () => {
-    const learned = vi.fn((name: string) => (name === 'grab home' ? 'Transportation' : null))
-    const parsed = parseExpense('grab home 12.40', { 'grab home': 'Travel' }, { learned })
-    expect(parsed).toMatchObject({ itemName: 'grab home', suggestedCategory: 'Transportation' })
-    expect(learned).toHaveBeenCalledWith('grab home')
-  })
-
-  it('suggests nothing when ctx.learned has no pick, whatever the mappings say', () => {
-    const parsed = parseExpense(
-      'grab home 12.40',
-      { 'grab home': 'Travel' },
-      { learned: () => null },
-    )
-    expect(parsed.suggestedCategory).toBeUndefined()
-  })
-
-  it('a category word typed after the amount still wins, without asking', () => {
-    const learned = vi.fn(() => 'Travel')
-    const parsed = parseExpense('lunch 8.50 food', {}, { categories: DEFAULT_CATEGORIES, learned })
-    expect(parsed.suggestedCategory).toBe('Food & Dining')
-    expect(learned).not.toHaveBeenCalled()
   })
 })
 
 describe('parseExpense — day and month without a year', () => {
-  const parse = (input: string, now: Date) => parseExpense(input, {}, { now })
+  const parse = (input: string, now: Date) => parseExpense(input, { now })
 
   it('reads a day up to a month ahead as a plan, not last year (31 days is the edge)', () => {
     const now = new Date(2026, 9, 18, 9, 30) // Sun 18 Oct 2026
@@ -170,7 +118,7 @@ describe('parseExpense — day and month without a year', () => {
 })
 
 describe('quick-add dates', () => {
-  const parse = (input: string, now: Date) => parseExpense(input, {}, { now })
+  const parse = (input: string, now: Date) => parseExpense(input, { now })
 
   // The quick add stores `parsedDate` as the entry's day (P2-2); undefined means today, which
   // the store fills in from the device clock.
@@ -200,36 +148,16 @@ describe('parseExpense — prototype keys', () => {
   const NAMES = ['constructor', '__proto__', 'toString', 'hasOwnProperty', 'valueOf']
 
   it.each(NAMES)('treats "%s" as a plain item name', (name) => {
-    const parsed = parseExpense(`${name} 5`, {}, { now: NOW, categories: DEFAULT_CATEGORIES })
+    const parsed = parseExpense(`${name} 5`, { now: NOW, categories: DEFAULT_CATEGORIES })
     expect(parsed.itemName).toBe(name)
     expect(parsed.amount).toBe(5)
     expect(parsed.suggestedCategory).toBeUndefined()
   })
 
-  it.each(NAMES)('never reads "%s" from a mappings prototype', (name) => {
-    const parsed = parseExpense(`${name} 5`, { coffee: 'Food & Dining' }, { now: NOW })
-    expect(
-      parsed.suggestedCategory === undefined || parsed.suggestedCategory === 'Food & Dining',
-    ).toBe(true)
-  })
-
   it.each(NAMES)('never reads "%s" as a trailing category', (name) => {
-    const parsed = parseExpense(`lunch 5 ${name}`, {}, { now: NOW, categories: DEFAULT_CATEGORIES })
+    const parsed = parseExpense(`lunch 5 ${name}`, { now: NOW, categories: DEFAULT_CATEGORIES })
     expect(parsed.itemName).toBe(`lunch ${name}`)
     expect(parsed.suggestedCategory).toBeUndefined()
-  })
-
-  it('reads only own mapping keys', () => {
-    const inherited = Object.create({ coffee: 'Inherited' }) as Record<string, string>
-    const parsed = parseExpense('coffee 4', inherited, { now: NOW })
-    expect(parsed.suggestedCategory).toBeUndefined()
-  })
-
-  it('reads an own __proto__ key from parsed JSON', () => {
-    const mappings = JSON.parse('{"__proto__": "Food & Dining"}') as Record<string, string>
-    expect(parseExpense('__proto__ 5', mappings, { now: NOW }).suggestedCategory).toBe(
-      'Food & Dining',
-    )
   })
 })
 
@@ -332,14 +260,10 @@ describe('parseExpense — properties (seeded)', () => {
       const tokens = [...words]
       tokens.splice(Math.floor(rand() * (words.length + 1)), 0, number)
       const input = tokens.join(' ')
-      const parsed = parseExpense(
-        input,
-        {},
-        {
-          now: randomClock(rand),
-          categories: DEFAULT_CATEGORIES,
-        },
-      )
+      const parsed = parseExpense(input, {
+        now: randomClock(rand),
+        categories: DEFAULT_CATEGORIES,
+      })
       expect({ input, amount: parsed.amount, item: parsed.itemName }).toEqual({
         input,
         amount: Number(number),
@@ -402,7 +326,7 @@ describe('parseExpense — properties (seeded)', () => {
                 : `${String(day.getDate())} ${monthWords[day.getMonth()] ?? ''}`
       }
       const input = `${words.join(' ')} ${money} ${tail}`
-      const parsed = parseExpense(input, {}, { now, categories: DEFAULT_CATEGORIES })
+      const parsed = parseExpense(input, { now, categories: DEFAULT_CATEGORIES })
       expect({
         input,
         amount: parsed.amount,
@@ -459,7 +383,7 @@ describe('parseExpense — properties (seeded)', () => {
       const input = Array.from({ length: 1 + Math.floor(rand() * 6) }, () => pick(rand, pool)).join(
         ' ',
       )
-      const parsed = parseExpense(input, {}, { now, categories: DEFAULT_CATEGORIES })
+      const parsed = parseExpense(input, { now, categories: DEFAULT_CATEGORIES })
       if (parsed.parsedDate !== undefined) {
         const [y = 0, m = 0, d = 0] = parsed.parsedDate.split('-').map(Number)
         expect({ input, date: format(new Date(y, m - 1, d, 12), 'yyyy-MM-dd') }).toEqual({
@@ -476,105 +400,5 @@ describe('parseExpense — properties (seeded)', () => {
         expect(Math.round(parsed.amount * 100) / 100).toBe(parsed.amount)
       }
     }
-  })
-})
-
-describe('parseExpense — learned-category fuzzy match', () => {
-  it('suggests exactly what a full Fuse search would (1,500 seeded queries)', () => {
-    const rand = mulberry32(0xf0e5)
-    const words = [
-      'chicken',
-      'rice',
-      'kopi',
-      'o',
-      'kosong',
-      'teh',
-      'grab',
-      'laksa',
-      'mala',
-      'sushi',
-    ]
-    const more = ['fairprice', 'netflix', 'Haircut', 'bubble', 'tea', 'toast', 'noodles', 'mrt']
-    const vocabulary = [...words, ...more]
-    const mappings: Record<string, string> = {}
-    const keys: string[] = []
-    while (keys.length < 300) {
-      const key = Array.from({ length: 1 + Math.floor(rand() * 3) }, () =>
-        pick(rand, vocabulary),
-      ).join(rand() < 0.1 ? '  ' : ' ')
-      if (Object.hasOwn(mappings, key)) continue
-      mappings[key] = `category ${String(keys.length)}`
-      keys.push(key)
-    }
-    const fuse = new Fuse(keys, { threshold: 0.4, includeScore: true })
-    const letters = 'abcdefghijklmnopqrstuvwxyz '
-    for (let i = 0; i < 1500; i++) {
-      let query = Array.from({ length: 1 + Math.floor(rand() * 4) }, () =>
-        pick(rand, vocabulary),
-      ).join(' ')
-      for (let edits = Math.floor(rand() * 5); edits > 0; edits--) {
-        const at = Math.floor(rand() * query.length)
-        const letter = letters[Math.floor(rand() * letters.length)] ?? ''
-        const kind = rand()
-        query =
-          kind < 0.33
-            ? query.slice(0, at) + query.slice(at + 1)
-            : kind < 0.66
-              ? query.slice(0, at) + letter + query.slice(at)
-              : query.slice(0, at) + letter + query.slice(at + 1)
-      }
-      if (rand() < 0.02) query = query.repeat(4)
-      if (rand() < 0.15) query = query.slice(0, 1 + Math.floor(rand() * 3))
-      const parsed = parseExpense(query, mappings, { now: NOW })
-      const item = parsed.itemName
-      if (!item || Object.hasOwn(mappings, item.toLowerCase())) continue
-
-      const expected = fuse.search(item.toLowerCase())[0]
-      expect({ item, category: parsed.suggestedCategory, confidence: parsed.confidence }).toEqual({
-        item,
-        category: expected ? mappings[expected.item] : undefined,
-        confidence: expected ? 1 - (expected.score ?? 0) : undefined,
-      })
-    }
-  }, 30_000)
-})
-
-describe('parseExpense — performance', () => {
-  // AC-22 reports a warm keystroke under 1 ms (about 0.3 ms on a dev machine). The guard is
-  // relative so a loaded CI box cannot fail it: each keystroke is timed next to a plain Fuse
-  // search over the same 2,000 names (what a parser without the pruning would pay, about 20x
-  // more), and the median parse must stay at least 4x cheaper.
-  it('parses a keystroke far faster than a full fuzzy search (2,000 learned names, no exact hit)', () => {
-    const rand = mulberry32(0xbea7)
-    const vocabulary = [...PLAIN_WORDS, 'noodles', 'fishball', 'hotpot', 'sushi', 'ramen', 'ntuc']
-    const mappings: Record<string, string> = {}
-    while (Object.keys(mappings).length < 2000) {
-      const words = Array.from({ length: 1 + Math.floor(rand() * 3) }, () => pick(rand, vocabulary))
-      if (rand() < 0.3) words.push(String(Math.floor(rand() * 100)))
-      mappings[words.join(' ')] = pick(rand, DEFAULT_CATEGORIES)
-    }
-    const ctx = { now: NOW, categories: DEFAULT_CATEGORIES }
-    const fuse = new Fuse(Object.keys(mappings), { threshold: 0.4 })
-    parseExpense('warm up 1', mappings, ctx)
-    fuse.search('warm up')
-
-    // Typed one keystroke at a time; none of the item names is a learned mapping.
-    const keystrokes = [
-      'chicken rce 4.50',
-      'kopi o kosong peng 1.90',
-      'zq lunch set 12 8.50',
-    ].flatMap((text) => Array.from({ length: text.length }, (_, i) => text.slice(0, i + 1)))
-    const parse: number[] = []
-    const search: number[] = []
-    for (const input of keystrokes) {
-      const t0 = performance.now()
-      const { itemName } = parseExpense(input, mappings, ctx)
-      parse.push(performance.now() - t0)
-      const t1 = performance.now()
-      fuse.search(itemName.toLowerCase())
-      search.push(performance.now() - t1)
-    }
-    const median = (runs: number[]) => runs.sort((a, b) => a - b)[Math.floor(runs.length / 2)] ?? 0
-    expect(median(parse) * 4).toBeLessThan(median(search))
   })
 })

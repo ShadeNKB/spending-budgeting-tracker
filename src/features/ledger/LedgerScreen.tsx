@@ -5,7 +5,7 @@ import { downloadCSV } from '../../lib/download'
 import { expensesToCsv } from '../../lib/csv'
 import { DatePicker } from '../../ui/DatePicker'
 import { format } from 'date-fns'
-import { UNDO_TOO_LATE, undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
+import { undoAction, useExpenseStore } from '../../stores/useExpenseStore'
 import { Segmented } from '../../ui/Segmented'
 import { Input } from '../../ui/Input'
 import { Select } from '../../ui/Select'
@@ -265,17 +265,7 @@ export function LedgerScreen() {
       const undo = deleteUndoId(useExpenseStore.getState().undoStack, id)
       toast.info(`Deleted "${expense.itemName}"`, {
         undoId: undo,
-        action:
-          undo === undefined
-            ? undefined
-            : {
-                label: 'Undo',
-                onClick: () => {
-                  const outcome = useExpenseStore.getState().consumeUndo(undo)
-                  if (outcome === null) toast.info(UNDO_TOO_LATE)
-                  else if (outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
-                },
-              },
+        action: undo === undefined ? undefined : undoAction(toast, undo),
       })
     },
     [toast],

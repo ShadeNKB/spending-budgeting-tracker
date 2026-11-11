@@ -244,7 +244,7 @@ const ON_SAT_2_JAN_2027: Row[] = [
 ]
 
 function check(row: Row, now: Date) {
-  const parsed = parseExpense(row.input, {}, { categories: DEFAULT_CATEGORIES, now })
+  const parsed = parseExpense(row.input, { categories: DEFAULT_CATEGORIES, now })
   expect({
     item: parsed.itemName,
     amount: parsed.amount,

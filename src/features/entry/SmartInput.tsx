@@ -8,13 +8,7 @@ import {
   isUnusualAmount,
   type AmountConfirmation,
 } from '../../utils/amountGuard'
-import {
-  NOT_STARTED,
-  UNDO_TOO_LATE,
-  undoOutcomeMessage,
-  useExpenseStore,
-  whenReady,
-} from '../../stores/useExpenseStore'
+import { NOT_STARTED, useExpenseStore, whenReady } from '../../stores/useExpenseStore'
 import { useToast } from '../../hooks/useToast'
 import { useHaptic } from '../../hooks/useHaptic'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
@@ -24,8 +18,7 @@ import { Pill } from '../../ui/Pill'
 import { colorFromString } from '../../lib/analytics'
 import { importWithReload } from '../../lib/chunkReload'
 import { OverlaySlot } from '../../app/OverlaySlot'
-import { actionErrorMessage, confirmAdded } from './expenseForm'
-import type { ExpenseView } from '../../types'
+import { addAndConfirm, useLearnedCategory } from './expenseForm'
 
 // SmartInput is on screen at boot (in the header and on Pulse), so its full-entry sheet only
 // mounts on the first tap: a lazy component rendered at boot would fetch the sheet and the
@@ -57,7 +50,6 @@ export function SmartInput({
   const inputRef = useRef<HTMLInputElement>(null)
   // Set by a commit, cleared by typing: a second Enter or tap before the text changes adds nothing.
   const committedRef = useRef(false)
-  const categoryMappings = useExpenseStore((s) => s.categoryMappings)
   const categories = useExpenseStore((s) => s.categories)
   const toast = useToast()
   const vibrate = useHaptic()
@@ -70,14 +62,12 @@ export function SmartInput({
   }, [autoFocus])
 
   const parsed = useMemo(
-    () =>
-      parseExpense(value, categoryMappings, {
-        categories,
-        now: keyToLocalNoon(today),
-        learned: (name) => useExpenseStore.getState().getSmartCategory(name),
-      }),
-    [value, categoryMappings, categories, today],
+    () => parseExpense(value, { categories, now: keyToLocalNoon(today) }),
+    [value, categories, today],
   )
+  // A category typed after the amount, else the app's pick from past entries.
+  const learned = useLearnedCategory(parsed.itemName)
+  const category = parsed.suggestedCategory ?? learned ?? undefined
   const amount = parsed.amount !== null && parsed.amount > 0 ? parsed.amount : null
   const tooLarge = amount !== null && isAmountTooLarge(amount)
   const canCommit = parsed.itemName !== '' && amount !== null && !tooLarge
@@ -123,41 +113,22 @@ export function SmartInput({
       vibrate([10, 60, 10])
       return
     }
-    let created: ExpenseView
-    try {
+    const created = addAndConfirm(
+      toast,
+      vibrate,
       // No date in the text: the store files it under today's local day (P2-2).
-      created = useExpenseStore.getState().addExpense({
+      {
         itemName: parsed.itemName,
         amount,
-        category: parsed.suggestedCategory,
+        category,
         day: parsed.parsedDate,
-      })
-    } catch (err) {
-      // The text stays, so the owner can fix what the message names.
-      toast.error(actionErrorMessage(err))
-      return
-    }
-    committedRef.current = true
-    vibrate(10)
-    const undoId = `add-${created.id}`
-    confirmAdded(
-      toast,
-      `Added "${created.itemName}" · ${fmt(created.amount)}${parsedDateLabel ? ` · ${parsedDateLabel}` : ''}`,
-      {
-        undoId,
-        action: {
-          label: 'Undo',
-          onClick: () => {
-            const outcome = useExpenseStore.getState().consumeUndo(undoId)
-            if (outcome === null) toast.info(UNDO_TOO_LATE)
-            else if (outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
-          },
-        },
       },
+      (added) =>
+        `Added "${added.itemName}" · ${fmt(added.amount)}${parsedDateLabel ? ` · ${parsedDateLabel}` : ''}`,
     )
-    setTimeout(() => {
-      useExpenseStore.getState().clearUndo(undoId)
-    }, 6000)
+    // Refused: the text stays, so the owner can fix what the message names.
+    if (created === null) return
+    committedRef.current = true
     setValue('')
     setFlagged(null)
     onCommit?.()
@@ -279,13 +250,13 @@ export function SmartInput({
                 <AlertTriangle size={10} /> Large amount — confirm to add
               </Pill>
             )}
-            {parsed.suggestedCategory && (
+            {category && (
               <Pill tone="info">
                 <span
                   className="mr-0.5 inline-block h-1.5 w-1.5 rounded-full"
-                  style={{ background: colorFromString(parsed.suggestedCategory) }}
+                  style={{ background: colorFromString(category) }}
                 />
-                {parsed.suggestedCategory}
+                {category}
               </Pill>
             )}
             {parsedDateLabel && (
@@ -309,7 +280,7 @@ export function SmartInput({
               ? {
                   itemName: parsed.itemName,
                   amount: parsed.amount ?? undefined,
-                  category: parsed.suggestedCategory,
+                  category,
                   date: parsed.parsedDate ?? today,
                 }
               : undefined

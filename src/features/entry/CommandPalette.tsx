@@ -17,7 +17,7 @@ import {
 import clsx from 'clsx'
 import Fuse from 'fuse.js/basic'
 import { useUIStore } from '../../stores/useUIStore'
-import { UNDO_TOO_LATE, undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
+import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { downloadJSON } from '../../lib/download'
 import { format as fmtDate } from 'date-fns'
@@ -38,7 +38,7 @@ import { LayerAnnouncer } from '../../ui/LayerAnnouncer'
 import { useHeldWhileClosing, usePresence } from '../../ui/usePresence'
 import { announce, retract } from '../../ui/announce'
 import { shieldKeyGesture } from '../../ui/pressShield'
-import { actionErrorMessage, confirmAdded } from './expenseForm'
+import { addAndConfirm, useLearnedCategory } from './expenseForm'
 import { ledgerEntryHref } from '../ledger/ledgerParams'
 import type { ExpenseView } from '../../types'
 
@@ -139,7 +139,6 @@ export function CommandPalette() {
   const setAddSheetOpen = useUIStore((s) => s.setAddSheetOpen)
   const navigate = useNavigate()
   const expenses = useExpenseStore((s) => s.expenses)
-  const categoryMappings = useExpenseStore((s) => s.categoryMappings)
   const categories = useExpenseStore((s) => s.categories)
   const toast = useToast()
   const vibrate = useHaptic()
@@ -186,14 +185,12 @@ export function CommandPalette() {
   })
 
   const parsedQuery = useMemo(
-    () =>
-      parseExpense(query, categoryMappings, {
-        categories,
-        now: keyToLocalNoon(today),
-        learned: (name) => useExpenseStore.getState().getSmartCategory(name),
-      }),
-    [query, categoryMappings, categories, today],
+    () => parseExpense(query, { categories, now: keyToLocalNoon(today) }),
+    [query, categories, today],
   )
+  // A category typed after the amount, else the app's pick from past entries.
+  const learned = useLearnedCategory(parsedQuery.itemName)
+  const quickAddCategory = parsedQuery.suggestedCategory ?? learned ?? undefined
   const quickAddAmount =
     parsedQuery.itemName !== '' && parsedQuery.amount !== null && parsedQuery.amount > 0
       ? parsedQuery.amount
@@ -204,7 +201,7 @@ export function CommandPalette() {
 
   const quickAddAction: Action | null = useMemo(() => {
     if (quickAddAmount === null || tooLarge) return null
-    const { itemName, suggestedCategory, parsedDate } = parsedQuery
+    const { itemName, parsedDate } = parsedQuery
     const dateLabel = quickAddDateLabel(parsedDate, keyToLocalNoon(today))
     const summary = `"${itemName}" · ${fmt(quickAddAmount)}${dateLabel ? ` · ${dateLabel}` : ''}`
 
@@ -231,38 +228,18 @@ export function CommandPalette() {
       onRun: (at) => {
         // A double tap cannot confirm its own warning.
         if (addedRef.current || (confirming && at - flagged.at < CONFIRM_DELAY_MS)) return
-        let created: ExpenseView
-        try {
-          // No date in the text: the store files it under today's local day (P2-2).
-          created = useExpenseStore.getState().addExpense({
-            itemName,
-            amount: quickAddAmount,
-            category: suggestedCategory,
-            day: parsedDate,
-          })
-        } catch (err) {
-          // The palette stays open on the query, so the owner can fix what the message names.
-          toast.error(actionErrorMessage(err))
-          return
-        }
-        addedRef.current = true
-        vibrate(10)
-        const undoId = `add-${created.id}`
-        confirmAdded(
+        const created = addAndConfirm(
           toast,
-          `Added "${created.itemName}" · ${fmt(created.amount)}${dateLabel ? ` · ${dateLabel}` : ''}`,
-          {
-            undoId,
-            action: {
-              label: 'Undo',
-              onClick: () => {
-                const outcome = useExpenseStore.getState().consumeUndo(undoId)
-                if (outcome === null) toast.info(UNDO_TOO_LATE)
-                else if (outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
-              },
-            },
-          },
+          vibrate,
+          // No date in the text: the store files it under today's local day (P2-2).
+          { itemName, amount: quickAddAmount, category: quickAddCategory, day: parsedDate },
+          (added) =>
+            `Added "${added.itemName}" · ${fmt(added.amount)}${dateLabel ? ` · ${dateLabel}` : ''}`,
         )
+        // Refused: the palette stays open on the query, so the owner can fix what the message
+        // names.
+        if (created === null) return
+        addedRef.current = true
         setQuery('')
         setFlagged(null)
         setOpen(false)
@@ -275,6 +252,7 @@ export function CommandPalette() {
     parsedQuery,
     query,
     quickAddAmount,
+    quickAddCategory,
     setOpen,
     today,
     toast,
