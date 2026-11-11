@@ -13,6 +13,8 @@ import {
   PenLine,
   X,
   AlertTriangle,
+  Keyboard,
+  SunMoon,
 } from 'lucide-react'
 import clsx from 'clsx'
 import Fuse from 'fuse.js/basic'
@@ -47,6 +49,8 @@ type Action = {
   label: string
   hint?: string
   icon: React.ComponentType<{ size?: number; className?: string }>
+  /** Shown only once the query finds it (by its label or these words): the list opens short. */
+  more?: string
   warning?: boolean
   /** Closes the palette itself (quick add, which may wait for a confirming press). */
   selfClosing?: boolean
@@ -55,6 +59,28 @@ type Action = {
 }
 
 const EXPENSE_HITS = 6
+
+/** Settings' sections as palette actions: tab, label, the other words that find it. */
+const SETTINGS_PLACES = [
+  ['categories', 'Categories', 'settings rename merge'],
+  ['budgets', 'Budgets', 'settings limit cap monthly'],
+  ['backup', 'Backup and restore', 'settings import export download recovery'],
+  ['sync', 'Sync', 'settings devices code cloud'],
+] as const
+
+/** Ledger views as palette actions: id, label, the other words that find it, the search. */
+const LEDGER_PLACES = [
+  ['today', 'Ledger: today', 'entries', 'range=today'],
+  ['week', 'Ledger: last 7 days', 'entries week', 'range=week'],
+  ['year', 'Ledger: this year', 'entries', 'range=year'],
+  ['all', 'Ledger: all time', 'entries everything history', 'range=all'],
+  [
+    'other',
+    'Entries without a category',
+    'ledger uncategorised uncategorized other',
+    'range=all&category=Other',
+  ],
+] as const
 
 /**
  * Every option: 44 px tall. The active one (`aria-selected`: what Enter runs) carries a bar in
@@ -137,6 +163,7 @@ export function CommandPalette() {
   const setOpen = useUIStore((s) => s.setPaletteOpen)
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen)
   const setAddSheetOpen = useUIStore((s) => s.setAddSheetOpen)
+  const theme = useUIStore((s) => s.theme)
   const navigate = useNavigate()
   const expenses = useExpenseStore((s) => s.expenses)
   const categories = useExpenseStore((s) => s.categories)
@@ -301,8 +328,48 @@ export function CommandPalette() {
           useExpenseStore.getState().markBackedUp()
         },
       },
+      // Found by typing (F-055): a place in Settings, a Ledger range, the theme. `more` holds
+      // the other words that find each.
+      ...SETTINGS_PLACES.map(
+        ([tab, label, more]): Action => ({
+          id: `settings-${tab}`,
+          label,
+          more,
+          icon: Settings2,
+          onRun: () => {
+            useUIStore.getState().setSettingsTab(tab)
+            setSettingsOpen(true)
+          },
+        }),
+      ),
+      ...LEDGER_PLACES.map(
+        ([id, label, more, search]): Action => ({
+          id: `ledger-${id}`,
+          label,
+          more,
+          icon: ListOrdered,
+          onRun: () => {
+            void navigate(`/ledger?${search}`)
+          },
+        }),
+      ),
+      {
+        id: 'theme',
+        label: theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme',
+        more: 'appearance display mode night',
+        icon: SunMoon,
+        onRun: () => useUIStore.getState().setTheme(theme === 'light' ? 'dark' : 'light'),
+      },
+      {
+        id: 'shortcuts',
+        label: 'Keyboard shortcuts',
+        more: 'keys hotkeys help',
+        hint: '?',
+        icon: Keyboard,
+        onRun: () => useUIStore.getState().setHotkeysOpen(true),
+      },
     ],
-    [navigate, setSettingsOpen, setAddSheetOpen],
+    [navigate, setSettingsOpen, setAddSheetOpen, theme],
   )
 
   const expenseHits = useMemo(
@@ -311,10 +378,13 @@ export function CommandPalette() {
   )
 
   const filteredActions = useMemo(() => {
-    if (quickAddAction) return [quickAddAction, ...actions]
-    if (!query) return actions
-    const q = query.toLowerCase()
-    return actions.filter((a) => a.label.toLowerCase().includes(q))
+    const always = actions.filter((a) => a.more === undefined)
+    if (quickAddAction) return [quickAddAction, ...always]
+    const q = query.trim().toLowerCase()
+    if (!q) return always
+    return actions.filter(
+      (a) => a.label.toLowerCase().includes(q) || (a.more?.includes(q) ?? false),
+    )
   }, [actions, query, quickAddAction])
 
   const totalItems = filteredActions.length + expenseHits.length
