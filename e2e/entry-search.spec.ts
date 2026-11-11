@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test'
 import {
+  RICH,
   dialog,
   isPhone,
   manyRows,
@@ -94,17 +95,27 @@ test('At 320 px the six Ledger ranges show whole, with nothing to scroll (F-110)
   await expect(page.getByRole('radio', { name: 'Custom' })).toHaveAttribute('aria-checked', 'true')
 })
 
-test("On a phone the backup card's two buttons share a row", async ({ page }, testInfo) => {
-  test.skip(!isPhone(testInfo), 'a phone')
-  await seed(page, { expenses: manyRows(30) })
-  await page.goto('/ledger')
-  await waitForApp(page)
-  const download = page.getByRole('button', { name: 'Download a backup' })
-  test.skip((await download.count()) === 0, 'no backup card for this seed')
-  const [a, b] = await Promise.all([
-    download.boundingBox(),
-    page.getByRole('button', { name: 'Later' }).boundingBox(),
-  ])
-  expect(a?.y).toBe(b?.y)
-  expect((b?.x ?? 0) + (b?.width ?? 0)).toBeLessThanOrEqual(page.viewportSize()?.width ?? 0)
-})
+for (const width of [390, 320]) {
+  test(`On a phone the backup card's two buttons share a row, inside the card (${String(width)} px)`, async ({
+    page,
+  }, testInfo) => {
+    test.skip(!isPhone(testInfo), 'a phone')
+    await page.setViewportSize({ width, height: 664 })
+    // A history long enough for the reminder (the card shows once a backup is due).
+    await seed(page, { expenses: RICH })
+    await page.goto('/ledger')
+    await waitForApp(page)
+    const download = page.getByRole('button', { name: 'Download a backup' })
+    await expect(download).toBeVisible()
+    const later = page.getByRole('button', { name: 'Later' })
+    const [a, b] = await Promise.all([download.boundingBox(), later.boundingBox()])
+    expect(a?.y).toBe(b?.y)
+    // Inside the card's own padding, with room to spare.
+    const inside = await later.evaluate((el) => {
+      const row = el.parentElement
+      if (!row) return false
+      return el.getBoundingClientRect().right <= row.getBoundingClientRect().right
+    })
+    expect(inside).toBe(true)
+  })
+}

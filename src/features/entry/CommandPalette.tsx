@@ -19,6 +19,7 @@ import {
 import clsx from 'clsx'
 import Fuse from 'fuse.js/basic'
 import { useUIStore } from '../../stores/useUIStore'
+import { shownTheme } from '../../app/useAppliedTheme'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { downloadJSON } from '../../lib/download'
@@ -163,7 +164,7 @@ export function CommandPalette() {
   const setOpen = useUIStore((s) => s.setPaletteOpen)
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen)
   const setAddSheetOpen = useUIStore((s) => s.setAddSheetOpen)
-  const theme = useUIStore((s) => s.theme)
+  const light = shownTheme(useUIStore((s) => s.theme)) === 'light'
   const navigate = useNavigate()
   const expenses = useExpenseStore((s) => s.expenses)
   const categories = useExpenseStore((s) => s.categories)
@@ -351,11 +352,13 @@ export function CommandPalette() {
         }),
       ),
       {
+        // Named for where it goes from the theme that is showing: on `system` that is the
+        // system's, so on a light phone it offers dark.
         id: 'theme',
-        label: theme === 'light' ? 'Switch to dark theme' : 'Switch to light theme',
+        label: light ? 'Switch to dark theme' : 'Switch to light theme',
         more: 'appearance display mode night',
         icon: SunMoon,
-        onRun: () => useUIStore.getState().setTheme(theme === 'light' ? 'dark' : 'light'),
+        onRun: () => useUIStore.getState().setTheme(light ? 'dark' : 'light'),
       },
       {
         id: 'shortcuts',
@@ -366,7 +369,7 @@ export function CommandPalette() {
         onRun: () => useUIStore.getState().setHotkeysOpen(true),
       },
     ],
-    [navigate, setSettingsOpen, setAddSheetOpen, theme],
+    [navigate, setSettingsOpen, setAddSheetOpen, light],
   )
 
   const expenseHits = useMemo(

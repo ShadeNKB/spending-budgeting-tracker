@@ -60,15 +60,15 @@ export function TodayStrip({ entries, total }: { entries: readonly Expense[]; to
                   {initialOf(e.itemName)}
                 </span>
                 <span className="block min-w-0 flex-1">
-                  <span className="block truncate text-[13px] text-white max-md:text-[14px]">
+                  <span className="block truncate text-[13px] text-white min-[360px]:max-md:text-[14px]">
                     {e.itemName}
                   </span>
-                  <span className="block truncate text-[11px] text-[var(--text-tertiary)] max-md:text-[12px]">
+                  <span className="block truncate text-[11px] text-[var(--text-tertiary)] min-[360px]:max-md:text-[12px]">
                     {e.category}
                     {e.notes ? ` · ${e.notes}` : ''}
                   </span>
                 </span>
-                <span className="font-mono text-[13px] tabular-nums text-white max-md:text-[14px]">
+                <span className="font-mono text-[13px] tabular-nums text-white min-[360px]:max-md:text-[14px]">
                   {fmt(e.amount)}
                 </span>
               </button>

@@ -290,6 +290,30 @@ describe('CommandPalette actions found by typing (F-055)', () => {
     expect(screen.getByRole('option', { name: /Switch to dark theme/ })).toBeInTheDocument()
   })
 
+  // On `system` the theme showing is the system's: a light phone is offered dark, not the
+  // light it already shows.
+  it.each([
+    [false, 'Switch to dark theme', 'dark'],
+    [true, 'Switch to light theme', 'light'],
+  ] as const)('on System with the system dark=%s, offers "%s"', (prefersDark, label, goes) => {
+    vi.stubGlobal('matchMedia', (media: string) => ({
+      media,
+      matches: media.includes('prefers-color-scheme: dark') ? prefersDark : false,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }))
+    try {
+      useUIStore.setState({ theme: 'system' })
+      render(<App />)
+      openPalette()
+      type('theme')
+      fireEvent.click(screen.getByRole('option', { name: new RegExp(label) }))
+      expect(useUIStore.getState().theme).toBe(goes)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('opens the keyboard shortcuts', () => {
     render(<App />)
     openPalette()
