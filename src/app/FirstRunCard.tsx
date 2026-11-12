@@ -1,5 +1,5 @@
 import { useId, useLayoutEffect, useRef, useState } from 'react'
-import { format } from 'date-fns'
+import { formatDate } from '../lib/formatDate'
 // Icons no Settings module uses: one the card shared with Settings alone would be split into a
 // chunk of its own, and its name would be added to the startup code's preload list.
 import { CloudDownload, FolderOpen, Sparkles } from 'lucide-react'
@@ -117,7 +117,7 @@ export function FirstRunCard({ onStartFresh }: { onStartFresh: () => void }) {
   const downloadBackup = () => {
     try {
       downloadJSON(
-        `spendtrack-backup-${format(new Date(), 'yyyy-MM-dd')}.json`,
+        `spendtrack-backup-${formatDate(new Date(), 'yyyy-MM-dd')}.json`,
         useExpenseStore.getState().exportBackup(),
       )
       useExpenseStore.getState().markBackedUp()

@@ -129,7 +129,7 @@ describe('Settings sections', () => {
   // itself when it holds none (Sync without a relay, Budgets without categories). A panel that
   // holds controls is no extra stop of its own.
   it.each([
-    ['budgets', 'Budgets', 'Monthly budget for Food'],
+    ['budgets', 'Budgets', 'Whole month budget'],
     ['backup', 'Backup', 'Download JSON backup'],
     ['categories', 'Categories', 'Add category'],
   ] as const)('Tab from the %s tab moves to its first control', async (section, name, first) => {
@@ -155,6 +155,8 @@ describe('Settings sections', () => {
     act(() => {
       tab('Budgets').focus()
     })
+    // the whole month's field, Food's, then Transport's
+    await user.tab()
     await user.tab()
     await user.tab()
     const field = screen.getByRole('spinbutton', { name: 'Monthly budget for Transport' })

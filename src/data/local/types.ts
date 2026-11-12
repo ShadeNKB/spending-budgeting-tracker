@@ -177,6 +177,10 @@ export interface ExpenseFields {
   categories: readonly string[]
   categoryMappings: Readonly<Record<string, string>>
   budgets: Readonly<Record<string, number>>
+  /** Categories that are not spending: their entries are kept and leave every total (F-057). */
+  asideCategories: readonly string[]
+  /** One budget for the whole month's spending; null when none is set. */
+  monthBudget: number | null
   syncStatus: 'idle' | 'saving' | 'saved' | 'error'
   lastSavedAt: number | null
   isOffline: boolean
@@ -205,6 +209,10 @@ export interface ExpenseActions {
   removeCategory(name: string): void
   setBudget(category: string, amount: number): void
   removeBudget(category: string): void
+  /** Marks a category not spending (true), or counts it as spending again. */
+  setCategoryAside(category: string, aside: boolean): void
+  /** The whole-month budget; null removes it. */
+  setMonthBudget(amount: number | null): void
   setCurrency(code: string): void
   getSmartCategory(itemName: string): string | null
   previewImport(file: Blob): Promise<ImportPreview>

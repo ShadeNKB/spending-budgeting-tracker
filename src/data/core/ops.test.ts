@@ -17,6 +17,7 @@ import {
   renameCategory,
   setBudget,
   setCurrency,
+  setPref,
   undo,
   updateExpense,
 } from './ops'
@@ -569,5 +570,89 @@ describe('ops are pure: inputs never change and a merge with the input converges
     expect(
       mergeDoc(updateExpense(d, mk(T0 + 4, c), id, { amount: 3 }).doc, d).doc.expenses.get(id)?.a.v,
     ).toBe(3)
+  })
+})
+
+describe('setPref: a synced preference on the generic register (T8a)', () => {
+  it('writes the register once; the same value, or unsetting what was never set, changes nothing', () => {
+    const c: Hlc = { last: 0 }
+    const r = setPref(EMPTY_DOC, mk(T0, c), 'aside', ['Investment'], 'label')
+    expect(r.doc.prefs.get('aside')).toEqual({ v: ['Investment'], s: T0 })
+    expect(r.touched).toEqual([['pref:aside', T0]])
+    expect(r.undo?.label).toBe('label')
+    expect(setPref(r.doc, mk(T0 + 1, c), 'aside', ['Investment'], 'label').doc).toBe(r.doc)
+    expect(setPref(EMPTY_DOC, mk(T0, c), 'aside', null, 'label').doc).toBe(EMPTY_DOC)
+    // an object's key order is not a change
+    const o = setPref(EMPTY_DOC, mk(T0, c), 'box', { a: 1, b: 2 }, 'l')
+    expect(setPref(o.doc, mk(T0 + 1, c), 'box', { b: 2, a: 1 }, 'l').doc).toBe(o.doc)
+  })
+
+  it('a later write gets a later stamp, also on a clock that stands still', () => {
+    const c: Hlc = { last: 0 }
+    const a = setPref(EMPTY_DOC, mk(T0, c), 'monthCap', 500, 'l')
+    const b = setPref(a.doc, mk(T0, c), 'monthCap', 600, 'l')
+    expect(must(b.doc.prefs.get('monthCap')).s).toBeGreaterThan(must(a.doc.prefs.get('monthCap')).s)
+    expect(b.doc.prefs.get('monthCap')?.v).toBe(600)
+  })
+
+  it('refuses what the wire would drop: a bad or reserved key, the currency, a value too long', () => {
+    const set = (key: string, value: Parameters<typeof setPref>[3]): string =>
+      code(() => setPref(EMPTY_DOC, mk(), key, value, 'l'))
+    for (const key of [
+      '',
+      '1a',
+      'a-b',
+      'a b',
+      'constructor',
+      '__proto__',
+      'currency',
+      'k'.repeat(33),
+    ]) {
+      expect(set(key, 1), key).toBe('pref')
+    }
+    expect(set('k'.repeat(32), 1)).toBe('no-throw')
+    // JSON text of 2,048 characters passes, 2,049 does not: the rule decodePrefs applies
+    expect(set('aside', 'x'.repeat(2046))).toBe('no-throw')
+    expect(set('aside', 'x'.repeat(2047))).toBe('pref')
+  })
+
+  it('whatever it accepts survives the wire, and what it refuses for length would not', () => {
+    const c: Hlc = { last: 0 }
+    const names = ['Investment', 'Savings "pot"', 'Transfers, out']
+    let d = setPref(EMPTY_DOC, mk(T0, c), 'aside', names, 'l').doc
+    d = setPref(d, mk(T0 + 1, c), 'monthCap', 1234.5, 'l').doc
+    d = setPref(d, mk(T0 + 2, c), 'edge', 'x'.repeat(2046), 'l').doc
+    const back = decodeWire(parseJson(wireString(d)), 'remote').doc
+    expect(back.prefs.get('aside')).toEqual(d.prefs.get('aside'))
+    expect(back.prefs.get('monthCap')).toEqual(d.prefs.get('monthCap'))
+    expect(back.prefs.get('edge')).toEqual(d.prefs.get('edge'))
+    // the proof of the limit: one character more, written past the op, is dropped on the way
+    const tooLong = {
+      ...d,
+      prefs: new Map(d.prefs).set('edge', { v: 'x'.repeat(2047), s: T0 + 3 }),
+    }
+    expect(decodeWire(parseJson(wireString(tooLong)), 'remote').doc.prefs.has('edge')).toBe(false)
+  })
+
+  it('two devices: the later write wins on both sides of the merge', () => {
+    const a = setPref(EMPTY_DOC, mk(T0, { last: 0 }), 'aside', ['Investment'], 'l').doc
+    const b = setPref(EMPTY_DOC, mk(T0 + 5, { last: 0 }), 'aside', ['Savings'], 'l').doc
+    expect(mergeDoc(a, b).doc.prefs.get('aside')?.v).toEqual(['Savings'])
+    expect(mergeDoc(b, a).doc.prefs.get('aside')?.v).toEqual(['Savings'])
+  })
+
+  it('undo puts the earlier value back, or unsets a first write; a newer write is left alone', () => {
+    const c: Hlc = { last: 0 }
+    const first = setPref(EMPTY_DOC, mk(T0, c), 'monthCap', 500, 'l')
+    const second = setPref(first.doc, mk(T0 + 1, c), 'monthCap', 600, 'l')
+    const back = undo(second.doc, mk(T0 + 2, c), must(second.undo))
+    expect(back.doc.prefs.get('monthCap')?.v).toBe(500)
+    expect(back.report).toEqual({ applied: 1, skipped: 0 })
+    const unset = undo(first.doc, mk(T0 + 2, c), must(first.undo))
+    expect(unset.doc.prefs.get('monthCap')?.v).toBeNull()
+    // the first write's undo, after a second write: its stamp is no longer the one written
+    const late = undo(second.doc, mk(T0 + 3, c), must(first.undo))
+    expect(late.doc).toBe(second.doc)
+    expect(late.report).toEqual({ applied: 0, skipped: 1 })
   })
 })

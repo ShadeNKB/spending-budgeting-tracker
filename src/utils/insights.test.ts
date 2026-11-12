@@ -189,3 +189,55 @@ describe('computeInsights', () => {
     expect(insights.map((i) => i.id)).not.toContain('budget-over-Food')
   })
 })
+
+describe('computeInsights: the whole-month budget (T8a, review finding 1)', () => {
+  const today = '2026-10-18'
+  const month = (total: number): Expense[] => [
+    // last month as much as this one is heading for: no pace insight to hide behind
+    at('2026-09-10', Math.round((total * 31) / 18)),
+    at('2026-10-05', total / 2),
+    at('2026-10-12', total / 2, 'Transport'),
+  ]
+  const ids = (rows: Expense[], cap: number | null) =>
+    computeInsights(getLedgerIndex(rows), {}, today, fmt, cap).map((i) => i.id)
+
+  it('says the month is over its budget, first, and never "on track" while it is', () => {
+    const insights = computeInsights(getLedgerIndex(month(1400)), {}, today, fmt, 1000)
+    expect(insights[0]).toMatchObject({
+      id: 'budget-over-month',
+      tone: 'warn',
+      title: 'October is over budget',
+      detail: '<1400.00> of <1000.00> · 14 days left in October',
+    })
+    expect(insights.map((i) => i.id)).not.toContain('all-clear')
+    // without the budget the same month had nothing to say but good news
+    expect(ids(month(1400), null)).toEqual(['all-clear'])
+  })
+
+  it('warns from 85% of it, with what is left', () => {
+    const insights = computeInsights(getLedgerIndex(month(900)), {}, today, fmt, 1000)
+    expect(insights[0]).toMatchObject({
+      id: 'budget-near-month',
+      title: 'October at 90% of its budget',
+      detail: '<100.00> left · 14 days left in October',
+    })
+    expect(ids(month(850), 1000)).toContain('budget-near-month')
+    expect(ids(month(840), 1000)).not.toContain('budget-near-month')
+  })
+
+  it('exactly at the budget is 100%, not over: the rule Pulse uses', () => {
+    expect(ids(month(1000), 1000)).toEqual(['budget-near-month'])
+  })
+
+  it('counts every category of the month, with or without a cap of its own', () => {
+    const rows = [...month(1400), at('2026-10-06', 50, 'Gifts')]
+    const insights = computeInsights(getLedgerIndex(rows), { Food: 5000 }, today, fmt, 1000)
+    expect(insights[0]?.detail).toBe('<1450.00> of <1000.00> · 14 days left in October')
+  })
+
+  it('reads anything that is not an amount as no budget', () => {
+    for (const cap of [null, 0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(ids(month(1400), cap), String(cap)).toEqual(['all-clear'])
+    }
+  })
+})

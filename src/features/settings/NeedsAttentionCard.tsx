@@ -1,5 +1,5 @@
 import { useEffect, useId } from 'react'
-import { format } from 'date-fns'
+import { formatDate } from '../../lib/formatDate'
 import { Download, FileWarning, ListChecks } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { useToast } from '../../hooks/useToast'
@@ -51,7 +51,7 @@ export function NeedsAttentionCard() {
   const one = quarantined === 1
   const download = () => {
     downloadJSON(
-      `spendtrack-needs-attention-${format(new Date(), 'yyyy-MM-dd')}.json`,
+      `spendtrack-needs-attention-${formatDate(new Date(), 'yyyy-MM-dd')}.json`,
       useExpenseStore.getState().quarantineFile(),
     )
     toast.success(

@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { format } from 'date-fns'
+import { formatDate } from '../../lib/formatDate'
 import {
   Cloud,
   CloudOff,
@@ -800,7 +800,7 @@ function SyncContent() {
                 id={reconnectHintId}
                 className="text-center text-[12px] text-[var(--text-tertiary)]"
               >
-                This device remembers the code until {format(prev.until, 'd MMM')}.
+                This device remembers the code until {formatDate(prev.until, 'd MMM')}.
               </p>
             </div>
           ))}

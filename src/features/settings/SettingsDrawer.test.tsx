@@ -635,3 +635,194 @@ describe('Categories', () => {
     expect(useExpenseStore.getState().expenses[0]?.category).toBe('Meals')
   })
 })
+
+describe('Budgets: the whole month, and what is not spending (T8a, F-057)', () => {
+  const KEYS = {
+    categories: ['Other', 'Meals', 'Investment'],
+    categoryBudgets: { Meals: 200, Investment: 500 },
+    categoryBudgetUpdatedAt: { Meals: T1, Investment: T1 },
+    expenses: [
+      {
+        id: 'i1',
+        itemName: 'ETF',
+        amount: 300,
+        category: 'Investment',
+        date: '2026-10-01T12:00:00',
+        createdAt: T1,
+      },
+    ],
+  }
+
+  it('sets one budget for the whole month, says so, and an emptied field clears it', async () => {
+    await hydrateFrom(KEYS)
+    vi.useFakeTimers()
+    openOn('budgets')
+    const field = () => screen.getByRole('spinbutton', { name: 'Whole month budget' })
+    expect(field()).toHaveValue(null)
+    fireEvent.change(field(), { target: { value: '1500' } })
+    fireEvent.blur(field())
+    expect(useExpenseStore.getState().monthBudget).toBe(1500)
+    expect(useUIStore.getState().toasts.at(-1)).toMatchObject({ kind: 'success' })
+    expect(useUIStore.getState().toasts.at(-1)?.message).toContain('Whole month')
+    expect(field()).toHaveValue(1500)
+
+    // unchanged: nothing written, nothing said
+    const toasts = useUIStore.getState().toasts.length
+    fireEvent.focus(field())
+    fireEvent.blur(field())
+    expect(useUIStore.getState().toasts).toHaveLength(toasts)
+
+    fireEvent.change(field(), { target: { value: '' } })
+    fireEvent.blur(field())
+    expect(useExpenseStore.getState().monthBudget).toBeNull()
+    expect(useUIStore.getState().toasts.at(-1)?.message).toBe('Whole month budget cleared')
+  })
+
+  it('a whole-month budget the store refuses is said, and the field shows what was kept', async () => {
+    await hydrateFrom(KEYS)
+    vi.useFakeTimers()
+    openOn('budgets')
+    const field = screen.getByRole('spinbutton', { name: 'Whole month budget' })
+    for (const bad of ['0', '-20', '20000000']) {
+      fireEvent.change(field, { target: { value: bad } })
+      fireEvent.blur(field)
+      expect(useExpenseStore.getState().monthBudget, bad).toBeNull()
+      expect(useUIStore.getState().toasts.at(-1)?.kind, bad).toBe('error')
+      expect(field, bad).toHaveValue(null)
+    }
+  })
+
+  it('lists every category but Other as a switch, none pressed to begin with', async () => {
+    await hydrateFrom(KEYS)
+    vi.useFakeTimers()
+    openOn('budgets')
+    const group = screen.getByRole('group', { name: 'Not spending' })
+    const chips = within(group).getAllByRole('button')
+    expect(chips.map((c) => c.textContent)).toEqual(['Meals', 'Investment'])
+    for (const chip of chips) expect(chip).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  it('marking a category not spending presses its switch, pauses its cap, and offers Undo', async () => {
+    await hydrateFrom(KEYS)
+    vi.useFakeTimers()
+    openOn('budgets')
+    const chip = () =>
+      within(screen.getByRole('group', { name: 'Not spending' })).getByRole('button', {
+        name: 'Investment',
+      })
+    fireEvent.click(chip())
+    expect(useExpenseStore.getState().asideCategories).toEqual(['Investment'])
+    expect(chip()).toHaveAttribute('aria-pressed', 'true')
+    // its cap would measure nothing: the row says why there is no field
+    expect(screen.queryByRole('spinbutton', { name: 'Monthly budget for Investment' })).toBeNull()
+    expect(screen.getByText(/500\.00 cap paused$/)).toBeInTheDocument()
+    // the cap itself is kept for the day it counts again
+    expect({ ...useExpenseStore.getState().budgets }).toEqual({ Meals: 200, Investment: 500 })
+
+    const toast = useUIStore.getState().toasts.at(-1)
+    expect(toast).toMatchObject({
+      kind: 'info',
+      message: 'Investment no longer counts as spending',
+    })
+    expect(toast?.action?.label).toBe('Undo')
+    act(() => {
+      toast?.action?.onClick()
+    })
+    expect(useExpenseStore.getState().asideCategories).toEqual([])
+    expect(chip()).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('spinbutton', { name: 'Monthly budget for Investment' })).toHaveValue(
+      500,
+    )
+  })
+
+  it('pressing it again counts the category as spending, and says so', async () => {
+    await hydrateFrom(KEYS)
+    vi.useFakeTimers()
+    openOn('budgets')
+    const chip = () =>
+      within(screen.getByRole('group', { name: 'Not spending' })).getByRole('button', {
+        name: 'Investment',
+      })
+    fireEvent.click(chip())
+    fireEvent.click(chip())
+    expect(useExpenseStore.getState().asideCategories).toEqual([])
+    expect(useUIStore.getState().toasts.at(-1)?.message).toBe('Investment counts as spending again')
+  })
+
+  it('a renamed category stays not spending, and its switch carries the new name', async () => {
+    await hydrateFrom(KEYS)
+    vi.useFakeTimers()
+    act(() => {
+      useExpenseStore.getState().setCategoryAside('Investment', true)
+    })
+    openOn('categories')
+    const field = screen.getByRole('textbox', { name: 'Rename category Investment' })
+    fireEvent.change(field, { target: { value: 'Brokerage' } })
+    fireEvent.blur(field)
+    expect(useExpenseStore.getState().asideCategories).toEqual(['Brokerage'])
+    const toast = useUIStore.getState().toasts.at(-1)
+    expect(toast?.action?.label).toBe('Undo')
+    act(() => {
+      toast?.action?.onClick()
+    })
+    expect(useExpenseStore.getState().categories).toContain('Investment')
+    expect(useExpenseStore.getState().asideCategories).toEqual(['Investment'])
+  })
+})
+
+describe('a merge across the not-spending line says what happens to the totals (review finding 6)', () => {
+  const KEYS = {
+    categories: ['Other', 'Meals', 'Investment'],
+    categoryBudgets: { Meals: 200, Investment: 500 },
+    categoryBudgetUpdatedAt: { Meals: T1, Investment: T1 },
+    expenses: [
+      {
+        id: 'i1',
+        itemName: 'ETF',
+        amount: 300,
+        category: 'Investment',
+        date: '2026-10-01T12:00:00',
+        createdAt: T1,
+      },
+      {
+        id: 'm1',
+        itemName: 'Laksa',
+        amount: 6,
+        category: 'Meals',
+        date: '2026-10-02T12:00:00',
+        createdAt: T1,
+      },
+    ],
+  }
+
+  const askMerge = async (from: string, to: string) => {
+    await hydrateFrom(KEYS)
+    vi.useFakeTimers()
+    act(() => {
+      useExpenseStore.getState().setCategoryAside('Investment', true)
+    })
+    openOn('categories')
+    const field = screen.getByRole('textbox', { name: `Rename category ${from}` })
+    fireEvent.change(field, { target: { value: to } })
+    fireEvent.blur(field)
+    expect(screen.getByText(`Merge into ${to}?`)).toBeInTheDocument()
+  }
+
+  it('a counted category into a not-spending one: its expenses leave the totals, its budget is paused', async () => {
+    await askMerge('Meals', 'Investment')
+    expect(
+      screen.getByText(
+        "1 expense leaves your totals: Investment is not spending · Meals's budget is paused",
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('a not-spending category into a counted one: its expenses count as spending again', async () => {
+    await askMerge('Investment', 'Meals')
+    expect(
+      screen.getByText(
+        "1 expense counts as spending again in Meals · Meals keeps its own budget, not Investment's",
+      ),
+    ).toBeInTheDocument()
+  })
+})

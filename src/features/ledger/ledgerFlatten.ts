@@ -57,12 +57,15 @@ export interface LedgerGroup {
 
 /**
  * Group already-ordered index rows (newest day first, unreadable dates last) into day sections
- * in one pass, with totals summed in cents.
+ * in one pass, with totals summed in cents. A day's total is its spending: an entry in a
+ * not-spending category (`aside`, F-057) is listed under its day and left out of that day's sum, as
+ * it is left out of every other total.
  */
 export function groupLedgerRows(
   index: LedgerIndex,
   rows: readonly number[],
   today: DayKey,
+  aside?: ReadonlySet<string>,
 ): LedgerGroup[] {
   const groups: LedgerGroup[] = []
   let current: { group: LedgerGroup; cents: number } | null = null
@@ -83,7 +86,7 @@ export function groupLedgerRows(
       current = { group, cents: 0 }
     }
     current.group.items.push(expense)
-    current.cents += index.cents[r] ?? 0
+    if (aside?.has(expense.category) !== true) current.cents += index.cents[r] ?? 0
   }
   if (current) current.group.total = current.cents / 100
   return groups

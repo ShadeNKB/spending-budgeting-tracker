@@ -1,5 +1,5 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
-import { format } from 'date-fns'
+import { formatDate } from '../lib/formatDate'
 import clsx from 'clsx'
 import { AlertTriangle, Download, FlaskConical, HardDrive, RotateCw } from 'lucide-react'
 import { Button } from '../ui/Button'
@@ -32,7 +32,7 @@ const never = (): boolean => false
 const plural = (n: number, one: string, many: string): string =>
   `${n.toLocaleString()} ${n === 1 ? one : many}`
 
-const today = (): string => format(new Date(), 'yyyy-MM-dd')
+const today = (): string => formatDate(new Date(), 'yyyy-MM-dd')
 
 /** After a strip's own button removed it: focus goes to the screen, never to <body>. */
 function focusMain(): void {

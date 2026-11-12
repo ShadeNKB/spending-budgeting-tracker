@@ -1,5 +1,5 @@
 import { useRef } from 'react'
-import { format } from 'date-fns'
+import { formatDate } from '../../lib/formatDate'
 import { Download, RotateCcw } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { shieldGesture } from '../../ui/pressShield'
@@ -88,7 +88,10 @@ export function RecoverySnapshots({
       return
     }
     try {
-      downloadJSON(`spendtrack-snapshot-${format(new Date(snap.at), 'yyyy-MM-dd-HHmm')}.json`, file)
+      downloadJSON(
+        `spendtrack-snapshot-${formatDate(new Date(snap.at), 'yyyy-MM-dd-HHmm')}.json`,
+        file,
+      )
     } catch {
       toast.error("The download couldn't start. Try again.")
       return

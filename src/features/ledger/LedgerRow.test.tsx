@@ -887,3 +887,49 @@ describe('Ledger screen focus', ROOMY, () => {
     expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toHaveLength(3)
   })
 })
+
+describe('a row in a not-spending category (T8a, F-057)', () => {
+  const initial = useExpenseStore.getState()
+  afterEach(() => {
+    cleanup()
+    useExpenseStore.setState(initial, true)
+  })
+
+  it('says "not spending" under its amount and in its name; a counted row says nothing', () => {
+    const etf: Expense = {
+      ...KOPI,
+      id: 'e-9',
+      itemName: 'ETF',
+      amount: 300,
+      category: 'Investment',
+    }
+    useExpenseStore.setState({ asideCategories: ['Investment'] })
+    renderRows(vi.fn(), vi.fn(), [
+      [KOPI, 'Oct 19'],
+      [etf, 'Oct 19'],
+    ])
+    const row = screen.getByRole('button', {
+      name: /^Edit ETF, .* not spending, Investment, Oct 19$/,
+    })
+    expect(within(row).getByText('not spending')).toBeInTheDocument()
+    const counted = screen.getByRole('button', { name: /^Edit Kopi O, [^,]*, Food, Oct 19$/ })
+    expect(within(counted).queryByText('not spending')).toBeNull()
+  })
+
+  it('follows the setting: counted again, the words go', () => {
+    const etf: Expense = {
+      ...KOPI,
+      id: 'e-9',
+      itemName: 'ETF',
+      amount: 300,
+      category: 'Investment',
+    }
+    useExpenseStore.setState({ asideCategories: ['Investment'] })
+    renderRows(vi.fn(), vi.fn(), [[etf, 'Oct 19']])
+    expect(screen.getByText('not spending')).toBeInTheDocument()
+    act(() => {
+      useExpenseStore.setState({ asideCategories: [] })
+    })
+    expect(screen.queryByText('not spending')).toBeNull()
+  })
+})

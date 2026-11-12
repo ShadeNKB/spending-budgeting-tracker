@@ -72,9 +72,14 @@ export interface PeriodComparison {
 export type BudgetStatus = 'onTrack' | 'ahead' | 'over'
 
 export interface BudgetSummary {
-  /** Sum of the caps set (> 0). */
+  /**
+   * `all`: one budget for the whole month, measured against all of its spending.
+   * `categories`: the category caps summed, measured against those categories only.
+   */
+  readonly scope: 'all' | 'categories'
+  /** The whole-month budget, or the sum of the caps set (> 0). */
   readonly cap: number
-  /** Month total of the categories that have a cap. */
+  /** The month's total, or that of the categories that have a cap. */
   readonly spent: number
   /** `spent / cap`. */
   readonly used: number
@@ -85,7 +90,7 @@ export interface BudgetSummary {
   readonly perDay: number | null
   readonly projected: number | null
   readonly status: BudgetStatus
-  /** Spending in categories without a cap (never measured against one). */
+  /** Spending in categories without a cap (never measured against one); 0 for `all`. */
   readonly unbudgeted: number
   /** A finished month: spent vs cap only, no pace or projection. */
   readonly isFinal: boolean
@@ -305,6 +310,8 @@ export function computeMonthAnalytics(
   budgets: CategoryBudgets,
   today: DayKey,
   monthOffset = 0, // 0 = current month, 1 = the month before, …
+  /** One budget for the whole month's spending; none when null (or not an amount). */
+  monthCap: number | null = null,
 ): MonthAnalytics {
   const offset = Math.max(0, Math.trunc(monthOffset))
   const monthKey = addMonths(monthKeyOf(today), -offset)
@@ -324,14 +331,17 @@ export function computeMonthAnalytics(
     catCents.set(category, (catCents.get(category) ?? 0) + c)
   }
 
+  // The month to date: future-dated rows of this month are left out of it.
+  const toDateCents = isCurrent
+    ? sumRange(index, { start: range.start, end: today }).cents
+    : totalCents
   let comparison: PeriodComparison
   if (isCurrent) {
     const like = prevMonthLikeForLike(today)
-    const cur = sumRange(index, { start: range.start, end: today }).cents
     const prev = sumRange(index, like.range).cents
     comparison = {
       total: fromCents(prev),
-      changePct: changeSoFar(cur, prev),
+      changePct: changeSoFar(toDateCents, prev),
       against: like.against,
       label: like.label,
     }
@@ -352,6 +362,10 @@ export function computeMonthAnalytics(
   for (const r of todayRows) todayCents += index.cents[r] ?? 0
 
   const caps = activeCaps(budgets)
+  const monthCapCents = monthCap !== null && Number.isFinite(monthCap) ? toCents(monthCap) : 0
+  // One budget for the whole month measures all of it; without one, the category caps summed
+  // measure their own categories only.
+  const whole = monthCapCents > 0
   const fixed = isCurrent && caps.length > 0 ? paidMonthlyCharges(index, monthKey) : null
   let capCents = 0
   let spentCents = 0
@@ -386,20 +400,29 @@ export function computeMonthAnalytics(
 
   const daysLeft = isCurrent ? dim - dom + 1 : null
   let budget: BudgetSummary | null = null
-  if (capCents > 0) {
-    const projected = projectedCents(spentCents, fixedCents, dom, dim)
-    const status = statusOf(spentCents, capCents, projected, dom, isCurrent)
-    const leftCents = Math.max(0, capCents - spentCents)
+  const measuredCap = whole ? monthCapCents : capCents
+  if (measuredCap > 0) {
+    const measured = whole ? totalCents : spentCents
+    // The whole month's projection is Insights' own (the month to date at its daily rate, monthly
+    // charges already paid counted once) plus the rows dated later this month, counted once too:
+    // a row entered for the 25th is not a daily habit. The two screens cannot disagree.
+    const projected =
+      whole && isCurrent
+        ? totalCents - toDateCents + projectedMonthCents(index, today)
+        : projectedCents(measured, fixedCents, dom, dim)
+    const status = statusOf(measured, measuredCap, projected, dom, isCurrent)
+    const leftCents = Math.max(0, measuredCap - measured)
     budget = {
-      cap: fromCents(capCents),
-      spent: fromCents(spentCents),
-      used: spentCents / capCents,
+      scope: whole ? 'all' : 'categories',
+      cap: fromCents(measuredCap),
+      spent: fromCents(measured),
+      used: measured / measuredCap,
       expected: dom / dim,
       left: fromCents(leftCents),
       perDay: daysLeft === null ? null : fromCents(leftCents) / daysLeft,
       projected: status === 'ahead' ? fromCents(projected) : null,
       status,
-      unbudgeted: fromCents(Math.max(0, totalCents - spentCents)),
+      unbudgeted: whole ? 0 : fromCents(Math.max(0, totalCents - spentCents)),
       isFinal: !isCurrent,
     }
   }

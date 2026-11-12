@@ -36,8 +36,9 @@ const fact =
   "relative whitespace-nowrap pl-3 before:absolute before:left-0 before:w-3 before:text-center before:text-[var(--text-tertiary)] before:content-['·'] md:pl-0 md:before:hidden"
 
 /**
- * This month's budget: the share of the cap used (budgeted categories only), a tick where
- * spending would be if it were spread evenly, what is left and what that allows per day.
+ * This month's budget: the share used of the whole-month budget, or of the category caps summed
+ * (their categories only, and it says so), a tick where spending would be if it were spread
+ * evenly, what is left and what that allows per day.
  * Ahead of pace and over budget are spelled out, never shown by colour alone.
  * Mobile: a compact one-row strip. md+: a 74 px ring beside the hero total, one fact per line.
  */
@@ -49,7 +50,7 @@ export function PaceRing({ budget, daysLeft }: { budget: BudgetSummary; daysLeft
   const perDay = budget.perDay ?? 0
   const projected = budget.status === 'ahead' ? budget.projected : null
   const label = [
-    `Budget ${percent(budget.used)} used: ${fmt(budget.spent)} of ${fmt(budget.cap)}.`,
+    `${budget.scope === 'all' ? 'Whole month budget' : 'Budget'} ${percent(budget.used)} used: ${fmt(budget.spent)} of ${fmt(budget.cap)}.`,
     projected === null
       ? `${STATUS_TEXT[budget.status]}.`
       : `${STATUS_TEXT.ahead}: projected ${fmt(projected)}.`,

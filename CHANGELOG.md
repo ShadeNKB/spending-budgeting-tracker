@@ -1,5 +1,37 @@
 # Changelog
 
+## 0.17.0 — 2026-11-12
+
+T8a, the first slice of T8 (money in and smarter budgets): what counts as spending, and one budget for the whole month.
+
+### Added
+
+- **Mark a category "not spending"** (Settings › Budgets › Not spending). Money moved is not money spent: investments, savings, transfers. Entries in such a category stay in the Ledger, marked "not spending", and leave every total, the pace, the comparisons, Insights and the budgets. Pulse and the Ledger show their sum on a line of its own, and a day's total in the Ledger is that day's spending. Nothing is marked until you say so, so no total changes by itself. The choice syncs, rides in the backup file, follows a rename, and has an Undo. A cap on such a category is kept and shown as paused. "Other" always counts. (F-057)
+- **One budget for the whole month** (Settings › Budgets › Whole month). With it the ring on Pulse measures all your spending: what is left, and how much that is a day. Category caps keep their own rows, and you can have both. Insights says when the month is over its budget, or within 15% of it, before anything else.
+
+### Fixed
+
+- After "Remove from this device" in one tab, another tab still open could store this device's currency choice again: asking for it stored it when it was missing. Asking only reads now. This was the cause of a test that failed about once in many full runs (PR-4's and T7a's rare flake).
+- The card shown when no budget is set says what a budget gives you (what is left, and how much a day), and goes once either kind of budget is set.
+- A merge of two categories on different sides of the not-spending line says first what happens to the totals.
+
+### Changed (engineering)
+
+- **Room for T8: all JS 735.4 → 717.5 KB before the feature.** `src/lib/formatDate.ts` replaces date-fns `format`, which brought 19 KB of formatters and its English locale for the ten tokens the app uses. It throws on a token it does not know, as date-fns does on an unknown letter, and `formatDate.test.ts` holds it to date-fns on every pattern found in the source, every token alone and every pair, over two years of days and the edges of eight more: about 470,000 comparisons. date-fns stays for `parseISO` and `isValid`.
+- The settings are synced preferences on the doc's generic register, written by a new core op, `setPref`, that refuses what the wire would drop (a bad key, more than 2,048 characters of JSON). The wire, the merge and the backup file are unchanged: a device on an older version keeps them without reading them.
+- `src/data/local/spending.ts` gives them their meaning. One register per not-spending category (`aside_<hash>`, holding its name), not one list: two devices that each change a different category while apart keep both, and a rename's Undo takes back its own registers only. A stored name counts only while it is a category on screen under that very name, so a rename made by an older version, or by a restored file, counts the entries as spending again instead of passing the answer to whatever took them. The app's own rename carries it, in the same commit and the same Undo; a merge or a delete does not; a name that comes back starts counted.
+- `src/lib/spending.ts`: Pulse and Insights build their one index over spending only, so a total, a comparison, a forecast and a budget cannot disagree about what was left out. With no such category it is the Ledger's own index: no second pass over the entries. Pulse defers these settings with the entries they are read against, so a rename never counts a category's entries for a frame (an e2e records every value the hero shows).
+- `computeMonthAnalytics(…, monthCap)`: a whole-month budget measures every cent of the month. Its projection is Insights' own (`projectedMonthCents`) plus the rows dated later this month, counted once; `BudgetSummary.scope` says which kind the ring shows.
+- Boot 543,649 / 561,580 B (17,931 B left), eager 444,482 / 466,908 B; all JS 724.9 / 740 KB (15.1 KB left for T8's next slices).
+
+### Known limits
+
+- A device still on 0.16.0 keeps these settings and does not apply them: its totals count everything until it reloads, and a category renamed there counts as spending again here.
+- Two devices changing the same category's answer while apart keep the later one. An import's Undo does not take back the settings a file brought (budgets and renames behave the same way).
+- An entry that is not spending is not in Pulse's Today list (the Ledger lists it, and Pulse's line counts it).
+- Category caps still project a row dated later this month at the daily rate (the whole-month budget no longer does); that rule is T3's and is left for its own change.
+- Money in (income and refunds), the month-close recap and upcoming charges are T8's next slices.
+
 ## 0.16.0 — 2026-11-11
 
 T7e, the fifth and last slice of T7 (everyday entry and the Ledger): one way to add, more for the palette to find, and reading text on a phone.

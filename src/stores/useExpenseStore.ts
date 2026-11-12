@@ -222,6 +222,8 @@ export const useExpenseStore = create<ExpenseState>()(
     categories: DEFAULT_CATEGORIES,
     categoryMappings: {},
     budgets: {},
+    asideCategories: [],
+    monthBudget: null,
     syncStatus: 'idle',
     lastSavedAt: null,
     isOffline: typeof navigator !== 'undefined' ? !navigator.onLine : false,
@@ -272,6 +274,12 @@ export const useExpenseStore = create<ExpenseState>()(
     },
     removeBudget: (category: string) => {
       ready().removeBudget(category)
+    },
+    setCategoryAside: (category: string, aside: boolean) => {
+      ready().setCategoryAside(category, aside)
+    },
+    setMonthBudget: (amount: number | null) => {
+      ready().setMonthBudget(amount)
     },
     setCurrency: (code: string) => {
       ready().setCurrency(code)

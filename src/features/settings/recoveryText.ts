@@ -1,4 +1,4 @@
-import { format } from 'date-fns'
+import { formatDate } from '../../lib/formatDate'
 import { diffDays, toDayKey } from '../../lib/dates'
 
 // Text the Recovery view's sections share (PR-4 track spec §3.2, §4).
@@ -13,6 +13,6 @@ export function whenText(at: number): string {
       ? 'Today'
       : days === 1
         ? 'Yesterday'
-        : format(d, d.getFullYear() === now.getFullYear() ? 'd MMM' : 'd MMM yyyy')
-  return `${day}, ${format(d, 'HH:mm')}`
+        : formatDate(d, d.getFullYear() === now.getFullYear() ? 'd MMM' : 'd MMM yyyy')
+  return `${day}, ${formatDate(d, 'HH:mm')}`
 }

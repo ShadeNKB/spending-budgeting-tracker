@@ -6,7 +6,7 @@
 // the stores are not touched. Secret-like keys (the sync code, auth tokens) stay behind
 // so the file is safe to keep or share for support.
 
-import { format } from 'date-fns'
+import { formatDate } from './formatDate'
 import { downloadJSON } from './download'
 
 /**
@@ -59,7 +59,7 @@ export function collectRawStorage(storage: RawStorage): Record<string, string> {
 export function buildRescueFile(raw: Record<string, string>, now: Date): RescueFile {
   return {
     // Local time: the date the user sees on their clock, not the UTC date.
-    filename: `spendtrack-backup-raw-${format(now, 'yyyy-MM-dd-HHmm')}.json`,
+    filename: `spendtrack-backup-raw-${formatDate(now, 'yyyy-MM-dd-HHmm')}.json`,
     payload: {
       app: 'SpendTrack',
       kind: 'raw-browser-backup',

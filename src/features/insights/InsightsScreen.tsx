@@ -17,6 +17,7 @@ import { detectRecurring, forecastDailyFromRecurring, upcomingDue } from '../../
 import { computeTrailingDaily, computeWeekAnalytics } from '../../lib/analytics'
 import { addDays, formatRangeLabel, shortDate } from '../../lib/dates'
 import { getLedgerIndex } from '../../lib/ledgerIndex'
+import { spendingBudgets, splitSpending } from '../../lib/spending'
 import { Card } from '../../ui/Card'
 import { ChangePill } from '../../ui/ChangePill'
 import { Pill } from '../../ui/Pill'
@@ -48,15 +49,19 @@ const FORECAST_DAYS = 14
 
 export function InsightsScreen() {
   const expenses = useExpenseStore((s) => s.expenses)
-  const budgets = useExpenseStore((s) => s.budgets)
+  const allBudgets = useExpenseStore((s) => s.budgets)
+  const asideCategories = useExpenseStore((s) => s.asideCategories)
+  const monthBudget = useExpenseStore((s) => s.monthBudget)
   const setAddSheetOpen = useUIStore((s) => s.setAddSheetOpen)
   const fmt = useFormatMoney()
   const today = useToday()
-  const index = getLedgerIndex(expenses)
+  // Spending only, as on Pulse: not-spending entries (F-057) are in no figure here.
+  const budgets = spendingBudgets(allBudgets, asideCategories)
+  const index = getLedgerIndex(splitSpending(expenses, asideCategories).spending)
 
   const insights = useMemo(
-    () => computeInsights(index, budgets, today, fmt),
-    [index, budgets, today, fmt],
+    () => computeInsights(index, budgets, today, fmt, monthBudget),
+    [index, budgets, today, fmt, monthBudget],
   )
   const recurring = detectRecurring(index) // memoised per index
   const forecast = useMemo(
