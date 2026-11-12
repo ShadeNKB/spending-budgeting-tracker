@@ -88,7 +88,10 @@ export function RecoverySnapshots({
       return
     }
     try {
-      downloadJSON(`spendtrack-snapshot-${formatDate(new Date(snap.at), 'yyyy-MM-dd-HHmm')}.json`, file)
+      downloadJSON(
+        `spendtrack-snapshot-${formatDate(new Date(snap.at), 'yyyy-MM-dd-HHmm')}.json`,
+        file,
+      )
     } catch {
       toast.error("The download couldn't start. Try again.")
       return

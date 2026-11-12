@@ -93,7 +93,8 @@ const reasonOf = (item: AttentionItem): string =>
     ? 'Kept exactly as it was found'
     : (REASONS[item.reason] ?? "It couldn't be checked")
 
-const fileName = (): string => `spendtrack-needs-attention-${formatDate(new Date(), 'yyyy-MM-dd')}.json`
+const fileName = (): string =>
+  `spendtrack-needs-attention-${formatDate(new Date(), 'yyyy-MM-dd')}.json`
 
 /**
  * The section shows only while something needs attention; it stays mounted, so the Add sheet a
