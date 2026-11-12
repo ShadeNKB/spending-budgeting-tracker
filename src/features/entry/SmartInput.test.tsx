@@ -113,6 +113,53 @@ describe('SmartInput adds', () => {
     return useExpenseStore.getState().expenses.find((e) => e.itemName === item)
   }
 
+  // One matcher for every way in (F-044): the bar shows, and files under, what the add itself
+  // and the Add sheet would pick (useLearnedCategory, over the engine's smartCategory).
+  it("suggests the app's own pick from past entries, through a typo too, and files it there", () => {
+    act(() => {
+      useExpenseStore
+        .getState()
+        .addExpense({ itemName: 'Grab home', amount: 12, category: 'Transportation' })
+    })
+    render(<SmartInput />)
+    fireEvent.change(quickAdd(), { target: { value: 'grab hme 9.50' } })
+    expect(screen.getByText('Transportation')).toBeInTheDocument()
+    expect(useExpenseStore.getState().getSmartCategory('grab hme')).toBe('Transportation')
+    fireEvent.keyDown(quickAdd(), { key: 'Enter' })
+    expect(useExpenseStore.getState().expenses.find((e) => e.amount === 9.5)).toMatchObject({
+      itemName: 'grab hme',
+      category: 'Transportation',
+    })
+  })
+
+  it('a category typed after the amount wins over the pick', () => {
+    act(() => {
+      useExpenseStore
+        .getState()
+        .addExpense({ itemName: 'Grab home', amount: 12, category: 'Transportation' })
+    })
+    render(<SmartInput />)
+    fireEvent.change(quickAdd(), { target: { value: 'grab home 30 shopping' } })
+    expect(screen.getByText('Shopping')).toBeInTheDocument()
+    expect(screen.queryByText('Transportation')).toBeNull()
+    fireEvent.keyDown(quickAdd(), { key: 'Enter' })
+    expect(useExpenseStore.getState().expenses.find((e) => e.amount === 30)?.category).toBe(
+      'Shopping',
+    )
+  })
+
+  it('follows what the app learns while the text is in the bar', () => {
+    render(<SmartInput />)
+    fireEvent.change(quickAdd(), { target: { value: 'grab home 9.50' } })
+    expect(screen.queryByText('Transportation')).toBeNull()
+    act(() => {
+      useExpenseStore
+        .getState()
+        .addExpense({ itemName: 'Grab home', amount: 12, category: 'Transportation' })
+    })
+    expect(screen.getByText('Transportation')).toBeInTheDocument()
+  })
+
   it("stores an undated entry on today's local day, at local noon with no zone", () => {
     expect(add('kopi 1.80')).toMatchObject({
       amount: 1.8,

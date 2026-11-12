@@ -272,6 +272,8 @@ export function PulseScreen() {
                   </div>
                 )}
 
+                {/* On a wide screen the trend takes the room the card has (it was a 384 px strip in
+                    a 900 px column, F-087). */}
                 <div className="mt-4">
                   <div className="mb-1.5 flex items-center justify-between">
                     <span className="text-[10px] uppercase tracking-[0.08em] text-[var(--text-tertiary)]">
@@ -288,13 +290,13 @@ export function PulseScreen() {
                     label={trendLabel}
                     peakAs={sparkPeakAs}
                     height={44}
-                    className="max-w-sm"
+                    className="max-w-sm lg:max-w-2xl"
                   />
                   <SparklineAxis
                     labels={sparkLabels}
                     lastLabel={!yearData && monthData.isCurrent ? 'Today' : undefined}
                     highlightLast={a.isCurrent}
-                    className="max-w-sm"
+                    className="max-w-sm lg:max-w-2xl"
                   />
                 </div>
                 {!hasExpenses && (

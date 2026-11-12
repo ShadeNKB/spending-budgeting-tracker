@@ -106,6 +106,9 @@ export function Sparkline({
           style={{ height }}
         >
           <path d={area} fill={fill} />
+          {/* The drawing is stretched to its box (the wide Pulse card is 672 px for 400 units):
+              strokes keep their width, and the dots are zero-length round strokes, so they
+              stay round where a circle would be drawn as an oval. */}
           <path
             d={path}
             fill="none"
@@ -113,8 +116,17 @@ export function Sparkline({
             strokeWidth={1.8}
             strokeLinejoin="round"
             strokeLinecap="round"
+            vectorEffect="non-scaling-stroke"
           />
-          {lastPoint && <circle cx={lastPoint[0]} cy={lastPoint[1]} r={3} fill={stroke} />}
+          {lastPoint && (
+            <path
+              d={`M${String(lastPoint[0])} ${String(lastPoint[1])}h0`}
+              stroke={stroke}
+              strokeWidth={6}
+              strokeLinecap="round"
+              vectorEffect="non-scaling-stroke"
+            />
+          )}
           {activePoint && (
             <>
               <line
@@ -125,15 +137,19 @@ export function Sparkline({
                 stroke="var(--chart-axis)"
                 strokeWidth={1}
                 strokeDasharray="3 3"
+                vectorEffect="non-scaling-stroke"
               />
-              <circle
-                cx={activePoint[0]}
-                cy={activePoint[1]}
-                r={4}
-                fill={stroke}
-                stroke="var(--chart-axis-strong)"
-                strokeWidth={1.5}
-              />
+              {/* A ring, then the dot on it. */}
+              {(['var(--chart-axis-strong)', stroke] as const).map((colour, i) => (
+                <path
+                  key={colour}
+                  d={`M${String(activePoint[0])} ${String(activePoint[1])}h0`}
+                  stroke={colour}
+                  strokeWidth={i === 0 ? 11 : 8}
+                  strokeLinecap="round"
+                  vectorEffect="non-scaling-stroke"
+                />
+              ))}
             </>
           )}
         </svg>

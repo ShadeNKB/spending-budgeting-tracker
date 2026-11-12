@@ -24,7 +24,7 @@ import { useInlineConfirm } from '../../hooks/useInlineConfirm'
 import { shieldKeyGesture } from '../../ui/pressShield'
 import { useUIStore, type Theme } from '../../stores/useUIStore'
 import { CURRENCIES, isSupportedCurrency } from '../../lib/format'
-import { undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
+import { undoAction, useExpenseStore } from '../../stores/useExpenseStore'
 import { useSyncStore } from '../../stores/useSyncStore'
 import { DataUnavailable } from '../../app/DataNotices'
 import { BackupPanel } from './BackupPanel'
@@ -321,18 +321,7 @@ function CategoriesPanel() {
     const undoId = entry?.id.startsWith('cat-') === true ? entry.id : null
     toast.info(message, {
       undoId: undoId ?? undefined,
-      action:
-        undoId === null
-          ? undefined
-          : {
-              label: 'Undo',
-              onClick: () => {
-                const outcome = useExpenseStore.getState().consumeUndo(undoId)
-                if (outcome !== null && outcome.skipped > 0) {
-                  toast.warning(undoOutcomeMessage(outcome))
-                }
-              },
-            },
+      action: undoId === null ? undefined : undoAction(toast, undoId),
     })
   }
 

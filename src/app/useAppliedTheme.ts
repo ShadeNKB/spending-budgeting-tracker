@@ -18,6 +18,15 @@ export function resolveTheme(stored: Theme, prefersDark: boolean | null): Resolv
   return prefersDark === false ? 'light' : 'dark'
 }
 
+/** The theme showing now: the stored choice, or the system's while on `system`. */
+export function shownTheme(stored: Theme): ResolvedTheme {
+  const query =
+    typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-color-scheme: dark)')
+      : null
+  return resolveTheme(stored, query ? query.matches : null)
+}
+
 /** Theme attribute plus the browser chrome (Android toolbar, native controls) in one go. */
 export function applyThemeChrome(resolved: ResolvedTheme, doc: Document = document): void {
   doc.documentElement.setAttribute('data-theme', resolved)

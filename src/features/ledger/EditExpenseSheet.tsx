@@ -5,7 +5,7 @@ import { Sheet } from '../../ui/Sheet'
 import { Input } from '../../ui/Input'
 import { Button } from '../../ui/Button'
 import { InlineConfirm } from '../../ui/InlineConfirm'
-import { UNDO_TOO_LATE, undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
+import { undoAction, useExpenseStore } from '../../stores/useExpenseStore'
 import { useToast } from '../../hooks/useToast'
 import { useInlineConfirm } from '../../hooks/useInlineConfirm'
 import { useCurrencySymbol, useFormatMoney } from '../../hooks/useFormatMoney'
@@ -141,7 +141,10 @@ export function EditExpenseSheet({
     const after = useExpenseStore.getState().undoStack.at(-1)?.id
     const undo =
       after !== before && after?.startsWith(`update-${expense.id}-`) === true ? after : undefined
-    toast.success('Expense updated', { undoId: undo, action: undoAction(toast, undo) })
+    toast.success('Expense updated', {
+      undoId: undo,
+      action: undo === undefined ? undefined : undoAction(toast, undo),
+    })
     onClose()
   }
 
@@ -347,19 +350,6 @@ export function EditExpenseSheet({
   )
 }
 
-/** A toast's Undo for the store's undo entry `undo`; none when there is no entry to undo. */
-function undoAction(toast: ReturnType<typeof useToast>, undo: string | undefined) {
-  if (undo === undefined) return undefined
-  return {
-    label: 'Undo',
-    onClick: () => {
-      const outcome = useExpenseStore.getState().consumeUndo(undo)
-      if (outcome === null) toast.info(UNDO_TOO_LATE)
-      else if (outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
-    },
-  }
-}
-
 /** "Delete expense", then the question in its place. Re-keyed on every opening of the sheet. */
 function DeleteExpense({ expense, onDeleted }: { expense: Expense; onDeleted: () => void }) {
   const toast = useToast()
@@ -377,7 +367,7 @@ function DeleteExpense({ expense, onDeleted }: { expense: Expense; onDeleted: ()
             const undo = deleteUndoId(useExpenseStore.getState().undoStack, expense.id)
             toast.info(`Deleted "${expense.itemName}"`, {
               undoId: undo,
-              action: undoAction(toast, undo),
+              action: undo === undefined ? undefined : undoAction(toast, undo),
             })
             // The sheet closes and hands focus back itself (to the next row).
             confirm.close(null)

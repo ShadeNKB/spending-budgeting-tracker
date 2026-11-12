@@ -13,11 +13,14 @@ import {
   PenLine,
   X,
   AlertTriangle,
+  Keyboard,
+  SunMoon,
 } from 'lucide-react'
 import clsx from 'clsx'
 import Fuse from 'fuse.js/basic'
 import { useUIStore } from '../../stores/useUIStore'
-import { UNDO_TOO_LATE, undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
+import { shownTheme } from '../../app/useAppliedTheme'
+import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { downloadJSON } from '../../lib/download'
 import { format as fmtDate } from 'date-fns'
@@ -38,7 +41,7 @@ import { LayerAnnouncer } from '../../ui/LayerAnnouncer'
 import { useHeldWhileClosing, usePresence } from '../../ui/usePresence'
 import { announce, retract } from '../../ui/announce'
 import { shieldKeyGesture } from '../../ui/pressShield'
-import { actionErrorMessage, confirmAdded } from './expenseForm'
+import { addAndConfirm } from './expenseForm'
 import { ledgerEntryHref } from '../ledger/ledgerParams'
 import type { ExpenseView } from '../../types'
 
@@ -47,6 +50,8 @@ type Action = {
   label: string
   hint?: string
   icon: React.ComponentType<{ size?: number; className?: string }>
+  /** Shown only once the query finds it (by its label or these words): the list opens short. */
+  more?: string
   warning?: boolean
   /** Closes the palette itself (quick add, which may wait for a confirming press). */
   selfClosing?: boolean
@@ -55,6 +60,28 @@ type Action = {
 }
 
 const EXPENSE_HITS = 6
+
+/** Settings' sections as palette actions: tab, label, the other words that find it. */
+const SETTINGS_PLACES = [
+  ['categories', 'Categories', 'settings rename merge'],
+  ['budgets', 'Budgets', 'settings limit cap monthly'],
+  ['backup', 'Backup and restore', 'settings import export download recovery'],
+  ['sync', 'Sync', 'settings devices code cloud'],
+] as const
+
+/** Ledger views as palette actions: id, label, the other words that find it, the search. */
+const LEDGER_PLACES = [
+  ['today', 'Ledger: today', 'entries', 'range=today'],
+  ['week', 'Ledger: last 7 days', 'entries week', 'range=week'],
+  ['year', 'Ledger: this year', 'entries', 'range=year'],
+  ['all', 'Ledger: all time', 'entries everything history', 'range=all'],
+  [
+    'other',
+    'Entries without a category',
+    'ledger uncategorised uncategorized other',
+    'range=all&category=Other',
+  ],
+] as const
 
 /**
  * Every option: 44 px tall. The active one (`aria-selected`: what Enter runs) carries a bar in
@@ -137,9 +164,9 @@ export function CommandPalette() {
   const setOpen = useUIStore((s) => s.setPaletteOpen)
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen)
   const setAddSheetOpen = useUIStore((s) => s.setAddSheetOpen)
+  const light = shownTheme(useUIStore((s) => s.theme)) === 'light'
   const navigate = useNavigate()
   const expenses = useExpenseStore((s) => s.expenses)
-  const categoryMappings = useExpenseStore((s) => s.categoryMappings)
   const categories = useExpenseStore((s) => s.categories)
   const toast = useToast()
   const vibrate = useHaptic()
@@ -186,13 +213,8 @@ export function CommandPalette() {
   })
 
   const parsedQuery = useMemo(
-    () =>
-      parseExpense(query, categoryMappings, {
-        categories,
-        now: keyToLocalNoon(today),
-        learned: (name) => useExpenseStore.getState().getSmartCategory(name),
-      }),
-    [query, categoryMappings, categories, today],
+    () => parseExpense(query, { categories, now: keyToLocalNoon(today) }),
+    [query, categories, today],
   )
   const quickAddAmount =
     parsedQuery.itemName !== '' && parsedQuery.amount !== null && parsedQuery.amount > 0
@@ -204,6 +226,7 @@ export function CommandPalette() {
 
   const quickAddAction: Action | null = useMemo(() => {
     if (quickAddAmount === null || tooLarge) return null
+    // A category typed after the amount goes with the add; without one the engine picks.
     const { itemName, suggestedCategory, parsedDate } = parsedQuery
     const dateLabel = quickAddDateLabel(parsedDate, keyToLocalNoon(today))
     const summary = `"${itemName}" · ${fmt(quickAddAmount)}${dateLabel ? ` · ${dateLabel}` : ''}`
@@ -231,38 +254,18 @@ export function CommandPalette() {
       onRun: (at) => {
         // A double tap cannot confirm its own warning.
         if (addedRef.current || (confirming && at - flagged.at < CONFIRM_DELAY_MS)) return
-        let created: ExpenseView
-        try {
-          // No date in the text: the store files it under today's local day (P2-2).
-          created = useExpenseStore.getState().addExpense({
-            itemName,
-            amount: quickAddAmount,
-            category: suggestedCategory,
-            day: parsedDate,
-          })
-        } catch (err) {
-          // The palette stays open on the query, so the owner can fix what the message names.
-          toast.error(actionErrorMessage(err))
-          return
-        }
-        addedRef.current = true
-        vibrate(10)
-        const undoId = `add-${created.id}`
-        confirmAdded(
+        const created = addAndConfirm(
           toast,
-          `Added "${created.itemName}" · ${fmt(created.amount)}${dateLabel ? ` · ${dateLabel}` : ''}`,
-          {
-            undoId,
-            action: {
-              label: 'Undo',
-              onClick: () => {
-                const outcome = useExpenseStore.getState().consumeUndo(undoId)
-                if (outcome === null) toast.info(UNDO_TOO_LATE)
-                else if (outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
-              },
-            },
-          },
+          vibrate,
+          // No date in the text: the store files it under today's local day (P2-2).
+          { itemName, amount: quickAddAmount, category: suggestedCategory, day: parsedDate },
+          (added) =>
+            `Added "${added.itemName}" · ${fmt(added.amount)}${dateLabel ? ` · ${dateLabel}` : ''}`,
         )
+        // Refused: the palette stays open on the query, so the owner can fix what the message
+        // names.
+        if (created === null) return
+        addedRef.current = true
         setQuery('')
         setFlagged(null)
         setOpen(false)
@@ -323,8 +326,50 @@ export function CommandPalette() {
           useExpenseStore.getState().markBackedUp()
         },
       },
+      // Found by typing (F-055): a place in Settings, a Ledger range, the theme. `more` holds
+      // the other words that find each.
+      ...SETTINGS_PLACES.map(
+        ([tab, label, more]): Action => ({
+          id: `settings-${tab}`,
+          label,
+          more,
+          icon: Settings2,
+          onRun: () => {
+            useUIStore.getState().setSettingsTab(tab)
+            setSettingsOpen(true)
+          },
+        }),
+      ),
+      ...LEDGER_PLACES.map(
+        ([id, label, more, search]): Action => ({
+          id: `ledger-${id}`,
+          label,
+          more,
+          icon: ListOrdered,
+          onRun: () => {
+            void navigate(`/ledger?${search}`)
+          },
+        }),
+      ),
+      {
+        // Named for where it goes from the theme that is showing: on `system` that is the
+        // system's, so on a light phone it offers dark.
+        id: 'theme',
+        label: light ? 'Switch to dark theme' : 'Switch to light theme',
+        more: 'appearance display mode night',
+        icon: SunMoon,
+        onRun: () => useUIStore.getState().setTheme(light ? 'dark' : 'light'),
+      },
+      {
+        id: 'shortcuts',
+        label: 'Keyboard shortcuts',
+        more: 'keys hotkeys help',
+        hint: '?',
+        icon: Keyboard,
+        onRun: () => useUIStore.getState().setHotkeysOpen(true),
+      },
     ],
-    [navigate, setSettingsOpen, setAddSheetOpen],
+    [navigate, setSettingsOpen, setAddSheetOpen, light],
   )
 
   const expenseHits = useMemo(
@@ -333,10 +378,13 @@ export function CommandPalette() {
   )
 
   const filteredActions = useMemo(() => {
-    if (quickAddAction) return [quickAddAction, ...actions]
-    if (!query) return actions
-    const q = query.toLowerCase()
-    return actions.filter((a) => a.label.toLowerCase().includes(q))
+    const always = actions.filter((a) => a.more === undefined)
+    if (quickAddAction) return [quickAddAction, ...always]
+    const q = query.trim().toLowerCase()
+    if (!q) return always
+    return actions.filter(
+      (a) => a.label.toLowerCase().includes(q) || (a.more?.includes(q) ?? false),
+    )
   }, [actions, query, quickAddAction])
 
   const totalItems = filteredActions.length + expenseHits.length

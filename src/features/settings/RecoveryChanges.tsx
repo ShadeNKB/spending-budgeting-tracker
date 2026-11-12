@@ -7,8 +7,8 @@ import { useToast } from '../../hooks/useToast'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { formatKey, keyYear, todayKey } from '../../lib/dates'
 import {
+  undoAction,
   undoOutcomeMessage,
-  useExpenseStore,
   type ChangeItem,
   type RecordSummary,
   type RecoveryApi,
@@ -154,16 +154,10 @@ export function RecoveryChanges({
       action:
         undoId === null
           ? undefined
-          : {
-              label: 'Undo',
-              onClick: () => {
-                const o = useExpenseStore.getState().consumeUndo(undoId)
-                if (o === null) return
-                if (o.skipped > 0) toast.warning(undoOutcomeMessage(o))
-                else toast.success(undoOutcomeMessage(o))
-                onChanged()
-              },
-            },
+          : undoAction(toast, undoId, (o) => {
+              if (o.skipped === 0) toast.success(undoOutcomeMessage(o))
+              onChanged()
+            }),
     })
   }
 

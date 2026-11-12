@@ -148,11 +148,13 @@ export function BackupNudge() {
           </p>
         </div>
       </div>
-      <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-        <Button className="w-full sm:w-auto" onClick={download}>
+      {/* Side by side on a phone too: stacked, the card took a third of the screen above every
+          list (the Ledger's first entry started below the fold at 320 px). */}
+      <div className="mt-4 flex gap-2">
+        <Button className="flex-1 max-[359px]:px-3 sm:flex-none" onClick={download}>
           <Download size={14} aria-hidden /> Download a backup
         </Button>
-        <Button variant="ghost" className="w-full sm:w-auto" onClick={later}>
+        <Button variant="ghost" className="shrink-0 max-[359px]:px-3" onClick={later}>
           Later
         </Button>
       </div>

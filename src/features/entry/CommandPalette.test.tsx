@@ -234,6 +234,103 @@ const expense = (id: string, itemName: string, amount: number): ExpenseView => (
   ext: {},
 })
 
+describe('CommandPalette actions found by typing (F-055)', () => {
+  const options = () => screen.getAllByRole('option').map((o) => o.textContent)
+
+  it('opens on the six everyday actions, not on every one it knows', () => {
+    render(<App />)
+    openPalette()
+    expect(screen.getAllByRole('option')).toHaveLength(6)
+    expect(screen.queryByRole('option', { name: /Budgets/ })).toBeNull()
+  })
+
+  it('finds a place in Settings by its name or by another word for it, and opens it there', () => {
+    render(<App />)
+    openPalette()
+    type('budg')
+    expect(options()).toEqual([expect.stringContaining('Budgets')])
+    type('limit')
+    fireEvent.click(screen.getByRole('option', { name: /Budgets/ }))
+    expect(useUIStore.getState()).toMatchObject({ settingsOpen: true, settingsTab: 'budgets' })
+    expect(useUIStore.getState().paletteOpen).toBe(false)
+  })
+
+  it('finds a Ledger view, and opens the Ledger on it', () => {
+    render(<App />)
+    openPalette()
+    type('uncat')
+    fireEvent.click(screen.getByRole('option', { name: /Entries without a category/ }))
+    expect(screen.getByTestId('path')).toHaveTextContent('/ledger')
+    expect(screen.getByTestId('search')).toHaveTextContent('?range=all&category=Other')
+  })
+
+  it('finds every Ledger range under "ledger", after Go to Ledger', () => {
+    render(<App />)
+    openPalette()
+    type('ledger')
+    expect(options()).toEqual([
+      expect.stringContaining('Go to Ledger'),
+      expect.stringContaining('Ledger: today'),
+      expect.stringContaining('Ledger: last 7 days'),
+      expect.stringContaining('Ledger: this year'),
+      expect.stringContaining('Ledger: all time'),
+      expect.stringContaining('Entries without a category'),
+    ])
+  })
+
+  it('switches the theme, named for where it goes', () => {
+    useUIStore.setState({ theme: 'dark' })
+    render(<App />)
+    openPalette()
+    type('theme')
+    fireEvent.click(screen.getByRole('option', { name: /Switch to light theme/ }))
+    expect(useUIStore.getState().theme).toBe('light')
+    openPalette()
+    type('dark')
+    expect(screen.getByRole('option', { name: /Switch to dark theme/ })).toBeInTheDocument()
+  })
+
+  // On `system` the theme showing is the system's: a light phone is offered dark, not the
+  // light it already shows.
+  it.each([
+    [false, 'Switch to dark theme', 'dark'],
+    [true, 'Switch to light theme', 'light'],
+  ] as const)('on System with the system dark=%s, offers "%s"', (prefersDark, label, goes) => {
+    vi.stubGlobal('matchMedia', (media: string) => ({
+      media,
+      matches: media.includes('prefers-color-scheme: dark') ? prefersDark : false,
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+    }))
+    try {
+      useUIStore.setState({ theme: 'system' })
+      render(<App />)
+      openPalette()
+      type('theme')
+      fireEvent.click(screen.getByRole('option', { name: new RegExp(label) }))
+      expect(useUIStore.getState().theme).toBe(goes)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('opens the keyboard shortcuts', () => {
+    render(<App />)
+    openPalette()
+    type('keys')
+    fireEvent.click(screen.getByRole('option', { name: /Keyboard shortcuts/ }))
+    expect(useUIStore.getState().hotkeysOpen).toBe(true)
+  })
+
+  it('a quick add keeps the list to the add and the everyday six', () => {
+    render(<App />)
+    openPalette()
+    type('theme park 45')
+    expect(screen.getAllByRole('option')).toHaveLength(7)
+    expect(screen.queryByRole('option', { name: /Switch to/ })).toBeNull()
+  })
+})
+
 describe('CommandPalette status', () => {
   // The expense search runs a render behind the typing. "No matches" was said at "ko", before
   // the hits arrived, and stayed in the region beside the two kopi options.

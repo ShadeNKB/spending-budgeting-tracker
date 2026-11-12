@@ -173,6 +173,37 @@ export function installPersistence(): void {
  */
 export const UNDO_TOO_LATE = 'Too late to undo: the change was kept.'
 
+/** What an Undo needs of the toasts (useToast's api). */
+interface UndoToasts {
+  info(message: string): unknown
+  warning(message: string): unknown
+}
+
+/**
+ * A toast's Undo for the store's undo entry `undoId`, the same everywhere (F-044, F-115). Too
+ * late (its window closed, or another Undo took it) says so; entries that kept a change made on
+ * another device are named. `done` then gets the outcome: a caller with nothing on screen to show
+ * the undo (a cleared ledger coming back) says it there.
+ */
+export function undoAction(
+  toast: UndoToasts,
+  undoId: string,
+  done?: (outcome: UndoOutcome) => void,
+): { label: string; onClick: () => void } {
+  return {
+    label: 'Undo',
+    onClick: () => {
+      const outcome = useExpenseStore.getState().consumeUndo(undoId)
+      if (outcome === null) {
+        toast.info(UNDO_TOO_LATE)
+        return
+      }
+      if (outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
+      done?.(outcome)
+    },
+  }
+}
+
 export function undoOutcomeMessage(o: UndoOutcome): string {
   if (o.skipped === 0) return 'Undone'
   const kept = `${o.skipped.toLocaleString()} ${o.skipped === 1 ? 'entry' : 'entries'}`

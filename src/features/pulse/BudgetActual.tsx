@@ -68,16 +68,20 @@ export function BudgetActual({
                     style={{ background: barColor }}
                     aria-hidden="true"
                   />
-                  <span className="truncate text-[13px] text-white">{it.category}</span>
+                  <span className="truncate text-[13px] text-white min-[360px]:max-md:text-[14px]">
+                    {it.category}
+                  </span>
                   <span className="sr-only">, {status},</span>
                   {over && <AlertTriangle size={11} className="shrink-0 text-negative" />}
                   {ahead && <TrendingUp size={11} className="shrink-0 text-warning" />}
                 </div>{' '}
-                <div className="flex shrink-0 items-center gap-2 font-mono text-[12px] tabular-nums">
+                <div className="flex shrink-0 items-center gap-2 font-mono text-[12px] tabular-nums min-[360px]:max-md:text-[13px]">
                   <span className={over ? 'text-negative' : ahead ? 'text-warning' : 'text-white'}>
                     {fmt(it.total)}
                   </span>{' '}
-                  <span className="text-[var(--text-tertiary)]">
+                  {/* Under 360 px the name needs this room (with four-digit amounts it had none
+                      left); the note under the bar says what is left of the budget. */}
+                  <span className="text-[var(--text-tertiary)] max-[359px]:sr-only">
                     <span aria-hidden="true">/</span> <span className="sr-only">of</span>{' '}
                     {fmt(it.budget)}
                   </span>
@@ -103,7 +107,7 @@ export function BudgetActual({
               </div>
 
               <div
-                className={`mt-1 text-[10px] ${
+                className={`mt-1 text-[10px] min-[360px]:max-md:text-[12px] ${
                   over ? 'text-negative' : ahead ? 'text-warning' : 'text-[var(--text-tertiary)]'
                 }`}
               >

@@ -4,7 +4,7 @@ import { CalendarDays, ChevronDown } from 'lucide-react'
 import { Sheet } from '../../ui/Sheet'
 import { Input } from '../../ui/Input'
 import { Button } from '../../ui/Button'
-import { UNDO_TOO_LATE, undoOutcomeMessage, useExpenseStore } from '../../stores/useExpenseStore'
+import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useToast } from '../../hooks/useToast'
 import { useHaptic } from '../../hooks/useHaptic'
 import { useCurrencySymbol, useFormatMoney } from '../../hooks/useFormatMoney'
@@ -14,9 +14,9 @@ import { DatePicker } from '../../ui/DatePicker'
 import { shieldKeyGesture } from '../../ui/pressShield'
 import { DataUnavailable } from '../../app/DataNotices'
 import {
-  actionErrorMessage,
-  confirmAdded,
+  addAndConfirm,
   chosenChipFill,
+  useLearnedCategory,
   firstInvalidField,
   validateExpenseForm,
   type ExpenseFormErrors,
@@ -62,8 +62,6 @@ export function AddExpenseSheet({
   returnFocus,
 }: Props) {
   const categories = useExpenseStore((s) => s.categories)
-  // Subscribed so the suggestion below follows what the app learns while the sheet is open.
-  useExpenseStore((s) => s.categoryMappings)
   // The data engine did not load (bootError): nothing typed here could be saved this time.
   const cantSave = useExpenseStore((s) => s.bootError !== null)
   const toast = useToast()
@@ -115,40 +113,25 @@ export function AddExpenseSheet({
       fields[invalid].current?.focus()
       return
     }
-    let created: ExpenseView
-    try {
-      // The picked day as it is: the store keeps it as the entry's day (P2-2).
-      created = useExpenseStore.getState().addExpense({
+    const isBackdated = form.date !== today
+    const created = addAndConfirm(
+      toast,
+      vibrate,
+      {
         itemName: form.itemName.trim(),
         amount: parseFloat(form.amount),
         category: form.category || undefined,
+        // The picked day as it is: the store keeps it as the entry's day (P2-2).
         day: form.date,
         notes: form.notes.trim() || undefined,
-      })
-    } catch (err) {
-      // The sheet stays open with everything typed, so the owner can fix what the message names.
-      toast.error(actionErrorMessage(err))
-      return
-    }
-    vibrate(10)
-    onAdded?.(created)
-    const isBackdated = form.date !== today
-    const undoId = `add-${created.id}`
-    confirmAdded(
-      toast,
-      `Added "${created.itemName}" · ${fmt(created.amount)}${isBackdated ? ` · ${dayLabel(form.date)}` : ''}${addedNote === undefined ? '' : `. ${addedNote}`}`,
-      {
-        undoId,
-        action: {
-          label: 'Undo',
-          onClick: () => {
-            const outcome = useExpenseStore.getState().consumeUndo(undoId)
-            if (outcome === null) toast.info(UNDO_TOO_LATE)
-            else if (outcome.skipped > 0) toast.warning(undoOutcomeMessage(outcome))
-          },
-        },
       },
+      (added) =>
+        `Added "${added.itemName}" · ${fmt(added.amount)}${isBackdated ? ` · ${dayLabel(form.date)}` : ''}${addedNote === undefined ? '' : `. ${addedNote}`}`,
+      onAdded,
     )
+    // Refused: the sheet stays open with everything typed, so the owner can fix what the
+    // message names.
+    if (created === null) return
     setForm({ itemName: '', amount: '', category: '', date: today, notes: '' })
     onClose()
   }
@@ -169,13 +152,9 @@ export function AddExpenseSheet({
   const isBackdated = form.date && form.date !== today
 
   // The category the app files the entry under when none is picked: the same matcher as the
-  // add itself (and the quick bar's), shown before Add rather than found out after it. The
-  // matcher keeps its index between calls, so a call per keystroke is a lookup.
-  const itemName = form.itemName.trim()
-  const suggestion =
-    form.category === '' && itemName !== ''
-      ? useExpenseStore.getState().getSmartCategory(itemName)
-      : null
+  // add itself (and the quick bar's), shown before Add rather than found out after it.
+  const learned = useLearnedCategory(form.itemName)
+  const suggestion = form.category === '' ? learned : null
   const shown = form.category || suggestion || ''
 
   // Calendar days, not 24 h steps: the day after a DST change is 23 or 25 hours long.
@@ -328,6 +307,9 @@ export function AddExpenseSheet({
                 type="button"
                 key={c}
                 aria-pressed={form.category === c}
+                // Named as suggested, in one piece (a hidden span beside the text is read with
+                // a stray space before its comma).
+                aria-label={suggestion === c ? `${c}, suggested` : undefined}
                 onClick={() => set('category', form.category === c ? '' : c)}
                 className={`tap-target inline-flex h-9 items-center gap-1 rounded-full border px-3 text-[12px] font-medium transition ${
                   form.category === c
@@ -345,7 +327,6 @@ export function AddExpenseSheet({
                 }
               >
                 {c}
-                {suggestion === c && <span className="sr-only">, suggested</span>}
               </button>
             ))}
             {categories.length > 8 && (
