@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  busiestDay,
   colorFromString,
   categoryAvatarStyle,
   colorWithAlpha,
@@ -629,5 +630,48 @@ describe('computeMonthAnalytics — one budget for the whole month (T8a)', () =>
   it('an empty month with a budget has all of it left', () => {
     const a = computeMonthAnalytics(index([]), {}, '2026-10-18', 0, 700)
     expect(a.budget).toMatchObject({ scope: 'all', spent: 0, left: 700, status: 'onTrack' })
+  })
+})
+
+describe('a month in review (T8b)', () => {
+  it('names the largest entry of the month, the newest of equals', () => {
+    const rows = [
+      at('2026-10-03', 90, 'Food'),
+      at('2026-10-04', 400, 'Shopping'),
+      at('2026-10-20', 400, 'Travel'),
+      at('2026-09-30', 999, 'Food'),
+      at('2026-11-01', 999, 'Food'),
+    ]
+    const october = computeMonthAnalytics(index(rows), {}, '2026-11-05', 1)
+    expect(october.biggest).toMatchObject({
+      amount: 400,
+      category: 'Travel',
+      day: '2026-10-20',
+      id: rows[2]?.id,
+      itemName: rows[2]?.itemName,
+    })
+    // the current month has one too, future-dated rows included, as its total has them
+    expect(computeMonthAnalytics(index(rows), {}, '2026-10-10').biggest?.day).toBe('2026-10-20')
+  })
+
+  it('has none for an empty month', () => {
+    expect(computeMonthAnalytics(index([]), {}, '2026-10-18').biggest).toBeNull()
+    expect(
+      computeMonthAnalytics(index([at('2026-10-03', 5)]), {}, '2026-10-18', 1).biggest,
+    ).toBeNull()
+  })
+
+  it('the busiest day is the day most was spent, the earliest of equals', () => {
+    const rows = [
+      at('2026-10-03', 60, 'Food'),
+      at('2026-10-03', 40, 'Travel'),
+      at('2026-10-09', 100, 'Food'),
+      at('2026-10-12', 99.99, 'Food'),
+    ]
+    const october = computeMonthAnalytics(index(rows), {}, '2026-11-05', 1)
+    expect(october.daily).toHaveLength(31)
+    expect(busiestDay(october.daily)).toEqual({ date: '2026-10-03', total: 100 })
+    expect(busiestDay([])).toBeNull()
+    expect(busiestDay(computeMonthAnalytics(index([]), {}, '2026-11-05', 1).daily)).toBeNull()
   })
 })

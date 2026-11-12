@@ -115,6 +115,15 @@ export interface HeatmapData {
   readonly end: DayKey
 }
 
+/** One entry of a month, as a recap names it. */
+export interface NotableEntry {
+  readonly id: string
+  readonly itemName: string
+  readonly amount: number
+  readonly category: string
+  readonly day: DayKey
+}
+
 export interface MonthAnalytics {
   readonly period: 'month'
   readonly monthKey: MonthKey
@@ -126,6 +135,8 @@ export interface MonthAnalytics {
   /** Whole month, future-dated rows included. */
   readonly periodTotal: number
   readonly periodCount: number
+  /** The month's largest single entry (the newest of equals); null for an empty month. */
+  readonly biggest: NotableEntry | null
   readonly comparison: PeriodComparison
   readonly todayTotal: number
   readonly todayCount: number
@@ -323,13 +334,28 @@ export function computeMonthAnalytics(
 
   const rows = rowsInRange(index, range)
   let totalCents = 0
+  let biggestRow = -1
   const catCents = new Map<string, number>()
   for (const r of rows) {
     const c = index.cents[r] ?? 0
     totalCents += c
+    // rows come newest first: of equal amounts the newest stays
+    if (c > 0 && (biggestRow < 0 || c > (index.cents[biggestRow] ?? 0))) biggestRow = r
     const category = index.expenses[r]?.category ?? ''
     catCents.set(category, (catCents.get(category) ?? 0) + c)
   }
+  const top = biggestRow < 0 ? undefined : index.expenses[biggestRow]
+  const topDay = biggestRow < 0 ? null : (index.dayKeys[biggestRow] ?? null)
+  const biggest: NotableEntry | null =
+    top === undefined || topDay === null
+      ? null
+      : {
+          id: top.id,
+          itemName: top.itemName,
+          amount: fromCents(index.cents[biggestRow] ?? 0),
+          category: top.category,
+          day: topDay,
+        }
 
   // The month to date: future-dated rows of this month are left out of it.
   const toDateCents = isCurrent
@@ -435,6 +461,7 @@ export function computeMonthAnalytics(
     isCurrent,
     periodTotal: fromCents(totalCents),
     periodCount: rows.length,
+    biggest,
     comparison,
     todayTotal: fromCents(todayCents),
     todayCount: todayRows.length,
@@ -451,6 +478,13 @@ export function computeMonthAnalytics(
       : daySeries(index, enumerateDays(range)),
     heatmap: heatmapEndingAt(index, isCurrent ? today : range.end),
   }
+}
+
+/** The day of `daily` with the most spent (the earliest of equals); null when none has any. */
+export function busiestDay(daily: readonly DayPoint[]): DayPoint | null {
+  let best: DayPoint | null = null
+  for (const point of daily) if (point.total > (best?.total ?? 0)) best = point
+  return best
 }
 
 // ─── Year ─────────────────────────────────────────────────────────────────────

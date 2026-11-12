@@ -256,3 +256,48 @@ export function forecastDailyFromRecurring(
   }
   return bins
 }
+
+/** A recurring charge expected soon, as the "Due soon" list shows it. */
+export interface DueCharge {
+  readonly group: RecurringGroup
+  /** When it is expected; today for one due today or 1-3 days late. */
+  readonly due: DayKey
+  /** Days from today: 0 = today. */
+  readonly inDays: number
+  /** What it cost the last time: the amount a one-tap log enters. */
+  readonly lastAmount: number
+}
+
+/**
+ * A charge comes round at most about once a week. Something bought every day or two (kopi, the
+ * bus) repeats too, but it is a habit, not a charge to be reminded of: it would be "due" always.
+ */
+const MIN_CHARGE_GAP_DAYS = 6
+
+/**
+ * The charges expected within `days` days (today is day 0), soonest first, then by name. The same
+ * dates the forecast files them under (`upcomingDue`), so the two cannot disagree: a charge 1-3
+ * days late is due today, an older miss is skipped. Never one already logged for its turn: the
+ * next date is counted from the last entry.
+ */
+export function dueSoon(groups: readonly RecurringGroup[], today: DayKey, days = 7): DueCharge[] {
+  const out: DueCharge[] = []
+  for (const group of groups) {
+    if (group.confidence < 0.5 || group.avgGapDays < MIN_CHARGE_GAP_DAYS) continue
+    const due = upcomingDue(group, today)
+    const last = group.occurrences[group.occurrences.length - 1]
+    if (due === null || !last) continue
+    const inDays = diffDays(today, due)
+    if (inDays >= days) continue
+    out.push({ group, due, inDays, lastAmount: last.amount })
+  }
+  return out.sort(
+    (a, b) =>
+      a.inDays - b.inDays ||
+      (a.group.displayName < b.group.displayName
+        ? -1
+        : a.group.displayName > b.group.displayName
+          ? 1
+          : 0),
+  )
+}

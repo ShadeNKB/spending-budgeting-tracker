@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { detectRecurring, forecastDailyFromRecurring, upcomingDue } from './recurring'
+import { detectRecurring, dueSoon, forecastDailyFromRecurring, upcomingDue } from './recurring'
 import { getLedgerIndex } from '../lib/ledgerIndex'
 import type { Expense } from '../types'
 
@@ -276,5 +276,86 @@ describe('detectRecurring performance', () => {
     expect(cold).toBeLessThan(8 * build)
     // Warm is a cache hit (microseconds). Relative, so a loaded CI box cannot fail it.
     expect(warm * 20).toBeLessThan(cold)
+  })
+})
+
+describe('dueSoon (T8b)', () => {
+  // Invented charges: rent on the 18th, a subscription on the 20th, a gym fee on the 5th.
+  const monthly = (name: string, day: string, amount: number, months = ['07', '08', '09']) =>
+    months.map((m, i) => expense(`${name}-${String(i)}`, name, `2026-${m}-${day}`, amount))
+  const rows = [
+    ...monthly('Rent', '18', 600),
+    ...monthly('Spotify', '20', 11.98),
+    ...monthly('Gym', '05', 80),
+  ]
+  const names = (today: string, days?: number) =>
+    dueSoon(detect(rows), today, days).map((d) => `${d.group.displayName}:${String(d.inDays)}`)
+
+  it('lists what is due within seven days, soonest first, with the last amount', () => {
+    const due = dueSoon(detect(rows), '2026-10-18')
+    expect(due.map((d) => [d.group.displayName, d.due, d.inDays, d.lastAmount])).toEqual([
+      ['Rent', '2026-10-18', 0, 600],
+      ['Spotify', '2026-10-20', 2, 11.98],
+    ])
+    // the gym fee was due on the 5th: thirteen days late is a miss, not a reminder
+    expect(names('2026-10-18')).not.toContain('Gym:0')
+  })
+
+  it('the window is days from today, today being day 0', () => {
+    expect(names('2026-10-13')).toEqual(['Rent:5'])
+    expect(names('2026-10-14')).toEqual(['Rent:4', 'Spotify:6'])
+    expect(names('2026-10-14', 5)).toEqual(['Rent:4'])
+    expect(names('2026-10-11')).toEqual([])
+  })
+
+  it('a charge up to three days late is due today, as the forecast files it; later it is gone', () => {
+    expect(names('2026-10-21')).toEqual(['Rent:0', 'Spotify:0'])
+    expect(names('2026-10-22')).toEqual(['Spotify:0'])
+    for (const today of ['2026-10-18', '2026-10-21', '2026-10-22']) {
+      const first = forecastDailyFromRecurring(detect(rows), today, 1)[0] ?? 0
+      const dueToday = dueSoon(detect(rows), today)
+        .filter((d) => d.inDays === 0)
+        .reduce((s, d) => s + d.group.avgAmount, 0)
+      expect(first, today).toBeCloseTo(dueToday, 6)
+    }
+  })
+
+  it('logged for its turn, a charge leaves the list until the next one', () => {
+    const paid = [...rows, expense('rent-oct', 'Rent', '2026-10-18', 610)]
+    expect(dueSoon(detect(paid), '2026-10-18').map((d) => d.group.displayName)).toEqual(['Spotify'])
+    // and comes back for November, at what it cost the last time
+    const next = dueSoon(detect(paid), '2026-11-15')
+    expect(next.map((d) => [d.group.displayName, d.due, d.lastAmount])).toEqual([
+      ['Rent', '2026-11-18', 610],
+      ['Spotify', '2026-11-20', 11.98],
+    ])
+  })
+
+  it('a habit bought every day or two is not a charge: it would always be due', () => {
+    const kopi = Array.from({ length: 12 }, (_, i) =>
+      expense(`k${String(i)}`, 'Kopi', `2026-10-${String(2 + i).padStart(2, '0')}`, 1.8),
+    )
+    const groups = detect([...rows, ...kopi])
+    expect(groups.map((g) => g.displayName)).toContain('Kopi')
+    expect(dueSoon(groups, '2026-10-14').map((d) => d.group.displayName)).not.toContain('Kopi')
+    // a weekly one is
+    const weekly = ['01', '08', '15', '22'].map((d, i) =>
+      expense(`w${String(i)}`, 'Cleaner', `2026-09-${d}`, 40),
+    )
+    expect(dueSoon(detect(weekly), '2026-09-27').map((d) => d.group.displayName)).toEqual([
+      'Cleaner',
+    ])
+  })
+
+  it('equal dates sort by name, so the list never shuffles', () => {
+    const same = [...monthly('Zeta', '20', 5), ...monthly('Alpha', '20', 5)]
+    expect(dueSoon(detect(same), '2026-10-18').map((d) => d.group.displayName)).toEqual([
+      'Alpha',
+      'Zeta',
+    ])
+  })
+
+  it('nothing detected, nothing due', () => {
+    expect(dueSoon([], '2026-10-18')).toEqual([])
   })
 })

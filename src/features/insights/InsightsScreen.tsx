@@ -13,7 +13,12 @@ import {
 } from 'lucide-react'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { computeInsights, type InsightTone } from '../../utils/insights'
-import { detectRecurring, forecastDailyFromRecurring, upcomingDue } from '../../utils/recurring'
+import {
+  detectRecurring,
+  dueSoon,
+  forecastDailyFromRecurring,
+  upcomingDue,
+} from '../../utils/recurring'
 import { computeTrailingDaily, computeWeekAnalytics } from '../../lib/analytics'
 import { addDays, formatRangeLabel, shortDate } from '../../lib/dates'
 import { getLedgerIndex } from '../../lib/ledgerIndex'
@@ -23,6 +28,7 @@ import { ChangePill } from '../../ui/ChangePill'
 import { Pill } from '../../ui/Pill'
 import { EmptyState } from '../../ui/EmptyState'
 import { Sparkline, SparklineAxis } from '../pulse/Sparkline'
+import { DueSoon } from './DueSoon'
 import { ForecastChart } from './ForecastChart'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { seriesSummary, useChartScrub } from '../../hooks/useChartScrub'
@@ -64,6 +70,13 @@ export function InsightsScreen() {
     [index, budgets, today, fmt, monthBudget],
   )
   const recurring = detectRecurring(index) // memoised per index
+  // Charges to log are looked for among every entry: a monthly transfer that is not spending is
+  // still one to be reminded of (the forecast above stays spending only). With no such category
+  // it is the same index, and the same detection.
+  const due = useMemo(
+    () => dueSoon(detectRecurring(getLedgerIndex(expenses)), today),
+    [expenses, today],
+  )
   const forecast = useMemo(
     () => forecastDailyFromRecurring(recurring, today, FORECAST_DAYS),
     [recurring, today],
@@ -156,6 +169,8 @@ export function InsightsScreen() {
               })
             )}
           </div>
+
+          <DueSoon charges={due} today={today} notSpending={asideCategories} />
 
           {/* Last 7 days vs the previous 7 */}
           <Card>
