@@ -379,6 +379,21 @@ describe('Remove from this device', () => {
     expect(reload.calls).toBe(1)
   })
 
+  // The cause of a rare failure of the test above under load: every publish of new views asks
+  // for the device's currency, and that read used to store its answer when the key was missing,
+  // so a tab that outlived the removal put `spendtrack:currency` back.
+  it('asking for the device currency stores nothing: a publish after the key is gone leaves it gone', async () => {
+    const b = new FakeBacking()
+    seed(b, ownerV4({ rows: 5, noSync: true }).keys)
+    const t = await bootTab({ backing: b })
+    await settle()
+    b.data.delete('spendtrack:currency')
+    t.store.getState().addExpense({ itemName: 'kopi', amount: 1.8 })
+    await settle()
+    expect(t.store.getState().expenses.some((e) => e.itemName === 'kopi')).toBe(true)
+    expect(b.data.has('spendtrack:currency')).toBe(false)
+  })
+
   it('writes no currency choice afterwards, from a tab that has not noticed the removal yet', async () => {
     const b = new FakeBacking()
     seed(b, ownerV4({ rows: 5, noSync: true }).keys)

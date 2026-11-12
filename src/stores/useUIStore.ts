@@ -66,9 +66,9 @@ function detectDefaultCurrency(): SupportedCurrency {
 }
 
 // A stored valid choice always wins. Otherwise (first run, or a stored code outside the
-// supported set) the device's currency is resolved once and persisted, so the symbol never
-// changes on its own when travelling.
-function readCurrency(): SupportedCurrency {
+// supported set) the device's currency is resolved, and with `persist` stored (once, as the app
+// starts), so the symbol never changes on its own when travelling.
+function readCurrency(persist: boolean): SupportedCurrency {
   let stored: string | null = null
   try {
     stored = localStorage.getItem(CURRENCY_KEY)
@@ -77,13 +77,17 @@ function readCurrency(): SupportedCurrency {
   }
   if (isSupportedCurrency(stored)) return stored
   const resolved = detectDefaultCurrency()
-  persistPreference(CURRENCY_KEY, resolved)
+  if (persist) persistPreference(CURRENCY_KEY, resolved)
   return resolved
 }
 
-/** This device's own currency choice (`spendtrack:currency`), or its resolved default. */
+/**
+ * This device's own currency choice (`spendtrack:currency`), or its resolved default. It only
+ * reads: the engine asks on every publish, also in a tab that has outlived "Remove from this
+ * device" in another one, where nothing may be written again.
+ */
 export function readDeviceCurrency(): SupportedCurrency {
-  return readCurrency()
+  return readCurrency(false)
 }
 
 /**
@@ -140,7 +144,7 @@ export const useUIStore = create<UIState>((set, get) => ({
   addSheetOpen: false,
   hotkeysOpen: false,
   smartInputFocused: false,
-  currency: readCurrency(),
+  currency: readCurrency(true),
   theme: readTheme(),
 
   pushToast: (t) => {
