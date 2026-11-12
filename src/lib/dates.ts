@@ -345,7 +345,10 @@ export function keyToLocalNoon(key: DayKey): Date {
   return d
 }
 
-/** date-fns `format` on the key's local noon, for patterns without a fast helper. */
+/**
+ * `formatDate` on the key's local noon, for patterns without a fast helper. One of its ten tokens
+ * only: any other letter throws (formatDate.ts).
+ */
 export const formatKey = (key: DayKey, pattern: string): string =>
   formatDate(keyToLocalNoon(key), pattern)
 

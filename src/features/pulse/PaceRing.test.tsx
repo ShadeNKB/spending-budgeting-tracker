@@ -29,7 +29,7 @@ describe('PaceRing', () => {
     expect(screen.getByText('Budgeted categories only')).toBeInTheDocument()
   })
 
-  it('a whole-month budget: named as the monthly budget, with no such caveat', () => {
+  it('a whole-month budget: named as such, with no such caveat', () => {
     render(
       <PaceRing
         budget={summary({
@@ -44,7 +44,7 @@ describe('PaceRing', () => {
       />,
     )
     const ring = screen.getByRole('img')
-    expect(ring).toHaveAccessibleName(/^Monthly budget 50% used: .*500\.00 of .*1,000\.00\./)
+    expect(ring).toHaveAccessibleName(/^Whole month budget 50% used: .*500\.00 of .*1,000\.00\./)
     expect(ring).not.toHaveAccessibleName(/Budgeted categories only/)
     expect(screen.queryByText('Budgeted categories only')).toBeNull()
     // what is left, and what that is a day

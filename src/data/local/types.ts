@@ -177,7 +177,7 @@ export interface ExpenseFields {
   categories: readonly string[]
   categoryMappings: Readonly<Record<string, string>>
   budgets: Readonly<Record<string, number>>
-  /** Categories set aside: their entries are kept and leave every total (F-057). */
+  /** Categories that are not spending: their entries are kept and leave every total (F-057). */
   asideCategories: readonly string[]
   /** One budget for the whole month's spending; null when none is set. */
   monthBudget: number | null
@@ -209,7 +209,7 @@ export interface ExpenseActions {
   removeCategory(name: string): void
   setBudget(category: string, amount: number): void
   removeBudget(category: string): void
-  /** Sets a category aside (true), or counts it as spending again. */
+  /** Marks a category not spending (true), or counts it as spending again. */
   setCategoryAside(category: string, aside: boolean): void
   /** The whole-month budget; null removes it. */
   setMonthBudget(amount: number | null): void

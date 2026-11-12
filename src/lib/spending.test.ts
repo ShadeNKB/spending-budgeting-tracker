@@ -29,13 +29,13 @@ const ROWS: readonly Expense[] = [
 ]
 
 describe('splitSpending', () => {
-  it('with nothing set aside, spending is the very array it was given', () => {
+  it('with no not-spending category, spending is the very array it was given', () => {
     const split = splitSpending(ROWS, [])
     expect(split.spending).toBe(ROWS)
     expect(split.aside).toEqual([])
   })
 
-  it('moves the entries of set-aside categories out, keeping the order of both', () => {
+  it('moves the entries of not-spending categories out, keeping the order of both', () => {
     const split = splitSpending(ROWS, ['Investment', 'Savings'])
     expect(split.spending.map((e) => e.category)).toEqual(['Food', 'Transport', 'Food'])
     expect(split.aside.map((e) => e.amount)).toEqual([300, 150, 300])
@@ -43,7 +43,7 @@ describe('splitSpending', () => {
     expect(split.spending.length + split.aside.length).toBe(ROWS.length)
   })
 
-  it('a set-aside category with no entries leaves the array, and its index, as they were', () => {
+  it('a not-spending category with no entries leaves the array, and its index, as they were', () => {
     const split = splitSpending(ROWS, ['Crypto'])
     expect(split.spending).toBe(ROWS)
     expect(getLedgerIndex(split.spending)).toBe(getLedgerIndex(ROWS))
@@ -70,7 +70,7 @@ describe('splitSpending', () => {
 describe('spendingBudgets', () => {
   const budgets: CategoryBudgets = { Food: 400, Investment: 500 }
 
-  it('drops the cap of a set-aside category, and nothing else', () => {
+  it('drops the cap of a not-spending category, and nothing else', () => {
     expect({ ...spendingBudgets(budgets, ['Investment']) }).toEqual({ Food: 400 })
   })
 
@@ -93,7 +93,7 @@ describe('the figures over spending only (F-057)', () => {
   const { spending, aside } = splitSpending(ROWS, names)
   const today = '2026-10-18'
 
-  it('the month total, its comparison and its categories leave set-aside entries out', () => {
+  it('the month total, its comparison and its categories leave not-spending entries out', () => {
     const all = computeMonthAnalytics(getLedgerIndex(ROWS), {}, today)
     const a = computeMonthAnalytics(getLedgerIndex(spending), {}, today)
     expect(all.periodTotal).toBe(502.5)
@@ -104,7 +104,7 @@ describe('the figures over spending only (F-057)', () => {
     expect(a.topCategories.reduce((s, c) => s + c.share, 0)).toBeCloseTo(1, 10)
   })
 
-  it('what was set aside is summed on its own, and the two account for every cent', () => {
+  it('what was not spending is summed on its own, and the two account for every cent', () => {
     const range = monthRange('2026-10')
     const spent = sumRange(getLedgerIndex(spending), range).cents
     const moved = sumRange(getLedgerIndex(aside), range).cents
@@ -118,7 +118,7 @@ describe('the figures over spending only (F-057)', () => {
     expect(y.topCategories.map((c) => c.category)).toEqual(['Food', 'Transport'])
   })
 
-  it('a cap on a set-aside category measures nothing, and its row is gone', () => {
+  it('a cap on a not-spending category measures nothing, and its row is gone', () => {
     const budgets = spendingBudgets({ Food: 100, Investment: 200 }, names)
     const a = computeMonthAnalytics(getLedgerIndex(spending), budgets, today)
     expect(a.categoryBudgets.map((b) => b.category)).toEqual(['Food'])

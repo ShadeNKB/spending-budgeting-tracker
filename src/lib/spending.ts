@@ -1,7 +1,7 @@
 import type { CategoryBudgets, Expense } from '../types'
 
 /**
- * What counts as spending (F-057). Entries in a set-aside category (investments, savings,
+ * What counts as spending (F-057). Entries in a not-spending category (investments, savings,
  * transfers: money moved, not spent) stay in the Ledger and leave every total. Pulse and
  * Insights build their one index over `spending`, so a total, a pace, a comparison, a forecast
  * and a budget cannot disagree about what was left out; `aside` is summed on its own.
@@ -20,8 +20,8 @@ interface Cached {
 const cache = new WeakMap<readonly Expense[], Cached>()
 
 /**
- * Splits `expenses` by the set-aside names. Cached on both arrays' identity (the store keeps
- * each while it is unchanged), and with nothing set aside, or nothing in those categories,
+ * Splits `expenses` by the not-spending names. Cached on both arrays' identity (the store keeps
+ * each while it is unchanged), and with no such category, or nothing in those categories,
  * `spending` is the `expenses` array itself: the index built over it is the Ledger's.
  */
 export function splitSpending<E extends Expense>(
@@ -49,7 +49,7 @@ interface CachedBudgets {
 const budgetCache = new WeakMap<CategoryBudgets, CachedBudgets>()
 
 /**
- * The budgets without those of set-aside categories: a cap there measures nothing. The same
+ * The budgets without those of not-spending categories: a cap there measures nothing. The same
  * object while both inputs are the same, and `budgets` itself when it loses none.
  */
 export function spendingBudgets(

@@ -129,7 +129,7 @@ describe('Settings sections', () => {
   // itself when it holds none (Sync without a relay, Budgets without categories). A panel that
   // holds controls is no extra stop of its own.
   it.each([
-    ['budgets', 'Budgets', 'Monthly budget for all spending'],
+    ['budgets', 'Budgets', 'Whole month budget'],
     ['backup', 'Backup', 'Download JSON backup'],
     ['categories', 'Categories', 'Add category'],
   ] as const)('Tab from the %s tab moves to its first control', async (section, name, first) => {

@@ -35,7 +35,7 @@ export const LedgerRow = memo(function LedgerRow({
 }) {
   const fmt = useFormatMoney()
   const swipe = useSwipeReveal()
-  // In a set-aside category (F-057): listed, and in no total. The row says so in words.
+  // In a not-spending category (F-057): listed, and in no total. The row says so in words.
   const aside = useExpenseStore((s) => s.asideCategories.includes(expense.category))
 
   // The click that ends a drag is no tap; a tap on a revealed row closes it.
@@ -117,7 +117,7 @@ export const LedgerRow = memo(function LedgerRow({
           onClick={handleRowClick}
           onKeyDown={onRowKeyDown}
           aria-keyshortcuts="Delete"
-          aria-label={`Edit ${expense.itemName}, ${amount}${aside ? ' set aside' : ''}, ${expense.category}, ${dateLabel}`}
+          aria-label={`Edit ${expense.itemName}, ${amount}${aside ? ' not spending' : ''}, ${expense.category}, ${dateLabel}`}
           className="focus-inset flex min-w-0 flex-1 items-center gap-3 py-3 pl-3 pr-2 text-left md:pl-4"
         >
           <span
@@ -156,7 +156,7 @@ export const LedgerRow = memo(function LedgerRow({
             </span>
             {aside && (
               <span className="block text-[11px] text-[var(--text-tertiary)] min-[360px]:max-md:text-[12px]">
-                set aside
+                not spending
               </span>
             )}
           </span>

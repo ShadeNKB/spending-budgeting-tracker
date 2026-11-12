@@ -74,7 +74,7 @@ describe('groupLedgerRows', () => {
     expect(groupLedgerRows(index, [], '2026-10-18')).toEqual([])
   })
 
-  it("a day's total is its spending: a set-aside entry is listed under its day and not summed (F-057)", () => {
+  it("a day's total is its spending: a not-spending entry is listed under its day and not summed (F-057)", () => {
     const expenses = [
       mkExpense('a', '2026-10-18', 12.5),
       { ...mkExpense('etf', '2026-10-18', 300), category: 'Investment' },
@@ -85,7 +85,7 @@ describe('groupLedgerRows', () => {
     const groups = groupLedgerRows(index, rows, '2026-10-18', new Set(['Investment', 'Savings']))
     expect(groups.map((g) => [g.key, g.total, g.items.map((e) => e.id).sort()])).toEqual([
       ['2026-10-18', 12.5, ['a', 'etf']],
-      // a day of set-aside entries only: nothing was spent on it
+      // a day of not-spending entries only: nothing was spent on it
       ['2026-10-17', 0, ['pot']],
     ])
     // without the names, or with none, every row counts

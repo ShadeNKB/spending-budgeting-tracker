@@ -50,7 +50,7 @@ export function PaceRing({ budget, daysLeft }: { budget: BudgetSummary; daysLeft
   const perDay = budget.perDay ?? 0
   const projected = budget.status === 'ahead' ? budget.projected : null
   const label = [
-    `${budget.scope === 'all' ? 'Monthly budget' : 'Budget'} ${percent(budget.used)} used: ${fmt(budget.spent)} of ${fmt(budget.cap)}.`,
+    `${budget.scope === 'all' ? 'Whole month budget' : 'Budget'} ${percent(budget.used)} used: ${fmt(budget.spent)} of ${fmt(budget.cap)}.`,
     projected === null
       ? `${STATUS_TEXT[budget.status]}.`
       : `${STATUS_TEXT.ahead}: projected ${fmt(projected)}.`,

@@ -28,14 +28,16 @@ export interface Insight {
 
 /**
  * Compute up to 4 narrative insights for the Insights screen, from the shared periods:
- * budget alerts → last 7 days vs the previous 7 → uncategorised → month pace vs last month.
- * Every amount goes through `fmt`, so the copy follows the currency setting.
+ * budget alerts (the whole month's first) → last 7 days vs the previous 7 → uncategorised →
+ * month pace vs last month. Every amount goes through `fmt`, so the copy follows the currency
+ * setting. `monthCap` is the budget for the whole month's spending, when one is set.
  */
 export function computeInsights(
   index: LedgerIndex,
   budgets: CategoryBudgets,
   today: DayKey,
   fmt: (n: number) => string,
+  monthCap: number | null = null,
 ): Insight[] {
   const out: Insight[] = []
   const month = monthKeyOf(today)
@@ -50,6 +52,28 @@ export function computeInsights(
 
   // ── 1. Budget alerts (most urgent first) ───────────────────────
   // "Over" means past the cap, the same rule as Pulse; exactly at the cap reads 100%.
+  // The whole month's budget first: Pulse's ring measures it, and this screen must not call the
+  // month on track while that ring says over.
+  const monthCapCents = monthCap !== null && Number.isFinite(monthCap) ? toCents(monthCap) : 0
+  if (monthCapCents > 0) {
+    const spent = sumRange(index, thisMonth).cents
+    const pct = spent / monthCapCents
+    if (spent > monthCapCents) {
+      out.push({
+        id: 'budget-over-month',
+        tone: 'warn',
+        title: `${monthName(month)} is over budget`,
+        detail: `${fmt(spent / 100)} of ${fmt(monthCapCents / 100)} · ${daysLeftText}`,
+      })
+    } else if (pct >= 0.85) {
+      out.push({
+        id: 'budget-near-month',
+        tone: 'warn',
+        title: `${monthName(month)} at ${String(Math.round(pct * 100))}% of its budget`,
+        detail: `${fmt((monthCapCents - spent) / 100)} left · ${daysLeftText}`,
+      })
+    }
+  }
   const monthByCategory = categoryTotals(index, thisMonth)
   for (const [cat, cap] of activeCaps(budgets)) {
     const spent = monthByCategory.get(cat) ?? 0

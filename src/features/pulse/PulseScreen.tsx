@@ -64,9 +64,12 @@ export function PulseScreen() {
   // the cleared input paint first; the numbers follow a frame later.
   const latestExpenses = useExpenseStore((s) => s.expenses)
   const expenses = useDeferredValue(latestExpenses)
-  const allBudgets = useExpenseStore((s) => s.budgets)
-  const asideCategories = useExpenseStore((s) => s.asideCategories)
-  const monthBudget = useExpenseStore((s) => s.monthBudget)
+  // Deferred with the entries they are read against: a rename changes the entries' category and
+  // the not-spending names in one commit, and an urgent render pairing the old entries with the
+  // new names would count them for a frame.
+  const allBudgets = useDeferredValue(useExpenseStore((s) => s.budgets))
+  const asideCategories = useDeferredValue(useExpenseStore((s) => s.asideCategories))
+  const monthBudget = useDeferredValue(useExpenseStore((s) => s.monthBudget))
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen)
   const setSettingsTab = useUIStore((s) => s.setSettingsTab)
   const fmt = useFormatMoney()
@@ -79,7 +82,7 @@ export function PulseScreen() {
   const [yearOffset, setYearOffset] = useState(0)
   useEffect(() => whenIdle(preloadMonthlyBars), [])
 
-  // Every figure on this screen is spending: entries in a set-aside category (money moved, not
+  // Every figure on this screen is spending: entries in a not-spending category (money moved, not
   // spent) are summed on their own line and leave the rest, budgets included (F-057).
   const { spending, aside } = splitSpending(expenses, asideCategories)
   const budgets = spendingBudgets(allBudgets, asideCategories)
@@ -100,7 +103,7 @@ export function PulseScreen() {
   )
 
   const a = yearData ?? monthData
-  // What the period on screen holds of set-aside entries, future-dated ones included, as its
+  // What the period on screen holds of not-spending entries, future-dated ones included, as its
   // total holds them.
   const asideTotal =
     aside.length === 0
@@ -291,7 +294,7 @@ export function PulseScreen() {
 
                 {asideTotal > 0 && (
                   <div className="mt-1 text-[12px] text-[var(--text-secondary)]">
-                    Set aside{' '}
+                    Not spending{' '}
                     <span className="font-mono tabular-nums text-white">{fmt(asideTotal)}</span>
                     <span className="text-[var(--text-tertiary)]"> · not in the total</span>
                   </div>

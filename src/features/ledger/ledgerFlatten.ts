@@ -58,7 +58,7 @@ export interface LedgerGroup {
 /**
  * Group already-ordered index rows (newest day first, unreadable dates last) into day sections
  * in one pass, with totals summed in cents. A day's total is its spending: an entry in a
- * set-aside category (`aside`, F-057) is listed under its day and left out of that day's sum, as
+ * not-spending category (`aside`, F-057) is listed under its day and left out of that day's sum, as
  * it is left out of every other total.
  */
 export function groupLedgerRows(

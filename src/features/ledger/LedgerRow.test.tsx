@@ -888,14 +888,14 @@ describe('Ledger screen focus', ROOMY, () => {
   })
 })
 
-describe('a row in a set-aside category (T8a, F-057)', () => {
+describe('a row in a not-spending category (T8a, F-057)', () => {
   const initial = useExpenseStore.getState()
   afterEach(() => {
     cleanup()
     useExpenseStore.setState(initial, true)
   })
 
-  it('says "set aside" under its amount and in its name; a counted row says nothing', () => {
+  it('says "not spending" under its amount and in its name; a counted row says nothing', () => {
     const etf: Expense = {
       ...KOPI,
       id: 'e-9',
@@ -908,10 +908,12 @@ describe('a row in a set-aside category (T8a, F-057)', () => {
       [KOPI, 'Oct 19'],
       [etf, 'Oct 19'],
     ])
-    const row = screen.getByRole('button', { name: /^Edit ETF, .* set aside, Investment, Oct 19$/ })
-    expect(within(row).getByText('set aside')).toBeInTheDocument()
+    const row = screen.getByRole('button', {
+      name: /^Edit ETF, .* not spending, Investment, Oct 19$/,
+    })
+    expect(within(row).getByText('not spending')).toBeInTheDocument()
     const counted = screen.getByRole('button', { name: /^Edit Kopi O, [^,]*, Food, Oct 19$/ })
-    expect(within(counted).queryByText('set aside')).toBeNull()
+    expect(within(counted).queryByText('not spending')).toBeNull()
   })
 
   it('follows the setting: counted again, the words go', () => {
@@ -924,10 +926,10 @@ describe('a row in a set-aside category (T8a, F-057)', () => {
     }
     useExpenseStore.setState({ asideCategories: ['Investment'] })
     renderRows(vi.fn(), vi.fn(), [[etf, 'Oct 19']])
-    expect(screen.getByText('set aside')).toBeInTheDocument()
+    expect(screen.getByText('not spending')).toBeInTheDocument()
     act(() => {
       useExpenseStore.setState({ asideCategories: [] })
     })
-    expect(screen.queryByText('set aside')).toBeNull()
+    expect(screen.queryByText('not spending')).toBeNull()
   })
 })

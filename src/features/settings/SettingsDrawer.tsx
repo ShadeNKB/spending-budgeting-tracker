@@ -289,6 +289,7 @@ function CategoriesPanel() {
   const categories = useExpenseStore((s) => s.categories)
   const expenses = useExpenseStore((s) => s.expenses)
   const budgets = useExpenseStore((s) => s.budgets)
+  const asideCategories = useExpenseStore((s) => s.asideCategories)
   const toast = useToast()
   const [newCat, setNewCat] = useState('')
   const confirm = useInlineConfirm<string>()
@@ -415,7 +416,7 @@ function CategoriesPanel() {
                   layout="row"
                   tone="warning"
                   question={`Merge into ${merge.pending.to}?`}
-                  detail={mergeDetail(c, merge.pending.to, count, budgets)}
+                  detail={mergeDetail(c, merge.pending.to, count, budgets, asideCategories)}
                   confirmLabel={<Check size={14} aria-hidden />}
                   confirmName={`Merge ${c} into ${merge.pending.to}`}
                   cancelLabel={<X size={14} aria-hidden />}
@@ -527,24 +528,38 @@ function CategoriesPanel() {
 }
 
 /**
- * What a merge of `from` into `to` does, the budget first (a cut-off line still says it): the
- * category merged into keeps its own budget, else takes the merged one's (budgetView).
+ * What a merge of `from` into `to` does, the largest consequence first (a cut-off line still says
+ * it). Across the not-spending line the entries take the answer of the category they join, so
+ * they leave the totals or come into them: said before anything else. Then the budget: the
+ * category merged into keeps its own, else takes the merged one's (budgetView), which measures
+ * nothing while that category is not spending.
  */
 function mergeDetail(
   from: string,
   to: string,
   count: number,
   budgets: Readonly<Record<string, number>>,
+  aside: readonly string[],
 ): string {
+  const noun = `${count.toLocaleString()} ${count === 1 ? 'expense' : 'expenses'}`
+  const one = count === 1
+  const toAside = aside.includes(to)
+  const crosses = count > 0 && toAside !== aside.includes(from)
   const moves =
     count === 0
       ? `${from} has no expenses`
-      : `${count.toLocaleString()} ${count === 1 ? 'expense moves' : 'expenses move'} to ${to}`
+      : crosses
+        ? toAside
+          ? `${noun} ${one ? 'leaves' : 'leave'} your totals: ${to} is not spending`
+          : `${noun} ${one ? 'counts' : 'count'} as spending again in ${to}`
+        : `${noun} ${one ? 'moves' : 'move'} to ${to}`
   if (!Object.hasOwn(budgets, from)) return moves
-  const budget = Object.hasOwn(budgets, to)
-    ? `${to} keeps its own budget, not ${from}'s`
-    : `${to} takes ${from}'s budget`
-  return `${budget} · ${moves}`
+  const budget = toAside
+    ? `${from}'s budget is paused`
+    : Object.hasOwn(budgets, to)
+      ? `${to} keeps its own budget, not ${from}'s`
+      : `${to} takes ${from}'s budget`
+  return crosses ? `${moves} · ${budget}` : `${budget} · ${moves}`
 }
 
 const ASIDE_HEADING_ID = 'settings-not-spending'
@@ -626,8 +641,8 @@ function BudgetsPanel() {
   const fmt = useFormatMoney()
   const aside = new Set(asideCategories)
 
-  // A set-aside category's entries leave every total at once: the toast says what happened and
-  // offers the way back.
+  // A not-spending category's entries leave every total at once: the toast says what happened
+  // and offers the way back.
   const setAside = (category: string, on: boolean) => {
     try {
       useExpenseStore.getState().setCategoryAside(category, on)
@@ -638,20 +653,20 @@ function BudgetsPanel() {
     const entry = useExpenseStore.getState().undoStack.at(-1)
     const undoId = entry?.id.startsWith('set-') === true ? entry.id : undefined
     toast.info(
-      on ? `${category} set aside: out of your totals` : `${category} counts as spending again`,
+      on ? `${category} no longer counts as spending` : `${category} counts as spending again`,
       { undoId, action: undoId === undefined ? undefined : undoAction(toast, undoId) },
     )
   }
 
   return (
     <div className="flex flex-col gap-3">
-      <p className="text-[12px] text-[var(--text-tertiary)]">
+      <p className="text-[13px] text-[var(--text-tertiary)]">
         One budget for the whole month, caps for single categories, or both.
       </p>
       <div className={budgetRow}>
         <span className="flex-1 text-[13px] font-medium text-white">Whole month</span>
         <BudgetField
-          name="Monthly budget for all spending"
+          name="Whole month budget"
           current={monthBudget ?? undefined}
           onSet={(v) => {
             useExpenseStore.getState().setMonthBudget(v)
@@ -659,7 +674,7 @@ function BudgetsPanel() {
           }}
           onClear={() => {
             useExpenseStore.getState().setMonthBudget(null)
-            toast.info('Monthly budget cleared')
+            toast.info('Whole month budget cleared')
           }}
         />
       </div>
@@ -676,9 +691,11 @@ function BudgetsPanel() {
               />
               <span className="min-w-0 flex-1 truncate text-[13px] text-white">{c}</span>
               {aside.has(c) ? (
-                // Not spending: a cap would measure nothing. As tall as a field, so rows line up.
-                <span className="flex h-8 items-center text-[12px] text-[var(--text-tertiary)] [@media(pointer:coarse)]:h-11">
-                  Set aside
+                // Not spending: a cap would measure nothing. One it already has is kept for the
+                // day the category counts again, and the row says so. As tall as a field, so
+                // rows line up.
+                <span className="flex h-8 shrink-0 items-center text-[12px] text-[var(--text-tertiary)] [@media(pointer:coarse)]:h-11">
+                  {current === undefined ? 'Not spending' : `${fmt(current)} cap paused`}
                 </span>
               ) : (
                 <BudgetField
@@ -703,9 +720,10 @@ function BudgetsPanel() {
         <h3 id={ASIDE_HEADING_ID} className="text-[13px] font-semibold text-white">
           Not spending
         </h3>
-        <p className="text-[12px] leading-relaxed text-[var(--text-tertiary)]">
-          For money you move rather than spend: investments, savings, transfers. Entries in a
-          category set aside stay in the Ledger and leave your totals, pace and budgets.
+        <p className="text-[13px] leading-relaxed text-[var(--text-tertiary)]">
+          For money you move rather than spend: investments, savings, transfers. Entries in these
+          categories stay in the Ledger and are left out of your totals, pace and budgets. Other
+          always counts.
         </p>
         {/* 36 px chips 8 px apart: each gets a 44 px hit area on touch, none overlapping. */}
         <div role="group" aria-labelledby={ASIDE_HEADING_ID} className="flex flex-wrap gap-2">

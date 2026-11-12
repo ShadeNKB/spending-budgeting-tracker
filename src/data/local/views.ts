@@ -16,7 +16,7 @@ export interface Views {
   readonly categories: readonly string[]
   readonly categoryMappings: Readonly<Record<string, string>>
   readonly budgets: Readonly<Record<string, number>>
-  /** The categories set aside (not spending), in display order. */
+  /** The categories that are not spending, in display order. */
   readonly asideCategories: readonly string[]
   /** The budget for the whole month's spending, when one is set. */
   readonly monthBudget: number | null
@@ -237,7 +237,7 @@ export function buildViews(
       ? prev.budgets
       : budgetsView(doc)
   const budgets = prev !== null && sameRecord(buds, prev.budgets) ? prev.budgets : buds
-  // the set-aside names depend on their preference and on the display list
+  // the not-spending names depend on their preference and on the display list
   const aside =
     prev !== null && sameCats && prevDoc?.prefs === doc.prefs
       ? prev.asideCategories

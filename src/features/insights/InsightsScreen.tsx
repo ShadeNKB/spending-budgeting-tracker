@@ -51,16 +51,17 @@ export function InsightsScreen() {
   const expenses = useExpenseStore((s) => s.expenses)
   const allBudgets = useExpenseStore((s) => s.budgets)
   const asideCategories = useExpenseStore((s) => s.asideCategories)
+  const monthBudget = useExpenseStore((s) => s.monthBudget)
   const setAddSheetOpen = useUIStore((s) => s.setAddSheetOpen)
   const fmt = useFormatMoney()
   const today = useToday()
-  // Spending only, as on Pulse: set-aside entries (F-057) are in no figure here.
+  // Spending only, as on Pulse: not-spending entries (F-057) are in no figure here.
   const budgets = spendingBudgets(allBudgets, asideCategories)
   const index = getLedgerIndex(splitSpending(expenses, asideCategories).spending)
 
   const insights = useMemo(
-    () => computeInsights(index, budgets, today, fmt),
-    [index, budgets, today, fmt],
+    () => computeInsights(index, budgets, today, fmt, monthBudget),
+    [index, budgets, today, fmt, monthBudget],
   )
   const recurring = detectRecurring(index) // memoised per index
   const forecast = useMemo(

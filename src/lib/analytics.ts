@@ -331,14 +331,17 @@ export function computeMonthAnalytics(
     catCents.set(category, (catCents.get(category) ?? 0) + c)
   }
 
+  // The month to date: future-dated rows of this month are left out of it.
+  const toDateCents = isCurrent
+    ? sumRange(index, { start: range.start, end: today }).cents
+    : totalCents
   let comparison: PeriodComparison
   if (isCurrent) {
     const like = prevMonthLikeForLike(today)
-    const cur = sumRange(index, { start: range.start, end: today }).cents
     const prev = sumRange(index, like.range).cents
     comparison = {
       total: fromCents(prev),
-      changePct: changeSoFar(cur, prev),
+      changePct: changeSoFar(toDateCents, prev),
       against: like.against,
       label: like.label,
     }
@@ -363,7 +366,7 @@ export function computeMonthAnalytics(
   // One budget for the whole month measures all of it; without one, the category caps summed
   // measure their own categories only.
   const whole = monthCapCents > 0
-  const fixed = isCurrent && (whole || caps.length > 0) ? paidMonthlyCharges(index, monthKey) : null
+  const fixed = isCurrent && caps.length > 0 ? paidMonthlyCharges(index, monthKey) : null
   let capCents = 0
   let spentCents = 0
   let fixedCents = 0
@@ -400,12 +403,13 @@ export function computeMonthAnalytics(
   const measuredCap = whole ? monthCapCents : capCents
   if (measuredCap > 0) {
     const measured = whole ? totalCents : spentCents
-    let paid = fixedCents
-    if (whole) {
-      paid = 0
-      for (const cents of fixed?.values() ?? []) paid += cents
-    }
-    const projected = projectedCents(measured, paid, dom, dim)
+    // The whole month's projection is Insights' own (the month to date at its daily rate, monthly
+    // charges already paid counted once) plus the rows dated later this month, counted once too:
+    // a row entered for the 25th is not a daily habit. The two screens cannot disagree.
+    const projected =
+      whole && isCurrent
+        ? totalCents - toDateCents + projectedMonthCents(index, today)
+        : projectedCents(measured, fixedCents, dom, dim)
     const status = statusOf(measured, measuredCap, projected, dom, isCurrent)
     const leftCents = Math.max(0, measuredCap - measured)
     budget = {

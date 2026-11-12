@@ -579,6 +579,34 @@ describe('computeMonthAnalytics — one budget for the whole month (T8a)', () =>
     expect(tight.budget?.projected).toBeCloseTo(755, 6)
   })
 
+  it('counts a row dated later this month once, not at the daily rate (review finding 4)', () => {
+    // 200 by the 10th, and 300 entered for the 25th: 300 + 200 / 10 * 31 = 920, not 500 / 10 * 31
+    const rows = [at('2026-10-04', 200, 'Food'), at('2026-10-25', 300, 'Travel')]
+    const roomy = computeMonthAnalytics(index(rows), {}, '2026-10-10', 0, 1000)
+    expect(roomy.budget).toMatchObject({
+      status: 'onTrack',
+      projected: null,
+      spent: 500,
+      left: 500,
+    })
+    const tight = computeMonthAnalytics(index(rows), {}, '2026-10-10', 0, 900)
+    expect(tight.budget?.status).toBe('ahead')
+    expect(tight.budget?.projected).toBeCloseTo(920, 6)
+  })
+
+  it('projects the month as Insights does, so the two screens cannot disagree', () => {
+    const rows = [
+      at('2026-10-03', 90, 'Food'),
+      at('2026-10-04', 400, 'Shopping'),
+      at('2026-10-10', 10, 'Transport'),
+    ]
+    const a = computeMonthAnalytics(index(rows), {}, '2026-10-18', 0, 600)
+    expect(a.budget?.status).toBe('ahead')
+    expect(cents(a.budget?.projected ?? 0)).toBe(
+      Math.round(projectedMonthCents(index(rows), '2026-10-18')),
+    )
+  })
+
   it('a finished month is final: spent of the budget, no pace', () => {
     const a = computeMonthAnalytics(index(rows()), {}, '2026-11-05', 1, 450)
     expect(a.budget).toMatchObject({

@@ -240,7 +240,7 @@ export function LedgerScreen() {
   )
 
   const filtered = useMemo(() => rowsToExpenses(index, rows), [index, rows])
-  // The total, and each day's, is spending, as on Pulse; listed entries of set-aside categories
+  // The total, and each day's, is spending, as on Pulse; listed entries of not-spending categories
   // (F-057) are summed beside it, so the two always account for every row shown.
   const asideCategories = useExpenseStore((s) => s.asideCategories)
   const asideNames = useMemo(() => new Set(asideCategories), [asideCategories])
@@ -355,7 +355,7 @@ export function LedgerScreen() {
               </div>
               {asideSum > 0 && (
                 <div className="text-[11px] text-[var(--text-tertiary)]">
-                  <span className="font-mono tabular-nums">{fmt(asideSum)}</span> set aside
+                  <span className="font-mono tabular-nums">{fmt(asideSum)}</span> not spending
                 </div>
               )}
             </div>

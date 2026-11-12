@@ -1345,7 +1345,7 @@ export function createEngine(host: EngineHost): Engine {
 
     addCategory(name: string): void {
       const r = need()
-      run(r, (doc, ctx) => ops.addCategory(doc, ctx, name))
+      run(r, (doc, ctx) => spending.addCategory(doc, ctx, name))
     },
 
     renameCategory(from: string, to: string): void {
