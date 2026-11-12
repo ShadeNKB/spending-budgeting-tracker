@@ -19,9 +19,11 @@ import {
   monthRange,
   monthShortName,
   shortDate,
+  yearRange,
 } from '../../lib/dates'
 import type { LedgerPeriod } from '../ledger/ledgerParams'
-import { getLedgerIndex } from '../../lib/ledgerIndex'
+import { getLedgerIndex, sumRange } from '../../lib/ledgerIndex'
+import { spendingBudgets, splitSpending } from '../../lib/spending'
 import { importWithReload } from '../../lib/chunkReload'
 import { whenIdle } from '../../lib/whenIdle'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
@@ -62,7 +64,9 @@ export function PulseScreen() {
   // the cleared input paint first; the numbers follow a frame later.
   const latestExpenses = useExpenseStore((s) => s.expenses)
   const expenses = useDeferredValue(latestExpenses)
-  const budgets = useExpenseStore((s) => s.budgets)
+  const allBudgets = useExpenseStore((s) => s.budgets)
+  const asideCategories = useExpenseStore((s) => s.asideCategories)
+  const monthBudget = useExpenseStore((s) => s.monthBudget)
   const setSettingsOpen = useUIStore((s) => s.setSettingsOpen)
   const setSettingsTab = useUIStore((s) => s.setSettingsTab)
   const fmt = useFormatMoney()
@@ -75,15 +79,19 @@ export function PulseScreen() {
   const [yearOffset, setYearOffset] = useState(0)
   useEffect(() => whenIdle(preloadMonthlyBars), [])
 
-  const index = getLedgerIndex(expenses)
+  // Every figure on this screen is spending: entries in a set-aside category (money moved, not
+  // spent) are summed on their own line and leave the rest, budgets included (F-057).
+  const { spending, aside } = splitSpending(expenses, asideCategories)
+  const budgets = spendingBudgets(allBudgets, asideCategories)
+  const index = getLedgerIndex(spending)
   // The arrows page the period the switch shows, also while the screen is catching up with it:
   // ← right after choosing Year goes back a year, never a month out of sight.
   const offset = view === 'month' ? monthOffset : yearOffset
   const isCurrentPeriod = offset === 0
 
   const monthData = useMemo(
-    () => computeMonthAnalytics(index, budgets, today, monthOffset),
-    [index, budgets, today, monthOffset],
+    () => computeMonthAnalytics(index, budgets, today, monthOffset, monthBudget),
+    [index, budgets, today, monthOffset, monthBudget],
   )
   // The year is only computed while it is on screen.
   const yearData = useMemo(
@@ -92,6 +100,15 @@ export function PulseScreen() {
   )
 
   const a = yearData ?? monthData
+  // What the period on screen holds of set-aside entries, future-dated ones included, as its
+  // total holds them.
+  const asideTotal =
+    aside.length === 0
+      ? 0
+      : sumRange(
+          getLedgerIndex(aside),
+          yearData ? yearRange(yearData.year) : monthRange(monthData.monthKey),
+        ).cents / 100
   // A category opens the Ledger over the period on screen: a past month or year as its days.
   const ledgerPeriod: LedgerPeriod = yearData
     ? yearOffset === 0
@@ -272,6 +289,14 @@ export function PulseScreen() {
                   </div>
                 )}
 
+                {asideTotal > 0 && (
+                  <div className="mt-1 text-[12px] text-[var(--text-secondary)]">
+                    Set aside{' '}
+                    <span className="font-mono tabular-nums text-white">{fmt(asideTotal)}</span>
+                    <span className="text-[var(--text-tertiary)]"> · not in the total</span>
+                  </div>
+                )}
+
                 {/* On a wide screen the trend takes the room the card has (it was a 384 px strip in
                     a 900 px column, F-087). */}
                 <div className="mt-4">
@@ -402,7 +427,7 @@ export function PulseScreen() {
         </Card>
       )}
 
-      {!yearData && !hasBudgets && hasExpenses && (
+      {!yearData && !hasBudgets && monthData.budget === null && hasExpenses && (
         <Card className="border-accent/15 bg-accent/[0.035]">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex min-w-0 items-start gap-3">
@@ -412,7 +437,8 @@ export function PulseScreen() {
               <div className="min-w-0">
                 <h2 className="text-[13px] font-semibold text-white">No monthly budgets set</h2>
                 <p className="mt-0.5 text-[12px] leading-relaxed text-[var(--text-secondary)]">
-                  Add category caps to unlock pace rings, expected-spend markers, and budget alerts.
+                  Set one budget for the month, or caps by category, to see what is left and how
+                  much that is a day.
                 </p>
               </div>
             </div>

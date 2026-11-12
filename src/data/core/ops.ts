@@ -15,11 +15,13 @@ import {
   CATEGORY_MAX,
   CURRENCY_KEY,
   DEMO_PREFIX,
+  EXTRA_KEY_RE,
   FIELD_KEYS,
   LIVE_AND_DELETED,
   NAME_MAX,
   NOTES_INPUT_MAX,
   OTHER,
+  PREF_TEXT_MAX,
   UNDO_MS,
   isReserved,
 } from './constants'
@@ -37,7 +39,7 @@ import {
   reviveRecord,
   type RecordPatch,
 } from './record'
-import { validCurrency, validMapKey, validName } from './sanitize'
+import { isJson, validCurrency, validMapKey, validName } from './sanitize'
 import { tick } from './stamp'
 import type {
   BudgetReg,
@@ -46,6 +48,7 @@ import type {
   ExpenseRec,
   FieldKey,
   ImportPlan,
+  Json,
   NewExpenseInput,
   OpCtx,
   OpResult,
@@ -69,6 +72,7 @@ export type OpErrorCode =
   | 'notes'
   | 'budget'
   | 'currency'
+  | 'pref'
   | 'not-found'
   | 'reserved'
   | 'other-locked'
@@ -554,6 +558,30 @@ export function setCurrency(doc: Doc, ctx: OpCtx, code: string): OpResult {
     { k: 'reg', key: `pref:${CURRENCY_KEY}`, prev: old ?? null, wrote: t },
   ])
   return result({ ...doc, prefs }, [[`pref:${CURRENCY_KEY}`, t]], undo)
+}
+
+/**
+ * A synced preference other than the currency, which has its own rule: one last-writer-wins
+ * register per key, `null` for unset (what an undo of a first write leaves, too). The value must
+ * pass the wire's rule for a preference (decodePrefs), or the other devices would drop it and keep
+ * their own. What a key means is its reader's business; the core only carries it.
+ */
+export function setPref(doc: Doc, ctx: OpCtx, key: string, value: Json, label: string): OpResult {
+  if (
+    !EXTRA_KEY_RE.test(key) ||
+    isReserved(key) ||
+    key === CURRENCY_KEY ||
+    !isJson(value) ||
+    JSON.stringify(value).length > PREF_TEXT_MAX
+  ) {
+    throw new OpError('pref', 'That setting is too long to keep in sync.')
+  }
+  const old = doc.prefs.get(key)
+  if (old === undefined ? value === null : canon(old.v) === canon(value)) return unchanged(doc)
+  const t = tick(ctx.clock, ctx.wall, old?.s ?? 0)
+  const prefs = new Map(doc.prefs).set(key, { v: value, s: t })
+  const undo = entry(ctx, label, [{ k: 'reg', key: `pref:${key}`, prev: old ?? null, wrote: t }])
+  return result({ ...doc, prefs }, [[`pref:${key}`, t]], undo)
 }
 
 // ── undo (§7.2) ─────────────────────────────────────────────────────────────────────────────

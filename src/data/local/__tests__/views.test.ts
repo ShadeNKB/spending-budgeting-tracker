@@ -17,6 +17,8 @@ const plain = (v: Views): unknown => ({
   categories: [...v.categories],
   categoryMappings: { ...v.categoryMappings },
   budgets: { ...v.budgets },
+  asideCategories: [...v.asideCategories],
+  monthBudget: v.monthBudget,
   syncedCurrency: v.syncedCurrency,
   hasDemoRows: v.hasDemoRows,
 })

@@ -5,6 +5,7 @@
 import { displayList, isBudgetShown, resolver } from './categories'
 import {
   CURRENCY_KEY,
+  PREF_TEXT_MAX,
   EXTRA_KEY_RE,
   LEGACY_EPOCH_ISO,
   LIVE_AND_DELETED,
@@ -449,7 +450,7 @@ function decodePrefs(x5: Readonly<Record<string, unknown>> | null, acc: Acc): Ma
       typeof s !== 'number' ||
       !EXTRA_KEY_RE.test(k) ||
       isReserved(k) ||
-      rawText(value).length > 2048 ||
+      rawText(value).length > PREF_TEXT_MAX ||
       (k === CURRENCY_KEY && value !== null && !validCurrency(value))
     ) {
       drop(acc, `x5.pref.${k}`, [k, v])

@@ -75,6 +75,7 @@ import type * as RecoveryModule from './recoveryCentre'
 import { REMOTE_SAFETY_COPY_ERROR, SafetyCopyError } from './refusal'
 import { smartCategory } from './smart'
 import { type SnapMeta, type SnapReason, Snapshots } from './snapshots'
+import * as spending from './spending'
 import type {
   Attention,
   BootReport,
@@ -258,6 +259,8 @@ export function createEngine(host: EngineHost): Engine {
       if (p?.categories !== v.categories) patch.categories = v.categories
       if (p?.categoryMappings !== v.categoryMappings) patch.categoryMappings = v.categoryMappings
       if (p?.budgets !== v.budgets) patch.budgets = v.budgets
+      if (p?.asideCategories !== v.asideCategories) patch.asideCategories = v.asideCategories
+      if (p?.monthBudget !== v.monthBudget) patch.monthBudget = v.monthBudget
       if (p?.hasDemoRows !== v.hasDemoRows) patch.demo = v.hasDemoRows ? 'sample' : 'none'
       r.views = v
       r.viewsDoc = r.doc
@@ -1347,12 +1350,12 @@ export function createEngine(host: EngineHost): Engine {
 
     renameCategory(from: string, to: string): void {
       const r = need()
-      run(r, (doc, ctx) => ops.renameCategory(doc, ctx, from, to), revId('cat'))
+      run(r, (doc, ctx) => spending.renameCategory(doc, ctx, from, to), revId('cat'))
     },
 
     removeCategory(name: string): void {
       const r = need()
-      run(r, (doc, ctx) => ops.removeCategory(doc, ctx, name), revId('cat'))
+      run(r, (doc, ctx) => spending.removeCategory(doc, ctx, name), revId('cat'))
     },
 
     setBudget(category: string, amount: number): void {
@@ -1363,6 +1366,16 @@ export function createEngine(host: EngineHost): Engine {
     removeBudget(category: string): void {
       const r = need()
       run(r, (doc, ctx) => ops.removeBudget(doc, ctx, category), revId('bud'))
+    },
+
+    setCategoryAside(category: string, aside: boolean): void {
+      const r = need()
+      run(r, (doc, ctx) => spending.setAside(doc, ctx, category, aside), revId('set'))
+    },
+
+    setMonthBudget(amount: number | null): void {
+      const r = need()
+      run(r, (doc, ctx) => spending.setMonthCap(doc, ctx, amount), revId('set'))
     },
 
     setCurrency(code: string): void {

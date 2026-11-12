@@ -25,6 +25,8 @@ export const HASH_MAX = 16
 
 export const EXTRA_KEYS_MAX = 16
 export const EXTRA_BYTES_MAX = 2048
+/** A preference's value as JSON text: longer, and the wire drops it (decodePrefs). */
+export const PREF_TEXT_MAX = 2048
 export const EXTRA_KEY_RE = /^[A-Za-z][A-Za-z0-9_]{0,31}$/
 
 /**

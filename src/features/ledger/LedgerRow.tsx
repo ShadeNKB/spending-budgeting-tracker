@@ -1,5 +1,7 @@
 import { memo, type KeyboardEvent, type MouseEvent } from 'react'
+import clsx from 'clsx'
 import { Trash2 } from 'lucide-react'
+import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { categoryAvatarStyle } from '../../lib/analytics'
 import { initialOf } from '../../lib/format'
@@ -33,6 +35,8 @@ export const LedgerRow = memo(function LedgerRow({
 }) {
   const fmt = useFormatMoney()
   const swipe = useSwipeReveal()
+  // In a set-aside category (F-057): listed, and in no total. The row says so in words.
+  const aside = useExpenseStore((s) => s.asideCategories.includes(expense.category))
 
   // The click that ends a drag is no tap; a tap on a revealed row closes it.
   const handleRowClick = () => {
@@ -113,7 +117,7 @@ export const LedgerRow = memo(function LedgerRow({
           onClick={handleRowClick}
           onKeyDown={onRowKeyDown}
           aria-keyshortcuts="Delete"
-          aria-label={`Edit ${expense.itemName}, ${amount}, ${expense.category}, ${dateLabel}`}
+          aria-label={`Edit ${expense.itemName}, ${amount}${aside ? ' set aside' : ''}, ${expense.category}, ${dateLabel}`}
           className="focus-inset flex min-w-0 flex-1 items-center gap-3 py-3 pl-3 pr-2 text-left md:pl-4"
         >
           <span
@@ -141,8 +145,20 @@ export const LedgerRow = memo(function LedgerRow({
             </span>
           </span>
 
-          <span className="shrink-0 font-mono text-[14px] tabular-nums text-white min-[360px]:max-md:text-[15px]">
-            {amount}
+          <span className="shrink-0 text-right">
+            <span
+              className={clsx(
+                'block font-mono text-[14px] tabular-nums min-[360px]:max-md:text-[15px]',
+                aside ? 'text-[var(--text-secondary)]' : 'text-white',
+              )}
+            >
+              {amount}
+            </span>
+            {aside && (
+              <span className="block text-[11px] text-[var(--text-tertiary)] min-[360px]:max-md:text-[12px]">
+                set aside
+              </span>
+            )}
           </span>
         </button>
 

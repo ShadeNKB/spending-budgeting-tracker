@@ -240,12 +240,24 @@ export function LedgerScreen() {
   )
 
   const filtered = useMemo(() => rowsToExpenses(index, rows), [index, rows])
-  const groups = useMemo(() => groupLedgerRows(index, rows, today), [index, rows, today])
-  const totalSum = useMemo(() => {
+  // The total, and each day's, is spending, as on Pulse; listed entries of set-aside categories
+  // (F-057) are summed beside it, so the two always account for every row shown.
+  const asideCategories = useExpenseStore((s) => s.asideCategories)
+  const asideNames = useMemo(() => new Set(asideCategories), [asideCategories])
+  const groups = useMemo(
+    () => groupLedgerRows(index, rows, today, asideNames),
+    [index, rows, today, asideNames],
+  )
+  const { totalSum, asideSum } = useMemo(() => {
     let cents = 0
-    for (const r of rows) cents += index.cents[r] ?? 0
-    return cents / 100
-  }, [index, rows])
+    let aside = 0
+    for (const r of rows) {
+      const c = index.cents[r] ?? 0
+      if (asideNames.has(index.expenses[r]?.category ?? '')) aside += c
+      else cents += c
+    }
+    return { totalSum: cents / 100, asideSum: aside / 100 }
+  }, [index, rows, asideNames])
 
   const lastDelete = useRef<Change | null>(null)
   const handleDelete = useCallback(
@@ -341,6 +353,11 @@ export function LedgerScreen() {
               <div className="text-[11px] text-[var(--text-tertiary)]">
                 {filtered.length} {filtered.length === 1 ? 'entry' : 'entries'}
               </div>
+              {asideSum > 0 && (
+                <div className="text-[11px] text-[var(--text-tertiary)]">
+                  <span className="font-mono tabular-nums">{fmt(asideSum)}</span> set aside
+                </div>
+              )}
             </div>
           </div>
         </div>

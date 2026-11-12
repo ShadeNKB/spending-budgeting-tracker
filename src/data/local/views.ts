@@ -9,12 +9,17 @@ import { maxStampRec } from '../core/record'
 import { iso } from '../core/stamp'
 import type { Doc, ExpenseRec } from '../core/types'
 import type { ExpenseView } from '../../types'
+import { asideView, monthCapView } from './spending'
 
 export interface Views {
   readonly expenses: readonly ExpenseView[]
   readonly categories: readonly string[]
   readonly categoryMappings: Readonly<Record<string, string>>
   readonly budgets: Readonly<Record<string, number>>
+  /** The categories set aside (not spending), in display order. */
+  readonly asideCategories: readonly string[]
+  /** The budget for the whole month's spending, when one is set. */
+  readonly monthBudget: number | null
   /** The synced currency register, when it holds a code. */
   readonly syncedCurrency: string | null
   readonly hasDemoRows: boolean
@@ -232,11 +237,20 @@ export function buildViews(
       ? prev.budgets
       : budgetsView(doc)
   const budgets = prev !== null && sameRecord(buds, prev.budgets) ? prev.budgets : buds
+  // the set-aside names depend on their preference and on the display list
+  const aside =
+    prev !== null && sameCats && prevDoc?.prefs === doc.prefs
+      ? prev.asideCategories
+      : asideView(doc)
+  const asideCategories =
+    prev !== null && sameList(aside, prev.asideCategories) ? prev.asideCategories : aside
   return {
     expenses,
     categories,
     categoryMappings,
     budgets,
+    asideCategories,
+    monthBudget: monthCapView(doc),
     syncedCurrency: currencyOf(doc),
     hasDemoRows: demoBuild && hasDemo(doc),
   }
