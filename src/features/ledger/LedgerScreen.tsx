@@ -4,7 +4,7 @@ import { Search, Filter, Inbox, X, FileDown } from 'lucide-react'
 import { downloadCSV } from '../../lib/download'
 import { expensesToCsv } from '../../lib/csv'
 import { DatePicker } from '../../ui/DatePicker'
-import { format } from 'date-fns'
+import { formatDate } from '../../lib/formatDate'
 import { undoAction, useExpenseStore } from '../../stores/useExpenseStore'
 import { Segmented } from '../../ui/Segmented'
 import { Input } from '../../ui/Input'
@@ -282,7 +282,7 @@ export function LedgerScreen() {
 
   const handleExportCsv = () => {
     if (filtered.length === 0) return
-    downloadCSV(`spendtrack-${format(new Date(), 'yyyy-MM-dd')}.csv`, expensesToCsv(filtered))
+    downloadCSV(`spendtrack-${formatDate(new Date(), 'yyyy-MM-dd')}.csv`, expensesToCsv(filtered))
     toast.success(`Exported ${filtered.length} ${filtered.length === 1 ? 'entry' : 'entries'}`)
   }
 

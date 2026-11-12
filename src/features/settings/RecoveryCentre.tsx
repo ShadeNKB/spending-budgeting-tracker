@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
-import { format } from 'date-fns'
+import { formatDate } from '../../lib/formatDate'
 import { ChevronLeft, Download, FileDown, HardDrive } from 'lucide-react'
 import { Button } from '../../ui/Button'
 import { useToast } from '../../hooks/useToast'
@@ -140,7 +140,7 @@ export function RecoveryCentre({
   const downloadHeld = () => {
     try {
       downloadJSON(
-        `spendtrack-backup-${format(new Date(), 'yyyy-MM-dd')}.json`,
+        `spendtrack-backup-${formatDate(new Date(), 'yyyy-MM-dd')}.json`,
         useExpenseStore.getState().exportBackup(),
       )
     } catch {

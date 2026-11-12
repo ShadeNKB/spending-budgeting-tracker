@@ -23,7 +23,7 @@ import { shownTheme } from '../../app/useAppliedTheme'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { downloadJSON } from '../../lib/download'
-import { format as fmtDate } from 'date-fns'
+import { formatDate } from '../../lib/formatDate'
 import { parseExpense, quickAddDateLabel } from '../../utils/parseExpense'
 import {
   CONFIRM_DELAY_MS,
@@ -320,7 +320,7 @@ export function CommandPalette() {
         icon: Download,
         onRun: () => {
           downloadJSON(
-            `spendtrack-backup-${fmtDate(new Date(), 'yyyy-MM-dd')}.json`,
+            `spendtrack-backup-${formatDate(new Date(), 'yyyy-MM-dd')}.json`,
             useExpenseStore.getState().exportBackup(),
           )
           useExpenseStore.getState().markBackedUp()

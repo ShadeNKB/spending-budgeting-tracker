@@ -1,4 +1,4 @@
-import { format } from 'date-fns'
+import { formatDate } from '../lib/formatDate'
 
 export interface ParsedExpense {
   itemName: string
@@ -635,5 +635,5 @@ export function quickAddDateLabel(
   const today = todayKeyOf(now)
   if (parsedDate === undefined || parsedDate === today) return null
   const pattern = parsedDate.slice(0, 4) === today.slice(0, 4) ? 'MMM d' : 'MMM d, yyyy'
-  return format(new Date(`${parsedDate}T12:00:00`), pattern)
+  return formatDate(new Date(`${parsedDate}T12:00:00`), pattern)
 }

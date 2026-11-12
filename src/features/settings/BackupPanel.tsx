@@ -1,5 +1,5 @@
 import { lazy, Suspense, useCallback, useEffect, useId, useRef, useState, type Ref } from 'react'
-import { format } from 'date-fns'
+import { formatDate } from '../../lib/formatDate'
 import {
   ChevronRight,
   Download,
@@ -92,7 +92,7 @@ export function BackupPanel() {
 
   const downloadBackup = () => {
     downloadJSON(
-      `spendtrack-backup-${format(new Date(), 'yyyy-MM-dd')}.json`,
+      `spendtrack-backup-${formatDate(new Date(), 'yyyy-MM-dd')}.json`,
       useExpenseStore.getState().exportBackup(),
     )
     // "Last backup" here, only once the browser has the file: a download that throws records
@@ -102,7 +102,7 @@ export function BackupPanel() {
   }
 
   const exportCsv = () => {
-    downloadCSV(`spendtrack-${format(new Date(), 'yyyy-MM-dd')}.csv`, expensesToCsv(expenses))
+    downloadCSV(`spendtrack-${formatDate(new Date(), 'yyyy-MM-dd')}.csv`, expensesToCsv(expenses))
     toast.success('CSV exported')
   }
 

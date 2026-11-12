@@ -1,5 +1,5 @@
 import { useId, useMemo, useRef, useState } from 'react'
-import { format } from 'date-fns'
+import { formatDate } from '../lib/formatDate'
 // DatabaseBackup: an icon no Settings module uses, so the card shares no chunk with Settings alone.
 import { DatabaseBackup, Download } from 'lucide-react'
 import { Button } from '../ui/Button'
@@ -93,7 +93,7 @@ export function BackupNudge() {
     shieldGesture(e.nativeEvent)
     try {
       downloadJSON(
-        `spendtrack-backup-${format(new Date(), 'yyyy-MM-dd')}.json`,
+        `spendtrack-backup-${formatDate(new Date(), 'yyyy-MM-dd')}.json`,
         useExpenseStore.getState().exportBackup(),
       )
       // Recorded only once the browser has the file: a download that throws records nothing.

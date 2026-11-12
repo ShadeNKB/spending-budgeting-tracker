@@ -1,4 +1,5 @@
-import { format, parseISO } from 'date-fns'
+import { parseISO } from 'date-fns'
+import { formatDate } from './formatDate'
 
 /**
  * The one date contract for every number on screen.
@@ -111,7 +112,7 @@ function parseSlow(s: string): Parsed {
     const d = parseISO(s)
     const time = d.getTime()
     if (Number.isNaN(time)) return INVALID
-    const key = format(d, 'yyyy-MM-dd')
+    const key = formatDate(d, 'yyyy-MM-dd')
     // Keys are always 10 characters; a 5-digit year would break key arithmetic, so it is
     // treated like any other unusable date (listed under "Unknown date").
     return key.length === 10 ? { key, time } : INVALID
@@ -346,7 +347,7 @@ export function keyToLocalNoon(key: DayKey): Date {
 
 /** date-fns `format` on the key's local noon, for patterns without a fast helper. */
 export const formatKey = (key: DayKey, pattern: string): string =>
-  format(keyToLocalNoon(key), pattern)
+  formatDate(keyToLocalNoon(key), pattern)
 
 /** "Oct 18" */
 export const shortDate = (key: DayKey): string =>

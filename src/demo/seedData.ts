@@ -1,11 +1,12 @@
-import { format, subDays } from 'date-fns'
+import { subDays } from 'date-fns'
+import { formatDate } from '../lib/formatDate'
 import type { Expense, CategoryBudgets, CategoryMappings } from '../types'
 
 // Demo builds only (VITE_DEMO_MODE): the store reads these behind a build-time flag. Marked pure,
 // so every other build, Shade's included, drops the whole module instead of computing 60 rows
 // nothing reads.
 const today = /*#__PURE__*/ new Date()
-const d = (daysAgo: number): string => format(subDays(today, daysAgo), 'yyyy-MM-dd')
+const d = (daysAgo: number): string => formatDate(subDays(today, daysAgo), 'yyyy-MM-dd')
 const ts = (daysAgo: number): string => `${d(daysAgo)}T12:00:00`
 
 // 60 entries across 10 weeks — realistic Singapore daily life
