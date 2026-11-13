@@ -1,7 +1,7 @@
 import { StrictMode } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, render } from '@testing-library/react'
-import { RouterProvider, createMemoryRouter, useLocation } from 'react-router-dom'
+import { MemoryRouter, useLocation, useNavigate, type NavigateFunction } from 'react-router-dom'
 
 interface FakeLaunchParams {
   targetURL?: string
@@ -41,24 +41,31 @@ beforeAll(async () => {
 
 function mount(mod: Loaded, url: string, { strict = false } = {}) {
   let location = { pathname: '', search: '' }
+  let navigate: NavigateFunction = () => {}
   function Probe() {
     mod.useLaunchActions()
     const current = useLocation()
     location = { pathname: current.pathname, search: current.search }
+    navigate = useNavigate()
     return null
   }
-  const router = createMemoryRouter([{ path: '*', element: <Probe /> }], {
-    initialEntries: [url],
-  })
   // Count every false -> true transition of the add sheet: "opens once" means exactly one.
   let opens = 0
   mod.useUIStore.subscribe((state, prev) => {
     if (state.addSheetOpen && !prev.addSheetOpen) opens += 1
   })
-  const tree = <RouterProvider router={router} />
+  const tree = (
+    <MemoryRouter initialEntries={[url]}>
+      <Probe />
+    </MemoryRouter>
+  )
   render(strict ? <StrictMode>{tree}</StrictMode> : tree)
   return {
-    router,
+    go: (to: string) => {
+      act(() => {
+        void navigate(to)
+      })
+    },
     location: () => location,
     opens: () => opens,
     hydrate: () => {
@@ -121,10 +128,10 @@ describe('?add=1', () => {
     const app = mount(mod, '/pulse')
     expect(app.isOpen()).toBe(false)
 
-    await act(() => app.router.navigate('/pulse?add=1'))
+    app.go('/pulse?add=1')
     expect(app.opens()).toBe(1)
     app.close()
-    await act(() => app.router.navigate('/insights?add=1'))
+    app.go('/insights?add=1')
     expect(app.opens()).toBe(2)
     expect(app.location()).toEqual({ pathname: '/insights', search: '' })
   })

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.18.1 — 2026-11-13
+
+Room in the bundle before T8's last slice (money in). Nothing on screen changes; the app starts on about 56 KB less JavaScript.
+
+### Changed (engineering)
+
+- **The router runs in its declarative mode** (`BrowserRouter` + `useRoutes`) instead of as a data router (`createBrowserRouter` + `RouterProvider`). The app has three screens and no loaders or actions; the data router was 55 KB of the bundle's 92.6 KB of router, all of it on the startup path. Navigation still runs inside a React transition, so a screen whose chunk is loading leaves the current screen up, as before.
+- **The two error screens are the app's own boundaries** (`app/RouteBoundary.tsx`, on the `ErrorBoundary` the overlays already use) in place of the routes' `errorElement`, which only a data router reads. A screen that fails shows its card inside the shell; the shell failing shows the full-page card. Both clear as before, on the next navigation: a tab, Go to Pulse, the Back button, a change of the query alone.
+- Tests that mounted a data router (`createMemoryRouter`) mount the declarative one, so no test runs a router mode the app does not ship.
+- All JS 732.4 → 677.8 / 740 KB (62.2 KB left); boot 551,389 → 495,556 / 561,580 B (66,024 B left); eager 452,222 → 396,389 / 466,908 B. The budgets stay where they were: the room is for money in.
+
 ## 0.18.0 — 2026-11-13
 
 T8b, the second slice of T8 (money in and smarter budgets): charges due soon, and a month in review. No new data.

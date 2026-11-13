@@ -2,7 +2,7 @@ import { Profiler } from 'react'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { RouterProvider, createMemoryRouter } from 'react-router-dom'
+import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import { LedgerRow } from './LedgerRow'
 import { LedgerScreen } from './LedgerScreen'
 import { CLICK_GUARD_MS, SNAP_HZ, SNAP_SPRING, actionOpacity, tintOpacity } from './swipe'
@@ -734,10 +734,13 @@ describe('Ledger screen focus', ROOMY, () => {
   }
 
   function renderLedger() {
-    const router = createMemoryRouter([{ path: '/ledger', element: <LedgerScreen /> }], {
-      initialEntries: ['/ledger?range=all'],
-    })
-    render(<RouterProvider router={router} />)
+    render(
+      <MemoryRouter initialEntries={['/ledger?range=all']}>
+        <Routes>
+          <Route path="/ledger" element={<LedgerScreen />} />
+        </Routes>
+      </MemoryRouter>,
+    )
   }
   const row = (item: string) => screen.getByRole('button', { name: new RegExp(`^Edit ${item},`) })
   const ids = () => useExpenseStore.getState().expenses.map((e) => e.id)

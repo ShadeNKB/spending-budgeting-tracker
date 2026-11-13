@@ -4,12 +4,15 @@ import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import {
   Link,
+  MemoryRouter,
   Outlet,
-  RouterProvider,
-  createMemoryRouter,
+  useLocation,
+  useNavigate,
+  type NavigateFunction,
   type RouteObject,
 } from 'react-router-dom'
-import { OverlayError, RouteError } from './RouteError'
+import { OverlayError } from './RouteError'
+import { AppRoutes, ScreenOutlet } from './RouteBoundary'
 import { createUpdateController, type SwRegistrationLike, type UpdateController } from './swUpdate'
 import { downloadRescueFile } from '../lib/rescue'
 import { CHUNK_RELOAD_KEY, openPage, reloadPage } from '../lib/chunkReload'
@@ -53,14 +56,14 @@ function Ledger(): never {
   throw screenError
 }
 
+// The shape of routes.tsx, around stand-in screens.
 const testRoutes = (controller?: UpdateController): RouteObject[] => [
   {
     path: '/',
     element: <Shell />,
-    errorElement: <RouteError scope="app" controller={controller} />,
     children: [
       {
-        errorElement: <RouteError scope="screen" controller={controller} />,
+        element: <ScreenOutlet controller={controller} />,
         children: [
           { index: true, element: <Pulse /> },
           { path: 'pulse', element: <Pulse /> },
@@ -71,10 +74,36 @@ const testRoutes = (controller?: UpdateController): RouteObject[] => [
   },
 ]
 
+/** The app's own wiring (App.tsx), on a memory history. */
 function renderAt(url: string, controller?: UpdateController) {
-  const router = createMemoryRouter(testRoutes(controller), { initialEntries: [url] })
-  render(<RouterProvider router={router} />)
-  return router
+  const routes = testRoutes(controller)
+  let pathname = ''
+  let navigate: NavigateFunction = () => {}
+  // Outside the boundaries: it must outlive a shell crash to navigate away from one.
+  function Probe() {
+    pathname = useLocation().pathname
+    navigate = useNavigate()
+    return null
+  }
+  render(
+    <MemoryRouter initialEntries={[url]}>
+      <Probe />
+      <AppRoutes routes={routes} controller={controller} />
+    </MemoryRouter>,
+  )
+  return {
+    pathname: () => pathname,
+    go: (to: string) => {
+      act(() => {
+        void navigate(to)
+      })
+    },
+    back: () => {
+      act(() => {
+        void navigate(-1)
+      })
+    },
+  }
 }
 
 /**
@@ -242,9 +271,9 @@ describe('RouteError inside the shell (scope="screen")', () => {
 
   it('goes to Pulse inside the app', async () => {
     const user = userEvent.setup()
-    const router = renderAt('/ledger')
+    const app = renderAt('/ledger')
     await user.click(screen.getByRole('button', { name: 'Go to Pulse' }))
-    expect(router.state.location.pathname).toBe('/pulse')
+    expect(app.pathname()).toBe('/pulse')
     expect(screen.getByText('Pulse screen')).toBeInTheDocument()
     expect(screen.queryByRole('heading', { name: 'Something went wrong' })).toBeNull()
   })
@@ -254,6 +283,31 @@ describe('RouteError inside the shell (scope="screen")', () => {
     renderAt('/ledger')
     await user.click(screen.getByRole('link', { name: 'Pulse tab' }))
     expect(screen.getByText('Pulse screen')).toBeInTheDocument()
+  })
+
+  it('clears on Back, and shows again when the screen fails again', () => {
+    const app = renderAt('/pulse')
+    expect(screen.getByText('Pulse screen')).toBeInTheDocument()
+    app.go('/ledger')
+    expect(screen.getByRole('heading', { name: 'Something went wrong' })).toBeInTheDocument()
+    expect(screen.getByText('SHELL')).toBeInTheDocument()
+    app.back()
+    expect(app.pathname()).toBe('/pulse')
+    expect(screen.getByText('Pulse screen')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Something went wrong' })).toBeNull()
+    app.go('/ledger')
+    expect(screen.getByRole('heading', { name: 'Something went wrong' })).toBeInTheDocument()
+  })
+
+  // A navigation that changes only the query is still a navigation: the screen is tried again.
+  it('tries the screen again when only the query changes', () => {
+    pulseThrows = true
+    const app = renderAt('/pulse')
+    expect(screen.getByRole('heading', { name: 'Something went wrong' })).toBeInTheDocument()
+    pulseThrows = false
+    app.go('/pulse?month=2026-10')
+    expect(screen.getByText('Pulse screen')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Something went wrong' })).toBeNull()
   })
 
   it.each(['/pulse', '/'])('hides Go to Pulse when the error is on %s', (url) => {
@@ -376,6 +430,26 @@ describe('RouteError for a shell crash (scope="app")', () => {
     expect(openPage).toHaveBeenCalledWith('/pulse')
     expect(update.reload).not.toHaveBeenCalled()
   })
+
+  // The Back button is the one navigation left on this page: the shell is tried again.
+  it('tries the shell again on the next navigation', () => {
+    shellError = BUG
+    const app = renderAt('/ledger')
+    expect(screen.queryByText('SHELL')).toBeNull()
+    shellError = null
+    app.go('/pulse')
+    expect(screen.getByText('SHELL')).toBeInTheDocument()
+    expect(screen.getByText('Pulse screen')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Something went wrong' })).toBeNull()
+  })
+
+  it('stays while the shell keeps failing', () => {
+    shellError = BUG
+    const app = renderAt('/ledger')
+    app.go('/pulse')
+    expect(screen.queryByText('SHELL')).toBeNull()
+    expect(screen.getByRole('heading', { name: 'Something went wrong' })).toBeInTheDocument()
+  })
 })
 
 describe('OverlayError', () => {
@@ -478,24 +552,24 @@ describe('appRoutes', () => {
     ;({ appRoutes } = await import('./routes'))
   }, 60_000)
 
-  it('wraps every screen in a pathless boundary inside the shell, under a root boundary', () => {
+  it('wraps every screen in a pathless boundary inside the shell', () => {
     expect(appRoutes).toHaveLength(1)
     const [root] = appRoutes
     expect(root?.path).toBe('/')
-    expect(isValidElement<{ scope: string }>(root?.errorElement)).toBe(true)
-    if (isValidElement<{ scope: string }>(root?.errorElement)) {
-      expect(root.errorElement.props.scope).toBe('app')
-    }
     expect(root?.children).toHaveLength(1)
 
     const layout = root?.children?.[0]
     expect(layout?.path).toBeUndefined()
-    expect(layout?.element).toBeUndefined()
-    if (isValidElement<{ scope: string }>(layout?.errorElement)) {
-      expect(layout.errorElement.props.scope).toBe('screen')
+    if (isValidElement(layout?.element)) {
+      expect(layout.element.type).toBe(ScreenOutlet)
     } else {
-      expect.fail('the screen layout route has no errorElement')
+      expect.fail('the screen layout route has no boundary')
     }
+    // An errorElement does nothing without a data router: a boundary has to be an element.
+    const flat = [root, layout, ...(layout.children ?? [])]
+    expect(flat.filter((r) => r?.errorElement !== undefined || r?.ErrorBoundary != null)).toEqual(
+      [],
+    )
     expect(layout.children?.map((r) => (r.index ? 'index' : r.path))).toEqual([
       'index',
       'pulse',
