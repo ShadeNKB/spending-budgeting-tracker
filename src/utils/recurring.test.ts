@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import { detectRecurring, forecastDailyFromRecurring, upcomingDue } from './recurring'
+import { detectRecurring, dueSoon, forecastDailyFromRecurring, upcomingDue } from './recurring'
 import { getLedgerIndex } from '../lib/ledgerIndex'
+import { must } from '../data/__tests__/support/must'
 import type { Expense } from '../types'
 
 const expense = (
@@ -276,5 +277,150 @@ describe('detectRecurring performance', () => {
     expect(cold).toBeLessThan(8 * build)
     // Warm is a cache hit (microseconds). Relative, so a loaded CI box cannot fail it.
     expect(warm * 20).toBeLessThan(cold)
+  })
+})
+
+describe('dueSoon (T8b)', () => {
+  // Invented charges: rent on the 18th, a subscription on the 20th, a gym fee on the 5th.
+  const monthly = (name: string, day: string, amount: number, months = ['07', '08', '09']) =>
+    months.map((m, i) => expense(`${name}-${String(i)}`, name, `2026-${m}-${day}`, amount))
+  const rows = [
+    ...monthly('Rent', '18', 600),
+    ...monthly('Spotify', '20', 11.98),
+    ...monthly('Gym', '05', 80),
+  ]
+  const names = (today: string, days?: number) =>
+    dueSoon(detect(rows), today, days).map((d) => `${d.group.displayName}:${String(d.inDays)}`)
+
+  it('lists what is due within seven days, soonest first, with the last amount', () => {
+    const due = dueSoon(detect(rows), '2026-10-18')
+    expect(due.map((d) => [d.group.displayName, d.due, d.inDays, d.lastAmount])).toEqual([
+      ['Rent', '2026-10-18', 0, 600],
+      ['Spotify', '2026-10-20', 2, 11.98],
+    ])
+    // the gym fee was due on the 5th: thirteen days late is a miss, not a reminder
+    expect(names('2026-10-18')).not.toContain('Gym:0')
+  })
+
+  it('the window is days from today, today being day 0', () => {
+    expect(names('2026-10-13')).toEqual(['Rent:5'])
+    expect(names('2026-10-14')).toEqual(['Rent:4', 'Spotify:6'])
+    expect(names('2026-10-14', 5)).toEqual(['Rent:4'])
+    expect(names('2026-10-11')).toEqual([])
+  })
+
+  it('a charge up to three days late is due today, as the forecast files it; later it is gone', () => {
+    expect(names('2026-10-21')).toEqual(['Rent:0', 'Spotify:0'])
+    expect(names('2026-10-22')).toEqual(['Spotify:0'])
+    for (const today of ['2026-10-18', '2026-10-21', '2026-10-22']) {
+      const first = forecastDailyFromRecurring(detect(rows), today, 1)[0] ?? 0
+      const dueToday = dueSoon(detect(rows), today)
+        .filter((d) => d.inDays === 0)
+        .reduce((s, d) => s + d.group.avgAmount, 0)
+      expect(first, today).toBeCloseTo(dueToday, 6)
+    }
+  })
+
+  it('logged for its turn, a charge leaves the list until the next one', () => {
+    const paid = [...rows, expense('rent-oct', 'Rent', '2026-10-18', 610)]
+    expect(dueSoon(detect(paid), '2026-10-18').map((d) => d.group.displayName)).toEqual(['Spotify'])
+    // and comes back for November, at what it cost the last time
+    const next = dueSoon(detect(paid), '2026-11-15')
+    expect(next.map((d) => [d.group.displayName, d.due, d.lastAmount])).toEqual([
+      ['Rent', '2026-11-18', 610],
+      ['Spotify', '2026-11-20', 11.98],
+    ])
+  })
+
+  it('a habit bought every day or two is not a charge: it would always be due', () => {
+    const kopi = Array.from({ length: 12 }, (_, i) =>
+      expense(`k${String(i)}`, 'Kopi', `2026-10-${String(2 + i).padStart(2, '0')}`, 1.8),
+    )
+    const groups = detect([...rows, ...kopi])
+    expect(groups.map((g) => g.displayName)).toContain('Kopi')
+    expect(dueSoon(groups, '2026-10-14').map((d) => d.group.displayName)).not.toContain('Kopi')
+    // a weekly one is
+    const weekly = ['01', '08', '15', '22'].map((d, i) =>
+      expense(`w${String(i)}`, 'Cleaner', `2026-09-${d}`, 40),
+    )
+    expect(dueSoon(detect(weekly), '2026-09-27').map((d) => d.group.displayName)).toEqual([
+      'Cleaner',
+    ])
+  })
+
+  it('equal dates sort by name, so the list never shuffles', () => {
+    const same = [...monthly('Zeta', '20', 5), ...monthly('Alpha', '20', 5)]
+    expect(dueSoon(detect(same), '2026-10-18').map((d) => d.group.displayName)).toEqual([
+      'Alpha',
+      'Zeta',
+    ])
+  })
+
+  it('nothing detected, nothing due', () => {
+    expect(dueSoon([], '2026-10-18')).toEqual([])
+  })
+})
+
+describe('a charge that has stopped (T8b, review finding 1)', () => {
+  const netflix = [
+    expense('n1', 'Netflix', '2025-08-20'),
+    expense('n2', 'Netflix', '2025-09-20'),
+    expense('n3', 'Netflix', '2025-10-20'),
+  ]
+  const laksa = [
+    expense('l1', 'Laksa', '2025-09-27', 6),
+    expense('l2', 'Laksa', '2025-10-04', 6),
+    expense('l3', 'Laksa', '2025-10-11', 6),
+  ]
+
+  it('is not due a year later, nor expected by the forecast, nor given a next date', () => {
+    for (const rows of [netflix, laksa]) {
+      const groups = detect(rows)
+      expect(groups).toHaveLength(1)
+      for (const today of ['2026-11-13', '2026-11-14', '2026-11-20']) {
+        expect(dueSoon(groups, today), today).toEqual([])
+        expect(sum(forecastDailyFromRecurring(groups, today, 14)), today).toBe(0)
+        expect(upcomingDue(must(groups[0]), today), today).toBeNull()
+      }
+    }
+  })
+
+  it('one missed turn is only a miss: the next one is still expected', () => {
+    const groups = detect(netflix)
+    // November was missed; December is the second turn, and it has not gone by
+    expect(upcomingDue(must(groups[0]), '2025-12-01')).toBe('2025-12-20')
+    expect(dueSoon(groups, '2025-12-15').map((d) => d.due)).toEqual(['2025-12-20'])
+    // still due through its three days of grace
+    expect(dueSoon(groups, '2025-12-23').map((d) => d.inDays)).toEqual([0])
+    // then two turns have gone by unpaid: it has stopped
+    expect(dueSoon(groups, '2025-12-24')).toEqual([])
+    expect(upcomingDue(must(groups[0]), '2025-12-24')).toBeNull()
+  })
+
+  it('a weekly one stops seventeen days after its last entry', () => {
+    const groups = detect(laksa)
+    expect(upcomingDue(must(groups[0]), '2025-10-28')).toBe('2025-10-28')
+    expect(upcomingDue(must(groups[0]), '2025-10-29')).toBeNull()
+  })
+
+  it('logged late after a missed turn, it is expected again from that entry', () => {
+    // November was missed; it was paid on 5 December, and its day of the month is still the 20th
+    const back = detect([...netflix, expense('n4', 'Netflix', '2025-12-05')])
+    expect(dueSoon(back, '2025-12-15').map((d) => d.due)).toEqual(['2025-12-20'])
+    expect(upcomingDue(must(back[0]), '2026-01-10')).toBe('2026-01-20')
+  })
+})
+
+describe('a charge logged today is not listed today (T8b, review finding 4)', () => {
+  // Every six days: its next turn falls inside the seven-day window.
+  const sixDaily = ['01', '07', '13', '19'].map((d, i) =>
+    expense(`s${String(i)}`, 'Water refill', `2026-09-${d}`, 9),
+  )
+
+  it('leaves the list on the day it is logged, and is back the day after', () => {
+    expect(dueSoon(detect(sixDaily), '2026-09-25').map((d) => d.inDays)).toEqual([0])
+    const logged = detect([...sixDaily, expense('s9', 'Water refill', '2026-09-25', 9)])
+    expect(dueSoon(logged, '2026-09-25')).toEqual([])
+    expect(dueSoon(logged, '2026-09-26').map((d) => [d.due, d.inDays])).toEqual([['2026-10-01', 5]])
   })
 })

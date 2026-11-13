@@ -1429,6 +1429,11 @@
   [data-theme='light'] .border-white\/\[0\.04\] {
     border-color: rgba(0, 0, 0, 0.04);
   }
+  /* divide-white/X colours the lines between a list's rows, which no border twin reaches: in
+     light they were white on white (Today, the Ledger, the Insights lists). */
+  [data-theme='light'] .divide-white\/\[0\.04\] > :not([hidden]) ~ :not([hidden]) {
+    border-color: rgba(0, 0, 0, 0.06);
+  }
   [data-theme='light'] .border-white\/\[0\.05\] {
     border-color: rgba(0, 0, 0, 0.05);
   }

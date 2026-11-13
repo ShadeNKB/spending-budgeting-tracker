@@ -13,6 +13,7 @@ import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useUIStore } from '../../stores/useUIStore'
 import { computeMonthAnalytics, computeYearAnalytics } from '../../lib/analytics'
 import {
+  keyDay,
   makeKey,
   monthKeyOf,
   monthName,
@@ -39,6 +40,8 @@ import { Heatmap } from './Heatmap'
 import { TodayStrip } from './TodayStrip'
 import { Sparkline, SparklineAxis } from './Sparkline'
 import { BudgetActual } from './BudgetActual'
+import { MonthClosed } from './MonthClosed'
+import { MonthReview } from './MonthReview'
 import { SmartInput } from '../entry/SmartInput'
 
 type PeriodView = 'month' | 'year'
@@ -100,6 +103,13 @@ export function PulseScreen() {
   const yearData = useMemo(
     () => (shown === 'year' ? computeYearAnalytics(index, today, yearOffset) : null),
     [shown, index, today, yearOffset],
+  )
+
+  // The first three days of a month: last month, closed, for the card that says how it ended.
+  const closing = keyDay(today) <= 3
+  const lastMonth = useMemo(
+    () => (closing ? computeMonthAnalytics(index, budgets, today, 1, monthBudget) : null),
+    [closing, index, budgets, today, monthBudget],
   )
 
   const a = yearData ?? monthData
@@ -165,6 +175,15 @@ export function PulseScreen() {
       <div className="lg:hidden">
         <SmartInput />
       </div>
+
+      {lastMonth !== null && view === 'month' && monthOffset === 0 && (
+        <MonthClosed
+          month={lastMonth}
+          onSee={() => {
+            setMonthOffset(1)
+          }}
+        />
+      )}
 
       {/* Hero card */}
       <div>
@@ -373,6 +392,9 @@ export function PulseScreen() {
           </div>
         </Card>
       </div>
+
+      {/* A finished month: its largest entry, its busiest day, its count. */}
+      {!yearData && !monthData.isCurrent && <MonthReview month={monthData} />}
 
       {/* Year: monthly bars. The boundary stays mounted in the month view: a deferred render
           that suspends under a boundary already on screen keeps the old screen, where one
