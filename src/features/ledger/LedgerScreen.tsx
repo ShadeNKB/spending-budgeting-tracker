@@ -132,13 +132,20 @@ export function LedgerScreen() {
   // Filters live in the URL. Every write starts from the URL as it is *now* (not the params
   // of the last render), so a debounced search write can never revert a filter tapped while
   // it was pending, even if that tap is still rendering.
+  //
+  // A write that comes late (the search box's pause, its blur, the `?edit=` clean-up) is dropped
+  // once the browser has left this screen's address. The router applies a navigation in a
+  // transition: this screen can still be up after a tab was tapped, and its write would replace
+  // the entry the user has just gone to (the tap would do nothing).
+  const [home] = useState(() => window.location.pathname)
   const patchParams = useCallback(
     (patch: (next: URLSearchParams) => void) => {
+      if (window.location.pathname !== home) return
       const next = new URLSearchParams(window.location.search)
       patch(next)
       void navigate({ search: `?${next.toString()}` }, { replace: true })
     },
-    [navigate],
+    [home, navigate],
   )
 
   const setRange = (r: Range) => {

@@ -31,7 +31,8 @@ const screenSkeleton = (
   </div>
 )
 
-// Rendered by useRoutes under App's AppBoundary (the shell itself failed: a full-page card).
+// Rendered by AppRoutes (RouteBoundary.tsx), whose boundary takes a failing shell: a full-page
+// card.
 export const appRoutes: RouteObject[] = [
   {
     path: '/',

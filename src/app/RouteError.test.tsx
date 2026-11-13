@@ -98,6 +98,11 @@ function renderAt(url: string, controller?: UpdateController) {
         void navigate(to)
       })
     },
+    replace: (to: string) => {
+      act(() => {
+        void navigate(to, { replace: true })
+      })
+    },
     back: () => {
       act(() => {
         void navigate(-1)
@@ -299,6 +304,15 @@ describe('RouteError inside the shell (scope="screen")', () => {
     expect(screen.getByRole('heading', { name: 'Something went wrong' })).toBeInTheDocument()
   })
 
+  it('clears on a navigation that replaces the entry', () => {
+    const app = renderAt('/ledger')
+    expect(screen.getByRole('heading', { name: 'Something went wrong' })).toBeInTheDocument()
+    app.replace('/pulse')
+    expect(app.pathname()).toBe('/pulse')
+    expect(screen.getByText('Pulse screen')).toBeInTheDocument()
+    expect(screen.queryByRole('heading', { name: 'Something went wrong' })).toBeNull()
+  })
+
   // A navigation that changes only the query is still a navigation: the screen is tried again.
   it('tries the screen again when only the query changes', () => {
     pulseThrows = true
@@ -431,7 +445,7 @@ describe('RouteError for a shell crash (scope="app")', () => {
     expect(update.reload).not.toHaveBeenCalled()
   })
 
-  // The Back button is the one navigation left on this page: the shell is tried again.
+  // Any navigation tries the shell again (on this page, the browser's Back button).
   it('tries the shell again on the next navigation', () => {
     shellError = BUG
     const app = renderAt('/ledger')
