@@ -10,7 +10,7 @@ import {
   makeKey,
   type DayKey,
 } from '../lib/dates'
-import { itemKey, type LedgerIndex } from '../lib/ledgerIndex'
+import { entryDay, itemKey, type LedgerIndex } from '../lib/ledgerIndex'
 import type { Expense } from '../types'
 
 export interface RecurringGroup {
@@ -212,11 +212,18 @@ function* dueDates(group: RecurringGroup): Generator<DayKey> {
  * A group's expected charges from today on. The latest charge before today still counts, once,
  * as due today when it is 1-3 days late and nothing is due today (a cadence shorter than the
  * grace never piles several missed charges into today); older missed charges are skipped.
+ *
+ * None at all once the charge has stopped: its second turn since the last entry has gone by, grace
+ * included, with nothing logged. A subscription cancelled last year is otherwise expected every
+ * month for good (and a weekly one due "today" four days in seven, by the grace).
  */
 function* chargesFrom(group: RecurringGroup, today: DayKey): Generator<DayKey> {
   let missed: DayKey | null = null
   let first = true
+  let turn = 0
   for (const due of dueDates(group)) {
+    turn += 1
+    if (turn === 2 && diffDays(due, today) > OVERDUE_GRACE_DAYS) return
     if (due < today) {
       missed = due
       continue
@@ -276,9 +283,11 @@ const MIN_CHARGE_GAP_DAYS = 6
 
 /**
  * The charges expected within `days` days (today is day 0), soonest first, then by name. The same
- * dates the forecast files them under (`upcomingDue`), so the two cannot disagree: a charge 1-3
- * days late is due today, an older miss is skipped. Never one already logged for its turn: the
- * next date is counted from the last entry.
+ * dates the forecast files them under (`upcomingDue`), so over the same entries the two cannot
+ * disagree: a charge 1-3 days late is due today, an older miss is skipped, a charge that has
+ * stopped is gone from both. Never one already logged for its turn: the next date is counted from
+ * the last entry, and a charge logged today is not listed today whatever its cadence (one that
+ * comes round inside the window would stay under the pointer, with Log live).
  */
 export function dueSoon(groups: readonly RecurringGroup[], today: DayKey, days = 7): DueCharge[] {
   const out: DueCharge[] = []
@@ -287,6 +296,8 @@ export function dueSoon(groups: readonly RecurringGroup[], today: DayKey, days =
     const due = upcomingDue(group, today)
     const last = group.occurrences[group.occurrences.length - 1]
     if (due === null || !last) continue
+    const lastDay = entryDay(last)
+    if (lastDay !== null && lastDay >= today) continue
     const inDays = diffDays(today, due)
     if (inDays >= days) continue
     out.push({ group, due, inDays, lastAmount: last.amount })

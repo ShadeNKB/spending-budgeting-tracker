@@ -68,7 +68,7 @@ describe('DueSoon', () => {
     expect(screen.getByRole('heading', { name: 'Due soon' })).toBeInTheDocument()
     const rows = screen.getAllByRole('listitem')
     expect(rows.map((r) => r.textContent)).toEqual([
-      expect.stringMatching(/^RentDue today · Housing.*600\.00Log$/),
+      expect.stringMatching(/^RentToday · Housing.*600\.00Log$/),
       expect.stringMatching(/^ETF transferTomorrow · Investment.*300\.00Log$/),
       expect.stringMatching(/^SpotifyTue, Oct 20 · Subscriptions.*11\.98Log$/),
     ])
@@ -77,7 +77,8 @@ describe('DueSoon', () => {
   it('says which charges are not spending', () => {
     render(<DueSoon charges={charges()} today={TODAY} notSpending={['Investment']} />)
     const [rent, etf] = screen.getAllByRole('listitem')
-    expect(etf).toHaveTextContent('Tomorrow · Investment · not spending')
+    // under the amount, where a narrow screen does not cut it off
+    expect(etf).toHaveTextContent(/Tomorrow · Investment.*300\.00not spendingLog$/)
     expect(rent).not.toHaveTextContent('not spending')
   })
 
@@ -116,11 +117,75 @@ describe('DueSoon', () => {
     const add = fakeAdd()
     render(<DueSoon charges={charges()} today={TODAY} notSpending={[]} />)
     expect(add).not.toHaveBeenCalled()
-    expect(screen.getByText(/Nothing is added by itself\./)).toBeInTheDocument()
+    expect(screen.getByText(/Nothing is added on its own\./)).toBeInTheDocument()
   })
 
   it('shows nothing when nothing is due', () => {
     const { container } = render(<DueSoon charges={[]} today={TODAY} notSpending={[]} />)
     expect(container).toBeEmptyDOMElement()
+  })
+})
+
+describe('DueSoon: focus after a Log (review finding 5)', () => {
+  it('goes to the Log that took the place of the one pressed, never to <body>', () => {
+    fakeAdd()
+    const all = charges()
+    const { rerender } = render(
+      <main id="main" tabIndex={-1}>
+        <DueSoon charges={all} today={TODAY} notSpending={[]} />
+      </main>,
+    )
+    const first = screen.getByRole('button', { name: /^Log Rent/ })
+    first.focus()
+    fireEvent.click(first)
+    // the store answers with the list without it
+    rerender(
+      <main id="main" tabIndex={-1}>
+        <DueSoon charges={all.slice(1)} today={TODAY} notSpending={[]} />
+      </main>,
+    )
+    expect(screen.getByRole('button', { name: /^Log ETF transfer/ })).toHaveFocus()
+  })
+
+  it('goes to the one before when the last row was pressed, and to the screen when none is left', () => {
+    fakeAdd()
+    const all = charges()
+    const { rerender } = render(
+      <main id="main" tabIndex={-1}>
+        <DueSoon charges={all} today={TODAY} notSpending={[]} />
+      </main>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /^Log Spotify/ }))
+    rerender(
+      <main id="main" tabIndex={-1}>
+        <DueSoon charges={all.slice(0, 2)} today={TODAY} notSpending={[]} />
+      </main>,
+    )
+    expect(screen.getByRole('button', { name: /^Log ETF transfer/ })).toHaveFocus()
+
+    fireEvent.click(screen.getByRole('button', { name: /^Log ETF transfer/ }))
+    rerender(
+      <main id="main" tabIndex={-1}>
+        <DueSoon charges={[]} today={TODAY} notSpending={[]} />
+      </main>,
+    )
+    expect(screen.getByRole('main')).toHaveFocus()
+  })
+
+  it('a refused add moves nothing', () => {
+    useExpenseStore.setState({
+      addExpense: () => {
+        throw new Error('SpendTrack is still loading your data.')
+      },
+    })
+    render(
+      <main id="main" tabIndex={-1}>
+        <DueSoon charges={charges()} today={TODAY} notSpending={[]} />
+      </main>,
+    )
+    const first = screen.getByRole('button', { name: /^Log Rent/ })
+    first.focus()
+    fireEvent.click(first)
+    expect(first).toHaveFocus()
   })
 })

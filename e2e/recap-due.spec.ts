@@ -46,10 +46,10 @@ test('Insights lists what is due in the next 7 days; Log adds it for today, and 
   await expect(due).toBeVisible()
   expect(await dueNames(page)).toEqual(['rent', 'etf', 'spotify'])
   const items = due.getByRole('listitem')
-  await expect(items.nth(0)).toContainText('Due today · Other')
+  await expect(items.nth(0)).toContainText('Today · Other')
   await expect(items.nth(1)).toContainText('Tomorrow · Investment')
   await expect(items.nth(2)).toContainText('Tue, Oct 20 · Subscriptions')
-  await expect(due).toContainText('Nothing is added by itself.')
+  await expect(due).toContainText('Nothing is added on its own.')
   // Nothing was added by showing it.
   expect(await storedExpenses(page)).toHaveLength(ROWS.length)
 
@@ -105,9 +105,9 @@ test('A charge that is not spending is still listed, says so, and stays out of t
 
   await expect(card(page, '14-day forecast')).toContainText('S$611.98')
   expect(await dueNames(page)).toEqual(['rent', 'etf', 'spotify'])
-  await expect(card(page, 'Due soon').getByRole('listitem').nth(1)).toContainText(
-    'Tomorrow · Investment · not spending',
-  )
+  const transfer = card(page, 'Due soon').getByRole('listitem').nth(1)
+  await expect(transfer).toContainText('Tomorrow · Investment')
+  await expect(transfer.getByText('not spending', { exact: true })).toBeVisible()
 })
 
 test('A finished month on Pulse is in review: its biggest expense opens in the Ledger', async ({
@@ -117,11 +117,11 @@ test('A finished month on Pulse is in review: its biggest expense opens in the L
   await page.goto('/pulse')
   await waitForApp(page)
   // The month in progress is not reviewed yet.
-  await expect(page.getByRole('heading', { name: 'In review' })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Month in review' })).toHaveCount(0)
 
   await page.getByRole('button', { name: 'View previous month' }).click()
   await expect(heroTotal(page)).toHaveText('S$1,361.98')
-  const review = card(page, 'In review')
+  const review = card(page, 'Month in review')
   await expect(review).toContainText('September 2026')
   await expect(review).toContainText('S$600.00 · Sep 18')
   // The busiest day: rent's.
@@ -129,8 +129,8 @@ test('A finished month on Pulse is in review: its biggest expense opens in the L
     'href',
     '/ledger?date=2026-09-18',
   )
-  // 1,361.98 over September's 30 days.
-  await expect(review).toContainText('S$45.40 a day')
+  // Four entries, on four of September's 30 days.
+  await expect(review).toContainText('on 4 of 30 days')
 
   await review.getByRole('link', { name: 'rent', exact: true }).click()
   await expect(page).toHaveURL(/\/ledger\?date=2026-09-18/)
@@ -143,14 +143,14 @@ test('In the first days of a month Pulse says how the last one ended, once', asy
   await seed(page, { expenses: ROWS, now: new Date('2026-11-02T10:00:00+08:00') })
   await page.goto('/pulse')
   await waitForApp(page)
-  const closed = page.getByRole('region', { name: 'October in review' })
+  const closed = page.getByRole('region', { name: 'October closed' })
   await expect(closed).toContainText('October closed at S$12.50')
   await expect(closed).toContainText('99.1% less than September.')
 
   await closed.getByRole('button', { name: 'See October' }).click()
   await expect(closed).toHaveCount(0)
   await expect(heroTotal(page)).toHaveText('S$12.50')
-  await expect(card(page, 'In review')).toContainText('October 2026')
+  await expect(card(page, 'Month in review')).toContainText('October 2026')
 
   // Seen on this device: a reload does not say it again.
   await page.reload()
@@ -166,9 +166,9 @@ test('From the 4th of the month the card is not shown; the month is still there 
   await page.goto('/pulse')
   await waitForApp(page)
   await expect(heroTotal(page)).toHaveText('S$0.00')
-  await expect(page.getByRole('region', { name: 'October in review' })).toHaveCount(0)
+  await expect(page.getByRole('region', { name: 'October closed' })).toHaveCount(0)
   await page.getByRole('button', { name: 'View previous month' }).click()
-  await expect(card(page, 'In review')).toContainText('October 2026')
+  await expect(card(page, 'Month in review')).toContainText('October 2026')
 })
 
 /** Whether `locator` and its buttons sit inside a 320 px screen that does not scroll sideways. */
@@ -190,7 +190,7 @@ test('At 320 px the month card fits: nothing is cut or scrolls sideways', async 
   await seed(page, { expenses: ROWS, now: new Date('2026-11-02T10:00:00+08:00') })
   await page.goto('/pulse')
   await waitForApp(page)
-  const closed = page.getByRole('region', { name: 'October in review' })
+  const closed = page.getByRole('region', { name: 'October closed' })
   await expect(closed).toBeVisible()
   const box = await fits(closed)
   expect(box.pageScrolls).toBe(false)

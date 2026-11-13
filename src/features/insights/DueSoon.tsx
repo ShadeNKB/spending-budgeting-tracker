@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { CalendarClock } from 'lucide-react'
 import { colorFromString } from '../../lib/analytics'
 import { shortDate, weekdayShort, type DayKey } from '../../lib/dates'
@@ -9,9 +10,9 @@ import { Card } from '../../ui/Card'
 import type { DueCharge } from '../../utils/recurring'
 import { addAndConfirm } from '../entry/expenseForm'
 
-/** "Due today", "Tomorrow", else the weekday and date ("Thu, Nov 19"). */
+/** "Today", "Tomorrow", else the weekday and date ("Tue, Oct 20"): the card's title says "due". */
 function dueLabel(charge: DueCharge): string {
-  if (charge.inDays === 0) return 'Due today'
+  if (charge.inDays === 0) return 'Today'
   if (charge.inDays === 1) return 'Tomorrow'
   return `${weekdayShort(charge.due)}, ${shortDate(charge.due)}`
 }
@@ -35,9 +36,22 @@ export function DueSoon({
   const fmt = useFormatMoney()
   const toast = useToast()
   const vibrate = useHaptic()
+  const list = useRef<HTMLUListElement>(null)
+  // A logged charge leaves the list, and the button that was pressed with it. Focus goes to the
+  // Log that took its place, else to the one before, else to the screen: never to <body>.
+  const refocus = useRef<number | null>(null)
+  useEffect(() => {
+    const at = refocus.current
+    if (at === null) return
+    refocus.current = null
+    const buttons = list.current?.querySelectorAll<HTMLButtonElement>('button')
+    const next = buttons?.[Math.min(at, buttons.length - 1)]
+    if (next) next.focus({ preventScroll: true })
+    else document.getElementById('main')?.focus({ preventScroll: true })
+  })
   if (charges.length === 0) return null
 
-  const log = (charge: DueCharge) => {
+  const log = (charge: DueCharge, at: number) => {
     const created = addAndConfirm(
       toast,
       vibrate,
@@ -49,9 +63,10 @@ export function DueSoon({
       },
       (added) => `Added "${added.itemName}" · ${fmt(added.amount)}`,
     )
-    // Logged, the charge leaves the list and the next one moves up under the pointer: the rest
-    // of a double tap must not log that one too.
-    if (created !== null) shieldGesture()
+    if (created === null) return
+    // The next charge moves up under the pointer: the rest of a double tap must not log it too.
+    shieldGesture()
+    refocus.current = at
   }
 
   return (
@@ -63,8 +78,8 @@ export function DueSoon({
         </div>
         <span className="shrink-0 text-[11px] text-[var(--text-tertiary)]">Next 7 days</span>
       </div>
-      <ul className="divide-y divide-white/[0.04]">
-        {charges.map((charge) => {
+      <ul ref={list} className="divide-y divide-white/[0.04]">
+        {charges.map((charge, at) => {
           const { group } = charge
           const amount = fmt(charge.lastAmount)
           return (
@@ -78,15 +93,23 @@ export function DueSoon({
                 <div className="truncate text-[13px] text-white">{group.displayName}</div>
                 <div className="truncate text-[11px] text-[var(--text-tertiary)]">
                   {dueLabel(charge)} · {group.category}
-                  {notSpending.includes(group.category) ? ' · not spending' : ''}
                 </div>
               </div>
-              <span className="shrink-0 font-mono text-[13px] tabular-nums text-white">
-                {amount}
+              {/* Under the amount, as a Ledger row has it: at the end of the line above it was
+                  the first thing a narrow screen cut off. */}
+              <span className="shrink-0 text-right">
+                <span className="block font-mono text-[13px] tabular-nums text-white">
+                  {amount}
+                </span>
+                {notSpending.includes(group.category) && (
+                  <span className="block text-[11px] text-[var(--text-tertiary)]">
+                    not spending
+                  </span>
+                )}
               </span>
               <button
                 type="button"
-                onClick={() => log(charge)}
+                onClick={() => log(charge, at)}
                 aria-label={`Log ${group.displayName}, ${amount}, for today`}
                 className="tap-target inline-flex h-9 shrink-0 items-center rounded-[10px] border border-accent/25 bg-accent/10 px-3 text-[12px] font-semibold text-accent transition hover:bg-accent/15"
               >
@@ -96,8 +119,8 @@ export function DueSoon({
           )
         })}
       </ul>
-      <p className="mt-1 text-[11px] leading-relaxed text-[var(--text-tertiary)]">
-        Log adds it for today at its last amount, with an Undo. Nothing is added by itself.
+      <p className="mt-1 text-[12px] leading-relaxed text-[var(--text-tertiary)]">
+        Log adds it for today at its last amount, with an Undo. Nothing is added on its own.
       </p>
     </Card>
   )
