@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.18.0 — 2026-11-13
+
+T8b, the second slice of T8 (money in and smarter budgets): charges due soon, and a month in review. No new data.
+
+### Added
+
+- **Due soon** (Insights). The recurring charges expected in the next 7 days, soonest first, each with **Log**: one tap adds it for today at what it cost the last time, with the usual confirmation and its Undo. Nothing is ever added by itself: each synced device would add its own copy, and both would stay. A charge up to three days late is due today, as the forecast files it. Something bought every day or two (kopi, the bus) is a habit, not a charge, and is left out. A charge in a category that is not spending is listed too, and says so.
+- **A finished month in review** (Pulse, on any past month): its biggest expense, which opens in the Ledger, its biggest day, and how many entries made it on how many days.
+- **How last month ended** (Pulse, the first three days of a month): one card with the total, how it compares with the month before, and how it stood against the budget, shown once on each device. "See October" turns Pulse to that month.
+
+### Fixed
+
+- **A charge that has stopped is no longer expected.** A subscription cancelled a year ago was still projected every month by the 14-day forecast, and shown with a "next" date in the patterns list. Once a charge's second turn since its last entry has gone by, three days of grace included, it leaves the forecast, the list's "next" and Due soon. Logged again, it is expected again.
+- The lines between a list's rows show in light mode (Today on Pulse, the Ledger, the Insights lists): their colour had no light twin, so they were white on white.
+
+### Changed (engineering)
+
+- `dueSoon` (utils/recurring.ts) reads the same dates as the 14-day forecast (`upcomingDue`), so the list and the chart cannot disagree about today. Charges are looked for among every entry; the forecast and the patterns list stay on the spending-only index.
+- `MonthAnalytics.biggest` and `busiestDay` (lib/analytics.ts).
+- The month a device has seen closed is kept under `spendtrack:recap-seen`: a `spendtrack:*` key, so "Remove from this device" clears it.
+- Boot 551,389 / 561,580 B (10,191 B left), eager 452,222 / 466,908 B; all JS 732.4 / 740 KB (7.6 KB left: T8c starts by making room).
+
+### Known limits
+
+- Log enters the last amount: a charge that varies (a utility bill) is corrected in the Ledger, or undone and entered by hand.
+- A charge paid every three or four weeks is given a day of the month, as a monthly one is, so its reminder can come days late (the detector's rule since T3).
+- The same name used for two different charges (a transfer to two places) is one charge to the detector: Due soon shows the later of the two.
+- Two devices that each log the same charge before they sync keep both entries, as any two entries made apart are kept: delete one.
+- The month card is shown on the 1st to the 3rd only; the month itself stays one press of the previous-month arrow away.
+- Money in (income and refunds) is T8's last slice. It needs bundle room first: all JS stands 8 KB under its budget.
+
 ## 0.17.0 — 2026-11-12
 
 T8a, the first slice of T8 (money in and smarter budgets): what counts as spending, and one budget for the whole month.
