@@ -33,7 +33,7 @@ import { syncEnabled } from '../../services/syncConfig'
 import { useToast } from '../../hooks/useToast'
 import { useCurrencySymbol, useFormatMoney } from '../../hooks/useFormatMoney'
 import { colorFromString } from '../../lib/analytics'
-import { categoryOf } from '../../lib/kind'
+import { categoryOf, kindOf } from '../../lib/kind'
 
 const SECTIONS = [
   ['categories', Tags, 'Categories'],
@@ -368,11 +368,13 @@ function CategoriesPanel() {
     return true
   }
 
-  // A Map: a category may be named "__proto__" or "constructor". Only expenses are in a
-  // category: money in is stored under one it never shows.
+  // A Map: a category may be named "__proto__" or "constructor". Expenses and refunds are
+  // in a category: income is stored under one it never shows.
   const counts = new Map(
     categories.map((c) => [c, expenses.filter((e) => categoryOf(e) === c).length]),
   )
+  // Categories with a refund in them: their count is of entries, not of expenses alone.
+  const mixed = new Set(expenses.filter((e) => kindOf(e) === 'refund').map((e) => e.category))
   // Focus after a delete moves along the rows that can be deleted (Other cannot).
   const deletable = categories.filter((c) => c !== OTHER)
 
@@ -402,7 +404,7 @@ function CategoriesPanel() {
         {categories.map((c) => {
           const count = counts.get(c) ?? 0
           const one = count === 1
-          const noun = one ? 'expense' : 'expenses'
+          const noun = countNoun(count, mixed.has(c))
           return (
             <li
               key={c}
@@ -418,7 +420,14 @@ function CategoriesPanel() {
                   layout="row"
                   tone="warning"
                   question={`Merge into ${merge.pending.to}?`}
-                  detail={mergeDetail(c, merge.pending.to, count, budgets, asideCategories)}
+                  detail={mergeDetail(
+                    c,
+                    merge.pending.to,
+                    count,
+                    budgets,
+                    asideCategories,
+                    mixed.has(c),
+                  )}
                   confirmLabel={<Check size={14} aria-hidden />}
                   confirmName={`Merge ${c} into ${merge.pending.to}`}
                   cancelLabel={<X size={14} aria-hidden />}
@@ -536,14 +545,19 @@ function CategoriesPanel() {
  * category merged into keeps its own, else takes the merged one's (budgetView), which measures
  * nothing while that category is not spending.
  */
+/** What a category's count is of: expenses, or entries once a refund is among them. */
+const countNoun = (count: number, mixed: boolean): string =>
+  mixed ? (count === 1 ? 'entry' : 'entries') : count === 1 ? 'expense' : 'expenses'
+
 function mergeDetail(
   from: string,
   to: string,
   count: number,
   budgets: Readonly<Record<string, number>>,
   aside: readonly string[],
+  mixed = false,
 ): string {
-  const noun = `${count.toLocaleString()} ${count === 1 ? 'expense' : 'expenses'}`
+  const noun = `${count.toLocaleString()} ${countNoun(count, mixed)}`
   const one = count === 1
   const toAside = aside.includes(to)
   const crosses = count > 0 && toAside !== aside.includes(from)

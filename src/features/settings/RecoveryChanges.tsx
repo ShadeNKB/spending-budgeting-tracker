@@ -104,9 +104,10 @@ export function RecoveryChanges({
     <span className="text-white/90">
       {r.itemName === '' ? 'Unnamed entry' : r.itemName}
       {r.amount !== null && <> · {money(r.amount)}</>}
-      {/* An income says what it is where an expense has its category; a refund says both. */}
-      {r.kind !== undefined && ` · ${kindLabel(r.kind)}`}
+      {/* An income says what it is where an expense has its category; a refund says both,
+          the category first, as its row does. */}
       {(r.kind === undefined || r.kind === 'refund') && r.category !== null && ` · ${r.category}`}
+      {r.kind !== undefined && ` · ${kindLabel(r.kind)}`}
       {r.day !== null && ` · ${dayText(r.day)}`}
     </span>
   )

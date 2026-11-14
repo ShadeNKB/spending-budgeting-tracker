@@ -21,6 +21,7 @@ import {
 } from '../../utils/recurring'
 import { computeTrailingDaily, computeWeekAnalytics } from '../../lib/analytics'
 import { addDays, formatRangeLabel, shortDate } from '../../lib/dates'
+import { netFigure } from '../../lib/kind'
 import { getLedgerIndex } from '../../lib/ledgerIndex'
 import { spendingBudgets, splitSpending } from '../../lib/spending'
 import { Card } from '../../ui/Card'
@@ -194,7 +195,7 @@ export function InsightsScreen() {
               {...weekScrub.props}
               aria-label="Last 7 days by day"
               aria-describedby={weekSummaryId}
-              aria-valuetext={`${readDay(weekScrub.value)} · ${fmt(weekDays[weekScrub.value]?.total ?? 0)}`}
+              aria-valuetext={`${readDay(weekScrub.value)} · ${netFigure(weekDays[weekScrub.value]?.total ?? 0, fmt)}`}
               data-chart="week"
               className="mb-3 flex cursor-default touch-pan-y select-none items-end gap-1.5 rounded-md pt-6"
             >
@@ -221,7 +222,7 @@ export function InsightsScreen() {
                                 : 'left-1/2 -translate-x-1/2'
                           }`}
                         >
-                          {fmt(d.total)}
+                          {netFigure(d.total, fmt)}
                         </span>
                       )}
                       <div

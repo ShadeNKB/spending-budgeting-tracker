@@ -23,6 +23,7 @@ import {
   type DayKey,
 } from '../../lib/dates'
 import type { HeatmapData } from '../../lib/analytics'
+import { netFigure } from '../../lib/kind'
 
 // Each day is a 24 px target (WCAG 2.5.8's minimum) drawn as a 20 px square, so squares sit 4 px
 // apart. The weekday labels share the scroller's rows (the month row and its 4 px gap, then 7 day
@@ -80,16 +81,19 @@ interface Day {
   key: DayKey
   level: number
   total: number
+  /** Entries of the day: with some it opens in the Ledger, also at a net of zero or less. */
+  count: number
   /** "Sat, October 17: S$12.00" / "Thu, October 15: No spending" */
   label: string
 }
 
 /**
  * A day's figure in words: what was spent, or what came back when its refunds were more than its
- * spending ("S$20.00 back"), or that nothing was spent.
+ * spending ("S$20.00 back"), or that nothing was spent. A day whose entries cancel out (an
+ * expense and its refund) says "S$0.00": something happened on it.
  */
-const dayFigure = (total: number, fmt: (n: number) => string): string =>
-  total > 0 ? fmt(total) : total < 0 ? `${fmt(-total)} back` : 'No spending'
+const dayFigure = (day: { total: number; count: number }, fmt: (n: number) => string): string =>
+  day.total === 0 && day.count === 0 ? 'No spending' : netFigure(day.total, fmt)
 
 const levelOf = (total: number, max: number) => {
   if (total <= 0) return 0
@@ -102,8 +106,8 @@ const levelOf = (total: number, max: number) => {
 
 /**
  * Fourteen weeks of daily spending as one grid widget: one Tab stop (a roving tabindex that
- * starts on today), arrows / Page / Home / End move between days, Enter on a day with spending
- * opens it in the ledger. Days without spending are plain cells, not buttons that do nothing.
+ * starts on today), arrows / Page / Home / End move between days, Enter on a day with entries
+ * opens it in the ledger. Days without any are plain cells, not buttons that do nothing.
  */
 export function Heatmap({ data, today }: { data: HeatmapData; today: DayKey }) {
   const navigate = useNavigate()
@@ -137,7 +141,8 @@ export function Heatmap({ data, today }: { data: HeatmapData; today: DayKey }) {
         key: d.date,
         level: levelOf(d.total, max),
         total: d.total,
-        label: `${weekdayShort(d.date)}, ${longDate(d.date)}: ${dayFigure(d.total, fmt)}`,
+        count: d.count,
+        label: `${weekdayShort(d.date)}, ${longDate(d.date)}: ${dayFigure(d, fmt)}`,
       }
       const row = byRow[at % 7]
       if (row) row[week] = day
@@ -337,7 +342,7 @@ export function Heatmap({ data, today }: { data: HeatmapData; today: DayKey }) {
       >
         {read ? (
           <span className="text-[var(--text-secondary)]">
-            {`${shortDate(read.key)} · ${dayFigure(read.total, fmt)}`}
+            {`${shortDate(read.key)} · ${dayFigure(read, fmt)}`}
           </span>
         ) : (
           <span>
@@ -380,7 +385,7 @@ const DayCell = memo(function DayCell({
 }) {
   const square = clsx(SQUARE, LEVEL_CLASSES[day.level] ?? LEVEL_CLASSES[0], isToday && TODAY_DOT)
 
-  if (day.total > 0) {
+  if (day.count > 0) {
     return (
       <div role="gridcell" data-day={day.key} className="h-6 w-6 shrink-0">
         <button

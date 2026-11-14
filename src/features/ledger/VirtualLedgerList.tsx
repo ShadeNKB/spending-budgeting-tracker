@@ -2,7 +2,7 @@ import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useWindowVirtualizer } from '@tanstack/react-virtual'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { LedgerRow } from './LedgerRow'
-import { flattenLedgerGroups, type LedgerGroup } from './ledgerFlatten'
+import { flattenLedgerGroups, showsDayFigure, type LedgerGroup } from './ledgerFlatten'
 import type { Expense } from '../../types'
 
 /**
@@ -69,7 +69,7 @@ export function VirtualLedgerList({
                     {item.label}
                   </h2>
                   {/* No figure for a day with nothing to sum (LedgerScreen's grouped view). */}
-                  {item.counted > 0 && (
+                  {showsDayFigure(item) && (
                     <span className="font-mono text-[11px] tabular-nums text-[var(--text-secondary)]">
                       {fmt(item.total)}
                     </span>

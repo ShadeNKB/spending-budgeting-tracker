@@ -15,7 +15,12 @@ function heatmap(end: DayKey, spend: Readonly<Record<DayKey, number>> = {}): Hea
   return {
     start,
     end,
-    days: enumerateDays({ start, end }).map((date) => ({ date, total: spend[date] ?? 0 })),
+    days: enumerateDays({ start, end }).map((date) => ({
+      date,
+      total: spend[date] ?? 0,
+      // a day named in `spend` has entries, whatever they net to
+      count: date in spend ? 1 : 0,
+    })),
   }
 }
 
@@ -361,3 +366,29 @@ describe('Heatmap today in the local time zone', () => {
 function RouterHarness({ children }: { children: ReactNode }) {
   return <MemoryRouter>{children}</MemoryRouter>
 }
+
+describe('Heatmap: days that net to zero or less (refunds)', () => {
+  // Oct 16: refunds passed the day's spending. Oct 15: an expense and its refund.
+  const NET = { '2026-10-17': 12, '2026-10-16': -20, '2026-10-15': 0 }
+
+  it('says what came back, and a day whose entries cancel out is S$0.00, not "No spending"', () => {
+    renderAt(<Heatmap data={heatmap(TODAY, NET)} today={TODAY} />)
+    expect(
+      screen.getByRole('button', { name: /October 16.*: S\$20\.00 back$/ }),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /October 15.*: S\$0\.00$/ })).toBeInTheDocument()
+    // a day with no entry at all is still a plain cell
+    expect(screen.queryByRole('button', { name: /October 14/ })).toBeNull()
+  })
+
+  it('such a day opens in the Ledger like any day with entries, and is no busiest day', async () => {
+    const user = userEvent.setup()
+    renderAt(<Heatmap data={heatmap(TODAY, NET)} today={TODAY} />)
+    // only the day with a net spend counts as one, and it is the busiest
+    expect(screen.getByRole('grid')).toHaveAccessibleDescription(
+      '1 of 92 days with spending. Busiest: Sat, Oct 17, S$12.00.',
+    )
+    await user.click(screen.getByRole('button', { name: /October 16/ }))
+    expect(screen.getByTestId('location')).toHaveTextContent('/ledger?date=2026-10-16')
+  })
+})

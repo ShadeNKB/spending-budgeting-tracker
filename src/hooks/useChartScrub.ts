@@ -30,7 +30,9 @@ export function pointAt(
 
 /**
  * A chart's description for screen readers: "Total S$60.00. Peak S$30.00 on Sep 30.", or "No
- * spending in this period." (a period without spending never reads as having a peak).
+ * spending in this period." (a period without spending never reads as having a peak). A period
+ * that holds refunds alone is neither: "S$20.00 back in this period.", as the figure beside the
+ * chart says.
  */
 export function seriesSummary(
   values: readonly number[],
@@ -39,8 +41,13 @@ export function seriesSummary(
   preposition: 'on' | 'in' = 'on',
 ): string {
   const peak = Math.max(0, ...values)
-  if (peak <= 0) return 'No spending in this period.'
   const total = values.reduce((sum, v) => sum + v, 0)
+  if (peak <= 0) {
+    // judged in cents: a float sum of nothing must not read as a fraction of a cent back
+    return Math.round(total * 100) < 0
+      ? `${fmt(-total)} back in this period.`
+      : 'No spending in this period.'
+  }
   const where = labelOf(values.indexOf(peak))
   return `Total ${fmt(total)}. Peak ${fmt(peak)}${where ? ` ${preposition} ${where}` : ''}.`
 }

@@ -230,11 +230,6 @@ export function EditExpenseSheet({
                 { value: 'refund', label: 'Refund' },
               ]}
             />
-            {form.kind === 'refund' && (
-              <p className="mt-2 text-[12px] leading-relaxed text-[var(--text-secondary)]">
-                Money back for something you paid for. It comes off its category&apos;s spending.
-              </p>
-            )}
           </div>
         )}
         <Input
@@ -268,7 +263,7 @@ export function EditExpenseSheet({
               id={categoryLabelId}
               className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]"
             >
-              Category
+              {form.kind === 'refund' ? 'Category it comes off' : 'Category'}
             </span>
             {/* 36 px chips 8 px apart: each gets a 44 px hit area on touch, none overlapping. */}
             <div role="group" aria-labelledby={categoryLabelId} className="flex flex-wrap gap-2">

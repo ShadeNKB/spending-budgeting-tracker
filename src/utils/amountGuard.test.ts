@@ -59,6 +59,9 @@ describe('unusualAmountThreshold', () => {
     const income = rows(790, 790, 790).map((e) => ({ ...e, ext: { kind: 'income' } }))
     const newer = rows(5000).map((e) => ({ ...e, ext: { kind: 'transfer' } }))
     expect(unusualAmountThreshold([...income, ...newer, ...history])).toBe(50)
+    // nor is money back: a large refund is not what the owner usually spends
+    const refunds = rows(900, 900, 900).map((e) => ({ ...e, ext: { kind: 'refund' } }))
+    expect(unusualAmountThreshold([...refunds, ...history])).toBe(50)
     // and the 200 rows it reads are the 200 newest expenses
     const many = rows(...repeat(5, 200)).map((e, i) => (i < 150 ? e : { ...e, amount: 1000 }))
     const between = rows(...repeat(790, 100)).map((e) => ({ ...e, ext: { kind: 'income' } }))

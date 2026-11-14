@@ -130,6 +130,6 @@ test('an income and a refund survive 0.10.0: listed, edited and pushed there, ea
   await expect(
     page.getByRole('button', { name: /^Edit returned cable, -.*25\.00 refund, Shopping, / }),
   ).toBeVisible()
-  await expect(page.getByText(/after .*25\.00 in refunds$/)).toBeVisible()
+  await expect(page.getByText(/25\.00 refunds taken off$/)).toBeVisible()
   expect(onRelay('returned cable', 'kind')).toBe('refund')
 })

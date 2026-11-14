@@ -677,7 +677,7 @@
   .text-positive {
     color: var(--positive);
   }
-  /* An amount that came in (F-058): a Ledger row, a palette hit. */
+  /* An amount that came in or came back (F-058: income, a refund): a Ledger row, a palette hit. */
   .text-income {
     color: var(--positive);
   }

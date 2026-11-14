@@ -23,6 +23,7 @@ import {
   yearRange,
 } from '../../lib/dates'
 import type { LedgerPeriod } from '../ledger/ledgerParams'
+import { netFigure } from '../../lib/kind'
 import { getLedgerIndex, sumRange } from '../../lib/ledgerIndex'
 import { spendingBudgets, splitSpending } from '../../lib/spending'
 import { importWithReload } from '../../lib/chunkReload'
@@ -268,8 +269,9 @@ export function PulseScreen() {
                       <>
                         <span>
                           Today{' '}
+                          {/* No rows beside it here: a day below zero is said as money back. */}
                           <span className="font-mono tabular-nums text-white">
-                            {fmt(monthData.todayTotal)}
+                            {netFigure(monthData.todayTotal, fmt)}
                           </span>
                         </span>
                         <span className="text-[var(--text-tertiary)]">/</span>
@@ -317,14 +319,19 @@ export function PulseScreen() {
                     <span className="font-mono tabular-nums text-white">
                       {fmt(a.periodRefunded)}
                     </span>
-                    <span className="text-[var(--text-tertiary)]"> · taken off the total</span>
+                    <span className="text-[var(--text-tertiary)]">
+                      {' · '}
+                      <span className="whitespace-nowrap">taken off the total</span>
+                    </span>
                   </div>
                 )}
 
                 {asideTotal !== 0 && (
                   <div className="mt-1 text-[12px] text-[var(--text-secondary)]">
                     Not spending{' '}
-                    <span className="font-mono tabular-nums text-white">{fmt(asideTotal)}</span>
+                    <span className="font-mono tabular-nums text-white">
+                      {netFigure(asideTotal, fmt)}
+                    </span>
                     <span className="text-[var(--text-tertiary)]"> · not in the total</span>
                   </div>
                 )}
@@ -449,7 +456,11 @@ export function PulseScreen() {
           <SectionHeader icon={Layers} meta={a.label}>
             Top categories
           </SectionHeader>
-          <TopCategories items={a.topCategories} period={ledgerPeriod} />
+          <TopCategories
+            items={a.topCategories}
+            period={ledgerPeriod}
+            hasEntries={a.periodCount > 0}
+          />
         </Card>
 
         <Card className="min-w-0">

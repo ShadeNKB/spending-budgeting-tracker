@@ -90,7 +90,7 @@ export interface RecordSummary {
   readonly category: string | null
   readonly notes: string | null
   /**
-   * The record's kind when it has one (T8c): `'income'`, or a newer version's own word
+   * The record's kind when it has one (T8c): `'income'`, `'refund'`, or a newer version's own word
    * (`'other'` when that is not text). Absent for an expense.
    */
   readonly kind?: string

@@ -81,20 +81,22 @@ export const LedgerRow = memo(function LedgerRow({
   // An income or a refund carries its sign and a word under it: colour alone would not say it.
   const amount = shownAmount(expense, fmt)
   /**
-   * What the row says under its amount when it is not plain spending. A refund in a not-spending
-   * category says the latter: that is why no total moved (its minus still says money back).
+   * What the row says under its amount when it is not plain spending, on screen and to a screen
+   * reader alike. A refund in a not-spending category says both: what it is, and why no total
+   * moved.
    */
   const tag =
     kind === 'income'
       ? 'income'
       : kind === 'unknown'
         ? 'not counted'
-        : aside
-          ? 'not spending'
-          : kind === 'refund'
-            ? 'refund'
+        : kind === 'refund'
+          ? aside
+            ? 'refund, not spending'
+            : 'refund'
+          : aside
+            ? 'not spending'
             : null
-  const said = kind === 'refund' && aside ? 'refund, not spending' : tag
   const deleteName = `Delete ${expense.itemName}, ${amount}, ${dateLabel}`
 
   return (
@@ -143,7 +145,7 @@ export const LedgerRow = memo(function LedgerRow({
           onClick={handleRowClick}
           onKeyDown={onRowKeyDown}
           aria-keyshortcuts="Delete"
-          aria-label={`Edit ${expense.itemName}, ${amount}${said === null ? '' : ` ${said}`}${filed ? `, ${expense.category}` : ''}, ${dateLabel}`}
+          aria-label={`Edit ${expense.itemName}, ${amount}${tag === null ? '' : ` ${tag}`}${filed ? `, ${expense.category}` : ''}, ${dateLabel}`}
           className="focus-inset flex min-w-0 flex-1 items-center gap-3 py-3 pl-3 pr-2 text-left md:pl-4"
         >
           <span

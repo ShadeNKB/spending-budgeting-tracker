@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { KIND_REFUND as CORE_REFUND } from '../data/core/constants'
 import {
+  busiestDay,
   computeMonthAnalytics,
   computeWeekAnalytics,
   computeYearAnalytics,
@@ -8,13 +9,23 @@ import {
 } from './analytics'
 import { expensesToCsv } from './csv'
 import { formatMoney } from './format'
-import { KIND_REFUND, categoryOf, filedUnder, inSpending, kindOf, shownAmount } from './kind'
+import {
+  KIND_REFUND,
+  categoryOf,
+  filedUnder,
+  inSpending,
+  kindOf,
+  netFigure,
+  shownAmount,
+} from './kind'
 import { getLedgerIndex, rowsInRange, signedCents, sumRange } from './ledgerIndex'
 import { splitSpending } from './spending'
 import {
   filterLedgerRows,
   flattenLedgerGroups,
   groupLedgerRows,
+  showsDayFigure,
+  sumLedgerRows,
 } from '../features/ledger/ledgerFlatten'
 import { computeInsights } from '../utils/insights'
 import type { Expense, Json } from '../types'
@@ -64,6 +75,12 @@ describe('a refund, as a row reads it', () => {
     expect(shownAmount(e, fmt)).toBe('-S$20.00')
     expect(inSpending('income')).toBe(false)
     expect(inSpending('unknown')).toBe(false)
+  })
+
+  it('a net figure with no rows beside it says money back in words', () => {
+    expect(netFigure(-20, fmt)).toBe('S$20.00 back')
+    expect(netFigure(20, fmt)).toBe('S$20.00')
+    expect(netFigure(0, fmt)).toBe('S$0.00')
   })
 })
 
@@ -162,7 +179,20 @@ describe('a month with refunds', () => {
   it('a day whose refunds pass its spending is a point below zero, and no busiest day', () => {
     const day = month.daily.find((d) => d.date === '2026-10-10')
     expect(day?.total).toBe(-30)
-    expect(month.heatmap.days.find((d) => d.date === '2026-10-10')?.total).toBe(-30)
+    // the heatmap's day says how many entries made it, so it can be opened
+    expect(month.heatmap.days.find((d) => d.date === '2026-10-10')).toEqual({
+      date: '2026-10-10',
+      total: -30,
+      count: 1,
+    })
+    expect(month.heatmap.days.find((d) => d.date === '2026-10-11')?.count).toBe(0)
+    expect(busiestDay(month.daily)?.date).toBe('2026-10-02')
+    const backOnly = computeMonthAnalytics(
+      getLedgerIndex([refund('2026-10-10', 30, 'Food')]),
+      {},
+      TODAY,
+    )
+    expect(busiestDay(backOnly.daily)).toBeNull()
   })
 })
 
@@ -174,10 +204,30 @@ describe('refunds past the spending they come off', () => {
   ]
   const index = getLedgerIndex(rows)
 
-  it('the category is not listed, and the others do not pass 100% between them', () => {
+  it('the category is listed last with what came back and no share: the list adds up to the total', () => {
     const month = computeMonthAnalytics(index, {}, TODAY)
     expect(month.periodTotal).toBe(70)
-    expect(month.topCategories).toEqual([{ category: 'Food', total: 100, share: 1 }])
+    expect(month.topCategories).toEqual([
+      { category: 'Food', total: 100, share: 1 },
+      { category: 'Shopping', total: -30, share: 0 },
+    ])
+    expect(month.topCategories.reduce((sum, c) => sum + c.total, 0)).toBe(month.periodTotal)
+  })
+
+  it('a category that nets to exactly nothing is not listed; ones below zero come most back first', () => {
+    const rows2 = [
+      at('2026-10-02', 100, 'Food'),
+      at('2026-10-03', 40, 'Shopping'),
+      refund('2026-10-04', 40, 'Shopping'),
+      refund('2026-10-05', 5, 'Transport'),
+      refund('2026-10-06', 12, 'Gaming'),
+    ]
+    const month = computeMonthAnalytics(getLedgerIndex(rows2), {}, TODAY)
+    expect(month.topCategories.map((c) => [c.category, c.total])).toEqual([
+      ['Food', 100],
+      ['Gaming', -12],
+      ['Transport', -5],
+    ])
   })
 
   it('its budget reads 0% used, never less, with the money back as room', () => {
@@ -234,6 +284,30 @@ describe('the month-end projection with refunds', () => {
     // 50 net over 10 days of 31, at the daily rate: nothing held out as paid for the month
     expect(projectedMonthCents(getLedgerIndex(rows), '2026-10-10')).toBe(15500)
   })
+
+  // Review finding: the charge was held out as paid while its refund ran at the daily rate,
+  // which gave 20500 here, and a projection far below zero for a refunded rent.
+  it('a monthly charge refunded in the same month was not paid for it: both run at the daily rate', () => {
+    const rows = [
+      at('2026-08-03', 50, 'Health', undefined, 'Gym'),
+      at('2026-09-03', 50, 'Health', undefined, 'Gym'),
+      at('2026-10-03', 50, 'Health', undefined, 'Gym'),
+      refund('2026-10-04', 50, 'Health', 'Gym'),
+      at('2026-10-05', 100, 'Food'),
+    ]
+    // 100 net over 10 days of 31
+    expect(projectedMonthCents(getLedgerIndex(rows), '2026-10-10')).toBe(31000)
+    // without the refund the charge is paid for the month: 50 + (150 - 50) / 10 * 31
+    expect(
+      projectedMonthCents(getLedgerIndex(rows.filter((r) => kindOf(r) !== 'refund')), '2026-10-10'),
+    ).toBe(36000)
+    // a refund of the same name in an earlier month takes nothing from this month's charge
+    const earlier = [
+      ...rows.filter((r) => kindOf(r) !== 'refund'),
+      refund('2026-09-20', 50, 'Health', 'Gym'),
+    ]
+    expect(projectedMonthCents(getLedgerIndex(earlier), '2026-10-10')).toBe(36000)
+  })
 })
 
 describe('a year with refunds', () => {
@@ -266,21 +340,51 @@ describe('the Ledger with refunds', () => {
 
   it('a day’s figure is its spending less its refunds, and its rows add up to it', () => {
     const groups = groupLedgerRows(index, rows, TODAY)
-    expect(groups.map((g) => [g.key, g.total, g.counted])).toEqual([
-      ['2026-10-10', -7.5, 2],
+    expect(groups.map((g) => [g.key, g.total, g.refunds, showsDayFigure(g)])).toEqual([
+      ['2026-10-10', -7.5, 1, true],
       // income only: nothing to sum, so no figure is shown
-      ['2026-10-09', 0, 0],
-      ['2026-10-08', -5, 1],
+      ['2026-10-09', 0, 0, false],
+      ['2026-10-08', -5, 1, true],
       // an expense and its refund: a real S$0.00
-      ['2026-10-07', 0, 2],
+      ['2026-10-07', 0, 1, true],
     ])
     const headers = flattenLedgerGroups(groups).filter((i) => i.kind === 'header')
-    expect(headers.map((h) => h.counted)).toEqual([2, 0, 1, 2])
+    expect(headers.map((h) => h.refunds)).toEqual([1, 0, 1, 1])
+  })
+
+  it('without a refund a day shows its figure only above zero, as before refunds', () => {
+    expect(showsDayFigure({ total: 12.5, refunds: 0 })).toBe(true)
+    // an expense of less than half a cent, alone on its day
+    expect(showsDayFigure({ total: 0, refunds: 0 })).toBe(false)
+  })
+
+  it('the sums above the rows: spending net, what the refunds took off, and the rest beside it', () => {
+    expect(sumLedgerRows(index, rows, new Set())).toEqual({
+      total: -12.5,
+      refunded: 34,
+      aside: 0,
+      income: 790,
+      uncounted: 0,
+    })
+    // Shopping is not spending: its refund is netted on that line, and off the refunds line
+    expect(sumLedgerRows(index, rows, new Set(['Shopping']))).toEqual({
+      total: -7.5,
+      refunded: 29,
+      aside: -5,
+      income: 790,
+      uncounted: 0,
+    })
+    const newer = at('2026-10-06', 3, 'Food', { kind: 'transfer' })
+    const withNewer = getLedgerIndex([FOOD, newer])
+    expect(sumLedgerRows(withNewer, rowsInRange(withNewer, null), new Set())).toMatchObject({
+      total: 12.5,
+      uncounted: 1,
+    })
   })
 
   it('a refund in a not-spending category is listed and left out of the day’s sum', () => {
     const [day] = groupLedgerRows(index, rows, TODAY, new Set(['Food']))
-    expect(day).toMatchObject({ total: 0, counted: 0 })
+    expect(day).toMatchObject({ total: 0, refunds: 0 })
   })
 
   it('a category lists its refunds with its expenses', () => {
@@ -296,6 +400,13 @@ describe('the Ledger with refunds', () => {
         (r) => index.expenses[r]?.itemName,
       ),
     ).toEqual(['Returned cable'])
+  })
+
+  it('a search for "refund" lists every refund, by the word its row carries', () => {
+    const found = filterLedgerRows(index, rows, { category: 'all', search: ' Refund ' }).map(
+      (r) => index.expenses[r]?.itemName,
+    )
+    expect(new Set(found)).toEqual(new Set(['Dinner split', 'Returned cable', EVEN_BACK.itemName]))
   })
 })
 

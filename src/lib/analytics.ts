@@ -41,7 +41,9 @@ import type { CategoryBudgets, Expense } from '../types'
 
 export interface CategoryStat {
   readonly category: string
+  /** Net of refunds. Below zero for a category that got more back than was spent in it. */
   readonly total: number
+  /** Of what the categories with a net spend hold between them; 0 for one below zero. */
   readonly share: number
 }
 
@@ -108,9 +110,15 @@ export interface CategoryBudgetStat {
   readonly projected: number | null
 }
 
+/** A day of the heatmap: its net, and how many entries made it. */
+export interface HeatmapDay extends DayPoint {
+  /** Entries of the day. A day with some can be opened, also at a net of zero or less. */
+  readonly count: number
+}
+
 export interface HeatmapData {
   /** Sunday-start weeks: 13 full weeks plus the anchor's (partial) week. */
-  readonly days: readonly DayPoint[]
+  readonly days: readonly HeatmapDay[]
   readonly start: DayKey
   readonly end: DayKey
 }
@@ -222,22 +230,27 @@ export function categoryTotals(index: LedgerIndex, range: DayRange): Map<string,
 }
 
 /**
- * The six categories with the most spent, net of their refunds. A share is of what those with a
- * net spend hold between them: a category refunds took below zero is not listed, and must not
- * push the others past 100%. With no such category that is the period's total.
+ * The six categories with the most spent, net of their refunds, then every category refunds
+ * took below zero (most back first). A share is of what the categories with a net spend hold
+ * between them, so those never pass 100%; with no category below zero that is the period's
+ * total. The ones below zero are listed because their money back is in that total: a list
+ * without them would not add up to the figure above it.
  */
 function topCategories(totals: Map<string, number>): CategoryStat[] {
   let spentCents = 0
   for (const c of totals.values()) if (c > 0) spentCents += c
-  return Array.from(totals)
+  const byName = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
+  const all = Array.from(totals)
+  const spent = all
     .filter(([, c]) => c > 0)
-    .sort(([a, ca], [b, cb]) => cb - ca || (a < b ? -1 : a > b ? 1 : 0))
+    .sort(([a, ca], [b, cb]) => cb - ca || byName(a, b))
     .slice(0, 6)
-    .map(([category, c]) => ({
-      category,
-      total: fromCents(c),
-      share: spentCents > 0 ? c / spentCents : 0,
-    }))
+  const back = all.filter(([, c]) => c < 0).sort(([a, ca], [b, cb]) => ca - cb || byName(a, b))
+  return [...spent, ...back].map(([category, c]) => ({
+    category,
+    total: fromCents(c),
+    share: c > 0 && spentCents > 0 ? c / spentCents : 0,
+  }))
 }
 
 const daySeries = (index: LedgerIndex, days: readonly DayKey[]): DayPoint[] =>
@@ -249,7 +262,11 @@ export const computeTrailingDaily = (index: LedgerIndex, end: DayKey, days: numb
 
 function heatmapEndingAt(index: LedgerIndex, end: DayKey): HeatmapData {
   const start = sundayOnOrBefore(addDays(end, -13 * 7))
-  return { days: daySeries(index, enumerateDays({ start, end })), start, end }
+  const days = enumerateDays({ start, end }).map((date): HeatmapDay => {
+    const day = index.byDay.get(date)
+    return { date, total: fromCents(day?.cents ?? 0), count: day?.count ?? 0 }
+  })
+  return { days, start, end }
 }
 
 /** Valid caps only: own keys, finite, at least one cent (a cap that rounds to 0 is unset). */
@@ -260,7 +277,8 @@ export const activeCaps = (budgets: CategoryBudgets): [string, number][] =>
  * This month's monthly charges per category, in cents: rows whose item appears exactly once this
  * month (up to `end`) and once in each of the two months before (Spotify on the 1st, rent on the
  * 28th). They are paid for the month, so projecting them at the daily run rate would count them
- * again.
+ * again. A charge refunded this month was not paid for it: it is held out of nothing, and runs
+ * at the daily rate with its refund, where the two cancel.
  */
 function paidMonthlyCharges(
   index: LedgerIndex,
@@ -271,13 +289,19 @@ function paidMonthlyCharges(
   const oneBack = addMonths(monthKey, -1)
   // Per item: how often it appears in each of the three months, and its row this month.
   const seen = new Map<string, { twoBack: number; oneBack: number; now: number; row: number }>()
+  // Items with money back this month.
+  const refunded = new Set<string>()
   const range = { start: monthRange(twoBack).start, end }
   for (const r of rowsInRange(index, range)) {
-    // money back is no charge, whatever its name
-    if ((index.cents[r] ?? 0) < 0) continue
     const name = itemKey(index.expenses[r]?.itemName ?? '')
     if (!name) continue
     const month = index.dayKeys[r]?.slice(0, 7)
+    // Money back is no charge, whatever its name. (A row that counts below zero: a refund
+    // of less than half a cent counts as nothing, like an expense of that size.)
+    if ((index.cents[r] ?? 0) < 0) {
+      if (month !== twoBack && month !== oneBack) refunded.add(name)
+      continue
+    }
     const entry = seen.get(name) ?? { twoBack: 0, oneBack: 0, now: 0, row: r }
     if (month === twoBack) entry.twoBack++
     else if (month === oneBack) entry.oneBack++
@@ -288,7 +312,8 @@ function paidMonthlyCharges(
     seen.set(name, entry)
   }
   const paid = new Map<string, number>()
-  for (const entry of seen.values()) {
+  for (const [name, entry] of seen) {
+    if (refunded.has(name)) continue
     if (entry.twoBack !== 1 || entry.oneBack !== 1 || entry.now !== 1) continue
     const category = index.expenses[entry.row]?.category ?? ''
     paid.set(category, (paid.get(category) ?? 0) + (index.cents[entry.row] ?? 0))

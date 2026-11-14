@@ -82,6 +82,8 @@ export function AddExpenseSheet({
   const fmt = useFormatMoney()
   const symbol = useCurrencySymbol()
   const categoryLabelId = useId()
+  const categoryErrorId = useId()
+  const categoryGroup = useRef<HTMLDivElement>(null)
   const fields: Record<ExpenseFormField, React.RefObject<HTMLInputElement | null>> = {
     itemName: useRef<HTMLInputElement>(null),
     amount: useRef<HTMLInputElement>(null),
@@ -100,6 +102,8 @@ export function AddExpenseSheet({
   const [kind, setKind] = useState<EntryKind>(prefill?.kind ?? 'expense')
   const income = kind === 'income'
   const refund = kind === 'refund'
+  // A refund was sent with no category to come off (see `submit`): said at the chips.
+  const [needsCategory, setNeedsCategory] = useState(false)
 
   // Refill the form each time the sheet opens (SmartInput passes what was typed as a prefill),
   // and only then: refilling on later prefill or date changes would wipe what the user typed.
@@ -113,13 +117,22 @@ export function AddExpenseSheet({
       setForm(formFrom(prefill, today))
       setErrors({})
       setKind(prefill?.kind ?? 'expense')
+      setNeedsCategory(false)
     }
   }
 
   const set = (k: keyof typeof form, v: string) => {
     setForm((f) => ({ ...f, [k]: v }))
     if (k === 'itemName' || k === 'amount') setErrors((e) => ({ ...e, [k]: undefined }))
+    // a pick answers it; a new name may bring a suggestion that does
+    if (k === 'category' || k === 'itemName') setNeedsCategory(false)
   }
+
+  // The category the app files the entry under when none is picked: the same matcher as the
+  // add itself (and the quick bar's), shown before Add rather than found out after it.
+  const learned = useLearnedCategory(form.itemName)
+  const suggestion = form.category === '' ? learned : null
+  const shown = form.category || suggestion || ''
 
   const submit = () => {
     const errs = validateExpenseForm(form, fmt)
@@ -130,6 +143,16 @@ export function AddExpenseSheet({
         setErrors(errs)
       })
       fields[invalid].current?.focus()
+      return
+    }
+    // A refund comes off a category. With none picked and none learned for its name it would
+    // land in Other, take that below zero and leave the category it belongs to as it was: an
+    // expense filed under Other is only unsorted, a refund there is in the wrong sum.
+    if (refund && form.category === '' && suggestion === null) {
+      flushSync(() => {
+        setNeedsCategory(true)
+      })
+      categoryGroup.current?.querySelector('button')?.focus()
       return
     }
     const isBackdated = form.date !== today
@@ -147,7 +170,8 @@ export function AddExpenseSheet({
         notes: form.notes.trim() || undefined,
       },
       (added) =>
-        `Added ${kind === 'expense' ? '' : `${NOUN[kind]} `}"${added.itemName}" · ${fmt(added.amount)}${isBackdated ? ` · ${dayLabel(form.date)}` : ''}${addedNote === undefined ? '' : `. ${addedNote}`}`,
+        // a refund names the category it came off: the one figure that just moved
+        `Added ${kind === 'expense' ? '' : `${NOUN[kind]} `}"${added.itemName}" · ${fmt(added.amount)}${refund ? ` · off ${added.category}` : ''}${isBackdated ? ` · ${dayLabel(form.date)}` : ''}${addedNote === undefined ? '' : `. ${addedNote}`}`,
       onAdded,
     )
     // Refused: the sheet stays open with everything typed, so the owner can fix what the
@@ -172,12 +196,6 @@ export function AddExpenseSheet({
   }
 
   const isBackdated = form.date && form.date !== today
-
-  // The category the app files the entry under when none is picked: the same matcher as the
-  // add itself (and the quick bar's), shown before Add rather than found out after it.
-  const learned = useLearnedCategory(form.itemName)
-  const suggestion = form.category === '' ? learned : null
-  const shown = form.category || suggestion || ''
 
   // Calendar days, not 24 h steps: the day after a DST change is 23 or 25 hours long.
   const presets = [
@@ -241,12 +259,16 @@ export function AddExpenseSheet({
       >
         {/* Which way the money went. Income: pay, an allowance, a sale. It is not spending, so
             it takes no category and is in no spending total. Refund: money back for something
-            paid for. It is spending undone, so it takes the category it comes off. */}
+            paid for. It is spending undone, so it takes the category it comes off (the
+            Category label says so, where the choice is made). */}
         <div>
           <Segmented<EntryKind>
             label="Kind of entry"
             value={kind}
-            onChange={setKind}
+            onChange={(k) => {
+              setKind(k)
+              setNeedsCategory(false)
+            }}
             size="sm"
             options={[
               { value: 'expense', label: 'Expense' },
@@ -254,11 +276,6 @@ export function AddExpenseSheet({
               { value: 'refund', label: 'Refund' },
             ]}
           />
-          {refund && (
-            <p className="mt-2 text-[12px] leading-relaxed text-[var(--text-secondary)]">
-              Money back for something you paid for. It comes off its category&apos;s spending.
-            </p>
-          )}
         </div>
 
         {/* Date selector. The presets wrap rather than scroll, as in the Edit sheet: every one
@@ -337,7 +354,7 @@ export function AddExpenseSheet({
               id={categoryLabelId}
               className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]"
             >
-              Category
+              {refund ? 'Category it comes off' : 'Category'}
               {suggestion !== null && (
                 <span className="normal-case tracking-normal text-[var(--text-tertiary)]">
                   {' '}
@@ -346,7 +363,13 @@ export function AddExpenseSheet({
               )}
             </span>
             {/* 36 px chips 8 px apart: each gets a 44 px hit area on touch, none overlapping. */}
-            <div role="group" aria-labelledby={categoryLabelId} className="flex flex-wrap gap-2">
+            <div
+              ref={categoryGroup}
+              role="group"
+              aria-labelledby={categoryLabelId}
+              aria-describedby={needsCategory ? categoryErrorId : undefined}
+              className="flex flex-wrap gap-2"
+            >
               {categories.slice(0, 8).map((c) => (
                 <button
                   type="button"
@@ -404,6 +427,11 @@ export function AddExpenseSheet({
                 </div>
               )}
             </div>
+            {needsCategory && (
+              <p id={categoryErrorId} role="alert" className="text-[12px] text-negative">
+                Pick the category this refund comes off.
+              </p>
+            )}
           </div>
         )}
 

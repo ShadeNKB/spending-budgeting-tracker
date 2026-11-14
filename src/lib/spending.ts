@@ -68,13 +68,11 @@ export function splitSpending<E extends Expense>(
     income: income.length === 0 ? NONE : income,
     unknown: unknown.length === 0 ? NONE : unknown,
     outgoing:
-      refunds > 0
-        ? expenses.filter((e) => kindOf(e) === 'expense')
-        : allCounted
-          ? expenses
-          : aside.length === 0
-            ? spending
-            : expenses.filter((e) => kindOf(e) === 'expense'),
+      refunds === 0 && allCounted
+        ? expenses
+        : refunds === 0 && aside.length === 0
+          ? spending
+          : expenses.filter((e) => kindOf(e) === 'expense'),
   }
   cache.set(expenses, { names: asideCategories, split })
   return split

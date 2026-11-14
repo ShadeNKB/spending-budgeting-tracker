@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom'
 import { ArrowRight } from 'lucide-react'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { colorFromString, colorWithAlpha, type CategoryStat } from '../../lib/analytics'
+import { netFigure } from '../../lib/kind'
 import { ledgerCategoryHref, type LedgerPeriod } from '../ledger/ledgerParams'
 import { EmptyState } from '../../ui/EmptyState'
 import { PieChart } from 'lucide-react'
@@ -9,16 +10,25 @@ import { PieChart } from 'lucide-react'
 export function TopCategories({
   items,
   period,
+  hasEntries = false,
 }: {
   items: readonly CategoryStat[]
   /** The period on screen: a category opens the Ledger over it. */
   period: LedgerPeriod
+  /** The period holds entries: with no category to list, they cancel out (refunds). */
+  hasEntries?: boolean
 }) {
   const navigate = useNavigate()
   const fmt = useFormatMoney()
 
   if (!items.length) {
-    return (
+    return hasEntries ? (
+      <EmptyState
+        icon={PieChart}
+        title="Nothing spent, net"
+        description="Refunds cover what was spent in this period"
+      />
+    ) : (
       <EmptyState
         icon={PieChart}
         title="No spending yet"
@@ -31,6 +41,37 @@ export function TopCategories({
     <ul className="flex flex-col gap-3">
       {items.map((it) => {
         const color = colorFromString(it.category)
+        // A category that got more back than was spent in it: its money back is in the total
+        // above, so it is listed (the rows then add up to that total), without a share or a bar.
+        if (it.total < 0) {
+          return (
+            <li key={it.category}>
+              <button
+                type="button"
+                onClick={() => navigate(ledgerCategoryHref(it.category, period))}
+                className="group flex min-h-11 w-full items-center justify-between gap-3 rounded-lg px-2 py-1.5 text-left transition hover:bg-surface-2"
+              >
+                <span className="flex min-w-0 items-center gap-2">
+                  <span
+                    className="h-2 w-2 shrink-0 rounded-full border"
+                    style={{ borderColor: color }}
+                    aria-hidden="true"
+                  />
+                  <span className="truncate text-[13px] text-[var(--text-secondary)] min-[360px]:max-md:text-[14px]">
+                    {it.category}
+                  </span>
+                </span>
+                <span className="flex shrink-0 items-center gap-1 font-mono text-[13px] tabular-nums text-[var(--text-secondary)] min-[360px]:max-md:text-[14px]">
+                  {netFigure(it.total, fmt)}
+                  <ArrowRight
+                    size={12}
+                    className="opacity-40 transition group-hover:opacity-70 group-focus-visible:opacity-70"
+                  />
+                </span>
+              </button>
+            </li>
+          )
+        }
         return (
           <li key={it.category}>
             <button

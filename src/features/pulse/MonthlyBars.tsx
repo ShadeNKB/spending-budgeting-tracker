@@ -2,6 +2,7 @@ import { useId } from 'react'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { seriesSummary, useChartScrub } from '../../hooks/useChartScrub'
 import { makeKey, monthKeyOf, monthName } from '../../lib/dates'
+import { netFigure } from '../../lib/kind'
 import type { MonthTotal } from '../../lib/analytics'
 
 const CHART_H = 88 // bar area height — label lives outside this
@@ -37,7 +38,7 @@ export function MonthlyBars({
     if (d === undefined) return ''
     const parts = [nameOf(d)]
     if (d.state !== 'future' || d.total > 0)
-      parts.push(`${fmt(d.total)}${d.state === 'current' ? ' so far' : ''}`)
+      parts.push(`${netFigure(d.total, fmt)}${d.state === 'current' ? ' so far' : ''}`)
     if (d.state === 'future') parts.push('upcoming')
     return parts.join(' · ')
   }
@@ -76,7 +77,7 @@ export function MonthlyBars({
                     {d.label}
                   </div>
                   <div className="font-mono text-[11px] font-semibold tabular-nums text-white">
-                    {fmt(d.total)}
+                    {netFigure(d.total, fmt)}
                   </div>
                 </div>
               )}
@@ -142,7 +143,7 @@ export function MonthlyBars({
         {shown && (
           <span className="ml-auto text-[var(--text-secondary)]" aria-hidden="true">
             {shown.label}{' '}
-            <span className="font-mono tabular-nums text-white">{fmt(shown.total)}</span>
+            <span className="font-mono tabular-nums text-white">{netFigure(shown.total, fmt)}</span>
           </span>
         )}
       </div>

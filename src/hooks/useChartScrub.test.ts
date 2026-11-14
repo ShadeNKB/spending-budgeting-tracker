@@ -236,3 +236,30 @@ describe('useChartScrub', () => {
     expect(slider).toHaveAttribute('aria-valuenow', '2')
   })
 })
+
+describe('seriesSummary with refunds', () => {
+  const fmt = (n: number) => `S$${n.toFixed(2)}`
+  const days = ['Oct 1', 'Oct 2', 'Oct 3']
+
+  it('a period of refunds alone says what came back, never "No spending"', () => {
+    expect(seriesSummary([0, -20, 0], (i) => days[i] ?? '', fmt)).toBe(
+      'S$20.00 back in this period.',
+    )
+    expect(seriesSummary([-5, -20.5, 0], (i) => days[i] ?? '', fmt)).toBe(
+      'S$25.50 back in this period.',
+    )
+  })
+
+  it('nothing at all is still no spending, also when a float sum is a hair off zero', () => {
+    expect(seriesSummary([0, 0, 0], (i) => days[i] ?? '', fmt)).toBe('No spending in this period.')
+    expect(seriesSummary([-0.001, 0], (i) => days[i] ?? '', fmt)).toBe(
+      'No spending in this period.',
+    )
+  })
+
+  it('spending beside a refund keeps its total and its peak', () => {
+    expect(seriesSummary([30, -20, 5], (i) => days[i] ?? '', fmt)).toBe(
+      'Total S$15.00. Peak S$30.00 on Oct 1.',
+    )
+  })
+})

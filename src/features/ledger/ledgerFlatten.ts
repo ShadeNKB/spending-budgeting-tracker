@@ -57,8 +57,12 @@ export interface LedgerGroup {
   rowDateLabel: string
   items: Expense[]
   total: number
-  /** How many of `items` the total takes: 0 for a day of income or not-spending entries only. */
-  counted: number
+  /**
+   * How many refunds the total takes. A day with one shows its figure at zero or below too
+   * ("-S$20.00", or "S$0.00" for an expense and its refund); without one a figure shows only
+   * above zero, as before refunds.
+   */
+  refunds: number
 }
 
 /**
@@ -88,19 +92,74 @@ export function groupLedgerRows(
         rowDateLabel: ledgerRowDateLabel(key, today),
         items: [],
         total: 0,
-        counted: 0,
+        refunds: 0,
       }
       groups.push(group)
       current = { group, cents: 0 }
     }
     current.group.items.push(expense)
-    if (inSpending(kindOf(expense)) && aside?.has(expense.category) !== true) {
+    const kind = kindOf(expense)
+    if (inSpending(kind) && aside?.has(expense.category) !== true) {
       current.cents += index.cents[r] ?? 0
-      current.group.counted += 1
+      if (kind === 'refund') current.group.refunds += 1
     }
   }
   if (current) current.group.total = current.cents / 100
   return groups
+}
+
+/** A day's figure is shown when it has spending to show, or a refund in its sum. */
+export const showsDayFigure = (day: { total: number; refunds: number }): boolean =>
+  day.total > 0 || day.refunds > 0
+
+/** What the Ledger says above its rows, each in the entries' own unit (not cents). */
+export interface LedgerSums {
+  /** Spending, net of the refunds listed. */
+  total: number
+  /** What those refunds took off `total`. */
+  refunded: number
+  /** Entries in not-spending categories, net of refunds filed there. */
+  aside: number
+  income: number
+  /** Rows of a kind this version does not know. */
+  uncounted: number
+}
+
+/**
+ * The sums over the rows listed: spending net of refunds, as on Pulse; entries of not-spending
+ * categories (F-057) and income (F-058) beside it; rows of a kind this version does not know
+ * counted, not summed. Together the lines account for every row shown.
+ */
+export function sumLedgerRows(
+  index: LedgerIndex,
+  rows: readonly number[],
+  aside: ReadonlySet<string>,
+): LedgerSums {
+  let total = 0
+  let refunded = 0
+  let asideCents = 0
+  let income = 0
+  let uncounted = 0
+  for (const r of rows) {
+    const e = index.expenses[r]
+    if (!e) continue
+    const c = index.cents[r] ?? 0
+    const kind = kindOf(e)
+    if (kind === 'income') income += c
+    else if (kind === 'unknown') uncounted += 1
+    else if (aside.has(e.category)) asideCents += c
+    else {
+      total += c
+      if (kind === 'refund') refunded -= c
+    }
+  }
+  return {
+    total: total / 100,
+    refunded: refunded / 100,
+    aside: asideCents / 100,
+    income: income / 100,
+    uncounted,
+  }
 }
 
 export type FlatLedgerItem =
@@ -110,7 +169,7 @@ export type FlatLedgerItem =
       key: DayKey | null
       label: string
       total: number
-      counted: number
+      refunds: number
     }
   | { kind: 'row'; id: string; expense: Expense; dateLabel: string }
 
@@ -128,7 +187,7 @@ export function flattenLedgerGroups(groups: readonly LedgerGroup[]): FlatLedgerI
       key: g.key,
       label: g.label,
       total: g.total,
-      counted: g.counted,
+      refunds: g.refunds,
     })
     for (const e of g.items) {
       out.push({ kind: 'row', id: `r:${e.id}`, expense: e, dateLabel: g.rowDateLabel })

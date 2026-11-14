@@ -86,9 +86,11 @@ Update SpendTrack on every device before adding income: a device on 0.18 or olde
 
 ## Refunds
 
-A refund is money back for something you paid for: a shop's refund, a friend paying their share of a dinner you put on your card. Choose **Refund** on the same switch, type the amount as it came back (S$20, not -20), and pick the category it comes off.
+A refund is money back for something you paid for: a shop's refund, a friend paying their share of a dinner you put on your card. Choose **Refund** on the same switch, type the amount as it came back (S$20, not -20), and pick the category it comes off. If you pick none, SpendTrack uses the category it has learned for that name, and asks you for one when it has learned none.
 
-A refund is spending undone. It comes off its category, its day and the month on every screen, budgets included: S$80 of shoes and S$30 back is S$50 of Shopping. Pulse says what came off under the total ("Refunds S$30.00 · taken off the total"), and the Ledger lists the refund with a **-** and the word "refund", so the rows of a day add up to the figure in its header.
+A refund is spending undone. It comes off its category, its day and the month on every screen, budgets included: S$80 of shoes and S$30 back is S$50 of Shopping. Pulse says what came off under the total ("Refunds S$30.00 · taken off the total"). The Ledger lists the refund with a **-** and the word "refund", says "S$30.00 refunds taken off" under its total, and nets each day: a day's expenses and refunds add up to the figure in its header. Search the Ledger for "refund" to see every one.
+
+Where a figure stands without its rows (Today on Pulse, a day on the heatmap, a point of the trend), a net below zero is said in words: "S$7.20 back".
 
 A refund counts in the month it is dated, not the month of the purchase: money back today for something bought last month lowers this month.
 

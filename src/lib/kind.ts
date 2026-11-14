@@ -44,6 +44,15 @@ export function filedUnder(e: Expense): string {
 }
 
 /**
+ * A net figure where no signed rows sit beside it (a chart's tooltip, a day on the heatmap,
+ * "Today" on Pulse, a budget's row): below zero it is said as what came back, "S$20.00 back".
+ * A bare minus there reads as a mistake; beside its rows (a Ledger day, the Today strip) the
+ * minus stays, because the rows add up to it.
+ */
+export const netFigure = (total: number, fmt: (n: number) => string): string =>
+  total < 0 ? `${fmt(-total)} back` : fmt(total)
+
+/**
  * An entry's amount as a row shows it, on every screen that lists it. Income carries a plus:
  * it is beside the spending sums, not in them. A refund carries a minus: it is in them, and the
  * rows of a day add up to the day's figure.

@@ -6,6 +6,7 @@ import { AddExpenseSheet } from './AddExpenseSheet'
 import { EditExpenseSheet } from '../ledger/EditExpenseSheet'
 import { LedgerRow } from '../ledger/LedgerRow'
 import { TodayStrip } from '../pulse/TodayStrip'
+import { TopCategories } from '../pulse/TopCategories'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useUIStore } from '../../stores/useUIStore'
 import { kindOf } from '../../lib/kind'
@@ -64,29 +65,66 @@ afterEach(() => {
 const option = (name: 'Expense' | 'Income' | 'Refund') => screen.getByRole('radio', { name })
 const categories = () => screen.queryByRole('group', { name: /^Category/ })
 const chip = (name: string) => screen.getByRole('button', { name })
-const HINT = /Money back for something you paid for/
+/** A refund's chips say what the pick is for, where it is made. */
+const comesOff = () => screen.queryByRole('group', { name: /^Category it comes off/ })
+const NEEDS = 'Pick the category this refund comes off.'
 
 describe('the Add sheet: a refund', () => {
   beforeEach(async () => {
     await boot([])
   })
 
-  it('Refund names the sheet, says what it is, and keeps the category', async () => {
+  it('Refund names the sheet, keeps the category, and says what the category is for', async () => {
     const user = userEvent.setup()
     render(<AddExpenseSheet open onClose={() => {}} />)
-    expect(screen.queryByText(HINT)).toBeNull()
+    expect(comesOff()).toBeNull()
     // a category picked before the switch stays picked: a refund has one
     await user.click(chip('Shopping'))
     await user.click(option('Refund'))
     expect(option('Refund')).toBeChecked()
     expect(screen.getByRole('dialog', { name: 'Add refund' })).toBeInTheDocument()
-    expect(screen.getByText(HINT)).toBeInTheDocument()
+    expect(comesOff()).not.toBeNull()
     expect(categories()).not.toBeNull()
     expect(chip('Shopping')).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByPlaceholderText(/returned shoes, dinner split/i)).toBeInTheDocument()
-    // and the hint leaves with the kind
+    // and the label is an expense's again with the kind
     await user.click(option('Expense'))
-    expect(screen.queryByText(HINT)).toBeNull()
+    expect(comesOff()).toBeNull()
+    expect(categories()).not.toBeNull()
+  })
+
+  it('a refund with no category picked and none learned is not added: the chips say why', async () => {
+    const user = userEvent.setup()
+    const onClose = vi.fn()
+    render(<AddExpenseSheet open onClose={onClose} />)
+    await user.click(option('Refund'))
+    await user.type(screen.getByRole('textbox', { name: 'What' }), 'Deposit back')
+    await user.type(screen.getByPlaceholderText('0.00'), '50')
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+
+    expect(useExpenseStore.getState().expenses).toHaveLength(0)
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByText(NEEDS)).toHaveAttribute('role', 'alert')
+    expect(comesOff()).toHaveAccessibleDescription(NEEDS)
+    // focus is on the first chip, where the answer is
+    expect(comesOff()?.querySelector('button')).toHaveFocus()
+
+    await user.click(chip('Shopping'))
+    expect(screen.queryByText(NEEDS)).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    const [added] = useExpenseStore.getState().expenses
+    expect(added).toMatchObject({ itemName: 'Deposit back', category: 'Shopping' })
+    expect(onClose).toHaveBeenCalledOnce()
+  })
+
+  it('an expense with no category is still added as before (filed under Other)', async () => {
+    const user = userEvent.setup()
+    render(<AddExpenseSheet open onClose={() => {}} />)
+    await user.type(screen.getByRole('textbox', { name: 'What' }), 'Zzz thing')
+    await user.type(screen.getByPlaceholderText('0.00'), '3')
+    await user.click(screen.getByRole('button', { name: 'Add' }))
+    expect(useExpenseStore.getState().expenses).toHaveLength(1)
+    expect(screen.queryByText(NEEDS)).toBeNull()
   })
 
   it('stores a refund in its category with the amount as typed, and says so', async () => {
@@ -102,8 +140,9 @@ describe('the Add sheet: a refund', () => {
     const [added] = useExpenseStore.getState().expenses
     expect(added).toMatchObject({ itemName: 'Returned shoes', amount: 89.9, category: 'Shopping' })
     expect(added && kindOf(added)).toBe('refund')
+    // the confirmation names the category it came off
     expect(useUIStore.getState().toasts.at(-1)?.message).toBe(
-      'Added refund "Returned shoes" · S$89.90',
+      'Added refund "Returned shoes" · S$89.90 · off Shopping',
     )
     expect(onClose).toHaveBeenCalledOnce()
   })
@@ -119,6 +158,10 @@ describe('the Add sheet: a refund', () => {
     await user.click(screen.getByRole('button', { name: 'Add' }))
     const added = useExpenseStore.getState().expenses.find((e) => kindOf(e) === 'refund')
     expect(added).toMatchObject({ itemName: 'Shoes', category: 'Shopping' })
+    // said in the confirmation: the category was the app's pick, not a tap
+    expect(useUIStore.getState().toasts.at(-1)?.message).toBe(
+      'Added refund "Shoes" · S$89.90 · off Shopping',
+    )
   })
 
   it('opens on Refund when what opened it says so (the Fix of an unreadable refund)', () => {
@@ -142,7 +185,7 @@ describe('the Edit sheet: a refund', () => {
     render(<EditExpenseSheet expense={view('e-1')} onClose={() => {}} />)
     expect(screen.getByRole('dialog', { name: 'Edit refund' })).toBeInTheDocument()
     expect(option('Refund')).toBeChecked()
-    expect(screen.getByText(HINT)).toBeInTheDocument()
+    expect(comesOff()).not.toBeNull()
     expect(chip('Shopping')).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByRole('button', { name: 'Delete refund' })).toBeInTheDocument()
 
@@ -228,7 +271,7 @@ describe('a Ledger row: a refund', () => {
     ).toBeInTheDocument()
   })
 
-  it('in a not-spending category it says that, in the colour of an entry no total takes', () => {
+  it('in a not-spending category it says both, in the colour of an entry no total takes', () => {
     useExpenseStore.setState({ asideCategories: ['Shopping'] })
     row(BACK)
     expect(
@@ -236,7 +279,8 @@ describe('a Ledger row: a refund', () => {
         name: 'Edit Returned shoes, -S$89.90 refund, not spending, Shopping, Oct 19',
       }),
     ).toBeInTheDocument()
-    expect(screen.getByText('not spending', { exact: true })).toBeInTheDocument()
+    // on screen what a screen reader hears: the word is not left to the sign and the colour
+    expect(screen.getByText('refund, not spending', { exact: true })).toBeInTheDocument()
     expect(screen.getByText('-S$89.90')).not.toHaveClass('text-income')
   })
 })
@@ -268,5 +312,48 @@ describe('Today on Pulse: a refund', () => {
     expect(screen.getByText('-S$89.90')).toHaveClass('text-income')
     expect(screen.getByRole('button', { name: 'Edit Lunch, S$12.50, Food' })).toBeInTheDocument()
     expect(screen.getByText('S$12.50')).toHaveClass('text-white')
+  })
+})
+
+describe('Top categories: a category refunds took below zero', () => {
+  beforeEach(async () => {
+    await boot([])
+  })
+
+  it('is listed after the ones with spending, with what came back and no share', () => {
+    render(
+      <MemoryRouter>
+        <TopCategories
+          period={null}
+          items={[
+            { category: 'Food', total: 100, share: 1 },
+            { category: 'Transport', total: -12, share: 0 },
+          ]}
+        />
+      </MemoryRouter>,
+    )
+    const rows = screen.getAllByRole('button')
+    expect(rows).toHaveLength(2)
+    expect(rows[0]).toHaveTextContent('Food')
+    expect(rows[0]).toHaveTextContent('100%')
+    expect(rows[1]).toHaveTextContent('Transport')
+    expect(rows[1]).toHaveTextContent('S$12.00 back')
+    expect(rows[1]).not.toHaveTextContent('%')
+  })
+
+  it('with nothing to list in a period that has entries, it says refunds cover the spending', () => {
+    const { rerender } = render(
+      <MemoryRouter>
+        <TopCategories period={null} items={[]} hasEntries />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('Nothing spent, net')).toBeInTheDocument()
+    expect(screen.queryByText('No spending yet')).toBeNull()
+    rerender(
+      <MemoryRouter>
+        <TopCategories period={null} items={[]} />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText('No spending yet')).toBeInTheDocument()
   })
 })

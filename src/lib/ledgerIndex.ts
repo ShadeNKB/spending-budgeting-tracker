@@ -30,7 +30,10 @@ export interface LedgerIndex {
   readonly validCount: number
   readonly byDay: ReadonlyMap<DayKey, DayTotal>
   readonly totalCents: number
-  /** Lowercased `itemName \0 category \0 notes`, built on first use and cached. */
+  /**
+   * Lowercased `itemName \0 category \0 notes` (and the word "refund" for one), built on first
+   * use and cached.
+   */
   searchText: (row: number) => string
 }
 
@@ -135,8 +138,10 @@ function buildIndex(expenses: readonly Expense[]): LedgerIndex {
     if (hit !== undefined) return hit
     const e = expenses[r]
     // what the row shows: an income is found by "income", never by the category it is stored with
-    // (a refund is found by its category, which it shows)
-    const text = e ? `${e.itemName}\0${filedUnder(e)}\0${e.notes ?? ''}`.toLowerCase() : ''
+    // (a refund is found by its category, which it shows, and by the word its row carries)
+    const text = e
+      ? `${e.itemName}\0${filedUnder(e)}\0${e.notes ?? ''}${kindOf(e) === 'refund' ? '\0refund' : ''}`.toLowerCase()
+      : ''
     texts[r] = text
     return text
   }

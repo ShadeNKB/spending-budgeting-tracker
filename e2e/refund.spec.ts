@@ -6,6 +6,7 @@ import {
   isPhone,
   openAddSheet,
   openPalette,
+  openSettings,
   row,
   seed,
   storedExpenses,
@@ -55,14 +56,17 @@ test('A refund is added from the Add sheet and comes off the total, on Pulse and
   await sheet.getByRole('radio', { name: 'Refund' }).click()
   const refundSheet = dialog(page, 'Add refund')
   await expect(refundSheet).toBeVisible()
-  // A refund has a category: the one it comes off.
+  // A refund has a category, and its label says what the pick is for.
   await expect(categoryGroup(refundSheet)).toBeVisible()
-  await expect(refundSheet.getByText(/Money back for something you paid for/)).toBeVisible()
+  await expect(refundSheet.getByRole('group', { name: /^Category it comes off/ })).toBeVisible()
   await refundSheet.getByRole('textbox', { name: 'What' }).fill('Dinner split')
   await refundSheet.getByRole('spinbutton', { name: 'Amount' }).fill('5')
   await refundSheet.getByRole('button', { name: 'Food & Dining', exact: true }).click()
   await refundSheet.getByRole('button', { name: 'Add', exact: true }).click()
-  await expect(toast(page, 'Added refund "Dinner split" · S$5.00')).toBeVisible()
+  // The confirmation names the category it came off.
+  await expect(
+    toast(page, 'Added refund "Dinner split" · S$5.00 · off Food & Dining'),
+  ).toBeVisible()
 
   // The total is net, and the line under it says what came off.
   await expect(heroTotal(page)).toHaveText('S$47.50')
@@ -85,7 +89,7 @@ test('A refund is added from the Add sheet and comes off the total, on Pulse and
   const summary = ledgerSummary(page)
   await expect(summary).toContainText('S$47.50')
   await expect(summary).toContainText('3 entries')
-  await expect(summary).toContainText('after S$5.00 in refunds')
+  await expect(summary).toContainText('S$5.00 refunds taken off')
   const split = page.getByRole('button', {
     name: 'Edit Dinner split, -S$5.00 refund, Food & Dining, Oct 18',
   })
@@ -93,6 +97,12 @@ test('A refund is added from the Add sheet and comes off the total, on Pulse and
   await expect(split.getByText('refund', { exact: true })).toBeVisible()
   // Its day holds nothing else: the day's figure is what came back.
   await expect(dayHeader(page, 'Today')).toContainText('-S$5.00')
+
+  // A search for the word finds it, and only it.
+  const search = page.getByRole('textbox', { name: 'Search expenses' })
+  await search.fill('refund')
+  await expect(page.getByRole('button', { name: /^Edit / })).toHaveCount(1)
+  await expect(split).toBeVisible()
 
   // Its category lists it with the spending it comes off, and sums the two.
   await page.goto('/ledger?range=month&category=Food+%26+Dining')
@@ -135,7 +145,7 @@ test('The Edit sheet makes an expense a refund, the total follows below zero, an
 
   // 12.50 spent, 40.00 back.
   await expect(ledgerSummary(page)).toContainText('-S$27.50')
-  await expect(ledgerSummary(page)).toContainText('after S$40.00 in refunds')
+  await expect(ledgerSummary(page)).toContainText('S$40.00 refunds taken off')
   await expect(
     page.getByRole('button', { name: 'Edit grab, -S$40.00 refund, Transportation, Oct 10' }),
   ).toBeVisible()
@@ -163,8 +173,12 @@ test('The palette lists a refund with its minus, under its category', async ({ p
   await palette.getByRole('combobox').fill('split')
   const hit = palette.getByRole('group', { name: 'Entries' }).getByRole('option')
   await expect(hit).toHaveCount(1)
-  await expect(hit).toContainText('Food & Dining / Oct 5')
+  // In words too: the sign and the colour alone would not say what it is.
+  await expect(hit).toContainText('Food & Dining / Oct 5 / refund')
   await expect(hit).toContainText('-S$5.00')
+  // And it is found by that word.
+  await palette.getByRole('combobox').fill('refund')
+  await expect(palette.getByRole('group', { name: 'Entries' }).getByRole('option')).toHaveCount(1)
 })
 
 test('A monthly refund is never offered as a charge due', async ({ page }) => {
@@ -209,7 +223,7 @@ test('At 320 px the three kinds, a refund row and the Ledger’s sums fit', asyn
   expect(cut.amountCut).toBe(false)
   expect(cut.pageScrolls).toBe(false)
   expect(cut.right).toBeLessThanOrEqual(320)
-  await expect(ledgerSummary(page)).toContainText('after S$1,234.56 in refunds')
+  await expect(ledgerSummary(page)).toContainText('S$1,234.56 refunds taken off')
 
   const sheet = await openAddSheet(page, testInfo)
   await sheet.getByRole('radio', { name: 'Refund' }).click()
@@ -234,6 +248,80 @@ test('At 320 px the three kinds, a refund row and the Ledger’s sums fit', asyn
   expect(box.count).toBe(3)
   expect(box.cut).toBe(false)
   await expect(refundSheet.getByRole('button', { name: 'Add', exact: true })).toBeVisible()
+})
+
+test('A refund with no category to come off is not added until one is picked', async ({
+  page,
+}, testInfo) => {
+  await seed(page, { expenses: ROWS })
+  await page.goto('/ledger')
+  await waitForApp(page)
+  const sheet = await openAddSheet(page, testInfo)
+  await sheet.getByRole('radio', { name: 'Refund' }).click()
+  const refundSheet = dialog(page, 'Add refund')
+  await refundSheet.getByRole('textbox', { name: 'What' }).fill('deposit back')
+  await refundSheet.getByRole('spinbutton', { name: 'Amount' }).fill('50')
+  await refundSheet.getByRole('button', { name: 'Add', exact: true }).click()
+
+  // Nothing is added: under Other it would lower the wrong category.
+  await expect(refundSheet).toBeVisible()
+  await expect(refundSheet.getByText('Pick the category this refund comes off.')).toBeVisible()
+  expect((await storedExpenses(page)).some((e) => e.itemName === 'deposit back')).toBe(false)
+
+  await refundSheet.getByRole('button', { name: 'Shopping', exact: true }).click()
+  await expect(refundSheet.getByText('Pick the category this refund comes off.')).toHaveCount(0)
+  await refundSheet.getByRole('button', { name: 'Add', exact: true }).click()
+  await expect(toast(page, 'Added refund "deposit back" · S$50.00 · off Shopping')).toBeVisible()
+  expect((await storedExpenses(page)).find((e) => e.itemName === 'deposit back')).toMatchObject({
+    category: 'Shopping',
+    kind: 'refund',
+  })
+})
+
+test('Days and categories that net to zero or less say so in words, and still add up', async ({
+  page,
+}) => {
+  await seed(page, {
+    expenses: [
+      ...ROWS,
+      // bought and returned on one day
+      row('c1', '2026-10-12', 9, 'cable', 'Shopping'),
+      refund('c2', '2026-10-12', 9, 'returned cable', 'Shopping'),
+      // money back today, in a category with no spending this month
+      refund('g1', '2026-10-18', 8, 'game refund', 'Gaming'),
+    ],
+  })
+  await page.goto('/pulse')
+  await waitForApp(page)
+  // 52.50 spent, 9.00 and 8.00 back.
+  await expect(heroTotal(page)).toHaveText('S$44.50')
+  // With no rows beside it, a day below zero is money back, not a bare minus.
+  await expect(page.getByText('Today S$8.00 back')).toBeVisible()
+  // Top categories lists Gaming with what came back, so the list adds up to the total:
+  // 40.00 + 12.50 - 8.00 (Shopping nets to nothing and is not listed).
+  const gaming = page.getByRole('button', { name: /^Gaming/ })
+  await expect(gaming).toContainText('S$8.00 back')
+  await expect(page.getByRole('button', { name: /^Shopping/ })).toHaveCount(0)
+  // The heatmap's day says the same, and opens.
+  await expect(page.getByRole('button', { name: /October 18.*: S\$8\.00 back$/ })).toBeVisible()
+  await page.getByRole('button', { name: /October 12.*: S\$0\.00$/ }).click()
+  await waitForApp(page)
+  await expect(page).toHaveURL(/\/ledger\?date=2026-10-12/)
+  // In the Ledger the day's rows are in view: an expense and its refund are a real S$0.00.
+  await expect(page.getByRole('button', { name: /^Edit / })).toHaveCount(2)
+  await expect(dayHeader(page, 'Mon / Oct 12')).toContainText('S$0.00')
+})
+
+test('Settings counts a refund in its category, and calls them entries', async ({ page }) => {
+  await seed(page, {
+    expenses: [...ROWS, refund('r1', '2026-10-12', 5, 'dinner split', 'Food & Dining')],
+  })
+  await page.goto('/pulse')
+  await waitForApp(page)
+  const settings = await openSettings(page, 'Categories')
+  // Food & Dining: two expenses and the refund. Transportation: one expense, as before.
+  await expect(settings.getByText('3 entries', { exact: true })).toHaveCount(1)
+  await expect(settings.getByText('1 expense', { exact: true })).toHaveCount(1)
 })
 
 for (const theme of THEMES) {
