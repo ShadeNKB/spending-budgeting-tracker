@@ -782,11 +782,21 @@ function SyncContent() {
             <Cloud size={14} className="text-accent" aria-hidden />
             Link your devices
           </h3>
-          <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
-            Generate a sync code here, then join it on your other device. There&apos;s no account:
-            the code links them. The synced copy isn&apos;t encrypted yet: until the database
-            lockdown (update 005), anyone with this app&apos;s public key could read it.
-          </p>
+          {/* A new sync is private where the relay can keep one safe (PRIVATE-SYNC 3.6, 3.8). The
+              sentence claims only what holds from then on: a device encrypts what it sends. */}
+          {privateSyncReady ? (
+            <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
+              Generate a sync code here, then enter it on your other device. There&apos;s no
+              account: the code links them. What a device sends is encrypted on that device first,
+              so only a device with the code can read the synced copy.
+            </p>
+          ) : (
+            <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
+              Generate a sync code here, then join it on your other device. There&apos;s no account:
+              the code links them. The synced copy isn&apos;t encrypted yet: until the database
+              lockdown (update 005), anyone with this app&apos;s public key could read it.
+            </p>
+          )}
         </div>
 
         {prev !== null &&

@@ -28,7 +28,7 @@ import {
   type ImportPreview as Preview,
   type StorageFacts,
 } from '../../stores/useExpenseStore'
-import { useSyncStore } from '../../stores/useSyncStore'
+import { isPrivateCode, useSyncStore } from '../../stores/useSyncStore'
 import { useUIStore, type SettingsControl } from '../../stores/useUIStore'
 import { syncEnabled } from '../../services/syncConfig'
 import { ClearData } from './ClearData'
@@ -55,6 +55,8 @@ export function BackupPanel() {
   const facts = useExpenseStore((s) => s.facts)
   const demo = useExpenseStore((s) => s.demo)
   const synced = useSyncStore((s) => s.syncId !== null)
+  // A private sync (PRIVATE-SYNC 3.8): the sentence about the relay copy follows its kind.
+  const privateSync = useSyncStore((s) => s.syncId !== null && isPrivateCode(s.syncId))
   const reviewing = useUIStore((s) => forRecovery(s.settingsFocus))
   const [view, setView] = useState<'main' | 'recovery'>(reviewing ? 'recovery' : 'main')
   // A "Review" while Backup is already open: Recovery opens (set while rendering, not after).
@@ -150,7 +152,11 @@ export function BackupPanel() {
         <div className="text-[13px] font-semibold text-white">{entries(expenses.length)}</div>
         <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
           {synced
-            ? `Synced through your relay: every linked device has a full copy${demo === 'sample' ? ' (the sample data stays on this device)' : ''}. The relay copy isn't encrypted yet: until the database lockdown (update 005), anyone with this app's public key could read it.`
+            ? `Synced through your relay: every linked device has a full copy${demo === 'sample' ? ' (the sample data stays on this device)' : ''}. ${
+                privateSync
+                  ? 'What a device sends is encrypted on that device first: only a device with your sync code can read the relay copy.'
+                  : "The relay copy isn't encrypted yet: until the database lockdown (update 005), anyone with this app's public key could read it."
+              }`
             : 'Your data is stored only on this device. Download a backup regularly.'}
         </p>
         <StorageFactsList facts={facts} />
