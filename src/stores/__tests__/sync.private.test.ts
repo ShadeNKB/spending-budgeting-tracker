@@ -1,0 +1,334 @@
+// PRIVATE-SYNC release 1 (PR-6): a private bucket on the real engine, against a relay that only
+// ever holds ciphertext for it. AC-P1, P2, P4 to P9, P14, P16. Invented data; the code is the
+// codec's known-answer vector (a secret of bytes 00..0f), never a real one.
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { encodeSt5 } from '../../data/core/codes'
+import { isRecord } from '../../lib/backup'
+import {
+  SYNC_CODE,
+  bootDevice,
+  connect,
+  expense,
+  liveIds,
+  migrate,
+  payloadOf,
+  relay,
+  requestsOf,
+  resetRelay,
+  retireDevices,
+  rowPayload,
+  seedRow,
+  steadyRandom,
+  stubRelayEnv,
+  type Device,
+} from '../../__tests__/fakeRelay'
+
+vi.mock(
+  '@supabase/supabase-js',
+  async () => (await import('../../__tests__/fakeRelay')).supabaseModule,
+)
+
+vi.setConfig({ testTimeout: 30_000 })
+
+const NOW = Date.UTC(2026, 9, 19, 8, 0, 0)
+const MINUTE = 60_000
+const CODE = encodeSt5(Uint8Array.from({ length: 16 }, (_, i) => i))
+/** What `deriveKeys` gives for that secret (the vector in core/e2e.test.ts). */
+const ROW = 'e4555323-21f5-8f92-8c6a-97e208c0967b'
+const TOPIC = 'st:LlILSIkurgodVGmluLVEOQ'
+
+// WebCrypto and compression streams settle on real tasks, which fake timers never run. A
+// message channel is a real task the fake clock does not own: one round of it lets them finish
+// between steps of the fake clock.
+const realTick = (): Promise<void> =>
+  new Promise((resolve) => {
+    const channel = new MessageChannel()
+    channel.port1.onmessage = () => {
+      channel.port1.close()
+      resolve()
+    }
+    channel.port2.postMessage(null)
+  })
+
+/** Runs the fake clock and real tasks in turn until `promise` settles (or `ms` of fake time). */
+async function run<T>(promise: Promise<T>, ms = 8000): Promise<T> {
+  const state = { settled: false }
+  const mark = () => {
+    state.settled = true
+  }
+  promise.then(mark, mark)
+  for (let waited = 0; waited < ms; waited += 20) {
+    if (state.settled) break
+    await vi.advanceTimersByTimeAsync(20)
+    await realTick()
+  }
+  return promise
+}
+
+/** Lets cycles that nobody awaits (a commit's push, a poll) run out. */
+const idle = (ms = 4000) => run(new Promise<void>((resolve) => setTimeout(resolve, ms)), ms + 100)
+
+beforeEach(() => {
+  vi.useFakeTimers()
+  vi.setSystemTime(NOW)
+  localStorage.clear()
+  stubRelayEnv()
+  vi.stubEnv('VITE_SYNC_RELAY', 'rpc')
+  resetRelay()
+  migrate('004')
+  steadyRandom()
+})
+
+afterEach(() => {
+  retireDevices()
+  vi.clearAllTimers()
+  vi.useRealTimers()
+  vi.unstubAllEnvs()
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+  Object.defineProperty(navigator, 'onLine', { value: true, configurable: true })
+})
+
+const start = (d: Device, join = false) =>
+  run(d.sync.useSyncStore.getState().setupSync(CODE, join ? { join: true } : undefined))
+const sync = (d: Device) => run(d.sync.useSyncStore.getState().triggerSync())
+const add = (d: Device, itemName: string, amount = 1.5) =>
+  d.expense.useExpenseStore.getState().addExpense({ itemName, amount })
+const names = (d: Device) =>
+  d.expense.useExpenseStore
+    .getState()
+    .expenses.map((e) => e.itemName)
+    .sort()
+const envelope = (): Record<string, unknown> => {
+  const payload = rowPayload(ROW)
+  if (!isRecord(payload)) throw new Error('no private row')
+  return payload
+}
+/** Everything the relay was ever sent or holds, as text. */
+const seenByRelay = (): string =>
+  JSON.stringify([relay().requests, relay().pushes, [...relay().rows.entries()]])
+const storedText = (d: Device): string => {
+  const out: string[] = []
+  for (let i = 0; i < d.storage.length; i++) {
+    const key = d.storage.key(i) ?? ''
+    out.push(`${key}=${d.storage.getItem(key) ?? ''}`)
+  }
+  return out.join('\n')
+}
+
+describe('a private bucket round-trips on ciphertext alone (AC-P1, AC-P2)', () => {
+  it('two devices converge; the relay holds an envelope under the derived row, and never the code', async () => {
+    const laptop = await bootDevice({ expenses: [expense('e1', { itemName: 'Invented kopi' })] })
+    expect(await start(laptop)).toMatchObject({ ok: true, pushed: true })
+    const phone = await bootDevice({ expenses: [expense('e2', { itemName: 'Invented teh' })] })
+    expect(await start(phone, true)).toMatchObject({ ok: true })
+    await idle()
+    expect(await sync(laptop)).toMatchObject({ ok: true })
+    expect(names(laptop)).toEqual(['Invented kopi', 'Invented teh'])
+    expect(names(phone)).toEqual(['Invented kopi', 'Invented teh'])
+
+    add(phone, 'Invented laksa', 6.5)
+    await idle()
+    expect(await sync(laptop)).toMatchObject({ ok: true })
+    expect(names(laptop)).toContain('Invented laksa')
+
+    // one row, under the derived id, holding the six envelope fields and nothing else
+    expect([...relay().rows.keys()]).toEqual([ROW])
+    expect(Object.keys(envelope()).sort()).toEqual(['ct', 'iv', 'k', 'r', 'st', 'z'])
+    expect(envelope()).toMatchObject({ st: 5, k: 1 })
+    // nothing the relay saw names an entry, the code or its secret
+    const seen = seenByRelay()
+    for (const word of ['Invented', 'kopi', 'laksa', 'ST5', CODE.replace(/-/g, '').slice(3)]) {
+      expect(seen, word).not.toContain(word)
+    }
+    // every call named the derived row, by the sync functions, never forced
+    const calls = requestsOf('rpc')
+    expect(calls.length).toBeGreaterThan(3)
+    for (const call of calls) expect(call.args?.p_row).toBe(ROW)
+    expect(calls.some((c) => c.args?.p_force === true)).toBe(false)
+    expect(requestsOf('upsert')).toEqual([])
+  })
+
+  it('the device keeps the code in its own key only, and shows it masked', async () => {
+    const laptop = await bootDevice({ expenses: [expense('e1')] })
+    await start(laptop)
+    expect(laptop.storage.getItem('syncId')).toBeNull()
+    expect(laptop.storage.getItem('st5:sync')).not.toContain('ST5')
+    expect(JSON.parse(laptop.storage.getItem('st5:synckey') ?? '{}')).toMatchObject({ code: CODE })
+    // the code is in that one key and nowhere else on the device (the envelope's sync meta too)
+    const elsewhere = storedText(laptop)
+      .split('\n')
+      .filter((line) => !line.startsWith('st5:synckey='))
+      .join('\n')
+    expect(elsewhere).not.toContain('ST5-')
+    // what Settings shows of it: the last four symbols only
+    expect(laptop.sync.useSyncStore.getState().view?.codeMasked).toBe('••••-…-GFS3')
+
+    laptop.sync.useSyncStore.getState().disconnectSync()
+    expect(storedText(laptop)).not.toContain('ST5-')
+  })
+
+  it('live updates use the derived topic and no row events', async () => {
+    const laptop = await bootDevice({ expenses: [expense('e1')] })
+    await start(laptop)
+    await idle(500)
+    const text = JSON.stringify(relay().clientOptions) + seenByRelay()
+    expect(text).not.toContain(`sync_id=eq.${ROW}`)
+    expect(laptop.sync.useSyncStore.getState().view?.live).not.toBe('row-events')
+    expect(TOPIC.startsWith('st:')).toBe(true)
+  })
+})
+
+describe('what is not an envelope of this bucket is never merged (AC-P4, AC-P5)', () => {
+  async function linked(): Promise<Device> {
+    const laptop = await bootDevice({ expenses: [expense('e1', { itemName: 'Invented kopi' })] })
+    await start(laptop)
+    await idle(500)
+    return laptop
+  }
+
+  it.each([
+    ['a flipped ciphertext character', (e: Record<string, unknown>) => ({ ...e, ct: flip(e.ct) })],
+    [
+      'another revision on the same ciphertext',
+      (e: Record<string, unknown>) => ({ ...e, r: 'A'.repeat(22) }),
+    ],
+    [
+      'a plaintext payload with an injected entry',
+      () => payloadOf([expense('evil', { itemName: 'Invented injection', amount: 999 })]),
+    ],
+    [
+      'a plaintext moved marker',
+      () => ({ version: '4.0', expenses: 'moved', categories: [], x5: { min: 99 } }),
+    ],
+    ['an empty object', () => ({})],
+  ])('%s: not merged, repaired from this device', async (_label, tamper) => {
+    const laptop = await linked()
+    const before = envelope()
+    seedRow(ROW, tamper(before))
+    const result = await sync(laptop)
+    expect(result).toMatchObject({ ok: true, pushed: true })
+    expect(names(laptop)).toEqual(['Invented kopi'])
+    expect(liveIds(laptop)).not.toContain('evil')
+    // the row is this device's own sealed copy again, and it opens for a second device
+    expect(envelope()).toMatchObject({ st: 5, k: 1 })
+    expect(envelope().ct).not.toBe(before.ct)
+    const phone = await bootDevice({ expenses: [] })
+    expect(await start(phone, true)).toMatchObject({ ok: true })
+    expect(names(phone)).toEqual(['Invented kopi'])
+    // it was never fenced or paused by it
+    expect(laptop.sync.useSyncStore.getState().lastError).toBeNull()
+  })
+
+  it('an older valid envelope put back loses nothing', async () => {
+    const laptop = await linked()
+    const old = envelope()
+    add(laptop, 'Invented laksa', 6.5)
+    await idle()
+    expect(envelope().r).not.toBe(old.r)
+    seedRow(ROW, old)
+    expect(await sync(laptop)).toMatchObject({ ok: true })
+    expect(names(laptop)).toEqual(['Invented kopi', 'Invented laksa'])
+    const phone = await bootDevice({ expenses: [] })
+    await start(phone, true)
+    expect(names(phone)).toEqual(['Invented kopi', 'Invented laksa'])
+  })
+})
+
+const flip = (ct: unknown): string => {
+  const text = typeof ct === 'string' ? ct : ''
+  return (text.startsWith('A') ? 'B' : 'A') + text.slice(1)
+}
+
+describe('a newer format, and conflicts (AC-P6, AC-P7, AC-P8)', () => {
+  it('a newer envelope pauses and is never written over', async () => {
+    const laptop = await bootDevice({ expenses: [expense('e1')] })
+    await start(laptop)
+    await idle(500)
+    const newer = { st: 6, k: 1, r: 'B'.repeat(22), iv: 'A'.repeat(16), z: 0, ct: 'AAAA' }
+    seedRow(ROW, newer)
+    add(laptop, 'Invented laksa')
+    expect(await sync(laptop)).toMatchObject({ ok: false, error: 'update-required' })
+    await idle(5 * MINUTE)
+    expect(await sync(laptop)).toMatchObject({ ok: false, error: 'update-required' })
+    expect(rowPayload(ROW)).toEqual(newer)
+    // the edit is kept and still waiting
+    expect(names(laptop)).toContain('Invented laksa')
+    expect(laptop.expense.useExpenseStore.getState().unsyncedChanges()).toBeGreaterThan(0)
+  })
+
+  it('a private row is never force-written: every write names the copy it was merged from', async () => {
+    const laptop = await bootDevice({ expenses: [expense('e1')] })
+    await start(laptop)
+    await idle(500)
+    // another device keeps landing a write just before each of ours
+    relay().beforeWrite = () => {
+      const current = rowPayload(ROW)
+      relay().beforeWrite = null
+      seedRow(ROW, current)
+      relay().beforeWrite = bump
+    }
+    const bump = relay().beforeWrite
+    add(laptop, 'Invented laksa')
+    const result = await sync(laptop)
+    relay().beforeWrite = null
+    expect(result).toMatchObject({ ok: false, error: 'busy' })
+    const pushes = requestsOf('rpc').filter((c) => c.fn === 'st_sync_push')
+    expect(pushes.length).toBeGreaterThanOrEqual(6)
+    expect(pushes.some((c) => c.args?.p_force === true)).toBe(false)
+    // and once the other device is quiet, the edit goes through
+    expect(await sync(laptop)).toMatchObject({ ok: true, pushed: true })
+  })
+
+  it('every seal draws a fresh IV, whatever the engine generator returns', async () => {
+    const laptop = await bootDevice({ expenses: [expense('e1')] })
+    await start(laptop)
+    const ivs = new Set<unknown>([envelope().iv])
+    for (const name of ['Invented a', 'Invented b', 'Invented c']) {
+      add(laptop, name)
+      await idle()
+      ivs.add(envelope().iv)
+    }
+    // Math.random is pinned by steadyRandom(): four writes, four IVs all the same
+    expect(ivs.size).toBe(4)
+  })
+})
+
+describe('transports and the fence (AC-P14, AC-P16)', () => {
+  it('on the upsert transport a private bucket pauses and writes nothing', async () => {
+    vi.stubEnv('VITE_SYNC_RELAY', 'table')
+    const laptop = await bootDevice({ expenses: [expense('e1')] })
+    expect(await start(laptop)).toMatchObject({ ok: false, error: 'no-cas' })
+    expect([...relay().rows.keys()]).toEqual([])
+    expect(relay().upserts).toBe(0)
+  })
+
+  it('a device fenced out of its plain bucket joins the private one with its own edits', async () => {
+    // the laptop already syncs privately; the phone is still on the plain code
+    const laptop = await bootDevice({ expenses: [expense('e1', { itemName: 'Invented kopi' })] })
+    await start(laptop)
+    const phone = await bootDevice({ expenses: [expense('e2', { itemName: 'Invented teh' })] })
+    await run(connect(phone))
+    seedRow(SYNC_CODE, {
+      version: '4.0',
+      expenses: 'moved',
+      categories: [],
+      x5: { min: 99, moved: { at: '2026-10-19T08:00:00.000Z', why: 'private' } },
+    })
+    expect(await sync(phone)).toMatchObject({ ok: false, error: 'moved-private' })
+    add(phone, 'Invented laksa', 6.5)
+    await idle(2000)
+    // fenced: the plain row is as the marker left it
+    expect(rowPayload(SYNC_CODE)).toMatchObject({ expenses: 'moved' })
+
+    expect(await start(phone, true)).toMatchObject({ ok: true })
+    await idle()
+    expect(await sync(laptop)).toMatchObject({ ok: true })
+    expect(names(laptop)).toEqual(['Invented kopi', 'Invented laksa', 'Invented teh'])
+    expect(names(phone)).toEqual(['Invented kopi', 'Invented laksa', 'Invented teh'])
+    // the fence went with the plain setup; the plain row was not touched again
+    expect(phone.storage.getItem('st5:sync')).not.toContain('fenced')
+    expect(rowPayload(SYNC_CODE)).toMatchObject({ expenses: 'moved' })
+    expect(phone.sync.useSyncStore.getState().lastError).toBeNull()
+  })
+})
