@@ -29,7 +29,7 @@ T8c, the last slice of T8 (money in and smarter budgets): income. An entry can n
 - The palette searches what a row shows: an income is found by "income", as in the Ledger.
 - One split by kind and by not-spending category (`lib/spending.ts`): `spending`, `aside`, `income`, `unknown`, and `outgoing` (every expense, where recurring charges are looked for). Pulse and Insights still build their one index over `spending`.
 - On a light-theme Ledger row the income green is one step darker (green-800): the row's hover fill left green-700 at 4.45:1 for 14 px text. Found by the new axe check in `e2e/money-in.spec.ts`.
-- Boot 497,501 / 561,580 B (64,079 B left), eager 397,422 / 466,908 B; all JS 681.8 / 740 KB (58.2 KB left).
+- Boot 497,685 / 561,580 B (63,895 B left), eager 397,590 / 466,908 B; all JS 682.6 / 740 KB (57.4 KB left).
 
 ### Known limits
 
