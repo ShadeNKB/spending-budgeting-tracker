@@ -24,6 +24,7 @@ import {
   failureSeverity,
   isFailing,
   isPaused,
+  isPrivateCode,
   loadSyncEngine,
   needsReload,
   pausedDetail,
@@ -926,7 +927,31 @@ function SyncContent() {
           </div>
           <SyncBanners />
         </div>
+        {/* Fenced out of this sync because it was made private on another device (PRIVATE-SYNC
+            3.7): the field for the new code is here, in place. Joining keeps this device's
+            entries and merges them. */}
+        {lastError?.kind === 'moved-private' && (
+          <div className="flex flex-col gap-2">
+            <JoinSync
+              busy={connecting !== null}
+              joining={connecting === 'join'}
+              onJoin={(code) => {
+                run({ kind: 'join', code })
+              }}
+              onActiveChange={setJoinActive}
+            />
+            <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
+              No code? Disconnect, then start a new sync: your entries stay on this device.
+            </p>
+          </div>
+        )}
         <SyncCode code={syncId} />
+        {isPrivateCode(syncId) && (
+          <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
+            Private sync: what this device sends is encrypted here first. Only a device with this
+            code can read the synced copy from now on.
+          </p>
+        )}
         <CodeSafety />
       </div>
 
@@ -935,7 +960,10 @@ function SyncContent() {
       <div className="border-t border-white/[0.06] pt-3">
         {disconnect(
           syncId,
-          'This device stops syncing. Your data stays on this device, on your other devices and in the relay.',
+          // Disconnect forgets a private code for good (PRIVATE-SYNC 3.2): there is no Reconnect.
+          isPrivateCode(syncId)
+            ? 'This device stops syncing and forgets the private code. Copy it first if your other device is not at hand. Your data stays on this device.'
+            : 'This device stops syncing. Your data stays on this device, on your other devices and in the relay.',
         )}
       </div>
       <AppVersion />

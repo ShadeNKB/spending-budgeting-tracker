@@ -1506,3 +1506,65 @@ describe("the demo's sample data (P2-22, F-027)", () => {
     expect(generate()).toHaveFocus()
   })
 })
+
+// PRIVATE-SYNC 3.2, 3.7, 3.8 (release 1): what the panel shows of a private sync, and of a
+// device fenced out of a sync that was made private elsewhere.
+describe('a private sync, and a device fenced out of one', () => {
+  const PRIVATE = 'ST5-0004106-1050R3G-G28A1C6-0T3GFS3'
+
+  it('a private sync says what the code protects, and never shows the code whole', () => {
+    connectedPanel({ syncId: PRIVATE })
+    expect(
+      screen.getByText(
+        'Private sync: what this device sends is encrypted here first. Only a device with this code can read the synced copy from now on.',
+      ),
+    ).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('0004106')
+  })
+
+  it('a plain sync says none of it', () => {
+    connectedPanel()
+    expect(screen.queryByText(/^Private sync:/)).toBeNull()
+  })
+
+  it('Disconnect on a private sync says the code is forgotten', () => {
+    connectedPanel({ syncId: PRIVATE })
+    fireEvent.click(screen.getByRole('button', { name: /Disconnect sync/ }))
+    expect(
+      screen.getByText(
+        'This device stops syncing and forgets the private code. Copy it first if your other device is not at hand. Your data stays on this device.',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('a fenced device has the code field in place, and joining hands the private code on as a join', async () => {
+    const setupSync = vi.fn(() =>
+      Promise.resolve({ ok: true as const, pushed: false, changedLocal: true }),
+    )
+    useSyncStore.setState({ setupSync })
+    vi.mocked(previewJoin).mockImplementation(() => Promise.resolve({ ...FOUND, code: PRIVATE }))
+    connectedPanel({ cloudStatus: 'paused', lastError: failure('moved-private') })
+    expect(
+      screen.getByText(
+        'No code? Disconnect, then start a new sync: your entries stay on this device.',
+      ),
+    ).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Sync code'), {
+      target: { value: PRIVATE.toLowerCase() },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Join' }))
+    await settle()
+    fireEvent.click(
+      within(screen.getByRole('group', { name: 'Join this sync?' })).getByRole('button', {
+        name: 'Join',
+      }),
+    )
+    await settle()
+    expect(setupSync).toHaveBeenCalledWith(PRIVATE, { join: true })
+  })
+
+  it('a device that is not fenced has no code field in the linked view', () => {
+    connectedPanel({ cloudStatus: 'paused', lastError: failure('moved') })
+    expect(screen.queryByLabelText('Sync code')).toBeNull()
+  })
+})
