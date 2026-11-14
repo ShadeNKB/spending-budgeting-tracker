@@ -399,3 +399,32 @@ describe('the join preview for a private code (AC-P12)', () => {
     expect(await preview(phone, CODE)).toEqual({ kind: 'newer' })
   })
 })
+
+describe('starting a new private sync (AC-P13)', () => {
+  it('the engine makes a fresh, valid code each time; its first push creates the row and a second device joins', async () => {
+    const laptop = await bootDevice({ expenses: [expense('e1', { itemName: 'Invented kopi' })] })
+    const engine = await laptop.sync.loadSyncEngine()
+    const made = engine.newPrivateCode()
+    expect(made).toMatch(/^ST5(-[0-9A-HJKMNP-TV-Z]{7}){4}$/)
+    expect(engine.newPrivateCode()).not.toBe(made)
+    // steadyRandom() pins Math.random: the code does not come from it
+    expect(made).not.toBe(CODE)
+
+    expect(await run(laptop.sync.useSyncStore.getState().setupSync(made))).toMatchObject({
+      ok: true,
+      pushed: true,
+    })
+    const rows = [...relay().rows.keys()]
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
+    expect(seenByRelay()).not.toContain('ST5')
+
+    const phone = await bootDevice({ expenses: [] })
+    const preview = await run((await phone.sync.loadSyncEngine()).previewJoin(made))
+    expect(preview).toMatchObject({ kind: 'found', code: made, synced: 1 })
+    expect(
+      await run(phone.sync.useSyncStore.getState().setupSync(made, { join: true })),
+    ).toMatchObject({ ok: true })
+    expect(names(phone)).toEqual(['Invented kopi'])
+  })
+})

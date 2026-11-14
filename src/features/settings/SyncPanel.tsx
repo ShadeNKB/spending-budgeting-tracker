@@ -19,10 +19,12 @@ import { shieldGesture } from '../../ui/pressShield'
 import {
   FAILING_AFTER_MS,
   OLD_DEVICE_WAITING,
+  SYNC_RELOAD_MESSAGE,
   failingSinceMessage,
   failureSeverity,
   isFailing,
   isPaused,
+  loadSyncEngine,
   needsReload,
   pausedDetail,
   reloadSpendTrack,
@@ -34,7 +36,7 @@ import {
 } from '../../stores/useSyncStore'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useUIStore } from '../../stores/useUIStore'
-import { syncEnabled } from '../../services/syncConfig'
+import { privateSyncReady, syncEnabled } from '../../services/syncConfig'
 import { useTick } from '../../hooks/useTick'
 import { useToast } from '../../hooks/useToast'
 import { ARIA_DISABLED, DemoQuestion, JoinSync } from './JoinSync'
@@ -577,11 +579,25 @@ function SyncContent() {
   const run = (request: SetupRequest) => {
     switch (request.kind) {
       case 'generate': {
-        const code = crypto.randomUUID()
+        // A build whose relay writes by compare-and-set starts a private sync (PRIVATE-SYNC
+        // 3.6). Its code is made by the engine, which the screens load on demand; a build on the
+        // upsert transport makes a plain code, as before.
         void link(
           'generate',
-          () => setupSync(code),
-          'Sync code created. Join it on your other device.',
+          async (): Promise<SyncResult> => {
+            let code: string
+            try {
+              code = privateSyncReady
+                ? (await loadSyncEngine()).newPrivateCode()
+                : crypto.randomUUID()
+            } catch {
+              return { ok: false, error: 'reload', message: SYNC_RELOAD_MESSAGE }
+            }
+            return setupSync(code)
+          },
+          privateSyncReady
+            ? 'Private sync code created. Enter it on your other device.'
+            : 'Sync code created. Join it on your other device.',
         )
         return
       }

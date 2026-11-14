@@ -30,7 +30,13 @@ import {
   SCHEMA,
   WIRE_PUSH_MAX,
 } from '../data/core/constants'
-import { maskCode, normalizeUuid, parseSyncCode, type St5Failure } from '../data/core/codes'
+import {
+  encodeSt5,
+  maskCode,
+  normalizeUuid,
+  parseSyncCode,
+  type St5Failure,
+} from '../data/core/codes'
 import { canCompress, deriveKeys, open, seal, type Envelope, type SyncKeys } from '../data/core/e2e'
 import { EMPTY_DOC, digestDoc, mergeDoc } from '../data/core/doc'
 import { fnv36 } from '../data/core/hash'
@@ -1831,6 +1837,14 @@ export async function setupSync(syncId: string, user: boolean, join = false): Pr
   const result = await requestCycle('boot', user)
   if (gen === setupGen && !isOffline()) await ensureSubscribed(gen)
   return result
+}
+
+/**
+ * A new private code (PRIVATE-SYNC 3.6): 16 bytes from the platform's generator, in the code's
+ * written form. Made here because the screens do not import the data core.
+ */
+export function newPrivateCode(): string {
+  return encodeSt5(crypto.getRandomValues(new Uint8Array(16)))
 }
 
 /** Stops everything this engine runs; useSyncStore clears the code and the state. */
