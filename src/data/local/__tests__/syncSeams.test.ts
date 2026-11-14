@@ -190,4 +190,25 @@ describe('the PR-2 survivors, by name', () => {
     t.store.getState().addExpense({ itemName: 'Invented bus', amount: 1.2 })
     expect(t.store.getState().unsyncedChanges()).toBeGreaterThan(0)
   })
+
+  // PRIVATE-SYNC AC-P11. A private device has no plain code (`syncId`), and sync is on for it all
+  // the same: an edit that is not recorded for the relay would read "Synced" and never be sent.
+  it('a private device records its outbox like a plain one', async () => {
+    const b = new FakeBacking()
+    const t = await bootTab({ backing: b, keys: ownerV4({ rows: 4, noSync: true }).keys })
+    await settle()
+    expect(t.store.getState().unsyncedChanges()).toBe(0)
+    b.data.set(
+      'st5:synckey',
+      JSON.stringify({ code: 'ST5-0004106-1050R3G-G28A1C6-0T3GFS3', at: 1, established: true }),
+    )
+    const added = t.store.getState().addExpense({ itemName: 'Invented bus', amount: 1.2 })
+    expect(t.store.getState().unsyncedChanges()).toBeGreaterThan(0)
+    await settle()
+    const port = must(t.mod.getSyncPort(), 'port')
+    expect([...port.outbox().keys()]).toContain(`ex:${added.id}`)
+    // and it is in the saved envelope, so a reload still has it to send
+    const meta = own(envelopeOf(b), 'meta')
+    expect(JSON.stringify(isPlainObject(meta) ? own(meta, 'outbox') : null)).toContain(added.id)
+  })
 })

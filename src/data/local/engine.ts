@@ -486,7 +486,9 @@ export function createEngine(host: EngineHost): Engine {
 
   // ── commits ───────────────────────────────────────────────────────────────────────────────
 
-  const syncOn = (): boolean => storage.getSyncId() !== null
+  // plain or private (PRIVATE-SYNC 3.1): a private device has no plain code, and its edits must
+  // be recorded for the relay all the same
+  const syncOn = (): boolean => storage.isLinked()
 
   /** Synchronous: doc, outbox, localRev, views, one queued flush, the mirror debounce. */
   function commit(r: Runtime, next: Doc, touched: Touched, source: CommitSource): void {
@@ -890,7 +892,7 @@ export function createEngine(host: EngineHost): Engine {
   }
 
   function pristine(r: Runtime, io: Io, wall: number): Booted {
-    if (!DEMO || io.get(DEMO_KEY) !== null || storage.getSyncId() !== null) {
+    if (!DEMO || io.get(DEMO_KEY) !== null || storage.isLinked()) {
       return { report: null, changed: false }
     }
     r.doc = withDefaultCategories(decodeSeed(wall))
