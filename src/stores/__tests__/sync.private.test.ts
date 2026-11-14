@@ -1,5 +1,5 @@
 // PRIVATE-SYNC release 1 (PR-6): a private bucket on the real engine, against a relay that only
-// ever holds ciphertext for it. AC-P1, P2, P4 to P9, P14, P16, and 3.9. Invented data; the code is the
+// ever holds ciphertext for it. AC-P1 to P9, P12 to P16, and 3.9. Invented data; the code is the
 // codec's known-answer vector (a secret of bytes 00..0f), never a real one.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeSt5 } from '../../data/core/codes'
@@ -8,6 +8,7 @@ import {
   SYNC_CODE,
   bootDevice,
   connect,
+  dropRealtime,
   expense,
   liveIds,
   migrate,
@@ -518,5 +519,143 @@ describe('starting a new private sync (AC-P13)', () => {
       await run(phone.sync.useSyncStore.getState().setupSync(made, { join: true })),
     ).toMatchObject({ ok: true })
     expect(names(phone)).toEqual(['Invented kopi'])
+  })
+})
+
+/**
+ * Runs `during` once, while the first call of a WebCrypto step is pending: `encrypt` is inside
+ * the engine's seal, `decrypt` inside its open. Later calls go straight through.
+ */
+function whilePending(step: 'encrypt' | 'decrypt', during: () => void): void {
+  const subtle = globalThis.crypto.subtle
+  const real: SubtleCrypto['encrypt'] = subtle[step].bind(subtle)
+  const spy = step === 'encrypt' ? vi.spyOn(subtle, 'encrypt') : vi.spyOn(subtle, 'decrypt')
+  let ran = false
+  spy.mockImplementation((algorithm, key, data) => {
+    const pending = real(algorithm, key, data)
+    if (!ran) {
+      ran = true
+      queueMicrotask(during)
+    }
+    return pending
+  })
+}
+
+describe('edits and bucket changes while a copy is being opened or sealed (AC-P3)', () => {
+  const unsynced = (d: Device) => d.expense.useExpenseStore.getState().unsyncedChanges()
+  const pushCount = () => requestsOf('rpc').filter((c) => c.fn === 'st_sync_push').length
+
+  it('an edit made while the copy is being sealed is kept, and is not marked sent', async () => {
+    const laptop = await bootDevice({ expenses: [expense('e1', { itemName: 'Invented kopi' })] })
+    await start(laptop)
+    await idle(500)
+    add(laptop, 'Invented laksa')
+    const one = unsynced(laptop)
+    expect(one).toBeGreaterThan(0)
+    whilePending('encrypt', () => {
+      add(laptop, 'Invented teh')
+    })
+    expect(await sync(laptop)).toMatchObject({ ok: true, pushed: true })
+    // the push carried the copy as it was when the seal began: only the later edit still waits
+    expect(unsynced(laptop)).toBe(one)
+    await idle()
+    expect(unsynced(laptop)).toBe(0)
+    const phone = await bootDevice()
+    expect(await start(phone, true)).toMatchObject({ ok: true })
+    expect(names(phone)).toEqual(['Invented kopi', 'Invented laksa', 'Invented teh'])
+  })
+
+  it('an edit made while the pulled copy is being opened goes out with that cycle', async () => {
+    const laptop = await bootDevice({ expenses: [expense('e1', { itemName: 'Invented kopi' })] })
+    await start(laptop)
+    const phone = await bootDevice()
+    await start(phone, true)
+    // live updates are down: the laptop first hears of the phone's edit in the cycle below
+    dropRealtime(true)
+    add(phone, 'Invented teh')
+    await idle(3000)
+    expect(names(laptop)).toEqual(['Invented kopi'])
+    whilePending('decrypt', () => {
+      add(laptop, 'Invented laksa')
+    })
+    expect(await sync(laptop)).toMatchObject({ ok: true, pushed: true })
+    expect(unsynced(laptop)).toBe(0)
+    expect(names(laptop)).toEqual(['Invented kopi', 'Invented laksa', 'Invented teh'])
+    expect(await sync(phone)).toMatchObject({ ok: true })
+    expect(names(phone)).toEqual(['Invented kopi', 'Invented laksa', 'Invented teh'])
+  })
+
+  it('Disconnect while the copy is being sealed stops the cycle: nothing is written', async () => {
+    const laptop = await bootDevice({ expenses: [expense('e1', { itemName: 'Invented kopi' })] })
+    await start(laptop)
+    await idle(500)
+    add(laptop, 'Invented laksa')
+    const before = envelope()
+    const pushes = pushCount()
+    whilePending('encrypt', () => {
+      laptop.sync.useSyncStore.getState().disconnectSync()
+    })
+    expect(await sync(laptop)).toMatchObject({ ok: false, error: 'off' })
+    await idle()
+    expect(pushCount()).toBe(pushes)
+    expect(envelope()).toEqual(before)
+    expect(names(laptop)).toEqual(['Invented kopi', 'Invented laksa'])
+  })
+
+  it('Disconnect while the pulled copy is being opened stops the cycle: nothing is merged or written', async () => {
+    const laptop = await bootDevice({ expenses: [expense('e1', { itemName: 'Invented kopi' })] })
+    await start(laptop)
+    const phone = await bootDevice()
+    await start(phone, true)
+    dropRealtime(true)
+    add(phone, 'Invented teh')
+    await idle(3000)
+    expect(names(laptop)).toEqual(['Invented kopi'])
+    const before = envelope()
+    const pushes = pushCount()
+    whilePending('decrypt', () => {
+      laptop.sync.useSyncStore.getState().disconnectSync()
+    })
+    expect(await sync(laptop)).toMatchObject({ ok: false, error: 'off' })
+    await idle()
+    expect(pushCount()).toBe(pushes)
+    expect(envelope()).toEqual(before)
+    expect(names(laptop)).toEqual(['Invented kopi'])
+  })
+})
+
+// The fixture: 2,500 entries with 200-character notes, about 97% of the plaintext limit
+// (WIRE_PUSH_MAX). Sealed without compression its ciphertext alone is a third longer than that,
+// past what the relay takes.
+describe('size at the plaintext limit (AC-P15)', () => {
+  const COUNT = 2500
+  const big = () =>
+    Array.from({ length: COUNT }, (_, i) =>
+      expense(`b${String(i)}`, { itemName: `Invented ${String(i)}`, notes: 'x'.repeat(200) }),
+    )
+
+  it('with gzip the envelope is accepted, and a second device reads all of it', async () => {
+    const laptop = await bootDevice({ expenses: big() })
+    expect(await start(laptop)).toMatchObject({ ok: true, pushed: true })
+    const pct = laptop.sync.useSyncStore.getState().view?.sizePct ?? 0
+    expect(pct).toBeGreaterThanOrEqual(90)
+    expect(pct).toBeLessThanOrEqual(100)
+    expect(envelope()).toMatchObject({ st: 5, z: 1 })
+    expect(JSON.stringify(envelope()).length).toBeLessThan(1024 * 1024)
+    const phone = await bootDevice()
+    expect(await start(phone, true)).toMatchObject({ ok: true })
+    expect(liveIds(phone)).toHaveLength(COUNT)
+  })
+
+  it('without gzip it pauses too-large: nothing thrown, nothing written, nothing cut short', async () => {
+    vi.stubGlobal('CompressionStream', undefined)
+    const laptop = await bootDevice({ expenses: big() })
+    expect(await start(laptop)).toMatchObject({ ok: false, error: 'too-large' })
+    expect(laptop.sync.useSyncStore.getState().cloudStatus).toBe('paused')
+    expect([...relay().rows.keys()]).toEqual([])
+    expect(liveIds(laptop)).toHaveLength(COUNT)
+    // paused, not failing: no retry writes later either
+    await idle(5 * MINUTE)
+    expect([...relay().rows.keys()]).toEqual([])
   })
 })

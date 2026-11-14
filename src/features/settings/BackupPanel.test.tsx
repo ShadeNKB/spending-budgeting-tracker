@@ -58,7 +58,14 @@ let clearSampleData: ReturnType<typeof vi.fn<() => void>>
 let downloads: string[]
 
 function seed(
-  opts: { count?: number; sync?: boolean; facts?: Partial<StorageFacts>; demo?: boolean } = {},
+  opts: {
+    count?: number
+    sync?: boolean
+    /** The sync code, when it is not the plain one (`sync`). */
+    code?: string
+    facts?: Partial<StorageFacts>
+    demo?: boolean
+  } = {},
 ) {
   refreshStorageFacts = vi.fn()
   previewImport = vi.fn((file: Blob) =>
@@ -86,7 +93,7 @@ function seed(
     applyImport,
     clearSampleData,
   })
-  useSyncStore.setState({ syncId: opts.sync === true ? CODE : null })
+  useSyncStore.setState({ syncId: opts.code ?? (opts.sync === true ? CODE : null) })
   render(<BackupPanel />)
 }
 
@@ -130,6 +137,17 @@ describe('Backup copy per state', () => {
     expect(screen.queryByRole('button', { name: /this device only/ })).toBeNull()
     expect(screen.queryByText('Demo mode — sample data loaded.')).toBeNull()
     expect(screen.getByText('3 entries')).toBeInTheDocument()
+  })
+
+  it('with a private sync: says what a device encrypts, and nothing about an unencrypted copy', () => {
+    seed({ code: 'ST5-0004106-1050R3G-G28A1C6-0T3GFS3', count: 12 })
+    expect(
+      screen.getByText(
+        'Synced through your relay: every linked device has a full copy. What a device sends is encrypted on that device first: only a device with your sync code can read the relay copy.',
+      ),
+    ).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain("isn't encrypted yet")
+    expect(document.body.textContent).not.toContain('0004106')
   })
 
   it('with sync on: synced through the relay, honest about encryption, two delete actions', () => {

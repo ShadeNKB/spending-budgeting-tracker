@@ -17,21 +17,25 @@ import {
   type SyncResult,
   type SyncView,
 } from '../../stores/useSyncStore'
-import { previewJoin, type JoinPreview } from '../../stores/syncEngine'
+import { newPrivateCode, previewJoin, type JoinPreview } from '../../stores/syncEngine'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useUIStore } from '../../stores/useUIStore'
 
 // A build with sync configured; the store's actions are replaced per test, so no request is made.
 // A test of a build without relay settings turns `relayBuild.on` off (reset after each test).
-const relayBuild = vi.hoisted(() => ({ on: true }))
+// `private`: the relay can keep a private sync safe (`privateSyncReady`), off unless a test says.
+const relayBuild = vi.hoisted(() => ({ on: true, private: false }))
 vi.mock('../../services/syncConfig', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../services/syncConfig')>()),
   get syncEnabled() {
     return relayBuild.on
   },
+  get privateSyncReady() {
+    return relayBuild.private
+  },
 }))
 // The engine is stubbed: the panel reaches it only through loadSyncEngine() (Join's preview).
-vi.mock('../../stores/syncEngine', () => ({ previewJoin: vi.fn() }))
+vi.mock('../../stores/syncEngine', () => ({ previewJoin: vi.fn(), newPrivateCode: vi.fn() }))
 vi.mock('../../stores/useSyncStore', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../stores/useSyncStore')>()),
   loadSyncEngine: vi.fn(() => import('../../stores/syncEngine')),
@@ -161,6 +165,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   relayBuild.on = true
+  relayBuild.private = false
   useSyncStore.setState(initialSync, true)
   useUIStore.setState(initialUI, true)
   useExpenseStore.setState(initialExpenses, true)
@@ -1520,6 +1525,24 @@ describe('a private sync, and a device fenced out of one', () => {
       ),
     ).toBeInTheDocument()
     expect(document.body.textContent).not.toContain('0004106')
+  })
+
+  it('a build that can keep a private sync says so before Generate, and Generate makes a private code', async () => {
+    relayBuild.private = true
+    vi.mocked(newPrivateCode).mockReturnValue(PRIVATE)
+    const setupSync = vi.fn(() => Promise.resolve(OK))
+    useSyncStore.setState({ setupSync })
+    render(<SyncPanel />)
+    expect(
+      screen.getByText(
+        "Generate a sync code here, then enter it on your other device. There's no account: the code links them. What a device sends is encrypted on that device first, so only a device with the code can read the synced copy.",
+      ),
+    ).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain("isn't encrypted yet")
+    fireEvent.click(generate())
+    await settle()
+    expect(setupSync).toHaveBeenCalledTimes(1)
+    expect(setupSync).toHaveBeenCalledWith(PRIVATE)
   })
 
   it('a plain sync says none of it', () => {
