@@ -114,6 +114,11 @@ interface SyncState {
   setupSync: (syncId: string, opts?: { join?: boolean }) => Promise<SyncResult>
   disconnectSync: () => void
   triggerSync: (opts?: { resetBackoff?: boolean }) => Promise<SyncResult>
+  /**
+   * The owner's way out of a private synced copy this device cannot read as current
+   * (PRIVATE-SYNC 3.9): replaces it with this device's copy. Nothing on a plain sync.
+   */
+  replaceRelayCopy: () => Promise<SyncResult>
   scheduleSyncPush: () => void
 }
 
@@ -253,6 +258,14 @@ export function syncsWhenOnline(
 export function reloadSpendTrack(): void {
   getUpdateController().reloadToLatest()
 }
+
+/**
+ * A new build is downloaded and waiting, or this page was updated in another tab: Reload is
+ * the answer to a paused sync, and nothing else is offered meanwhile. For useSyncExternalStore.
+ */
+export const newBuildWaiting = (): boolean => getUpdateController().getSnapshot() !== 'idle'
+export const subscribeNewBuild = (listener: () => void): (() => void) =>
+  getUpdateController().subscribe(listener)
 
 /** Sync's state says a new build is out (the relay moved on, or a stale chunk): look for it now. */
 export function lookForNewBuild(): void {
@@ -483,6 +496,13 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     if (!syncEnabled || syncId === null) return Promise.resolve(offResult())
     // No engine yet: its chunk failed to load during setup, so set up again.
     return engine ? engine.triggerSync(opts) : setup(syncId, true)
+  },
+
+  replaceRelayCopy: () => {
+    const { syncId } = get()
+    // No engine, no pause to answer: the pause this action ends is the engine's own.
+    if (!syncEnabled || syncId === null || engine === null) return Promise.resolve(offResult())
+    return engine.replaceRelayCopy()
   },
 
   scheduleSyncPush: () => {

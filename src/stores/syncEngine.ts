@@ -1090,7 +1090,8 @@ function mergeStep(b: Bucket, pulled: Pulled | null, reason: CycleReason): Step 
     // so two devices that disagree about the copy cannot overwrite each other in a loop, and
     // never by a device that has not synced with this code (it might not be ours to repair).
     if (!unreadable) port.quarantine(dec.report.quarantined)
-    if (!established || now - port.meta().repairAt < REPAIR_EVERY_MS) {
+    // The owner's own ask (3.9) does not wait out the pace of automatic repairs.
+    if (!established || (!ownerReplace && now - port.meta().repairAt < REPAIR_EVERY_MS)) {
       throw new InvalidRemoteError()
     }
     // The quarantine entry holds an excerpt; the push over the copy waits until this device
@@ -1301,13 +1302,19 @@ async function attempts(
     if (gen !== setupGen) return offResult()
     const read = await openPulled(b, pulled)
     if (gen !== setupGen) return offResult()
+    let toMerge = read.kind === 'ok' ? read.pulled : null
     if (read.kind === 'newer') {
-      // Judged on a header nobody signed: a cycle never writes over it (the owner can, 3.9).
-      // Remembered, so the next poll is a HEAD and does not pull and open it again.
-      if (pulled !== null) setEtag(port, b.rowId, pulled.etag, null)
-      return pause('update-required', syncMessage('update-required'))
+      if (!ownerReplace || pulled === null) {
+        // Judged on a header nobody signed: a cycle never writes over it (the owner can, 3.9).
+        // Remembered, so the next poll is a HEAD and does not pull and open it again.
+        if (pulled !== null) setEtag(port, b.rowId, pulled.etag, null)
+        return pause('update-required', syncMessage('update-required'))
+      }
+      // The owner asked (3.9): the row goes the way of a copy that cannot be read, repaired
+      // from this device by compare-and-set on the etag just pulled.
+      toMerge = { payload: UNREADABLE, etag: pulled.etag }
     }
-    const step = mergeStep(b, read.pulled, reason)
+    const step = mergeStep(b, toMerge, reason)
     if (step.kind === 'done') return step.result
     // Sealed after the merge section, which stays synchronous (3.3 step 4).
     let payload = step.wire
@@ -1837,6 +1844,24 @@ export async function setupSync(syncId: string, user: boolean, join = false): Pr
   const result = await requestCycle('boot', user)
   if (gen === setupGen && !isOffline()) await ensureSubscribed(gen)
   return result
+}
+
+/** Set for the one cycle the owner asked to replace an unreadable private copy with (3.9). */
+let ownerReplace = false
+
+/**
+ * The owner's way out of a private row this device cannot read as current (PRIVATE-SYNC 3.9): a
+ * "newer" header is judged before any authentication, so a forged or damaged one would otherwise
+ * stop sync for good. Runs one ordinary cycle, under the lock, that repairs the row from this
+ * device's copy. Nothing happens on a plain sync.
+ */
+export function replaceRelayCopy(): Promise<SyncResult> {
+  const code = useSyncStore.getState().syncId
+  if (code === null || !isPrivateCode(code)) return Promise.resolve(offResult())
+  ownerReplace = true
+  return requestCycle('manual', true).finally(() => {
+    ownerReplace = false
+  })
 }
 
 /**

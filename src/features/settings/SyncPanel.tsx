@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { formatDate } from '../../lib/formatDate'
 import {
   Cloud,
@@ -27,8 +27,10 @@ import {
   isPrivateCode,
   loadSyncEngine,
   needsReload,
+  newBuildWaiting,
   pausedDetail,
   reloadSpendTrack,
+  subscribeNewBuild,
   syncsWhenOnline,
   useSyncStore,
   type CloudStatus,
@@ -246,7 +248,7 @@ function setupFailure(
 }
 
 /** Controls that take focus after a view swap (see `focusNext`). */
-type FocusTarget = 'sync-now' | 'generate' | 'reconnect' | 'disconnect'
+type FocusTarget = 'sync-now' | 'generate' | 'reconnect' | 'disconnect' | 'replace'
 
 const BANNER_TONE: Record<BannerTone, string> = {
   error: 'border-negative/20 bg-negative/10 text-negative',
@@ -474,12 +476,18 @@ function SyncContent() {
   const setupSync = useSyncStore((s) => s.setupSync)
   const disconnectSync = useSyncStore((s) => s.disconnectSync)
   const triggerSync = useSyncStore((s) => s.triggerSync)
+  const replaceRelayCopy = useSyncStore((s) => s.replaceRelayCopy)
+  const buildWaiting = useSyncExternalStore(subscribeNewBuild, newBuildWaiting)
   const toast = useToast()
 
   // The setup this panel is running, if any: every setup control waits for it.
   const [connecting, setConnecting] = useState<SetupRequest['kind'] | null>(null)
   const [manualSyncing, setManualSyncing] = useState(false)
   const [confirmDisconnect, setConfirmDisconnect] = useState(false)
+  // The owner's way out of a private copy this device cannot read (PRIVATE-SYNC 3.9).
+  const [confirmReplace, setConfirmReplace] = useState(false)
+  const [replacing, setReplacing] = useState(false)
+  const syncNow = useRef<HTMLButtonElement | null>(null)
   // Generate while this device remembers a code it left (F-050): one sync or two?
   const [askSeparate, setAskSeparate] = useState(false)
   // Generate or Reconnect asked while the demo's sample rows are here (P2-22): they never
@@ -682,6 +690,19 @@ function SyncContent() {
     )
   }
 
+  const handleReplace = () => {
+    setConfirmReplace(false)
+    // The question leaves: its button comes back, busy, and takes focus.
+    focusNext.current = 'replace'
+    void runRequest(setReplacing, replaceRelayCopy, (result) => {
+      if (result.ok) {
+        // The pause is over and this block leaves with it: focus goes to Sync now.
+        syncNow.current?.focus()
+        toast.success('Synced copy replaced')
+      } else reportFailure(result)
+    })
+  }
+
   /** Stops syncing here. A plain code is remembered for 30 days for a one-tap Reconnect. */
   const handleDisconnect = (code: string | null) => {
     if (code !== null) keepPrevious(code, Date.now())
@@ -689,6 +710,8 @@ function SyncContent() {
     requestGen.current++
     setConnecting(null)
     setManualSyncing(false)
+    setReplacing(false)
+    setConfirmReplace(false)
     disconnectSync()
     setConfirmDisconnect(false)
     toast.info('Sync disconnected')
@@ -910,6 +933,7 @@ function SyncContent() {
             </div>
             <button
               ref={(element) => {
+                syncNow.current = element
                 focusWhenShown('sync-now')(element)
                 // The pill that opened Settings asked for it.
                 if (element && useUIStore.getState().takeSettingsFocus('sync-now')) element.focus()
@@ -943,6 +967,51 @@ function SyncContent() {
             <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
               No code? Disconnect, then start a new sync: your entries stay on this device.
             </p>
+          </div>
+        )}
+        {/* A private copy this device cannot read as current, with no newer build to reload
+            into (PRIVATE-SYNC 3.9): the "newer" mark is read before the copy is opened, so a
+            damaged one would pause sync for good. The owner may replace the copy. */}
+        {isPrivateCode(syncId) && lastError?.kind === 'update-required' && !buildWaiting && (
+          <div className="flex flex-col gap-2">
+            <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
+              Reloaded and still paused? The synced copy may be damaged. This device can replace it
+              with its own copy.
+            </p>
+            {confirmReplace ? (
+              <InlineConfirm
+                tone="warning"
+                question="Replace the synced copy with this device's?"
+                detail="Do this only if reloading didn't help. Your other devices keep their entries and add them back when they next sync. Anything that was only in the synced copy is lost."
+                confirmLabel="Replace"
+                onConfirm={handleReplace}
+                onCancel={() => {
+                  focusNext.current = 'replace'
+                  setConfirmReplace(false)
+                }}
+              />
+            ) : (
+              <Button
+                ref={focusWhenShown('replace')}
+                onClick={() => {
+                  if (replacing) return
+                  // The question takes this button's place: a double tap's second tap must
+                  // not answer it.
+                  shieldGesture()
+                  setConfirmReplace(true)
+                }}
+                variant="ghost"
+                aria-disabled={replacing}
+                className={clsx('w-full [@media(pointer:coarse)]:h-11', ARIA_DISABLED)}
+              >
+                {replacing ? (
+                  <Loader2 size={14} className="animate-spin" aria-hidden />
+                ) : (
+                  <RefreshCw size={14} aria-hidden />
+                )}
+                {replacing ? 'Replacing…' : 'Replace the synced copy'}
+              </Button>
+            )}
           </div>
         )}
         <SyncCode code={syncId} />

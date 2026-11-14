@@ -1567,4 +1567,89 @@ describe('a private sync, and a device fenced out of one', () => {
     connectedPanel({ cloudStatus: 'paused', lastError: failure('moved') })
     expect(screen.queryByLabelText('Sync code')).toBeNull()
   })
+
+  // PRIVATE-SYNC 3.9: a private copy this device cannot read as current, and no newer build to
+  // reload into.
+  describe('replacing a synced copy this device cannot read', () => {
+    const QUESTION = "Replace the synced copy with this device's?"
+    const paused = () => ({
+      syncId: PRIVATE,
+      cloudStatus: 'paused' as const,
+      lastError: failure('update-required'),
+    })
+    const replaceButton = () => screen.queryByRole('button', { name: 'Replace the synced copy' })
+    const ask = () => {
+      const button = replaceButton()
+      if (button === null) throw new Error('no Replace button')
+      fireEvent.click(button)
+      return screen.getByRole('group', { name: QUESTION })
+    }
+
+    it('asks first, says what is lost, and replaces only on the answer', async () => {
+      const replaceRelayCopy = vi.fn(() => Promise.resolve(OK))
+      connectedPanel({ ...paused(), replaceRelayCopy })
+      expect(
+        screen.getByText(
+          'Reloaded and still paused? The synced copy may be damaged. This device can replace it with its own copy.',
+        ),
+      ).toBeInTheDocument()
+      const question = ask()
+      expect(replaceRelayCopy).not.toHaveBeenCalled()
+      expect(within(question).getByRole('button', { name: 'Cancel' })).toHaveFocus()
+      expect(question).toHaveAccessibleDescription(
+        "Do this only if reloading didn't help. Your other devices keep their entries and add them back when they next sync. Anything that was only in the synced copy is lost.",
+      )
+      fireEvent.click(within(question).getByRole('button', { name: 'Replace' }))
+      await settle()
+      expect(replaceRelayCopy).toHaveBeenCalledTimes(1)
+      expect(toasts()).toEqual([['success', 'Synced copy replaced']])
+      expect(screen.getByRole('button', { name: 'Sync now' })).toHaveFocus()
+    })
+
+    it('Cancel replaces nothing and hands focus back to the button', () => {
+      const replaceRelayCopy = vi.fn(() => Promise.resolve(OK))
+      connectedPanel({ ...paused(), replaceRelayCopy })
+      fireEvent.click(within(ask()).getByRole('button', { name: 'Cancel' }))
+      expect(replaceRelayCopy).not.toHaveBeenCalled()
+      expect(replaceButton()).toHaveFocus()
+    })
+
+    it('is busy while it runs, keeps focus, and cannot be asked twice', async () => {
+      let finish: (result: SyncResult) => void = () => {}
+      const replaceRelayCopy = vi.fn(
+        () =>
+          new Promise<SyncResult>((resolve) => {
+            finish = resolve
+          }),
+      )
+      connectedPanel({ ...paused(), replaceRelayCopy })
+      fireEvent.click(within(ask()).getByRole('button', { name: 'Replace' }))
+      const busy = screen.getByRole('button', { name: 'Replacing…' })
+      expect(busy).toHaveFocus()
+      expect(busy).toHaveAttribute('aria-disabled', 'true')
+      fireEvent.click(busy)
+      expect(screen.queryByRole('group', { name: QUESTION })).toBeNull()
+      await act(async () => {
+        finish(failed('network'))
+        await Promise.resolve()
+      })
+      expect(replaceRelayCopy).toHaveBeenCalledTimes(1)
+      expect(toasts()).toEqual([['warning', MSG.network]])
+      expect(replaceButton()).not.toBeNull()
+    })
+
+    it('is not offered on a plain sync, on any other pause, or while a new build waits', () => {
+      const { unmount } = connectedPanel({ ...paused(), syncId: CODE })
+      expect(replaceButton()).toBeNull()
+      unmount()
+      const other = connectedPanel({ ...paused(), lastError: failure('too-large') })
+      expect(replaceButton()).toBeNull()
+      other.unmount()
+      // Reload is the answer while a new build is waiting
+      vi.spyOn(getUpdateController(), 'getSnapshot').mockReturnValue('ready')
+      connectedPanel(paused())
+      expect(replaceButton()).toBeNull()
+      expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument()
+    })
+  })
 })

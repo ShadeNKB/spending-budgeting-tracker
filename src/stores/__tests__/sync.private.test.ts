@@ -1,5 +1,5 @@
 // PRIVATE-SYNC release 1 (PR-6): a private bucket on the real engine, against a relay that only
-// ever holds ciphertext for it. AC-P1, P2, P4 to P9, P14, P16. Invented data; the code is the
+// ever holds ciphertext for it. AC-P1, P2, P4 to P9, P14, P16, and 3.9. Invented data; the code is the
 // codec's known-answer vector (a secret of bytes 00..0f), never a real one.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeSt5 } from '../../data/core/codes'
@@ -17,6 +17,7 @@ import {
   resetRelay,
   retireDevices,
   rowPayload,
+  rowStamp,
   seedRow,
   steadyRandom,
   stubRelayEnv,
@@ -291,6 +292,97 @@ describe('a newer format, and conflicts (AC-P6, AC-P7, AC-P8)', () => {
     }
     // Math.random is pinned by steadyRandom(): four writes, four IVs all the same
     expect(ivs.size).toBe(4)
+  })
+})
+
+// PRIVATE-SYNC 3.9: "newer" is read off a header nobody signed, so a damaged or forged one would
+// pause a private sync for good. The owner, and only the owner, may write over it.
+describe("the owner's way out of a copy marked newer (3.9)", () => {
+  const NEWER = { st: 6, k: 1, r: 'B'.repeat(22), iv: 'A'.repeat(16), z: 0, ct: 'AAAA' }
+  const pushCalls = () => requestsOf('rpc').filter((c) => c.fn === 'st_sync_push')
+  const replace = (d: Device) => run(d.sync.useSyncStore.getState().replaceRelayCopy())
+
+  it('replaces it with this device’s copy, by compare-and-set on the copy just pulled', async () => {
+    const laptop = await bootDevice({ expenses: [expense('e1', { itemName: 'Invented kopi' })] })
+    await start(laptop)
+    await idle(500)
+    seedRow(ROW, NEWER)
+    const stamp = rowStamp(ROW)
+    add(laptop, 'Invented laksa')
+    expect(await sync(laptop)).toMatchObject({ ok: false, error: 'update-required' })
+    const before = pushCalls().length
+
+    expect(await replace(laptop)).toMatchObject({ ok: true, pushed: true })
+    const pushes = pushCalls().slice(before)
+    expect(pushes).toHaveLength(1)
+    expect(pushes[0]?.args).toMatchObject({ p_base: stamp, p_force: false })
+    expect(envelope()).toMatchObject({ st: 5, k: 1 })
+    expect(laptop.sync.useSyncStore.getState().lastError).toBeNull()
+    expect(laptop.expense.useExpenseStore.getState().unsyncedChanges()).toBe(0)
+
+    // the copy is readable again: a second device joins it
+    const phone = await bootDevice()
+    expect(await start(phone, true)).toMatchObject({ ok: true })
+    expect(names(phone)).toEqual(['Invented kopi', 'Invented laksa'])
+  })
+
+  it('does not wait out the pace of automatic repairs', async () => {
+    const laptop = await bootDevice({ expenses: [expense('e1')] })
+    await start(laptop)
+    await idle(500)
+    // a repair has just run: the next automatic one is ten minutes away
+    seedRow(ROW, { ...envelope(), ct: flip(envelope().ct) })
+    expect(await sync(laptop)).toMatchObject({ ok: true, pushed: true })
+    seedRow(ROW, { ...envelope(), ct: flip(envelope().ct) })
+    expect(await sync(laptop)).toMatchObject({ ok: false, error: 'invalid' })
+    seedRow(ROW, NEWER)
+    expect(await sync(laptop)).toMatchObject({ ok: false, error: 'update-required' })
+    expect(await replace(laptop)).toMatchObject({ ok: true, pushed: true })
+    expect(envelope()).toMatchObject({ st: 5 })
+  })
+
+  it('a write that lands first is not written over: the replace merges it instead', async () => {
+    const laptop = await bootDevice({ expenses: [expense('e1', { itemName: 'Invented kopi' })] })
+    await start(laptop)
+    const phone = await bootDevice()
+    await start(phone, true)
+    add(phone, 'Invented teh')
+    await idle()
+    const phoneCopy = envelope()
+    seedRow(ROW, NEWER)
+    expect(await sync(laptop)).toMatchObject({ ok: false, error: 'update-required' })
+    // the phone's copy comes back just before the laptop's replacing write
+    relay().beforeWrite = () => {
+      relay().beforeWrite = null
+      seedRow(ROW, phoneCopy)
+    }
+    expect(await replace(laptop)).toMatchObject({ ok: true })
+    relay().beforeWrite = null
+    expect(names(laptop)).toEqual(['Invented kopi', 'Invented teh'])
+    expect(pushCalls().some((c) => c.args?.p_force === true)).toBe(false)
+  })
+
+  it('is the owner’s alone: the next cycle does not write over a newer copy', async () => {
+    const laptop = await bootDevice({ expenses: [expense('e1')] })
+    await start(laptop)
+    await idle(500)
+    seedRow(ROW, NEWER)
+    expect(await sync(laptop)).toMatchObject({ ok: false, error: 'update-required' })
+    expect(await replace(laptop)).toMatchObject({ ok: true })
+    seedRow(ROW, NEWER)
+    add(laptop, 'Invented laksa')
+    expect(await sync(laptop)).toMatchObject({ ok: false, error: 'update-required' })
+    await idle(11 * MINUTE)
+    expect(rowPayload(ROW)).toEqual(NEWER)
+  })
+
+  it('does nothing on a plain sync', async () => {
+    const laptop = await bootDevice({ expenses: [expense('e1')] })
+    await run(connect(laptop))
+    await idle(500)
+    const before = relay().requests.length
+    expect(await replace(laptop)).toMatchObject({ ok: false, error: 'off' })
+    expect(relay().requests.length).toBe(before)
   })
 })
 
