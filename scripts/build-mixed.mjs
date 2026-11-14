@@ -3,6 +3,8 @@
 //
 //   candidate        this worktree, as it ships (no sync flags: plain upsert, table transport)
 //   candidate-flags  this worktree with VITE_SYNC_CAS=on and VITE_SYNC_RELAY=auto (PR-5 runbook)
+//   v020             `git archive v0.20.0`: the last release before private sync, which must
+//                    refuse a private code and keep a private setup it cannot read (PR-6)
 //   v010             `git archive v0.10.0` (else PR-2's final commit 02a2e40; ST5_E2E_V010_REF
 //                    overrides): what a device that has not reloaded since PR-2 runs (app 0.10.0)
 //   v092             `git archive v0.9.2`: what the owner's phone may still run (app 0.9.2, PR-0)
@@ -10,7 +12,7 @@
 // All point at the fake relay of e2e/data-engine/support/relayServer.ts
 // (VITE_SUPABASE_URL=http://localhost:4219, VITE_SUPABASE_ANON_KEY=e2e-anon). An archived tree
 // is built offline against an existing install of its dependency set, linked in as a junction:
-// 0.10.0 uses this worktree's node_modules (PR-3 adds no dependency), 0.9.2 an install of its
+// 0.20.0 and 0.10.0 use this worktree's node_modules (no dependency was added since), 0.9.2 an install of its
 // own (default ../pr0/node_modules, the PR-0 worktree; ST5_E2E_V092_MODULES overrides). Each
 // build is redone only when its source moves: an archived tree when its commit (or the relay)
 // changes, a worktree build when a hash of its sources and flags changes. Each build's production
@@ -18,7 +20,7 @@
 // relay added to connect-src, for the suite's server.
 //
 // Output (ST5_E2E_CACHE, default node_modules/.cache/st5-e2e): candidate/, candidate-flags/,
-// v010/, v092/, *.csp, *.stamp and manifest.json. An archived tree is extracted next to them
+// v020/, v010/, v092/, *.csp, *.stamp and manifest.json. An archived tree is extracted next to them
 // only while it builds, then removed with its junction: 0.10.0's junction points back at this
 // worktree's node_modules, which holds the cache, and a tree left behind would be a loop for any
 // walker that follows junctions. Usage: node scripts/build-mixed.mjs [--skip-candidate] [--force]
@@ -54,6 +56,10 @@ const BASE_ENV = {
 
 /** The archived releases: the ref to build, and where its dependency set lives. */
 const ARCHIVED = {
+  v020: {
+    refs: ['v0.20.0'],
+    modules: resolve(process.env.ST5_E2E_V020_MODULES ?? join(ROOT, 'node_modules')),
+  },
   v010: {
     refs: process.env.ST5_E2E_V010_REF ? [process.env.ST5_E2E_V010_REF] : ['v0.10.0', '02a2e40'],
     modules: resolve(process.env.ST5_E2E_V010_MODULES ?? join(ROOT, 'node_modules')),
@@ -205,6 +211,7 @@ function main() {
   const skipCandidate = process.argv.includes('--skip-candidate')
   const version = skipCandidate ? null : buildWorktree('candidate', NO_FLAGS)
   if (!skipCandidate) buildWorktree('candidate-flags', FLAGS)
+  const v020 = buildArchived('v020')
   const v010 = buildArchived('v010')
   const v092 = buildArchived('v092')
   const entry = (name) => ({ dir: join(CACHE, name), csp: join(CACHE, `${name}.csp`) })
@@ -213,6 +220,7 @@ function main() {
     builtAt: new Date().toISOString(),
     candidate: { ...entry('candidate'), version, flags: NO_FLAGS },
     'candidate-flags': { ...entry('candidate-flags'), version, flags: FLAGS },
+    v020: { ...entry('v020'), ref: v020.ref, commit: v020.commit },
     v010: { ...entry('v010'), ref: v010.ref, commit: v010.commit },
     v092: { ...entry('v092'), ref: v092.ref, commit: v092.commit },
   }

@@ -23,7 +23,12 @@ export default defineConfig({
   },
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
-    // The sync-on Backup and Sync states also pass the gate on an iPhone (support/a11y.ts `isPhone`).
-    { name: 'mobile', use: { ...devices['iPhone 14'] }, testMatch: /a11y\.data\.ts$/ },
+    // The sync-on Backup and Sync states also pass the gate on an iPhone (support/a11y.ts `isPhone`),
+    // and a private sync runs on WebKit too (its WebCrypto and compression streams; AC-P17).
+    {
+      name: 'mobile',
+      use: { ...devices['iPhone 14'] },
+      testMatch: /(a11y|private)\.data\.ts$/,
+    },
   ],
 })
