@@ -1,5 +1,39 @@
 # Changelog
 
+## 0.19.0 — 2026-11-14
+
+T8c, the last slice of T8 (money in and smarter budgets): income. An entry can now be money that came in.
+
+### Added
+
+- **Income** (F-058). The Add sheet and the Edit sheet have an **Expense | Income** switch. Income is money that came in: pay, an allowance, a sale. It takes a name, an amount, a day and notes, and no category.
+- **Money in on Pulse.** Under the period's total: "Money in S$790.00 · S$178.00 more than spent" (or "less than spent"), for the month or the year on screen. Shown once the period holds an income.
+- **Income in the Ledger.** An income row shows **+S$790.00** in green with "income" under it, and "Income" where an expense has its category. The Ledger's total and each day's total stay spending; money in is summed on its own line ("+S$790.00 money in"). A search for "income" lists them all. A category filter lists expenses only.
+- **CSV export: a Type column**, last, saying `expense` or `income`. The five columns before it are where they always were, and amounts stay positive. An income's Category cell is empty.
+
+### What does not change
+
+- **Every spending figure.** The total, the pace, the comparison with last month, budgets, Top categories, the heatmap, the trend, the forecast and every Insights figure are spending, as before: income is in none of them.
+- **Every entry made before today.** An expense is an entry without the new field, so nothing already stored is rewritten.
+- **Due soon** never offers an income (Log would enter an allowance as an expense).
+
+### Changed (engineering)
+
+- **The kind of an entry lives in its record's extras register** (`kind: "income"`; absent for an expense). Every v5 release since 0.10.0 keeps a record's fields it does not know, through its own edits, merges, backups and pushes, so there is no new wire field, merge rule or file format, and no version of the app can drop it. `kind-v010.data.ts` proves it against the real 0.10.0 build: an income made here, then listed, edited and pushed by 0.10.0 on the same storage and sync code, comes back an income with 0.10.0's amount.
+- `addExpense` and `updateExpense` (data/core/ops.ts) take a kind. A kind change stamps the extras register alone, never the category: an income turned back into an expense finds its category where it was. Other extras are kept. The ops refuse a kind they do not write, and a change the wire would drop on the next read (`extrasFit`).
+- **A kind this version does not know is listed, can be edited, and is counted nowhere** ("not counted"; the Edit sheet says a newer SpendTrack made it and leaves the kind as it is). A later version can add a kind without this one counting it as spending.
+- One split by kind and by not-spending category (`lib/spending.ts`): `spending`, `aside`, `income`, `unknown`, and `outgoing` (every expense, where recurring charges are looked for). Pulse and Insights still build their one index over `spending`.
+- On a light-theme Ledger row the income green is one step darker (green-800): the row's hover fill left green-700 at 4.45:1 for 14 px text. Found by the new axe check in `e2e/money-in.spec.ts`.
+- Boot 497,501 / 561,580 B (64,079 B left), eager 397,422 / 466,908 B; all JS 681.8 / 740 KB (58.2 KB left).
+
+### Known limits
+
+- **A device still on 0.18 or older shows an income as an expense under Other**, and counts it there, until it is updated: it keeps the entry exactly, and cannot know what the field means. Update both devices before adding income.
+- **Refunds and paybacks are not here yet.** Money that comes back for something bought (a refund, a friend's share of a dinner) should come off that category's spending, not sit beside it as income. That is the next slice: it makes spending a signed sum, and every chart has to be checked for it. Until then, edit the expense down to what it really cost.
+- Quick add and the palette's add are for expenses: income is added from the Add sheet.
+- The Today strip on Pulse lists today's spending; an income added today is in the Ledger.
+- A day that holds only money in shows "S$0.00" in its Ledger header: the header is the day's spending.
+
 ## 0.18.1 — 2026-11-13
 
 Room in the bundle before T8's last slice (money in). Nothing on screen changes; the app starts on about 56 KB less JavaScript.
