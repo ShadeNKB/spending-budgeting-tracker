@@ -77,12 +77,45 @@ describe('JoinSync: validation before any network call (AC-U3)', () => {
     expect(loadSyncEngine).not.toHaveBeenCalled()
   })
 
-  it('AC-U3: a private ST5 code asks for an update and never loads the engine', async () => {
-    await join('ST5-ABCD-EFGH-JKMN-PQRS')
+  // PRIVATE-SYNC 3.5: a private code is read by the engine, where the check of its sum lives.
+  const PRIVATE = 'ST5-0004106-1050R3G-G28A1C6-0T3GFS3'
+
+  it('a private code that fails its check shows the engine’s words under the field, marked invalid', async () => {
+    stubEngine({
+      kind: 'failed',
+      result: {
+        ok: false,
+        error: 'invalid',
+        message: 'One character of that code looks wrong. Check it against your other device.',
+      },
+    })
+    await join('  st5-0004106 1050r3g g28a1c6 0t3gfs4 ')
+    // as typed, less the outer spaces: the engine reads any case, spaces and dashes
+    expect(previewJoin).toHaveBeenCalledWith('st5-0004106 1050r3g g28a1c6 0t3gfs4')
+    expect(message()).toHaveTextContent('One character of that code looks wrong.')
+    expect(field()).toHaveAttribute('aria-invalid', 'true')
+  })
+
+  it('a private code that names no sync says so', async () => {
+    stubEngine({ kind: 'not-found', private: true })
+    await join(PRIVATE)
     expect(message()).toHaveTextContent(
-      "That's a private sync code. Update SpendTrack on this device to use it.",
+      'No private sync was found for that code. Check it on your other device.',
     )
-    expect(loadSyncEngine).not.toHaveBeenCalled()
+  })
+
+  it('a private code that is found joins with the code in its written form', async () => {
+    stubEngine({ ...FOUND, code: PRIVATE })
+    const onJoin = await join(PRIVATE.toLowerCase())
+    fireEvent.click(screen.getByRole('button', { name: 'Join' }))
+    expect(onJoin).toHaveBeenCalledWith(PRIVATE)
+  })
+
+  it('the code field makes no capitals, corrections or spelling marks', () => {
+    render(<JoinSync busy={false} joining={false} onJoin={vi.fn()} onActiveChange={vi.fn()} />)
+    expect(field()).toHaveAttribute('autocapitalize', 'off')
+    expect(field()).toHaveAttribute('autocorrect', 'off')
+    expect(field()).toHaveAttribute('spellcheck', 'false')
   })
 
   it('the message lives in a polite live region that describes the field', async () => {
