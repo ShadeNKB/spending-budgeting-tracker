@@ -5,12 +5,12 @@ import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { categoryAvatarStyle } from '../../lib/analytics'
 import { initialOf } from '../../lib/format'
-import { filedUnder, kindOf } from '../../lib/kind'
+import { filedUnder, kindOf, shownAmount } from '../../lib/kind'
 import { toastJustLeft } from '../../ui/pressShield'
 import { useSwipeReveal } from './useSwipeReveal'
 import type { Expense } from '../../types'
 
-/** Money in wears the app's green where an expense wears its category's hue. */
+/** An income wears the app's green where an expense wears its category's hue. */
 const INCOME_AVATAR: CSSProperties & Record<'--cat', string> = {
   '--cat': 'var(--positive)',
   background: 'var(--positive-dim)',
@@ -79,8 +79,8 @@ export const LedgerRow = memo(function LedgerRow({
     onDelete(expense.id, e.nativeEvent.timeStamp)
   }
 
-  // Money in carries its sign and the word under it: colour alone would not say it.
-  const amount = `${kind === 'income' ? '+' : ''}${fmt(expense.amount)}`
+  // An income carries its sign and the word under it: colour alone would not say it.
+  const amount = shownAmount(expense, fmt)
   /** What the row says under its amount when it is in no spending total. */
   const tag =
     kind === 'income'
@@ -171,7 +171,7 @@ export const LedgerRow = memo(function LedgerRow({
               className={clsx(
                 'block font-mono text-[14px] tabular-nums min-[360px]:max-md:text-[15px]',
                 kind === 'income'
-                  ? 'text-positive'
+                  ? 'text-income'
                   : aside || kind === 'unknown'
                     ? 'text-[var(--text-secondary)]'
                     : 'text-white',

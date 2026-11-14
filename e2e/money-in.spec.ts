@@ -5,6 +5,8 @@ import {
   dialog,
   isPhone,
   openAddSheet,
+  openPalette,
+  openSettings,
   row,
   seed,
   storedExpenses,
@@ -31,7 +33,7 @@ const ledgerSummary = (page: Page) =>
   page.getByRole('heading', { name: 'Ledger' }).locator('xpath=../..')
 const toast = (page: Page, text: string | RegExp) =>
   page.locator('[data-toast]').filter({ hasText: text })
-const moneyIn = (page: Page) => page.getByText(/^Money in S\$/)
+const moneyIn = (page: Page) => page.getByText(/^Income S\$/)
 const categoryGroup = (sheet: Locator) => sheet.getByRole('group', { name: /^Category/ })
 
 test('An income is added from the Add sheet, said on Pulse and in the Ledger, and stays out of spending', async ({
@@ -57,7 +59,7 @@ test('An income is added from the Add sheet, said on Pulse and in the Ledger, an
 
   // Spending is what it was; the money in has its own line, with what it leaves.
   await expect(heroTotal(page)).toHaveText('S$52.50')
-  await expect(moneyIn(page)).toHaveText('Money in S$790.00 · S$737.50 more than spent')
+  await expect(moneyIn(page)).toHaveText('Income S$790.00 · S$737.50 more than spent')
   // It is stored as an income, under no category of its own.
   const stored = (await storedExpenses(page)).find((e) => e.itemName === 'Allowance')
   expect(stored).toMatchObject({ amount: 790, category: 'Other', kind: 'income' })
@@ -65,12 +67,12 @@ test('An income is added from the Add sheet, said on Pulse and in the Ledger, an
   // The year sums its own.
   await page.getByRole('radio', { name: 'Year' }).click()
   await expect(heroTotal(page)).toHaveText('S$132.50')
-  await expect(moneyIn(page)).toHaveText('Money in S$790.00 · S$657.50 more than spent')
+  await expect(moneyIn(page)).toHaveText('Income S$790.00 · S$657.50 more than spent')
 
   await page.reload()
   await waitForApp(page)
   await expect(heroTotal(page)).toHaveText('S$52.50')
-  await expect(moneyIn(page)).toHaveText('Money in S$790.00 · S$737.50 more than spent')
+  await expect(moneyIn(page)).toHaveText('Income S$790.00 · S$737.50 more than spent')
 
   // The Ledger lists it with its sign and the word, and sums it beside the spending.
   await page.goto('/ledger')
@@ -78,16 +80,15 @@ test('An income is added from the Add sheet, said on Pulse and in the Ledger, an
   const summary = ledgerSummary(page)
   await expect(summary).toContainText('S$52.50')
   await expect(summary).toContainText('3 entries')
-  await expect(summary).toContainText('+S$790.00 money in')
+  await expect(summary).toContainText('+S$790.00 income')
   const allowance = page.getByRole('button', {
     name: 'Edit Allowance, +S$790.00 income, Oct 18',
   })
   await expect(allowance).toBeVisible()
   await expect(allowance.getByText('income', { exact: true })).toBeVisible()
-  // Its day's total is that day's spending: none.
-  await expect(page.getByRole('heading', { name: 'Today' }).locator('xpath=..')).toContainText(
-    'S$0.00',
-  )
+  // Its day's header shows that day's spending. There is none: no figure, never "S$0.00" over
+  // an income.
+  await expect(page.getByRole('heading', { name: 'Today' }).locator('xpath=..')).toHaveText('Today')
 
   // A search for the word finds it, and only it.
   await page.getByRole('textbox', { name: 'Search expenses' }).fill('income')
@@ -95,11 +96,40 @@ test('An income is added from the Add sheet, said on Pulse and in the Ledger, an
   await expect(allowance).toBeVisible()
 })
 
+test('Settings counts a category by its expenses: an income stored under it is not one', async ({
+  page,
+}) => {
+  // An expense made an income keeps the category it was stored with (Food & Dining here).
+  const made = { ...row('i9', '2026-10-06', 30, 'sold textbooks', 'Food & Dining'), kind: 'income' }
+  await seed(page, { expenses: [...ROWS, made as SeedExpense] })
+  await page.goto('/pulse')
+  await waitForApp(page)
+  const settings = await openSettings(page, 'Categories')
+  await expect(settings.getByText('2 expenses', { exact: true })).toHaveCount(1)
+  await expect(settings.getByText('3 expenses', { exact: true })).toHaveCount(0)
+})
+
+test('The palette lists an income with its sign, under Entries', async ({ page }) => {
+  await seed(page, { expenses: [...ROWS, income('i1', '2026-10-05', 790, 'allowance')] })
+  await page.goto('/pulse')
+  await waitForApp(page)
+  const palette = await openPalette(page)
+  await palette.getByRole('combobox').fill('allow')
+  const hit = palette.getByRole('group', { name: 'Entries' }).getByRole('option')
+  await expect(hit).toHaveCount(1)
+  await expect(hit).toContainText('allowance')
+  await expect(hit).toContainText('Income / Oct 5')
+  await expect(hit).toContainText('+S$790.00')
+  // It is found by what its row says, as in the Ledger.
+  await palette.getByRole('combobox').fill('income')
+  await expect(palette.getByRole('group', { name: 'Entries' }).getByRole('option')).toHaveCount(1)
+})
+
 test('Spending more than came in says by how much', async ({ page }) => {
   await seed(page, { expenses: [...ROWS, income('i1', '2026-10-05', 20, 'sold a book')] })
   await page.goto('/pulse')
   await waitForApp(page)
-  await expect(moneyIn(page)).toHaveText('Money in S$20.00 · S$32.50 less than spent')
+  await expect(moneyIn(page)).toHaveText('Income S$20.00 · S$32.50 less than spent')
 })
 
 test('The Edit sheet turns an income into an expense, which then counts, and Undo takes that back', async ({
@@ -123,7 +153,7 @@ test('The Edit sheet turns an income into an expense, which then counts, and Und
   await expect(toast(page, 'Expense updated')).toBeVisible()
 
   await expect(ledgerSummary(page)).toContainText('S$252.50')
-  await expect(ledgerSummary(page)).not.toContainText('money in')
+  await expect(ledgerSummary(page)).not.toContainText('+S$')
   await expect(
     page.getByRole('button', { name: 'Edit sold bike, S$200.00, Shopping, Oct 5' }),
   ).toBeVisible()
@@ -133,7 +163,7 @@ test('The Edit sheet turns an income into an expense, which then counts, and Und
   await page.waitForTimeout(800)
   await toast(page, 'Expense updated').getByRole('button', { name: 'Undo' }).click()
   await expect(ledgerSummary(page)).toContainText('S$52.50')
-  await expect(ledgerSummary(page)).toContainText('+S$200.00 money in')
+  await expect(ledgerSummary(page)).toContainText('+S$200.00 income')
 })
 
 test('A monthly income is in no Insights figure and is never offered as a charge due', async ({
@@ -218,6 +248,10 @@ for (const theme of THEMES) {
       page.getByRole('button', { name: /^Edit shopee, S\$25\.00 not counted/ }),
     ).toBeVisible()
     expect.soft(await axeViolations(page), 'Ledger').toEqual([])
+    // The total is spending alone: neither the income nor the newer kind is in it.
+    await expect(ledgerSummary(page)).toContainText('S$52.50')
+    await expect(ledgerSummary(page)).toContainText('+S$790.00 income')
+    await expect(ledgerSummary(page)).toContainText('1 newer kind, not counted')
 
     await page.getByRole('button', { name: /^Edit allowance, / }).click()
     await expect(dialog(page, 'Edit income')).toBeVisible()

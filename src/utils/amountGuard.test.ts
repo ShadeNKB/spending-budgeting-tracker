@@ -53,6 +53,18 @@ describe('unusualAmountThreshold', () => {
     expect(unusualAmountThreshold(history)).toBe(10_000)
   })
 
+  // A quick add is an expense: pay among the rows must not lift the bar past a typo (F-058).
+  it('reads expenses only: income, and kinds this version does not know, are no measure', () => {
+    const history = rows(...MEDIAN_5_P95_20)
+    const income = rows(790, 790, 790).map((e) => ({ ...e, ext: { kind: 'income' } }))
+    const newer = rows(5000).map((e) => ({ ...e, ext: { kind: 'refund' } }))
+    expect(unusualAmountThreshold([...income, ...newer, ...history])).toBe(50)
+    // and the 200 rows it reads are the 200 newest expenses
+    const many = rows(...repeat(5, 200)).map((e, i) => (i < 150 ? e : { ...e, amount: 1000 }))
+    const between = rows(...repeat(790, 100)).map((e) => ({ ...e, ext: { kind: 'income' } }))
+    expect(unusualAmountThreshold([...between, ...many])).toBe(2000)
+  })
+
   it('is computed once per expenses array', () => {
     const history = rows(...MEDIAN_5_P95_20)
     expect(unusualAmountThreshold(history)).toBe(50)

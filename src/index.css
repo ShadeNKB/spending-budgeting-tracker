@@ -677,6 +677,10 @@
   .text-positive {
     color: var(--positive);
   }
+  /* An amount that came in (F-058): a Ledger row, a palette hit. */
+  .text-income {
+    color: var(--positive);
+  }
   .text-negative {
     color: var(--negative);
   }
@@ -1316,10 +1320,10 @@
     color: color-mix(in srgb, var(--cat) 50%, black);
   }
 
-  /* Money in on a Ledger row (F-058). The row's hover fill is a shade darker than the card, and
-     the light theme's text green (green-700) reads at 4.45:1 on it for 14 px text: one step
-     darker, 6.3:1 there. */
-  [data-theme='light'] [data-ledger-row] .text-positive {
+  /* An income's amount (F-058). A row's hover fill is a shade darker than the card, and the
+     light theme's text green (green-700) reads at 4.45:1 on it for 14 px text: one step darker,
+     6.3:1 there. */
+  [data-theme='light'] .text-income {
     color: #166534; /* green-800 */
   }
 

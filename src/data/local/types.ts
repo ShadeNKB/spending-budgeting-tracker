@@ -89,6 +89,11 @@ export interface RecordSummary {
   readonly day: string | null
   readonly category: string | null
   readonly notes: string | null
+  /**
+   * The record's kind when it has one (T8c): `'income'`, or a newer version's own word
+   * (`'other'` when that is not text). Absent for an expense.
+   */
+  readonly kind?: string
 }
 
 export interface ChangeItem {
@@ -119,6 +124,8 @@ export interface AttentionItem {
     readonly day?: string
     readonly category?: string
     readonly notes?: string
+    /** The row was an income: its Fix opens the Add sheet on Income. */
+    readonly kind?: 'income'
   } | null
 }
 

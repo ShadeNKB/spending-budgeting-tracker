@@ -142,7 +142,10 @@ export function EditExpenseSheet({
         ...(form.kind === 'expense' ? { category: form.category } : {}),
         day: form.date,
         notes: form.notes.trim(),
-        ...(form.kind === 'unknown' ? {} : { kind: form.kind }),
+        // The kind goes only when the switch was moved. The sheet holds the entry as it was
+        // when it opened: sent back unchanged, that kind would undo one the other device set
+        // meanwhile (or erase a newer version's) on a save that only meant to fix a note.
+        ...(form.kind === 'unknown' || form.kind === kindOf(expense) ? {} : { kind: form.kind }),
       })
     } catch (err) {
       // The sheet stays open with the edits, so the owner can fix what the message names.
@@ -204,8 +207,8 @@ export function EditExpenseSheet({
       >
         {form.kind === 'unknown' ? (
           <p className="rounded-xl border border-white/[0.06] bg-surface-2/55 px-3 py-2 text-[12px] leading-relaxed text-[var(--text-secondary)]">
-            A newer SpendTrack made this kind of entry. This version lists it and counts it in no
-            total. Update SpendTrack on this device to see it as it was meant.
+            This entry came from a newer version of SpendTrack. It is listed here and left out of
+            every total. Update SpendTrack on this device to see it in full.
           </p>
         ) : (
           <div>
@@ -380,14 +383,32 @@ export function EditExpenseSheet({
 
         {!isMobile && <div className="flex gap-2 pt-1">{actions}</div>}
 
-        {expense && <DeleteExpense key={session} expense={expense} onDeleted={onClose} />}
+        {expense && (
+          <DeleteExpense
+            key={session}
+            expense={expense}
+            noun={NOUN[form.kind].toLowerCase()}
+            onDeleted={onClose}
+          />
+        )}
       </div>
     </Sheet>
   )
 }
 
-/** "Delete expense", then the question in its place. Re-keyed on every opening of the sheet. */
-function DeleteExpense({ expense, onDeleted }: { expense: Expense; onDeleted: () => void }) {
+/**
+ * "Delete expense" (or income, or entry: the sheet's own word for it), then the question in its
+ * place. Re-keyed on every opening of the sheet.
+ */
+function DeleteExpense({
+  expense,
+  noun,
+  onDeleted,
+}: {
+  expense: Expense
+  noun: string
+  onDeleted: () => void
+}) {
   const toast = useToast()
   const confirm = useInlineConfirm<'delete'>()
 
@@ -418,7 +439,7 @@ function DeleteExpense({ expense, onDeleted }: { expense: Expense; onDeleted: ()
           onClick={() => confirm.ask('delete')}
           className="tap-target flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-white/[0.06] py-2.5 text-[12px] text-[var(--text-tertiary)] transition hover:border-negative/30 hover:bg-negative/10 hover:text-negative"
         >
-          <Trash2 size={13} aria-hidden /> Delete expense
+          <Trash2 size={13} aria-hidden /> Delete {noun}
         </button>
       )}
     </div>

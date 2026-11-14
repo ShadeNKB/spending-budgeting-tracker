@@ -72,10 +72,11 @@ test('A category that is not spending leaves Pulse and the Ledger total, on its 
   })
   await expect(etf).toBeVisible()
   await expect(etf.getByText('not spending')).toBeVisible()
-  // Its day's total is that day's spending: none.
-  await expect(
-    page.getByRole('heading', { name: 'Sun / Oct 4' }).locator('xpath=..'),
-  ).toContainText('S$0.00')
+  // Its day's header shows that day's spending. There is none: no figure (0.19.0; it said
+  // "S$0.00" before).
+  await expect(page.getByRole('heading', { name: 'Sun / Oct 4' }).locator('xpath=..')).toHaveText(
+    'Sun / Oct 4',
+  )
   await expect(
     page.getByRole('button', { name: 'Edit kopi, S$12.50, Food & Dining, Oct 3' }),
   ).toBeVisible()

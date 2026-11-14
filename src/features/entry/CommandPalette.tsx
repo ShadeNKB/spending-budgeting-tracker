@@ -43,7 +43,7 @@ import { announce, retract } from '../../ui/announce'
 import { shieldKeyGesture } from '../../ui/pressShield'
 import { addAndConfirm } from './expenseForm'
 import { ledgerEntryHref } from '../ledger/ledgerParams'
-import { filedUnder } from '../../lib/kind'
+import { filedUnder, kindOf, shownAmount } from '../../lib/kind'
 import type { ExpenseView } from '../../types'
 
 type Action = {
@@ -93,10 +93,22 @@ const OPTION =
   'relative flex min-h-11 w-full cursor-pointer items-center gap-3 px-4 py-2.5 text-left text-sm transition before:absolute before:inset-y-1.5 before:left-0 before:hidden before:w-[3px] before:rounded-r-full before:bg-[var(--focus-ring)] aria-selected:before:block'
 
 interface ExpenseIndex {
-  readonly fuse: Fuse<ExpenseView>
+  readonly fuse: Fuse<SearchRow>
   /** Row positions of each indexed entry, ascending (the store keeps the newest first). */
   readonly rows: readonly (readonly number[])[]
 }
+
+/** What the search reads of an entry: what its row shows (an income is filed under "Income"). */
+interface SearchRow {
+  readonly itemName: string
+  readonly category: string
+  readonly notes: string
+}
+const searchRow = (e: ExpenseView): SearchRow => ({
+  itemName: e.itemName,
+  category: filedUnder(e),
+  notes: e.notes ?? '',
+})
 
 // One search index per expenses array (the store replaces the array on every change), so typing
 // searches a ready index instead of rebuilding it per keystroke. Rows that read the same to the
@@ -107,12 +119,13 @@ const expenseIndexCache = new WeakMap<readonly ExpenseView[], ExpenseIndex>()
 function expenseIndex(expenses: readonly ExpenseView[]): ExpenseIndex {
   const cached = expenseIndexCache.get(expenses)
   if (cached) return cached
-  const groups = new Map<string, { first: ExpenseView; rows: number[] }>()
+  const groups = new Map<string, { first: SearchRow; rows: number[] }>()
   expenses.forEach((expense, i) => {
-    const key = [expense.itemName, expense.category, expense.notes ?? ''].join('\u0000')
+    const row = searchRow(expense)
+    const key = [row.itemName, row.category, row.notes].join('\u0000')
     const group = groups.get(key)
     if (group) group.rows.push(i)
-    else groups.set(key, { first: expense, rows: [i] })
+    else groups.set(key, { first: row, rows: [i] })
   })
   const entries = [...groups.values()]
   const index: ExpenseIndex = {
@@ -605,7 +618,7 @@ export function CommandPalette() {
                 aria-hidden
                 className="px-4 pb-1 pt-2 text-[10px] font-semibold uppercase tracking-[0.08em] text-[var(--text-tertiary)]"
               >
-                Expenses
+                Entries
               </div>
               {expenseHits.map((e, i) => {
                 const idx = filteredActions.length + i
@@ -622,8 +635,13 @@ export function CommandPalette() {
                         {filedUnder(e)} / {formatKey(e.day, 'MMM d')}
                       </div>
                     </div>
-                    <span className="font-mono text-[13px] tabular-nums text-white">
-                      {fmt(e.amount)}
+                    <span
+                      className={clsx(
+                        'font-mono text-[13px] tabular-nums',
+                        kindOf(e) === 'income' ? 'text-income' : 'text-white',
+                      )}
+                    >
+                      {shownAmount(e, fmt)}
                     </span>
                   </div>
                 )

@@ -1,3 +1,4 @@
+import { kindOf } from '../lib/kind'
 import type { Expense } from '../types'
 
 /** The largest amount quick add accepts; anything above is a typo, not a purchase. */
@@ -26,17 +27,19 @@ const thresholdCache = new WeakMap<readonly Expense[], number>()
  * The amount from which a quick add asks for a second press: the larger of 10 × the median and
  * 2 × the 95th percentile (nearest rank) of the 200 newest amounts, or 10,000 with fewer than 10
  * rows of history. For a typical day (median 6, p95 60) that is 120, so groceries go straight in
- * while 450 typed for 4.50 does not.
+ * while 450 typed for 4.50 does not. Expenses only: a quick add is an expense, and two months'
+ * pay among twenty rows would lift the bar past any typo (F-058).
  */
 export function unusualAmountThreshold(expenses: readonly Expense[]): number {
   const cached = thresholdCache.get(expenses)
   if (cached !== undefined) return cached
 
-  const amounts = expenses
-    .slice(0, HISTORY_ROWS)
-    .map((e) => e.amount)
-    .filter((a) => Number.isFinite(a) && a > 0)
-    .sort((a, b) => a - b)
+  const newest: number[] = []
+  for (const e of expenses) {
+    if (newest.length === HISTORY_ROWS) break
+    if (kindOf(e) === 'expense') newest.push(e.amount)
+  }
+  const amounts = newest.filter((a) => Number.isFinite(a) && a > 0).sort((a, b) => a - b)
 
   let threshold = NEW_PROFILE_THRESHOLD
   if (amounts.length >= MIN_HISTORY) {

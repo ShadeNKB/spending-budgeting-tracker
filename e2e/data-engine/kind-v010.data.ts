@@ -96,7 +96,7 @@ test('an income survives 0.10.0: listed, edited and pushed there, it comes back 
   await expect(
     page.getByRole('button', { name: /^Edit allowance, \+.*800\.00 income, / }),
   ).toBeVisible()
-  await expect(page.getByText(/800\.00 money in$/)).toBeVisible()
+  await expect(page.getByText(/800\.00 income$/)).toBeVisible()
   expect(await stored(page, 'allowance')).toMatchObject({ amount: 800, kind: 'income' })
   expect(onRelay('allowance', 'kind')).toBe('income')
 })

@@ -30,5 +30,9 @@ export const categoryOf = (e: Expense): string | null =>
 /** What a row shows where an expense has its category (and what a search for it finds). */
 export function filedUnder(e: Expense): string {
   const kind = kindOf(e)
-  return kind === 'expense' ? e.category : kind === 'income' ? 'Income' : 'Newer kind of entry'
+  return kind === 'expense' ? e.category : kind === 'income' ? 'Income' : 'Newer kind'
 }
+
+/** An entry's amount as a row shows it: income carries its sign, on every screen that lists it. */
+export const shownAmount = (e: Expense, fmt: (n: number) => string): string =>
+  `${kindOf(e) === 'income' ? '+' : ''}${fmt(e.amount)}`

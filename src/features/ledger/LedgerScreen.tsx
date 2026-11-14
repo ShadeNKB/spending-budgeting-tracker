@@ -381,12 +381,12 @@ export function LedgerScreen() {
               )}
               {incomeSum > 0 && (
                 <div className="text-[11px] text-[var(--text-tertiary)]">
-                  <span className="font-mono tabular-nums">+{fmt(incomeSum)}</span> money in
+                  <span className="font-mono tabular-nums">+{fmt(incomeSum)}</span> income
                 </div>
               )}
               {uncounted > 0 && (
                 <div className="text-[11px] text-[var(--text-tertiary)]">
-                  {uncounted} not counted
+                  {uncounted} newer kind, not counted
                 </div>
               )}
             </div>
@@ -560,9 +560,14 @@ export function LedgerScreen() {
                 <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
                   {g.label}
                 </h2>
-                <span className="font-mono text-[11px] tabular-nums text-[var(--text-secondary)]">
-                  {fmt(g.total)}
-                </span>
+                {/* A day's spending. A day that holds none (income only, or entries that are
+                    not spending) shows no figure: "S$0.00" over "+S$790.00" reads as a sum
+                    gone wrong. */}
+                {g.total > 0 && (
+                  <span className="font-mono text-[11px] tabular-nums text-[var(--text-secondary)]">
+                    {fmt(g.total)}
+                  </span>
+                )}
               </header>
               <ul className="divide-y divide-white/[0.04]">
                 {g.items.map((e) => (

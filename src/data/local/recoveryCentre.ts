@@ -5,7 +5,7 @@
 // syncs and never deletes; the lists' own bookkeeping (seen marks, Fix, Discard) goes through the
 // engine's shedding writer. Memory-only, or once this device was wiped, nothing is written.
 import { displayList, resolver } from '../core/categories'
-import { NOTES_INPUT_MAX, nullRecord } from '../core/constants'
+import { KIND_INCOME, KIND_KEY, NOTES_INPUT_MAX, nullRecord } from '../core/constants'
 import { dayOf, isDateText, localDay, validDay } from '../core/dates'
 import { EMPTY_DOC } from '../core/doc'
 import { canon, fnv36 } from '../core/hash'
@@ -89,8 +89,15 @@ const FIXED = 'repaired:fixed:'
 /** The quarantine name of a relay copy kept whole (engine.ts RELAY_COPY_KEY). */
 const RELAY_COPY = 'relay'
 
-/** The fields a change can put back; extras ride along and are never restored on their own. */
+/**
+ * The fields a change can put back. Of the extras only the kind is put back (`putBack`, below):
+ * what a newer version keeps there rides along and is never restored on its own.
+ */
 const RESTORABLE = ['n', 'a', 'c', 'd', 'o'] as const
+
+/** A record's kind as stored: undefined for an expense. */
+const kindIn = (rec: ExpenseRec): unknown =>
+  Object.hasOwn(rec.x.v, KIND_KEY) ? rec.x.v[KIND_KEY] : undefined
 
 const ORIGINS: ReadonlySet<string> = new Set([
   'local-envelope',
@@ -145,12 +152,16 @@ function summaryOf(w: WireRecord | undefined, res: (n: string) => string): Recor
   const amount = own(w, 'amount')
   const category = text(own(w, 'category'))
   const notes = text(own(w, 'notes'))
+  const kind = own(w, KIND_KEY)
   return {
     itemName: text(own(w, 'itemName')) ?? '',
     amount: typeof amount === 'number' && Number.isFinite(amount) ? amount : null,
     day: dayText(own(w, 'day'), own(w, 'date')),
     category: category === null ? null : res(category),
     notes: notes === null || notes.trim() === '' ? null : notes,
+    ...(kind === undefined
+      ? {}
+      : { kind: typeof kind === 'string' && kind !== '' ? kind : 'other' }),
   }
 }
 
@@ -171,6 +182,7 @@ function salvageOf(raw: string, doc: Doc): AttentionItem['salvage'] {
     ...(day === null ? {} : { day }),
     ...(listed !== null && displayList(doc).includes(listed) ? { category: listed } : {}),
     ...(notes === '' ? {} : { notes }),
+    ...(own(o, KIND_KEY) === KIND_INCOME ? { kind: KIND_INCOME } : {}),
   }
 }
 
@@ -323,6 +335,16 @@ export function createRecovery(host: RecoveryHost): RecoveryApi {
       else if (f === 'c') patch.category = res(before.c.v)
       else if (f === 'd') patch.day = dayOf(before)
       else patch.notes = before.o.v ?? ''
+    }
+    // The kind, by the same rule: back only while the entry still holds what that edit wrote. A
+    // kind this version does not write (a newer one's) stays as the other device left it.
+    const was = kindIn(before)
+    const now = kindIn(after)
+    if (!same(was, now)) {
+      if (cur.x.s !== after.x.s || !same(kindIn(cur), now)) {
+        if (!same(kindIn(cur), was)) moved = true
+      } else if (was === undefined) patch.kind = 'expense'
+      else if (was === KIND_INCOME) patch.kind = KIND_INCOME
     }
     if (Object.keys(patch).length === 0) return none(moved ? 'changed-since' : 'already')
     return apply((doc, ctx) => updateExpense(doc, ctx, cur.id, patch), 1)

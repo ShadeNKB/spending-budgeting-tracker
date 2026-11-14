@@ -119,7 +119,7 @@ export function PulseScreen() {
   const periodRange = yearData ? yearRange(yearData.year) : monthRange(monthData.monthKey)
   const asideTotal =
     aside.length === 0 ? 0 : sumRange(getLedgerIndex(aside), periodRange).cents / 100
-  // Money in over the same period, and what is left of it after the period's spending.
+  // Income over the same period, and what is left of it after the period's spending.
   const incomeCents = income.length === 0 ? 0 : sumRange(getLedgerIndex(income), periodRange).cents
   const leftCents = incomeCents - Math.round(a.periodTotal * 100)
   // A category opens the Ledger over the period on screen: a past month or year as its days.
@@ -321,16 +321,20 @@ export function PulseScreen() {
 
                 {incomeCents > 0 && (
                   <div className="mt-1 text-[12px] text-[var(--text-secondary)]">
-                    Money in{' '}
+                    Income{' '}
                     <span className="font-mono tabular-nums text-white">
                       {fmt(incomeCents / 100)}
                     </span>
                     <span className="text-[var(--text-tertiary)]">
                       {' · '}
-                      <span className="font-mono tabular-nums">
-                        {fmt(Math.abs(leftCents) / 100)}
-                      </span>{' '}
-                      {leftCents >= 0 ? 'more than spent' : 'less than spent'}
+                      {/* Kept whole: on a narrow phone the line breaks after the dot, never
+                          between the amount and its words. */}
+                      <span className="whitespace-nowrap">
+                        <span className="font-mono tabular-nums">
+                          {fmt(Math.abs(leftCents) / 100)}
+                        </span>{' '}
+                        {leftCents >= 0 ? 'more than spent' : 'less than spent'}
+                      </span>
                     </span>
                   </div>
                 )}

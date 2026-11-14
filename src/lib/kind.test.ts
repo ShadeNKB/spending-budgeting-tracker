@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { KIND_INCOME as CORE_INCOME, KIND_KEY as CORE_KEY } from '../data/core/constants'
 import { expensesToCsv } from './csv'
-import { KIND_INCOME, KIND_KEY, categoryOf, filedUnder, kindOf } from './kind'
+import { KIND_INCOME, KIND_KEY, categoryOf, filedUnder, kindOf, shownAmount } from './kind'
 import { getLedgerIndex, rowsInRange } from './ledgerIndex'
 import { splitSpending } from './spending'
 import { filterLedgerRows, groupLedgerRows } from '../features/ledger/ledgerFlatten'
@@ -56,7 +56,11 @@ describe('kindOf (T8c)', () => {
     expect(categoryOf(income('2026-10-10', 790, 'Food'))).toBeNull()
     expect(filedUnder(at('2026-10-02', 5, 'Food'))).toBe('Food')
     expect(filedUnder(income('2026-10-10', 790))).toBe('Income')
-    expect(filedUnder(at('2026-10-02', 5, 'Food', { kind: 'refund' }))).toBe('Newer kind of entry')
+    const fmt = (n: number) => `S$${n.toFixed(2)}`
+    expect(shownAmount(income('2026-10-10', 790), fmt)).toBe('+S$790.00')
+    expect(shownAmount(at('2026-10-02', 5, 'Food'), fmt)).toBe('S$5.00')
+    expect(shownAmount(at('2026-10-02', 5, 'Food', { kind: 'refund' }), fmt)).toBe('S$5.00')
+    expect(filedUnder(at('2026-10-02', 5, 'Food', { kind: 'refund' }))).toBe('Newer kind')
   })
 })
 

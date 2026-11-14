@@ -299,6 +299,7 @@ export function RecoveryAttention({
                     category: salvage.category,
                     date: salvage.day,
                     notes: salvage.notes,
+                    kind: salvage.kind,
                   }
             }
             onAdded={(added) => {

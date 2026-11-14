@@ -1044,7 +1044,7 @@ test.describe('Command palette', () => {
       await page.keyboard.press('ArrowDown')
       expect(await optionMarks(palette), `${theme}: actions`).toEqual(marked(/^Go to Ledger/))
       await combobox.fill('kopi')
-      await expect(palette.getByRole('group', { name: 'Expenses' })).toBeVisible()
+      await expect(palette.getByRole('group', { name: 'Entries' })).toBeVisible()
       await page.keyboard.press('ArrowDown')
       expect(await optionMarks(palette), `${theme}: expenses`).toEqual(marked(/kopi/i))
 
@@ -1052,7 +1052,7 @@ test.describe('Command palette', () => {
       await page.keyboard.press('Enter')
       await expect(palette.getByRole('option', { name: /^Confirm large amount/ })).toBeVisible()
       // The expense search has caught up with the new query.
-      await expect(palette.getByRole('group', { name: 'Expenses' })).toHaveCount(0)
+      await expect(palette.getByRole('group', { name: 'Entries' })).toHaveCount(0)
       expect(await optionMarks(palette), `${theme}: the large amount`).toEqual(
         marked(/^Confirm large amount/),
       )
@@ -1263,7 +1263,7 @@ test.describe('Ledger rows', () => {
       const palette = await openPalette(page)
       await palette.getByRole('combobox').fill('row 0123')
       await expect(
-        palette.getByRole('group', { name: 'Expenses' }).getByRole('option').first(),
+        palette.getByRole('group', { name: 'Entries' }).getByRole('option').first(),
       ).toContainText('row 0123')
     })
   }

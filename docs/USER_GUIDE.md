@@ -76,11 +76,11 @@ Settings → **Categories**: add a category, rename one by typing over its name,
 
 Settings → **Budgets**: a monthly cap per category, more than 0 and at most 10,000,000. Empty the field to remove a budget.
 
-## Money in
+## Income
 
 The Add sheet (the **+** button, or Ctrl+N) has an **Expense | Income** switch. Income is money that came in: pay, an allowance, something you sold. It has a name, an amount, a day and notes, and no category.
 
-Income is never spending. It is in no total, budget, chart or forecast. Pulse shows it on its own line under the total ("Money in S$790.00 · S$178.00 more than spent"), and the Ledger lists it with a **+** and the word "income", summed apart from the spending. Search the Ledger for "income" to see every one. The Edit sheet has the same switch, so an entry made as the wrong kind is one tap to put right.
+Income is never spending. It is in no total, budget, chart or forecast. Pulse shows it on its own line under the total ("Income S$790.00 · S$178.00 more than spent"), and the Ledger lists it with a **+** and the word "income", summed apart from the spending. Search the Ledger for "income" to see every one. The Edit sheet has the same switch, so an entry made as the wrong kind is one tap to put right.
 
 Update SpendTrack on every device before adding income: a device on 0.18 or older keeps the entry exactly, and shows it as an expense under Other until it is updated.
 

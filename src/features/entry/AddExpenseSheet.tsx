@@ -36,6 +36,8 @@ interface Props {
     category?: string
     date?: DayKey
     notes?: string
+    /** Opens the sheet on Income (the Fix of an unreadable income). */
+    kind?: EntryKind
   }
   /** The entry was added (before the sheet closes): Recovery's Fix marks its row fixed. */
   onAdded?: (added: ExpenseView) => void
@@ -84,8 +86,9 @@ export function AddExpenseSheet({
 
   const [form, setForm] = useState(() => formFrom(prefill, today))
   const [errors, setErrors] = useState<ExpenseFormErrors>({})
-  // Money in (F-058) is added from the same sheet: an expense every time it opens.
-  const [kind, setKind] = useState<EntryKind>('expense')
+  // Income (F-058) is added from the same sheet: an expense every time it opens, unless what
+  // opened it says otherwise.
+  const [kind, setKind] = useState<EntryKind>(prefill?.kind ?? 'expense')
   const income = kind === 'income'
 
   // Refill the form each time the sheet opens (SmartInput passes what was typed as a prefill),
@@ -99,7 +102,7 @@ export function AddExpenseSheet({
     if (open) {
       setForm(formFrom(prefill, today))
       setErrors({})
-      setKind('expense')
+      setKind(prefill?.kind ?? 'expense')
     }
   }
 
