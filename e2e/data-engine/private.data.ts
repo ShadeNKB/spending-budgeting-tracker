@@ -97,9 +97,7 @@ test.afterAll(async () => {
 /** Generates a private sync through the real panel; resolves to the code read off the screen. */
 async function generatePrivate(d: Device): Promise<string> {
   const sheet = await openSettingsTab(d.page, 'Sync')
-  await expect(
-    sheet.getByText(/What a device sends is encrypted on that device first/),
-  ).toBeVisible()
+  await expect(sheet.getByText(/A sync started here is private/)).toBeVisible()
   await sheet.getByRole('button', { name: 'Generate sync code for this device' }).click()
   await expect(
     toasts(d.page).getByText('Private sync code created. Enter it on your other device.'),
@@ -343,9 +341,7 @@ test('AC-P19: before a private sync is made, and a mistyped private code', async
   page,
 }, testInfo) => {
   const sheet = await openSync(page, testInfo, { expenses: JSON.stringify(RICH) })
-  await expect(
-    sheet.getByText(/What a device sends is encrypted on that device first/),
-  ).toBeVisible()
+  await expect(sheet.getByText(/A sync started here is private/)).toBeVisible()
   await sheet.getByRole('textbox', { name: 'Sync code' }).fill(`${KAT.slice(0, -1)}0`)
   await sheet.getByRole('button', { name: 'Join', exact: true }).click()
   await expect(
@@ -385,13 +381,15 @@ test('AC-P19: fenced out of a sync that was made private: the code field, in pla
   })
   await expect(
     sheet
-      .getByText('Sync was made private on your other device. Enter the private code shown there.')
+      .getByText('Sync was made private on your other device. Enter the new sync code shown there.')
       .first(),
   ).toBeVisible({ timeout: 30_000 })
   await expect(sheet.getByRole('textbox', { name: 'Sync code' })).toBeVisible()
+  // one code on screen: the old one, which no device syncs with any more, is not shown
+  await expect(sheet.getByRole('button', { name: 'Show code' })).toHaveCount(0)
   await expect(
     sheet.getByText(
-      'No code? Disconnect, then start a new sync: your entries stay on this device.',
+      'No code? Use Disconnect at the bottom of this page, then start a new sync. Your entries stay on this device.',
     ),
   ).toBeVisible()
   // fenced for good: the marker is remembered, and the row is left as it is
@@ -418,7 +416,7 @@ test('3.9, AC-P19: a copy marked newer: Replace asks first, then repairs it from
   await replace.click()
   const ask = sheet.getByRole('group', { name: "Replace the synced copy with this device's?" })
   await expect(ask.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused()
-  await expect(ask).toContainText('Anything that was only in the synced copy is lost.')
+  await expect(ask).toContainText('Anything that is no longer on any of your devices is lost.')
   expect(relay.row(KAT_ROW)?.payload).toEqual(NEWER)
   await gate(page, testInfo)
 

@@ -154,7 +154,7 @@ export function BackupPanel() {
           {synced
             ? `Synced through your relay: every linked device has a full copy${demo === 'sample' ? ' (the sample data stays on this device)' : ''}. ${
                 privateSync
-                  ? 'What a device sends is encrypted on that device first: only a device with your sync code can read the relay copy.'
+                  ? 'What a device sends is encrypted on that device first: only a device with your sync code can read the synced copy from now on.'
                   : "The relay copy isn't encrypted yet: until the database lockdown (update 005), anyone with this app's public key could read it."
               }`
             : 'Your data is stored only on this device. Download a backup regularly.'}

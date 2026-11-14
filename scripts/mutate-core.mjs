@@ -26,7 +26,8 @@
 // sync's (PR-6): P1 a private row force-written, P2 an inner revision that is not the envelope's
 // merged, P3 what does not open passed to the merge, P4 one IV for every seal, P5 a cycle writing
 // over a copy marked newer, P6 a private sync on the upsert transport, P7 a fence that is not
-// saved; and PR-2's
+// saved, P8 a setup changed in another tab not followed, P9 a newer copy pulled again by every
+// poll, P10 a write sent after the setup changed mid-cycle; and PR-2's
 // two survivors by name, M23 (absorb's raw copy of a damaged envelope ignored) and M34 (outbox
 // written with sync off).
 // A mutation may need more than one edit (`edits`); each anchor must occur exactly once.
@@ -348,7 +349,7 @@ const SYNC_MUTATIONS = [
     file: 'src/stores/syncEngine.ts',
     find: "        force: b.kind === 'plain' && conflicts >= CAS_FORCE_AFTER && step.base !== null,\n",
     replace: '        force: conflicts >= CAS_FORCE_AFTER && step.base !== null,\n',
-    expect: 'AC-P8: a private row is never force-written',
+    expect: 'AC-P7: a private row is never force-written',
   },
   {
     id: 'P2',
@@ -373,13 +374,13 @@ const SYNC_MUTATIONS = [
     file: 'src/stores/syncEngine.ts',
     find: '  const iv = crypto.getRandomValues(new Uint8Array(12))\n',
     replace: '  const iv = new Uint8Array(12)\n',
-    expect: 'AC-P7: every seal draws a fresh IV',
+    expect: 'AC-P8: every seal draws a fresh IV',
   },
   {
     id: 'P5',
     name: 'A cycle writes over a copy marked newer',
     file: 'src/stores/syncEngine.ts',
-    find: '      if (!ownerReplace || pulled === null) {\n',
+    find: '      if (!ownerReplace() || pulled === null) {\n',
     replace: '      if (pulled === null) {\n',
     expect: 'AC-P6: a newer envelope pauses and is never written over (only the owner may, 3.9)',
   },
@@ -398,6 +399,30 @@ const SYNC_MUTATIONS = [
     find: '    storage.setFenced(b.code, why, now)\n',
     replace: '',
     expect: 'AC-P14: a fenced device never touches the row again once the marker is replaced',
+  },
+  {
+    id: 'P8',
+    name: 'A cycle does not follow a setup changed in another tab',
+    file: 'src/stores/syncEngine.ts',
+    find: '  if (changedElsewhere(code)) return followSaved()\n',
+    replace: '',
+    expect: '3.2 / AC-P3: a tab on the old code asks its row nothing once the setup changed',
+  },
+  {
+    id: 'P9',
+    name: 'A copy marked newer is not remembered: every poll pulls and opens it again',
+    file: 'src/stores/syncEngine.ts',
+    find: '        if (pulled !== null) setEtag(port, b.rowId, pulled.etag, null)\n',
+    replace: '',
+    expect: 'AC-P6: after the pause the polls are HEADs',
+  },
+  {
+    id: 'P10',
+    name: 'A setup changed while the copy was sealed still gets the write',
+    file: 'src/stores/syncEngine.ts',
+    find: '    if (changedElsewhere(b.code)) {\n      forgetSent(step.sent)\n      return followSaved()\n    }\n',
+    replace: '',
+    expect: 'AC-P3: a setup changed elsewhere while a copy is being sealed gets no write',
   },
   {
     id: 'M23',

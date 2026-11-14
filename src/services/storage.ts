@@ -47,14 +47,18 @@ const isQuota = (err: unknown): boolean =>
 let quotaWarned = false
 
 /**
- * Writes one key. `area` is the Storage to write (the engine passes the one it booted on, so two
- * engines in one test each write their own tab's view); it defaults to `localStorage`.
+ * The storage this module works on: the page's own, bound the first time it is needed. A page
+ * has one `localStorage` for its whole life, so nothing changes there; two devices in one test
+ * each keep their own sync setup, where the last one booted used to hold both.
  */
-export function safeSet(
-  key: string,
-  value: string,
-  area: Pick<Storage, 'setItem'> = localStorage,
-): void {
+let bound: Storage | null = null
+const page = (): Storage => (bound ??= localStorage)
+
+/**
+ * Writes one key. `area` is the Storage to write (the engine passes the one it booted on, so two
+ * engines in one test each write their own tab's view); it defaults to this page's.
+ */
+export function safeSet(key: string, value: string, area: Pick<Storage, 'setItem'> = page()): void {
   try {
     area.setItem(key, value)
   } catch (err) {
@@ -79,7 +83,7 @@ function read(key: string): string | null {
 /** The stored value; null when the key is absent; undefined when storage refused the read. */
 function readKey(key: string): string | null | undefined {
   try {
-    return localStorage.getItem(key)
+    return page().getItem(key)
   } catch {
     return undefined
   }
@@ -88,7 +92,7 @@ function readKey(key: string): string | null | undefined {
 /** Best effort: a key that cannot be removed is read the same way next time. */
 function forget(key: string): void {
   try {
-    localStorage.removeItem(key)
+    page().removeItem(key)
   } catch {
     // storage refused: the next read decides again from the same keys
   }
@@ -309,9 +313,9 @@ export const storage = {
     if (id === null) {
       // the private code first: were the rest to fail, the device must not stay private
       // with nothing on screen saying so
-      localStorage.removeItem(PRIVATE_KEY)
-      localStorage.removeItem(SYNC_KEY)
-      localStorage.removeItem(SYNC_ID_KEY)
+      page().removeItem(PRIVATE_KEY)
+      page().removeItem(SYNC_KEY)
+      page().removeItem(SYNC_ID_KEY)
       return
     }
     // The plain writer never writes over a private setup (3.2): start-up and another tab

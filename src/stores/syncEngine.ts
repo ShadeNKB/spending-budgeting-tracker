@@ -146,7 +146,7 @@ export function syncMessage(
     case 'denied':
       return 'Sync paused: the sync server refused access. Your data is safe on this device.'
     case 'moved-private':
-      return 'Sync was made private on your other device. Enter the private code shown there.'
+      return 'Sync was made private on your other device. Enter the new sync code shown there.'
     case 'no-cas':
       return 'Sync paused: this sync server cannot keep a private sync safe yet. Your data is safe on this device.'
     case 'off':
@@ -156,7 +156,7 @@ export function syncMessage(
 
 /** A 53400 from the relay: it will not take another row. */
 export const FULL_RELAY_MESSAGE = 'The sync relay is full. Your changes are saved on this device.'
-export const REPAIRED_MESSAGE = 'The sync copy was damaged. Restored it from this device.'
+export const REPAIRED_MESSAGE = 'The synced copy was damaged. Restored it from this device.'
 const INVALID_CODE_MESSAGE = "That code isn't valid."
 /** What is wrong with a typed private code, by the reason its check gives (PRIVATE-SYNC 3.5). */
 const PRIVATE_CODE_MESSAGE: Record<St5Failure, string> = {
@@ -390,7 +390,8 @@ interface Bucket {
   readonly kind: 'plain' | 'e2e'
   readonly code: string
   readonly rowId: string
-  readonly topic: string
+  /** A promise: a plain code's topic is a hash, worked out off the cycle's path. */
+  readonly topic: Promise<string>
   readonly keys: SyncKeys | null
 }
 
@@ -399,17 +400,29 @@ class BadCodeError extends Error {}
 
 async function deriveBucket(code: string): Promise<Bucket> {
   if (!isPrivateCode(code)) {
-    return { kind: 'plain', code, rowId: code, topic: await topicOf(code), keys: null }
+    // Never awaited by a cycle, as before private sync: a plain bucket pulls and pushes
+    // without the hash, so a browser with no SubtleCrypto (a page not served over HTTPS)
+    // still syncs, with no live updates.
+    const topic = Promise.resolve().then(() => topicOf(code))
+    topic.catch(() => undefined)
+    return { kind: 'plain', code, rowId: code, topic, keys: null }
   }
   const parsed = parseSyncCode(code)
   if (parsed.kind !== 'e2e') throw new BadCodeError()
   const keys = await deriveKeys(parsed.secret)
-  return { kind: 'e2e', code, rowId: keys.rowId, topic: keys.topic, keys }
+  return { kind: 'e2e', code, rowId: keys.rowId, topic: Promise.resolve(keys.topic), keys }
 }
 
 /** The bucket of a code, derived once per code (the raw code is never a row id or a topic). */
 function bucketFor(code: string): Promise<Bucket> {
-  if (bucket?.code !== code) bucket = { code, value: deriveBucket(code) }
+  if (bucket?.code !== code) {
+    const value = deriveBucket(code)
+    bucket = { code, value }
+    // A derivation that failed is tried again by the next cycle, never kept.
+    value.catch(() => {
+      if (bucket?.value === value) bucket = null
+    })
+  }
   return bucket.value
 }
 
@@ -1091,7 +1104,7 @@ function mergeStep(b: Bucket, pulled: Pulled | null, reason: CycleReason): Step 
     // never by a device that has not synced with this code (it might not be ours to repair).
     if (!unreadable) port.quarantine(dec.report.quarantined)
     // The owner's own ask (3.9) does not wait out the pace of automatic repairs.
-    if (!established || (!ownerReplace && now - port.meta().repairAt < REPAIR_EVERY_MS)) {
+    if (!established || (!ownerReplace() && now - port.meta().repairAt < REPAIR_EVERY_MS)) {
       throw new InvalidRemoteError()
     }
     // The quarantine entry holds an excerpt; the push over the copy waits until this device
@@ -1224,20 +1237,28 @@ function landed(step: PushStep, b: Bucket, etag: string): number {
   remember(sentEtags, etag)
   pushedThisSession.add(code)
   establish(code)
-  if (repaired && !toastedOnce.has('repair')) {
+  // The owner's own replace is answered by the panel, in its own words (3.9).
+  if (repaired && !ownerReplace() && !toastedOnce.has('repair')) {
     toastedOnce.add('repair')
     useUIStore.getState().pushToast({ kind: 'warning', message: REPAIRED_MESSAGE })
   }
   // The other v5 devices hear it at once (best effort: row events and polling still carry it).
   const dev = port.deviceId()
-  announce(b.topic, { rev: step.sent.rev, dev })
+  const rev = step.sent.rev
+  void b.topic.then(
+    (topic) => {
+      announce(topic, { rev, dev })
+    },
+    () => undefined,
+  )
   return waiting
 }
 
 /** The relay refused the payload (22023): too large once its jsonb text is over the limit. */
-function tooLargeForRelay(err: unknown, step: PushStep): boolean {
+function tooLargeForRelay(err: unknown, step: PushStep, sent: unknown): boolean {
   if (!(err instanceof SyncTransportError) || err.kind !== 'invalid') return false
-  const bytes = new TextEncoder().encode(JSON.stringify(step.wire)).length
+  // What was sent: a private bucket's envelope, not the payload inside it (3.3).
+  const bytes = new TextEncoder().encode(JSON.stringify(sent)).length
   return bytes * JSONB_SLACK > RPC_PAYLOAD_MAX || step.chars > WIRE_PUSH_MAX
 }
 
@@ -1304,7 +1325,7 @@ async function attempts(
     if (gen !== setupGen) return offResult()
     let toMerge = read.kind === 'ok' ? read.pulled : null
     if (read.kind === 'newer') {
-      if (!ownerReplace || pulled === null) {
+      if (!ownerReplace() || pulled === null) {
         // Judged on a header nobody signed: a cycle never writes over it (the owner can, 3.9).
         // Remembered, so the next poll is a HEAD and does not pull and open it again.
         if (pulled !== null) setEtag(port, b.rowId, pulled.etag, null)
@@ -1330,6 +1351,12 @@ async function attempts(
       }
       payload = sealed
     }
+    // Asked again right before the write: a setup changed in another tab while this cycle
+    // pulled, merged or sealed gets no write from it.
+    if (changedElsewhere(b.code)) {
+      forgetSent(step.sent)
+      return followSaved()
+    }
     let res: PushOutcome
     try {
       res = await t.push(b.rowId, payload, {
@@ -1343,7 +1370,7 @@ async function attempts(
       })
     } catch (err) {
       // Kept in sentPushes: a push whose answer was lost may still land (its echo is ours).
-      if (gen === setupGen && tooLargeForRelay(err, step)) {
+      if (gen === setupGen && tooLargeForRelay(err, step, payload)) {
         return pause('too-large', syncMessage('too-large', Math.round(step.chars / 1024)))
       }
       throw err
@@ -1404,10 +1431,57 @@ function fenceOut(b: Bucket, raw: unknown, now: number): SyncResult {
   } catch {
     // storage refused: fenced for this session, and again at the next pull of the marker
   }
+  // It asks that row nothing from here on, live updates included: the channel closes too.
+  stopRealtime()
+  publishLive()
   return fencedResult(why)
 }
 
+/** This tab's own setup reached storage (a code storage refused still works for the session). */
+let setupSaved = false
+
+/**
+ * Another tab changed this device's sync since this tab set up (3.2): another code, another
+ * kind, or none at all. False while the saved setup is this tab's, or cannot be read just now.
+ */
+function changedElsewhere(code: string): boolean {
+  let cfg: ReturnType<typeof storage.getSyncConfig>
+  try {
+    cfg = storage.getSyncConfig()
+  } catch {
+    return false
+  }
+  if ((cfg?.kind === 'plain' || cfg?.kind === 'e2e') && cfg.code === code) return false
+  // Nothing saved, and this tab's own setup never was (storage refused it): the code works
+  // for this session, as it always did.
+  return cfg !== null || setupSaved
+}
+
+/**
+ * Follows the setup another tab saved (3.2): this tab leaves its bucket with no request and
+ * without touching storage, then starts from what is saved, as a page load does. A tab left
+ * on a plain code would otherwise keep sending, unencrypted, what the device adds after it
+ * went private in the other tab.
+ */
+function followSaved(): SyncResult {
+  stop()
+  useSyncStore.setState({
+    syncId: null,
+    cloudStatus: 'off',
+    lastSyncAt: null,
+    lastError: null,
+    pendingLocal: false,
+    pending: 0,
+    waitingForOld: 0,
+    legacyWriterAt: null,
+    view: null,
+  })
+  useSyncStore.getState().initSync()
+  return offResult()
+}
+
 async function cycle(code: string, gen: number, reason: CycleReason): Promise<SyncResult> {
+  if (changedElsewhere(code)) return followSaved()
   // A fenced device makes no request (3.7).
   const cfg = readConfig()
   if (cfg?.kind === 'plain' && cfg.code === code && cfg.fenced !== undefined) {
@@ -1417,9 +1491,13 @@ async function cycle(code: string, gen: number, reason: CycleReason): Promise<Sy
   let b: Bucket
   try {
     b = await bucketFor(code)
-  } catch {
-    // a stored private code that no longer parses: there is no row to ask for
-    return gen === setupGen ? pause('not-found', syncMessage('not-found')) : offResult()
+  } catch (err) {
+    if (gen !== setupGen) return offResult()
+    // A stored private code that no longer parses: there is no row to ask for. Any other
+    // failure (the keys could not be derived just now) is a failed cycle, and retried.
+    return err instanceof BadCodeError
+      ? pause('not-found', syncMessage('not-found'))
+      : fail(err, reason)
   }
   if (gen !== setupGen) return offResult()
   // A refusal the relay's answer to a fresh probe may explain asks again within the cycle.
@@ -1719,6 +1797,8 @@ async function ensureSubscribed(gen: number): Promise<void> {
   const code = useSyncStore.getState().syncId
   if (code === null || gen !== setupGen || realtimeUnsub !== null || subscribingGen === gen) return
   if (hidden()) return
+  // A setup changed in another tab: the next cycle follows it, and this one opens no channel.
+  if (changedElsewhere(code)) return
   // A fenced device asks its old bucket nothing, live updates included (3.7).
   const cfg = readConfig()
   if (cfg?.kind === 'plain' && cfg.fenced !== undefined) return
@@ -1731,7 +1811,7 @@ async function ensureSubscribed(gen: number): Promise<void> {
     // and what it delivered would be an envelope.
     const rowEvents = b.kind === 'plain' && !tableDenied && !rowEventsFailed
     const unsubscribe = await subscribeSync(
-      { topic: b.topic, row: b.rowId, rowEvents },
+      { topic: await b.topic, row: b.rowId, rowEvents },
       {
         onRowChange: (change) => {
           if (gen === setupGen) onRowChange(change)
@@ -1812,6 +1892,8 @@ export async function setupSync(syncId: string, user: boolean, join = false): Pr
     (saved?.kind === 'plain' || saved?.kind === 'e2e') && saved.code === syncId ? saved : null
   established = join ? savedHere?.established === true : (savedHere?.established ?? true)
   keepCode(syncId, established)
+  const kept = readConfig()
+  setupSaved = (kept?.kind === 'plain' || kept?.kind === 'e2e') && kept.code === syncId
   const gen = ++setupGen
   stopRealtime()
   clearTimers()
@@ -1846,8 +1928,13 @@ export async function setupSync(syncId: string, user: boolean, join = false): Pr
   return result
 }
 
-/** Set for the one cycle the owner asked to replace an unreadable private copy with (3.9). */
-let ownerReplace = false
+/**
+ * The setup the owner asked to replace an unreadable private copy in (3.9), while that ask is
+ * being answered: a cycle of any other setup (a Disconnect and a new code in between) never
+ * takes it for its own.
+ */
+let ownerReplaceGen: number | null = null
+const ownerReplace = (): boolean => ownerReplaceGen === setupGen
 
 /**
  * The owner's way out of a private row this device cannot read as current (PRIVATE-SYNC 3.9): a
@@ -1858,9 +1945,9 @@ let ownerReplace = false
 export function replaceRelayCopy(): Promise<SyncResult> {
   const code = useSyncStore.getState().syncId
   if (code === null || !isPrivateCode(code)) return Promise.resolve(offResult())
-  ownerReplace = true
+  ownerReplaceGen = setupGen
   return requestCycle('manual', true).finally(() => {
-    ownerReplace = false
+    ownerReplaceGen = null
   })
 }
 

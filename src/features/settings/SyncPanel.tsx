@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   Info,
   Download,
+  Upload,
   type LucideIcon,
 } from 'lucide-react'
 import { Button } from '../../ui/Button'
@@ -505,6 +506,23 @@ function SyncContent() {
   const statusId = useId()
   const reconnectHintId = useId()
   useFailingTurn(lastError)
+  // Replace answers a private copy this device cannot read as current, with no newer build to
+  // reload into (PRIVATE-SYNC 3.9). That pause can end by itself, when the other device
+  // repairs the copy: the block then leaves with focus inside it, its question included, so
+  // the question is taken back and Sync now takes the focus.
+  const canReplace =
+    syncId !== null &&
+    isPrivateCode(syncId) &&
+    lastError?.kind === 'update-required' &&
+    !buildWaiting
+  if (!canReplace && confirmReplace) setConfirmReplace(false)
+  const replaceShown = useRef(false)
+  useEffect(() => {
+    if (replaceShown.current && !canReplace && document.activeElement === document.body) {
+      syncNow.current?.focus()
+    }
+    replaceShown.current = canReplace
+  }, [canReplace])
   // "Synced · 2m ago" ages while the panel stays open, as on the pill; a retry counts down.
   useTick(lastError?.retryAt === undefined ? 15_000 : 5_000)
 
@@ -818,8 +836,8 @@ function SyncContent() {
           {privateSyncReady ? (
             <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
               Generate a sync code here, then enter it on your other device. There&apos;s no
-              account: the code links them. What a device sends is encrypted on that device first,
-              so only a device with the code can read the synced copy.
+              account: the code links them. A sync started here is private: each device encrypts
+              what it sends, so only a device with the code can read the synced copy.
             </p>
           ) : (
             <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
@@ -972,14 +990,15 @@ function SyncContent() {
               onActiveChange={setJoinActive}
             />
             <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
-              No code? Disconnect, then start a new sync: your entries stay on this device.
+              No code? Use Disconnect at the bottom of this page, then start a new sync. Your
+              entries stay on this device.
             </p>
           </div>
         )}
         {/* A private copy this device cannot read as current, with no newer build to reload
             into (PRIVATE-SYNC 3.9): the "newer" mark is read before the copy is opened, so a
             damaged one would pause sync for good. The owner may replace the copy. */}
-        {isPrivateCode(syncId) && lastError?.kind === 'update-required' && !buildWaiting && (
+        {canReplace && (
           <div className="flex flex-col gap-2">
             <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
               Reloaded and still paused? The synced copy may be damaged. This device can replace it
@@ -989,7 +1008,7 @@ function SyncContent() {
               <InlineConfirm
                 tone="warning"
                 question="Replace the synced copy with this device's?"
-                detail="Do this only if reloading didn't help. Your other devices keep their entries and add them back when they next sync. Anything that was only in the synced copy is lost."
+                detail="Do this only if reloading didn't help. Your other devices keep their entries and add them back when they next sync. Anything that is no longer on any of your devices is lost."
                 confirmLabel="Replace"
                 onConfirm={handleReplace}
                 onCancel={() => {
@@ -1014,14 +1033,16 @@ function SyncContent() {
                 {replacing ? (
                   <Loader2 size={14} className="animate-spin" aria-hidden />
                 ) : (
-                  <RefreshCw size={14} aria-hidden />
+                  <Upload size={14} aria-hidden />
                 )}
                 {replacing ? 'Replacing…' : 'Replace the synced copy'}
               </Button>
             )}
           </div>
         )}
-        <SyncCode code={syncId} />
+        {/* A fenced device's code is the old one, which no device syncs with any more: the
+            field above is where the new one goes, and one code on screen is enough. */}
+        {lastError?.kind !== 'moved-private' && <SyncCode code={syncId} />}
         {isPrivateCode(syncId) && (
           <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
             Private sync: what this device sends is encrypted here first. Only a device with this
@@ -1038,7 +1059,7 @@ function SyncContent() {
           syncId,
           // Disconnect forgets a private code for good (PRIVATE-SYNC 3.2): there is no Reconnect.
           isPrivateCode(syncId)
-            ? 'This device stops syncing and forgets the private code. Copy it first if your other device is not at hand. Your data stays on this device.'
+            ? 'This device stops syncing and forgets the sync code. Copy it first if you may link this device again. Your data stays here and on your other devices.'
             : 'This device stops syncing. Your data stays on this device, on your other devices and in the relay.',
         )}
       </div>

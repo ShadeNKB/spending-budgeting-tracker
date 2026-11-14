@@ -153,7 +153,7 @@ describe('a damaged relay copy is quarantined and repaired, at most once per 10 
     expect(store.getState().expenses).toBe(before) // nothing merged from it
     expect(store.getState().attention.quarantined).toBeGreaterThan(attention)
     expect(toastsOf(phone).map((t) => t.message)).toEqual([
-      'The sync copy was damaged. Restored it from this device.',
+      'The synced copy was damaged. Restored it from this device.',
     ])
   })
 
@@ -201,7 +201,7 @@ describe('a damaged relay copy is quarantined and repaired, at most once per 10 
     expect(relayRows()).toHaveLength(1)
     // Said once per session, however often it is repaired.
     expect(
-      toastsOf(phone).filter((t) => t.message.startsWith('The sync copy was damaged')),
+      toastsOf(phone).filter((t) => t.message.startsWith('The synced copy was damaged')),
     ).toHaveLength(1)
   })
 
@@ -730,6 +730,7 @@ describe('fences fail closed and resume (AC-20)', () => {
       phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
       const local = phone.expense.useExpenseStore.getState().expenses
       const marker = { version: '4.0', expenses: 'moved', categories: [], x5 }
+      expect(relay().channels.size).toBe(1)
       seedRow(SYNC_CODE, marker)
       const upserts = relay().upserts
 
@@ -737,6 +738,8 @@ describe('fences fail closed and resume (AC-20)', () => {
       expect(phone.sync.useSyncStore.getState().cloudStatus).toBe('paused')
       expect(relay().upserts).toBe(upserts)
       expect(rowPayload(SYNC_CODE)).toEqual(marker)
+      // it asks that row nothing from here on, live updates included: its channel is closed
+      expect(relay().channels.size).toBe(0)
       expect(phone.expense.useExpenseStore.getState().expenses).toBe(local)
       expect(JSON.parse(localStorage.getItem('st5:sync') ?? '{}')).toMatchObject({
         kind: 'plain',

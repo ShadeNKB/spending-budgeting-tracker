@@ -69,7 +69,7 @@ const MSG: Record<SyncFailure['kind'], string> = {
     "Sync paused: your data (1365 KB) is too large for the sync server. It's still saved here — export a backup.",
   moved: 'Sync moved to a newer version. Reload SpendTrack to update.',
   'moved-private':
-    'Sync was made private on your other device. Enter the private code shown there.',
+    'Sync was made private on your other device. Enter the new sync code shown there.',
   'no-cas':
     'Sync paused: this sync server cannot keep a private sync safe yet. Your data is safe on this device.',
   'update-required': 'Sync moved to a newer version. Reload SpendTrack to update.',
@@ -1545,7 +1545,7 @@ describe('a private sync, and a device fenced out of one', () => {
     render(<SyncPanel />)
     expect(
       screen.getByText(
-        "Generate a sync code here, then enter it on your other device. There's no account: the code links them. What a device sends is encrypted on that device first, so only a device with the code can read the synced copy.",
+        "Generate a sync code here, then enter it on your other device. There's no account: the code links them. A sync started here is private: each device encrypts what it sends, so only a device with the code can read the synced copy.",
       ),
     ).toBeInTheDocument()
     expect(document.body.textContent).not.toContain("isn't encrypted yet")
@@ -1565,7 +1565,7 @@ describe('a private sync, and a device fenced out of one', () => {
     fireEvent.click(screen.getByRole('button', { name: /Disconnect sync/ }))
     expect(
       screen.getByText(
-        'This device stops syncing and forgets the private code. Copy it first if your other device is not at hand. Your data stays on this device.',
+        'This device stops syncing and forgets the sync code. Copy it first if you may link this device again. Your data stays here and on your other devices.',
       ),
     ).toBeInTheDocument()
   })
@@ -1579,7 +1579,7 @@ describe('a private sync, and a device fenced out of one', () => {
     connectedPanel({ cloudStatus: 'paused', lastError: failure('moved-private') })
     expect(
       screen.getByText(
-        'No code? Disconnect, then start a new sync: your entries stay on this device.',
+        'No code? Use Disconnect at the bottom of this page, then start a new sync. Your entries stay on this device.',
       ),
     ).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('Sync code'), {
@@ -1594,6 +1594,13 @@ describe('a private sync, and a device fenced out of one', () => {
     )
     await settle()
     expect(setupSync).toHaveBeenCalledWith(PRIVATE, { join: true })
+  })
+
+  it('a fenced device shows one code field and not its old code', () => {
+    connectedPanel({ cloudStatus: 'paused', lastError: failure('moved-private') })
+    expect(screen.getByLabelText('Sync code')).toBeInTheDocument()
+    expect(screen.queryByText('Your sync code')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Show code' })).toBeNull()
   })
 
   it('a device that is not fenced has no code field in the linked view', () => {
@@ -1630,7 +1637,7 @@ describe('a private sync, and a device fenced out of one', () => {
       expect(replaceRelayCopy).not.toHaveBeenCalled()
       expect(within(question).getByRole('button', { name: 'Cancel' })).toHaveFocus()
       expect(question).toHaveAccessibleDescription(
-        "Do this only if reloading didn't help. Your other devices keep their entries and add them back when they next sync. Anything that was only in the synced copy is lost.",
+        "Do this only if reloading didn't help. Your other devices keep their entries and add them back when they next sync. Anything that is no longer on any of your devices is lost.",
       )
       fireEvent.click(within(question).getByRole('button', { name: 'Replace' }))
       await settle()
@@ -1670,6 +1677,26 @@ describe('a private sync, and a device fenced out of one', () => {
       expect(replaceRelayCopy).toHaveBeenCalledTimes(1)
       expect(toasts()).toEqual([['warning', MSG.network]])
       expect(replaceButton()).not.toBeNull()
+    })
+
+    it('when the pause ends by itself under the question, the question goes and Sync now has focus', () => {
+      vi.mocked(replaceRelayCopy).mockImplementation(() => Promise.resolve(OK))
+      connectedPanel(paused())
+      ask()
+      // the other device repaired the copy: a cycle of this one cleared the pause
+      act(() => {
+        useSyncStore.setState({ cloudStatus: 'synced', lastError: null })
+      })
+      expect(screen.queryByRole('group', { name: QUESTION })).toBeNull()
+      expect(replaceButton()).toBeNull()
+      expect(screen.getByRole('button', { name: 'Sync now' })).toHaveFocus()
+      // and the question is not waiting there the next time the pause comes
+      act(() => {
+        useSyncStore.setState({ cloudStatus: 'paused', lastError: failure('update-required') })
+      })
+      expect(screen.queryByRole('group', { name: QUESTION })).toBeNull()
+      expect(replaceButton()).not.toBeNull()
+      expect(replaceRelayCopy).not.toHaveBeenCalled()
     })
 
     it('is not offered on a plain sync, on any other pause, or while a new build waits', () => {

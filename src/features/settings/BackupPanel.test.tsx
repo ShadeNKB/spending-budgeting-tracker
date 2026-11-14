@@ -143,7 +143,7 @@ describe('Backup copy per state', () => {
     seed({ code: 'ST5-0004106-1050R3G-G28A1C6-0T3GFS3', count: 12 })
     expect(
       screen.getByText(
-        'Synced through your relay: every linked device has a full copy. What a device sends is encrypted on that device first: only a device with your sync code can read the relay copy.',
+        'Synced through your relay: every linked device has a full copy. What a device sends is encrypted on that device first: only a device with your sync code can read the synced copy from now on.',
       ),
     ).toBeInTheDocument()
     expect(document.body.textContent).not.toContain("isn't encrypted yet")
