@@ -104,7 +104,7 @@ The code field turns off auto-capitalise, auto-correct and spell-check. A join n
 
 A device on this release that pulls a moved marker from its **plain** bucket writes `fenced: { why, at }` into its plain config before it pauses. While `fenced` is set that device never pulls, pushes or re-creates that row, whatever the row holds later, a missing row included. Only joining another code or Disconnect clears it. Its entries, its outbox and its snapshots are untouched.
 
-- `why: private` pauses `moved-private`: "Sync was made private on your other device. Enter the private code shown there." Settings › Sync shows the code field in place. It is not a reload state (`needsReload` is false for it) and going offline does not replace it.
+- `why: private` pauses `moved-private`: "Sync was made private on your other device. Enter the new sync code shown there." Settings › Sync shows the code field in place. It is not a reload state (`needsReload` is false for it) and going offline does not replace it.
 - any other `why` keeps today's `moved` wording, now durable.
 
 Nothing in release 1 writes a marker. The fence ships first so that every device is already safe when release 2 does.
@@ -112,16 +112,16 @@ Nothing in release 1 writes a marker. The fence ships first so that every device
 ### 3.8 On screen
 
 - Settings › Sync, private bucket: the code masked as today (`••••-…-XXXX`), Show and Copy as today; under the code, one line: "Private sync: what this device sends is encrypted here first. Only a device with this code can read the synced copy from now on." (No badge on the status row: the row says what sync is doing, and one sentence says what kind it is.)
-- Settings › Sync, not linked, on a build whose relay can keep a private sync safe (`privateSyncReady`: the sync functions, or compare-and-set on the table): the intro says a new sync is encrypted on the device, and Generate makes a private code. Other builds keep the "isn't encrypted yet" intro and make a plain code.
+- Settings › Sync, not linked, on a build whose relay can keep a private sync safe (`privateSyncReady`: the sync functions, or compare-and-set on the table): the intro says a sync started here is private, and Generate makes a private code. Other builds keep the "isn't encrypted yet" intro and make a plain code.
 - Settings › Sync, plain bucket: the existing "isn't encrypted yet" line stays (release 2 adds the action).
 - Backup panel: its sentence follows the bucket's kind.
-- The sync pill: `moved-private` reads "enter private code" and `no-cas` "not available"; both open Settings › Sync.
+- The sync pill: `moved-private` reads "enter new sync code" and `no-cas` "server not ready"; both open Settings › Sync.
 - Device list: unchanged ("This device", "Other device").
 
 ### 3.9 The owner's ways out
 
 - **A private row this device cannot read as current** (`update-required` on a private bucket, while no newer build is waiting): Settings › Sync offers "Replace the synced copy", and asks first ("Replace the synced copy with this device's?", saying that other devices add their entries back when they next sync and that anything only the synced copy held is lost). Confirmed, it runs one ordinary cycle, under the lock, that treats the row as unreadable: nothing of it is merged, and this device's copy is sealed and written by compare-and-set on the etag that cycle pulled (never forced; a write that lands first is merged, not written over). It does not wait out the pace of automatic repairs, and it is not offered while a new build is waiting (Reload is the answer then) or on a plain sync. This is the repair for a forged or damaged header.
-- **Fenced with no code to enter**: the same panel says "No code? Disconnect, then start a new sync: your entries stay on this device."
+- **Fenced with no code to enter**: the same panel says "No code? Use Disconnect at the bottom of this page, then start a new sync. Your entries stay on this device." The old code is not shown while fenced: no device syncs with it any more.
 
 ## 4. Release 2: making an existing bucket private (gate D)
 
@@ -263,3 +263,21 @@ Where the build differs from the text first reviewed, and why. Each is reflected
 - **Replace is a cycle, not a separate writer** (3.9): it shares the lock, the compare-and-set and the conflict handling with every other write of a private row.
 - **Tests.** AC-P1 to P9 and P12 to P16 on the real engine against the fake relay (`src/stores/__tests__/sync.private.test.ts`); P10 in `src/services/storage.test.ts`; P11 in `src/data/local/__tests__/syncSeams.test.ts`; P17 to P19 and 3.9 in real browsers on Chromium and iPhone WebKit, P18 beside a build of the v0.20.0 tag (`e2e/data-engine/private.data.ts`).
 
+### Code reviews of the built branch (15 Nov)
+
+Three independent read-only reviews before the PR: security (verdict fail, on one major finding), sync correctness (pass with notes, the same major finding), and the interface (one blocker).
+
+- **A setup changed in another tab was not followed** (both code reviews, major). 3.2 asked for it and the first build did not do it: a tab left on a plain code kept pushing, in plaintext, what the device added after another tab made it private; a fenced tab stopped being fenced once another tab joined the private code. Taken: every cycle asks storage first and again right before its write (`changedElsewhere`, `followSaved`), and no channel is opened for a setup that changed. Tests on the real engine; mutations P8 and P10.
+- **A plain cycle waited for the realtime topic** (correctness, minor regression): without SubtleCrypto a plain sync paused `not-found`, and the failed derivation was cached. Taken: the topic is a promise only realtime awaits, and a failed derivation is not kept.
+- **A fenced device kept its channel** (correctness, minor). Taken: the fence closes it.
+- **The size refusal was judged on the inner payload** (both, minor). Taken: on what was sent.
+- **The replace flag could be seen by a cycle of another setup, and answered with two toasts** (both, nits). Taken: tied to the setup generation; the repair toast is left to the panel.
+- **Overclaims** (security, interface): the not-linked intro spoke for every sync on a screen that also joins plain ones; Backup's line lacked "from now on"; the changelog's headline lacked its condition; the guide lacked two limits. Taken.
+- **Interface**: one noun for the code ("sync code"), the fenced device hides its dead code and says where Disconnect is, the confirm says the loss in the owner's terms, Replace has its own icon, and focus goes to Sync now when the pause ends under the question. Declined, with reasons: a narrower button on desktop (every action in this panel is full width), "from now on" dropped from the line under the code (the security review asked for the opposite, and release 2 needs it), one verb for "enter" and "join" (the plain strings are 0.20.0's, and both verbs are natural).
+- **Test gaps closed**: AC-P3's second half (another tab), AC-P6 (the polls after a newer pause are HEADs; mutation P9), AC-P14 (the channel closes).
+- **Recorded, not changed**:
+  - Content that opens under the key but is not a valid payload of this format is quarantined as a plain bucket's is: only a holder of the code can produce it, and it can be read. "No copy is kept" (3.3) is about what does not open.
+  - Replace repairs a copy whose header is marked newer. A copy that opens and was written by a newer SpendTrack is merged and never written over: the pause stays, and Reload is the way.
+  - A cycle that starts as the page is hidden awaits `open` and `seal` before its request, so it may not get out before the page freezes. The change stays in the outbox.
+  - An older build's Disconnect on a private device's storage (0.11.0 to 0.20.0 offer one on the "newer SpendTrack" view) removes what that build knows of, not `st5:synckey`: release 1 is private again at its next load. Nothing is lost or exposed; the owner's Disconnect there is undone.
+  - A damaged `st5:synckey` beside an intact `st5:sync` marker reads as "set up by a newer SpendTrack", with Disconnect as the way out.

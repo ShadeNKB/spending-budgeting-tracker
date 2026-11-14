@@ -136,9 +136,11 @@ Share a code only with your own devices.
 - **A sync you already have is not changed by updating.** It stays a plain sync until you move it. Until "Make sync private" arrives, the way by hand is: **Disconnect** on every device, **Generate** on one, **Join** with the new code on the others. Nothing is lost: each device keeps its entries and a join merges them. The old copy stays on the relay until you delete its row there.
 - Update every device first. 0.20.0 and older say "That's a private sync code. Update SpendTrack on this device to use it."
 - What it doesn't hide: the relay still sees how big the copy is, when it changes and where a device connects from. Whatever a plain sync put on the relay earlier stays readable there.
+- What it doesn't prevent: whoever can write to the relay can replace the copy with garbage, or hand back an older one. A device notices a copy it can't read and repairs it from its own; an older copy changes nothing on a device that already holds newer entries.
+- With SpendTrack open in two tabs, a change of sync made in one (Disconnect, a new code) is followed by the other at its next sync.
 - There is no way to recover a lost code from the relay, and no way to lock one device out: copy the code from a linked device (Settings → Sync → **Show**), or start a new sync on the devices you keep.
 - **Replace the synced copy** appears only when a private sync is paused on a copy it can't read as current and no new version is waiting. Reload first. If sync stays paused, the copy may be damaged: Replace writes this device's copy over it, and your other devices add their entries back when they next sync.
-- "Sync was made private on your other device" means this device is still on the old plain code: enter the private code shown on the other device. No code? Disconnect, then start a new sync: your entries stay on this device.
+- "Sync was made private on your other device" means this device is still on the old plain code: enter the new sync code shown on the other device. No code? Use Disconnect at the bottom of the page, then start a new sync. Your entries stay on this device.
 
 **What Settings → Sync shows:**
 
