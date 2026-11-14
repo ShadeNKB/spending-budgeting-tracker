@@ -1,7 +1,7 @@
-import { createBrowserRouter, Navigate, type RouteObject } from 'react-router-dom'
+import { Navigate, type RouteObject } from 'react-router-dom'
 import { lazy, Suspense } from 'react'
 import { AppShell } from './AppShell'
-import { RouteError } from './RouteError'
+import { ScreenOutlet } from './RouteBoundary'
 import { PulseScreen } from '../features/pulse/PulseScreen'
 import { importWithReload } from '../lib/chunkReload'
 
@@ -17,7 +17,7 @@ const InsightsScreen = lazy(() =>
   })),
 )
 
-// A plain element rather than a component: this module exports the router config,
+// A plain element rather than a component: this module exports the route config,
 // so it must not declare components of its own (React Fast Refresh boundary).
 const screenSkeleton = (
   <div role="status" aria-live="polite" className="flex flex-col gap-4">
@@ -31,17 +31,17 @@ const screenSkeleton = (
   </div>
 )
 
+// Rendered by AppRoutes (RouteBoundary.tsx), whose boundary takes a failing shell: a full-page
+// card.
 export const appRoutes: RouteObject[] = [
   {
     path: '/',
     element: <AppShell />,
-    // The shell itself failed: a full-page recovery card.
-    errorElement: <RouteError scope="app" />,
     children: [
       {
         // Pathless layout route: a screen error renders inside the shell's <Outlet/>, so
-        // the TopBar, TabBar and overlays stay usable. The router clears it on navigation.
-        errorElement: <RouteError scope="screen" />,
+        // the TopBar, TabBar and overlays stay usable. The next navigation clears it.
+        element: <ScreenOutlet />,
         children: [
           // Render PulseScreen directly at "/" — avoids Navigate redirect that causes
           // AnimatePresence mode="wait" to show a blank frame on first cold visit.
@@ -69,5 +69,3 @@ export const appRoutes: RouteObject[] = [
     ],
   },
 ]
-
-export const router = createBrowserRouter(appRoutes)

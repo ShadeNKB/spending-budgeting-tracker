@@ -1,7 +1,7 @@
 import { Component, type ReactNode } from 'react'
 
 interface Props {
-  /** Changing this clears a caught error (for overlays: their open flag). */
+  /** Changing this clears a caught error (an overlay's open flag, a route's location key). */
   resetKey: unknown
   fallback: (error: unknown, reset: () => void) => ReactNode
   children: ReactNode
@@ -12,7 +12,7 @@ interface State {
   resetKey: unknown
 }
 
-/** Keeps a crashing overlay from taking the rest of the app down with it. */
+/** Keeps a crashing overlay or screen from taking the rest of the app down with it. */
 export class ErrorBoundary extends Component<Props, State> {
   override state: State = { caught: null, resetKey: this.props.resetKey }
 

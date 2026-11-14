@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, useSyncExternalStore } from 'react'
-import { isRouteErrorResponse, useLocation, useNavigate, useRouteError } from 'react-router-dom'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { AlertTriangle, Download, RotateCw, WifiOff } from 'lucide-react'
 import { Button } from '../ui/Button'
 import { SpendLogo } from '../ui/SpendLogo'
@@ -51,7 +51,6 @@ function rescueMessage(outcome: RescueOutcome): string {
 }
 
 function describeError(error: unknown): string {
-  if (isRouteErrorResponse(error)) return `${error.status} ${error.statusText}`
   if (error instanceof Error) return `${error.name}: ${error.message}`
   if (typeof error === 'string') return error
   return 'Unknown error'
@@ -195,19 +194,19 @@ function ErrorCard({
 }
 
 /**
- * Router errorElement. `screen` renders inside the app shell (TopBar, TabBar and the
- * overlays stay usable, and React Router clears it on the next navigation); `app` replaces
- * the whole page when the shell itself fails.
+ * What a route boundary shows (RouteBoundary.tsx). `screen` renders inside the app shell
+ * (TopBar, TabBar and the overlays stay usable, and the next navigation clears it); `app`
+ * replaces the whole page when the shell itself fails.
  */
 export function RouteError({
   scope,
+  error,
   controller = getUpdateController(),
 }: {
   scope: Scope
+  error: unknown
   controller?: UpdateController
 }) {
-  const error = useRouteError()
-
   if (scope === 'screen') {
     return (
       <section className="mx-auto w-full max-w-[560px] py-4 md:py-8">

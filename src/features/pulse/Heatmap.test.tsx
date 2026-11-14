@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { createMemoryRouter, MemoryRouter, RouterProvider, useLocation } from 'react-router-dom'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { Heatmap } from './Heatmap'
 import { useUIStore } from '../../stores/useUIStore'
@@ -29,22 +29,22 @@ function LocationProbe() {
 }
 
 function renderAt(element: ReactNode) {
-  const router = createMemoryRouter(
-    [
-      {
-        path: '/pulse',
-        element: (
-          <>
-            {element}
-            <LocationProbe />
-          </>
-        ),
-      },
-      { path: '/ledger', element: <LocationProbe /> },
-    ],
-    { initialEntries: ['/pulse'] },
+  return render(
+    <MemoryRouter initialEntries={['/pulse']}>
+      <Routes>
+        <Route
+          path="/pulse"
+          element={
+            <>
+              {element}
+              <LocationProbe />
+            </>
+          }
+        />
+        <Route path="/ledger" element={<LocationProbe />} />
+      </Routes>
+    </MemoryRouter>,
   )
-  return render(<RouterProvider router={router} />)
 }
 
 const grid = () => screen.getByRole('grid')

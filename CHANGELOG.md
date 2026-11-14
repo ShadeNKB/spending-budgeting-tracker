@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.18.1 — 2026-11-13
+
+Room in the bundle before T8's last slice (money in). Nothing on screen changes; the app starts on about 56 KB less JavaScript.
+
+### Changed (engineering)
+
+- **The router runs in its declarative mode** (`BrowserRouter` + `useRoutes`) instead of as a data router (`createBrowserRouter` + `RouterProvider`). The app has three screens and no loaders or actions; the data router was 55 KB of the bundle's 92.6 KB of router, all of it on the startup path. Navigation still runs inside a React transition, as before.
+- **The two error screens are the app's own boundaries** (`app/RouteBoundary.tsx`, on the `ErrorBoundary` the overlays already use) in place of the routes' `errorElement`, which only a data router reads. A screen that fails shows its card inside the shell; the shell failing shows the full-page card. Both clear as before, on the next navigation: a tab, Go to Pulse, the Back button, a change of the query alone.
+- **The Ledger drops a late filter write once the browser has left its address.** The declarative router resolves a relative write against the screen as last rendered, and a navigation is applied in a transition: a search typed in the Ledger, then a tab tapped within the search box's 0.4 s pause, would have put the Ledger back and swallowed the tap. Found by the independent review, before release; `LedgerScreen.url.test.tsx` holds it on a real `BrowserRouter` with a screen that is still loading.
+- Tests that mounted a data router (`createMemoryRouter`) mount the declarative one, so no test runs a router mode the app does not ship. `App.test.tsx` holds App's own wiring: the page's address, and the full-page card when the shell fails.
+- All JS 732.4 → 677.9 / 740 KB (62.1 KB left); boot 551,389 → 495,556 / 561,580 B (66,024 B left); eager 452,222 → 396,389 / 466,908 B. The budgets stay where they were: the room is for money in.
+
 ## 0.18.0 — 2026-11-13
 
 T8b, the second slice of T8 (money in and smarter budgets): charges due soon, and a month in review. No new data.
