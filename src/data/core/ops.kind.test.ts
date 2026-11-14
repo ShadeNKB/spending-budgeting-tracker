@@ -109,7 +109,7 @@ describe('addExpense with a kind (T8c)', () => {
           kind: kind as 'income',
         }),
       )
-    expect(add('refund')).toBe('kind')
+    expect(add('transfer')).toBe('kind')
     expect(add('')).toBe('kind')
     expect(add(1)).toBe('kind')
     expect(add(null)).toBe('kind')
@@ -217,7 +217,7 @@ describe('updateExpense with a kind (T8c)', () => {
     const rec = only(doc)
     const set = (d: Doc, kind: unknown): string =>
       code(() => updateExpense(d, mk(T0 + 1, c), rec.id, { kind: kind as 'income' }))
-    expect(set(doc, 'refund')).toBe('kind')
+    expect(set(doc, 'transfer')).toBe('kind')
     // sixteen extras already: a seventeenth key would be dropped on the next decode
     const full = Object.fromEntries(Array.from({ length: 16 }, (_, i) => [`k${String(i)}`, i]))
     const crowded = withExtras(doc, rec, extras(full))
@@ -280,11 +280,11 @@ describe('a kind across two devices and versions (T8c)', () => {
     const c: Hlc = { last: 0 }
     const doc = addExpense(EMPTY_DOC, mk(T0, c), { itemName: 'Shopee', amount: 25 }).doc
     const rec = only(doc)
-    const newer = withExtras(doc, rec, extras({ kind: 'refund' }))
+    const newer = withExtras(doc, rec, extras({ kind: 'transfer' }))
     const edited = only(updateExpense(newer, mk(T0 + 1, c), rec.id, { amount: 26 }).doc)
-    expect(kindOf(edited)).toBe('refund')
+    expect(kindOf(edited)).toBe('transfer')
     expect(kindOf(only(overWire({ ...newer, expenses: new Map([[rec.id, edited]]) })))).toBe(
-      'refund',
+      'transfer',
     )
   })
 })

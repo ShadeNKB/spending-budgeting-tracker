@@ -1,5 +1,5 @@
 import type { Expense } from '../types'
-import { KIND_KEY, kindOf } from './kind'
+import { KIND_KEY, categoryOf, kindOf } from './kind'
 import { entryDay } from './ledgerIndex'
 
 // One CSV writer for every export. The text inside an expense can come from an
@@ -48,7 +48,7 @@ export function csvDay(expense: Expense): string {
 }
 
 /**
- * The Type cell: `expense`, `income`, or the kind's own word when a newer SpendTrack wrote one
+ * The Type cell: `expense`, `income`, `refund`, or the kind's own word when a newer SpendTrack wrote one
  * this version does not know (`other` when it is not text).
  */
 export function csvType(expense: Expense): string {
@@ -60,15 +60,15 @@ export function csvType(expense: Expense): string {
 
 /**
  * The CSV export of `expenses`: BOM, header, one row per entry, CRLF line endings. Amounts are
- * positive for every type: the Type column says which way the money went. Only an expense has a
- * category.
+ * positive for every type: the Type column says which way the money went. An expense or a refund
+ * has a category.
  */
 export function expensesToCsv(expenses: readonly Expense[]): string {
   const rows = expenses.map((e) =>
     [
       toCsvCell(csvDay(e)),
       toCsvCell(e.itemName),
-      toCsvCell(kindOf(e) === 'expense' ? e.category : ''),
+      toCsvCell(categoryOf(e) ?? ''),
       toCsvCell(e.amount),
       toCsvCell(e.notes),
       toCsvCell(csvType(e)),

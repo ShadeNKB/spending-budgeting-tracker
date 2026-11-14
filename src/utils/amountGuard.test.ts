@@ -57,7 +57,7 @@ describe('unusualAmountThreshold', () => {
   it('reads expenses only: income, and kinds this version does not know, are no measure', () => {
     const history = rows(...MEDIAN_5_P95_20)
     const income = rows(790, 790, 790).map((e) => ({ ...e, ext: { kind: 'income' } }))
-    const newer = rows(5000).map((e) => ({ ...e, ext: { kind: 'refund' } }))
+    const newer = rows(5000).map((e) => ({ ...e, ext: { kind: 'transfer' } }))
     expect(unusualAmountThreshold([...income, ...newer, ...history])).toBe(50)
     // and the 200 rows it reads are the 200 newest expenses
     const many = rows(...repeat(5, 200)).map((e, i) => (i < 150 ? e : { ...e, amount: 1000 }))

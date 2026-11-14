@@ -103,7 +103,8 @@ export function computeInsights(
   for (const [cat, cur] of thisWeek) {
     const prev = lastWeek.get(cat) ?? 0
     if (prev <= 0) continue
-    const pct = (cur - prev) / prev
+    // refunds can take a week's net below zero: 100% down at most
+    const pct = Math.max(-1, (cur - prev) / prev)
     if (Math.abs(pct) >= 0.3 && Math.abs(cur - prev) >= 500) {
       deltas.push({ cat, pct, diff: (cur - prev) / 100 })
     }

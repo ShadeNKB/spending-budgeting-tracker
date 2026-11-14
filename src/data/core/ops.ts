@@ -19,6 +19,7 @@ import {
   FIELD_KEYS,
   KIND_INCOME,
   KIND_KEY,
+  KIND_REFUND,
   LIVE_AND_DELETED,
   NAME_MAX,
   NOTES_INPUT_MAX,
@@ -150,8 +151,8 @@ function checkNotes(notes: string): string | null {
 // ── helpers ─────────────────────────────────────────────────────────────────────────────────
 
 function checkKind(kind: unknown): EntryKind {
-  if (kind === 'expense' || kind === KIND_INCOME) return kind
-  throw new OpError('kind', 'Choose expense or income.')
+  if (kind === 'expense' || kind === KIND_INCOME || kind === KIND_REFUND) return kind
+  throw new OpError('kind', 'Choose expense, income or refund.')
 }
 
 /** True for a record this version reads as an income. */
@@ -296,6 +297,7 @@ export function addExpense(doc: Doc, ctx: OpCtx, input: NewExpenseInput): OpResu
   const kind = input.kind === undefined ? 'expense' : checkKind(input.kind)
   // An income is filed under no category: stored as Other, which teaches no item its category
   // below, whatever category came with it (the caller's own pick from past entries, often).
+  // A refund is filed like an expense, in the category it comes off.
   const category =
     kind === KIND_INCOME
       ? OTHER

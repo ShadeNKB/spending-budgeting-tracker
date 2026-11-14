@@ -6,7 +6,7 @@ import {
   weekdayShort,
   type DayKey,
 } from '../../lib/dates'
-import { categoryOf, kindOf } from '../../lib/kind'
+import { categoryOf, inSpending, kindOf } from '../../lib/kind'
 import type { LedgerIndex } from '../../lib/ledgerIndex'
 import type { Expense } from '../../types'
 
@@ -33,7 +33,7 @@ export function ledgerRowDateLabel(key: DayKey | null, today: DayKey): string {
 /**
  * Narrow already-ordered index rows to one category (`'all'` = any) and a search over the name,
  * category and notes. The search ignores case and surrounding spaces ("Kopi" finds "kopi").
- * Only an expense is in a category: money in is listed under "all" alone.
+ * An expense or a refund is in a category: income is listed under "all" alone.
  */
 export function filterLedgerRows(
   index: LedgerIndex,
@@ -57,14 +57,16 @@ export interface LedgerGroup {
   rowDateLabel: string
   items: Expense[]
   total: number
+  /** How many of `items` the total takes: 0 for a day of income or not-spending entries only. */
+  counted: number
 }
 
 /**
  * Group already-ordered index rows (newest day first, unreadable dates last) into day sections
- * in one pass, with totals summed in cents. A day's total is its spending: an entry in a
- * not-spending category (`aside`, F-057), money in, or an entry of a kind this version does not
- * know (F-058) is listed under its day and left out of that day's sum, as it is left out of
- * every other spending total.
+ * in one pass, with totals summed in cents. A day's total is its spending, net of the refunds
+ * listed under it: an entry in a not-spending category (`aside`, F-057), income, or an entry of
+ * a kind this version does not know (F-058) is listed under its day and left out of that day's
+ * sum, as it is left out of every other spending total.
  */
 export function groupLedgerRows(
   index: LedgerIndex,
@@ -86,20 +88,30 @@ export function groupLedgerRows(
         rowDateLabel: ledgerRowDateLabel(key, today),
         items: [],
         total: 0,
+        counted: 0,
       }
       groups.push(group)
       current = { group, cents: 0 }
     }
     current.group.items.push(expense)
-    if (kindOf(expense) === 'expense' && aside?.has(expense.category) !== true)
+    if (inSpending(kindOf(expense)) && aside?.has(expense.category) !== true) {
       current.cents += index.cents[r] ?? 0
+      current.group.counted += 1
+    }
   }
   if (current) current.group.total = current.cents / 100
   return groups
 }
 
 export type FlatLedgerItem =
-  | { kind: 'header'; id: string; key: DayKey | null; label: string; total: number }
+  | {
+      kind: 'header'
+      id: string
+      key: DayKey | null
+      label: string
+      total: number
+      counted: number
+    }
   | { kind: 'row'; id: string; expense: Expense; dateLabel: string }
 
 /**
@@ -116,6 +128,7 @@ export function flattenLedgerGroups(groups: readonly LedgerGroup[]): FlatLedgerI
       key: g.key,
       label: g.label,
       total: g.total,
+      counted: g.counted,
     })
     for (const e of g.items) {
       out.push({ kind: 'row', id: `r:${e.id}`, expense: e, dateLabel: g.rowDateLabel })

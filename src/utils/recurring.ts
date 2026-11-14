@@ -94,10 +94,13 @@ export function detectRecurring(index: LedgerIndex): RecurringGroup[] {
 function detect(index: LedgerIndex): RecurringGroup[] {
   if (index.validCount < 3) return []
 
-  // 1. Bucket rows (readable dates only) by exact normalized name.
+  // 1. Bucket rows (readable dates only) by exact normalized name. A refund (the index counts it
+  //    below zero) is in no bucket: money back that repeats, a card's cashback, is not a charge
+  //    to forecast or to be reminded of, and one refund of a subscription is not a payment of it.
   const buckets = new Map<string, number[]>()
   for (let p = 0; p < index.validCount; p++) {
     const r = index.order[p] ?? 0
+    if ((index.cents[r] ?? 0) < 0) continue
     const k = itemKey(index.expenses[r]?.itemName ?? '')
     if (!k) continue
     const bucket = buckets.get(k)

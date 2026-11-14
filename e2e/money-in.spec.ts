@@ -231,7 +231,7 @@ for (const theme of THEMES) {
   test(`Money in passes axe in the ${theme} theme: the Ledger rows, Pulse's line and both sheets`, async ({
     page,
   }, testInfo) => {
-    const newer = { ...row('n1', '2026-10-17', 25, 'shopee', 'Shopping'), kind: 'refund' }
+    const newer = { ...row('n1', '2026-10-17', 25, 'shopee', 'Shopping'), kind: 'transfer' }
     await seed(page, {
       theme,
       expenses: [...ROWS, income('i1', '2026-10-16', 790, 'allowance'), newer as SeedExpense],

@@ -6,13 +6,14 @@ import { kindOf } from './kind'
  * `spending`, so a total, a pace, a comparison, a forecast and a budget cannot disagree about
  * what was left out; every other part is summed on its own, and the Ledger lists them all.
  *
- * - `spending`: expenses that count.
+ * - `spending`: expenses that count, and the refunds that come off them (the index counts a
+ *   refund below zero, so every sum over this part is net).
  * - `aside`: expenses in a not-spending category (investments, savings, transfers: money
- *   moved, not spent).
+ *   moved, not spent), and refunds filed there.
  * - `income`: money that came in (T8c).
  * - `unknown`: entries of a kind this version does not know. Counted nowhere.
- * - `outgoing`: every expense, counted or not (`spending` and `aside` together, in the store's
- *   order): where recurring charges are looked for.
+ * - `outgoing`: every expense, counted or not, and no refund (in the store's order): where
+ *   recurring charges are looked for. Money back is not a charge to be reminded of.
  */
 export interface SpendingSplit<E extends Expense = Expense> {
   readonly spending: readonly E[]
@@ -34,7 +35,7 @@ const cache = new WeakMap<readonly Expense[], Cached>()
  * Splits `expenses` by kind and by the not-spending names. Cached on both arrays' identity (the
  * store keeps each while it is unchanged). A part that takes every entry is the `expenses`
  * array itself: with no income and no not-spending entry, the index built over `spending` is
- * the Ledger's own.
+ * the Ledger's own, refunds included.
  */
 export function splitSpending<E extends Expense>(
   expenses: readonly E[],
@@ -48,24 +49,32 @@ export function splitSpending<E extends Expense>(
   const aside: E[] = []
   const income: E[] = []
   const unknown: E[] = []
+  let refunds = 0
   for (const e of expenses) {
     const kind = kindOf(e)
     if (kind === 'income') income.push(e)
     else if (kind === 'unknown') unknown.push(e)
-    else if (names?.has(e.category) === true) aside.push(e)
-    else spending.push(e)
+    else {
+      if (kind === 'refund') refunds++
+      if (names?.has(e.category) === true) aside.push(e)
+      else spending.push(e)
+    }
   }
-  const allOutgoing = income.length === 0 && unknown.length === 0
+  // every entry is an expense or a refund
+  const allCounted = income.length === 0 && unknown.length === 0
   const split: SpendingSplit<E> = {
-    spending: allOutgoing && aside.length === 0 ? expenses : spending,
+    spending: allCounted && aside.length === 0 ? expenses : spending,
     aside: aside.length === 0 ? NONE : aside,
     income: income.length === 0 ? NONE : income,
     unknown: unknown.length === 0 ? NONE : unknown,
-    outgoing: allOutgoing
-      ? expenses
-      : aside.length === 0
-        ? spending
-        : expenses.filter((e) => kindOf(e) === 'expense'),
+    outgoing:
+      refunds > 0
+        ? expenses.filter((e) => kindOf(e) === 'expense')
+        : allCounted
+          ? expenses
+          : aside.length === 0
+            ? spending
+            : expenses.filter((e) => kindOf(e) === 'expense'),
   }
   cache.set(expenses, { names: asideCategories, split })
   return split

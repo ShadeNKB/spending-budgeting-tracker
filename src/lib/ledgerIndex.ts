@@ -1,5 +1,5 @@
 import { dayKeyOfStored, keyToLocalNoon, readStored, type DayKey, type DayRange } from './dates'
-import { filedUnder } from './kind'
+import { filedUnder, kindOf } from './kind'
 import type { Expense } from '../types'
 
 /**
@@ -17,7 +17,10 @@ export interface LedgerIndex {
   readonly expenses: readonly Expense[]
   /** Per row: its day (`entryDay`), `null` when it has none that can be read. */
   readonly dayKeys: readonly (DayKey | null)[]
-  /** Per row: the amount in integer cents (non-finite amounts count 0). */
+  /**
+   * Per row: the amount in integer cents, as a sum takes it: a refund is negative (non-finite
+   * amounts count 0). Every total built on the index is net of refunds for that reason alone.
+   */
   readonly cents: Float64Array
   /** Row indices, newest first: day desc, time desc, createdAt desc, id asc; unreadable last. */
   readonly order: Uint32Array
@@ -34,6 +37,10 @@ export interface LedgerIndex {
 /** Integer cents; non-finite amounts contribute nothing. */
 export const toCents = (amount: number): number =>
   Number.isFinite(amount) ? Math.round(amount * 100) : 0
+
+/** An entry's cents as a sum takes them: a refund is money back, so it counts below zero. */
+export const signedCents = (e: Expense): number =>
+  kindOf(e) === 'refund' ? -toCents(e.amount) : toCents(e.amount)
 
 /** The key two rows share when they are the same item: lower case, spaces collapsed. */
 export const itemKey = (name: string): string => name.toLowerCase().trim().replace(/\s+/g, ' ')
@@ -79,7 +86,7 @@ function buildIndex(expenses: readonly Expense[]): LedgerIndex {
     if (!e) continue
     const stored = readStored(e.date)
     const key = dayOr(e.day, stored.key)
-    const c = toCents(e.amount)
+    const c = signedCents(e)
     dayKeys[i] = key
     cents[i] = c
     totalCents += c
@@ -128,6 +135,7 @@ function buildIndex(expenses: readonly Expense[]): LedgerIndex {
     if (hit !== undefined) return hit
     const e = expenses[r]
     // what the row shows: an income is found by "income", never by the category it is stored with
+    // (a refund is found by its category, which it shows)
     const text = e ? `${e.itemName}\0${filedUnder(e)}\0${e.notes ?? ''}`.toLowerCase() : ''
     texts[r] = text
     return text

@@ -78,11 +78,21 @@ Settings → **Budgets**: a monthly cap per category, more than 0 and at most 10
 
 ## Income
 
-The Add sheet (the **+** button, or Ctrl+N) has an **Expense | Income** switch. Income is money that came in: pay, an allowance, something you sold. It has a name, an amount, a day and notes, and no category.
+The Add sheet (the **+** button, or Ctrl+N) has an **Expense | Income | Refund** switch. Income is money that came in: pay, an allowance, something you sold. It has a name, an amount, a day and notes, and no category.
 
 Income is never spending. It is in no total, budget, chart or forecast. Pulse shows it on its own line under the total ("Income S$790.00 · S$178.00 more than spent"), and the Ledger lists it with a **+** and the word "income", summed apart from the spending. Search the Ledger for "income" to see every one. The Edit sheet has the same switch, so an entry made as the wrong kind is one tap to put right.
 
 Update SpendTrack on every device before adding income: a device on 0.18 or older keeps the entry exactly, and shows it as an expense under Other until it is updated.
+
+## Refunds
+
+A refund is money back for something you paid for: a shop's refund, a friend paying their share of a dinner you put on your card. Choose **Refund** on the same switch, type the amount as it came back (S$20, not -20), and pick the category it comes off.
+
+A refund is spending undone. It comes off its category, its day and the month on every screen, budgets included: S$80 of shoes and S$30 back is S$50 of Shopping. Pulse says what came off under the total ("Refunds S$30.00 · taken off the total"), and the Ledger lists the refund with a **-** and the word "refund", so the rows of a day add up to the figure in its header.
+
+A refund counts in the month it is dated, not the month of the purchase: money back today for something bought last month lowers this month.
+
+Update SpendTrack on every device before entering a refund: a device on 0.19 lists it as "Newer kind" and leaves it out of its totals, and one on 0.18 or older shows it as an expense, until it is updated.
 
 ## Cross-device sync
 

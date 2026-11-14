@@ -85,9 +85,9 @@ export function PulseScreen() {
   const [yearOffset, setYearOffset] = useState(0)
   useEffect(() => whenIdle(preloadMonthlyBars), [])
 
-  // Every figure on this screen is spending: entries in a not-spending category (money moved, not
-  // spent) and money in are each summed on their own line and leave the rest, budgets included
-  // (F-057, F-058).
+  // Every figure on this screen is spending, net of refunds: entries in a not-spending category
+  // (money moved, not spent) and income are each summed on their own line and leave the rest,
+  // budgets included (F-057, F-058). What refunds took off the total has a line too.
   const { spending, aside, income } = splitSpending(expenses, asideCategories)
   const budgets = spendingBudgets(allBudgets, asideCategories)
   const index = getLedgerIndex(spending)
@@ -311,7 +311,17 @@ export function PulseScreen() {
                   </div>
                 )}
 
-                {asideTotal > 0 && (
+                {a.periodRefunded > 0 && (
+                  <div className="mt-1 text-[12px] text-[var(--text-secondary)]">
+                    Refunds{' '}
+                    <span className="font-mono tabular-nums text-white">
+                      {fmt(a.periodRefunded)}
+                    </span>
+                    <span className="text-[var(--text-tertiary)]"> · taken off the total</span>
+                  </div>
+                )}
+
+                {asideTotal !== 0 && (
                   <div className="mt-1 text-[12px] text-[var(--text-secondary)]">
                     Not spending{' '}
                     <span className="font-mono tabular-nums text-white">{fmt(asideTotal)}</span>

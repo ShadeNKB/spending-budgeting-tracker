@@ -18,7 +18,13 @@ import { PagedList, ROW_ACTION, RecoveryRow, RecoverySection, When } from './Rec
 
 /** A record's kind in words (T8c): an expense has none stored. */
 const kindLabel = (kind: string | undefined): string =>
-  kind === undefined ? 'Expense' : kind === 'income' ? 'Income' : 'Newer kind'
+  kind === undefined
+    ? 'Expense'
+    : kind === 'income'
+      ? 'Income'
+      : kind === 'refund'
+        ? 'Refund'
+        : 'Newer kind'
 
 // Changes from your other device, in Recovery (PR-4 track spec §3.2, F-004): what a sync merge
 // replaced or removed here, from the journal. Restore puts this device's version back as a new,
@@ -98,8 +104,9 @@ export function RecoveryChanges({
     <span className="text-white/90">
       {r.itemName === '' ? 'Unnamed entry' : r.itemName}
       {r.amount !== null && <> · {money(r.amount)}</>}
-      {/* Only an expense is in a category: an income says what it is there. */}
-      {r.kind !== undefined ? ` · ${kindLabel(r.kind)}` : r.category !== null && ` · ${r.category}`}
+      {/* An income says what it is where an expense has its category; a refund says both. */}
+      {r.kind !== undefined && ` · ${kindLabel(r.kind)}`}
+      {(r.kind === undefined || r.kind === 'refund') && r.category !== null && ` · ${r.category}`}
       {r.day !== null && ` · ${dayText(r.day)}`}
     </span>
   )

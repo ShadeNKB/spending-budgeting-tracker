@@ -135,6 +135,8 @@ export interface MonthAnalytics {
   /** Whole month, future-dated rows included. */
   readonly periodTotal: number
   readonly periodCount: number
+  /** What refunds took off `periodTotal` (it is net of them already); 0 with none. */
+  readonly periodRefunded: number
   /** The month's largest single entry (the newest of equals); null for an empty month. */
   readonly biggest: NotableEntry | null
   readonly comparison: PeriodComparison
@@ -170,6 +172,8 @@ export interface YearAnalytics {
   readonly isCurrent: boolean
   readonly periodTotal: number
   readonly periodCount: number
+  /** What refunds took off `periodTotal` (it is net of them already); 0 with none. */
+  readonly periodRefunded: number
   readonly comparison: PeriodComparison
   readonly monthlyTotals: readonly MonthTotal[]
   /**
@@ -199,8 +203,9 @@ export interface WeekAnalytics {
 
 const fromCents = (cents: number): number => cents / 100
 
+// Refunds can take a period's net below zero: that reads as 100% less, never as more than all.
 const changeOf = (curCents: number, prevCents: number): number | null =>
-  prevCents > 0 ? (curCents - prevCents) / prevCents : null
+  prevCents > 0 ? Math.max(-1, (curCents - prevCents) / prevCents) : null
 
 /** The current period so far vs its like-for-like window; nothing logged yet → no comparison. */
 const changeSoFar = (curCents: number, prevCents: number): number | null =>
@@ -216,7 +221,14 @@ export function categoryTotals(index: LedgerIndex, range: DayRange): Map<string,
   return totals
 }
 
-function topCategories(totals: Map<string, number>, totalCents: number): CategoryStat[] {
+/**
+ * The six categories with the most spent, net of their refunds. A share is of what those with a
+ * net spend hold between them: a category refunds took below zero is not listed, and must not
+ * push the others past 100%. With no such category that is the period's total.
+ */
+function topCategories(totals: Map<string, number>): CategoryStat[] {
+  let spentCents = 0
+  for (const c of totals.values()) if (c > 0) spentCents += c
   return Array.from(totals)
     .filter(([, c]) => c > 0)
     .sort(([a, ca], [b, cb]) => cb - ca || (a < b ? -1 : a > b ? 1 : 0))
@@ -224,7 +236,7 @@ function topCategories(totals: Map<string, number>, totalCents: number): Categor
     .map(([category, c]) => ({
       category,
       total: fromCents(c),
-      share: totalCents > 0 ? c / totalCents : 0,
+      share: spentCents > 0 ? c / spentCents : 0,
     }))
 }
 
@@ -261,6 +273,8 @@ function paidMonthlyCharges(
   const seen = new Map<string, { twoBack: number; oneBack: number; now: number; row: number }>()
   const range = { start: monthRange(twoBack).start, end }
   for (const r of rowsInRange(index, range)) {
+    // money back is no charge, whatever its name
+    if ((index.cents[r] ?? 0) < 0) continue
     const name = itemKey(index.expenses[r]?.itemName ?? '')
     if (!name) continue
     const month = index.dayKeys[r]?.slice(0, 7)
@@ -334,11 +348,13 @@ export function computeMonthAnalytics(
 
   const rows = rowsInRange(index, range)
   let totalCents = 0
+  let refundCents = 0
   let biggestRow = -1
   const catCents = new Map<string, number>()
   for (const r of rows) {
     const c = index.cents[r] ?? 0
     totalCents += c
+    if (c < 0) refundCents -= c
     // rows come newest first: of equal amounts the newest stays
     if (c > 0 && (biggestRow < 0 || c > (index.cents[biggestRow] ?? 0))) biggestRow = r
     const category = index.expenses[r]?.category ?? ''
@@ -410,7 +426,8 @@ export function computeMonthAnalytics(
         category,
         total: fromCents(spentC),
         budget: fromCents(capC),
-        used: capC > 0 ? spentC / capC : 0,
+        // never below none: refunds past the category's spending leave it at 0% used
+        used: capC > 0 ? Math.max(0, spentC) / capC : 0,
         expected: dom / dim,
         left: fromCents(Math.max(0, capC - spentC)),
         status,
@@ -442,7 +459,7 @@ export function computeMonthAnalytics(
       scope: whole ? 'all' : 'categories',
       cap: fromCents(measuredCap),
       spent: fromCents(measured),
-      used: measured / measuredCap,
+      used: Math.max(0, measured) / measuredCap,
       expected: dom / dim,
       left: fromCents(leftCents),
       perDay: daysLeft === null ? null : fromCents(leftCents) / daysLeft,
@@ -461,6 +478,7 @@ export function computeMonthAnalytics(
     isCurrent,
     periodTotal: fromCents(totalCents),
     periodCount: rows.length,
+    periodRefunded: fromCents(refundCents),
     biggest,
     comparison,
     todayTotal: fromCents(todayCents),
@@ -471,7 +489,7 @@ export function computeMonthAnalytics(
     daysLeft,
     dailyAverage: fromCents(totalCents) / dom,
     budget,
-    topCategories: topCategories(catCents, totalCents),
+    topCategories: topCategories(catCents),
     categoryBudgets,
     daily: isCurrent
       ? computeTrailingDaily(index, today, 30)
@@ -504,9 +522,11 @@ export function computeYearAnalytics(
   const monthCents = new Array<number>(12).fill(0)
   const catCents = new Map<string, number>()
   let totalCents = 0
+  let refundCents = 0
   for (const r of rows) {
     const c = index.cents[r] ?? 0
     totalCents += c
+    if (c < 0) refundCents -= c
     const m = Number(index.dayKeys[r]?.slice(5, 7) ?? '1') - 1
     monthCents[m] = (monthCents[m] ?? 0) + c
     const category = index.expenses[r]?.category ?? ''
@@ -561,12 +581,13 @@ export function computeYearAnalytics(
     isCurrent,
     periodTotal: fromCents(totalCents),
     periodCount: rows.length,
+    periodRefunded: fromCents(refundCents),
     comparison,
     monthlyTotals,
     monthlyAverage: fromCents(totalCents) / Math.max(1, monthsElapsed),
     monthsElapsed,
     highestMonth,
-    topCategories: topCategories(catCents, totalCents),
+    topCategories: topCategories(catCents),
     sparkline: { values: plotted.map((m) => m.total), labels: plotted.map((m) => m.label) },
     heatmap: heatmapEndingAt(index, isCurrent ? today : range.end),
   }

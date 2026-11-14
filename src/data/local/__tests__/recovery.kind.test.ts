@@ -1,6 +1,7 @@
 // The Recovery centre and an entry's kind (T8c). A kind another device changed is a change like
 // any other field's: listed with what it was and what it is, and put back by the same rule (only
-// while the entry still holds what that edit wrote). A Fix of an unreadable income opens on Income.
+// while the entry still holds what that edit wrote). A Fix of an unreadable income opens on Income,
+// a refund's on Refund.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { must } from '../../__tests__/support/must'
 import { KIND_KEY } from '../../core/constants'
@@ -136,6 +137,43 @@ describe('a kind another device changed (T8c)', () => {
     expect(await r.restoreChange(c.id)).toMatchObject({ applied: 0, why: 'already' })
     expect(kindHere(t, id)).toBe('income')
   })
+
+  it('a refund made here and undone elsewhere is listed as one, and Restore makes it a refund again', async () => {
+    const t = await bootTab({ keys: ownerV4({ rows: 20, tombstones: 0 }).keys })
+    await afterBoot()
+    synced(t)
+    const id = must(liveIds(t)[0], 'id')
+    const category = must(
+      t.store.getState().expenses.find((e) => e.id === id),
+      'entry',
+    ).category
+    t.store.getState().updateExpense(id, { kind: 'refund' })
+    port(t).applyRemote(kindOn(t, id, 'expense'))
+    expect(kindHere(t, id)).toBeUndefined()
+
+    const r = await api(t)
+    const c = must(r.changes()[0], 'conflict')
+    expect(c.before?.kind).toBe('refund')
+    // a refund has a category to show beside its kind
+    expect(c.before?.category).toBe(category)
+    expect(await r.restoreChange(c.id)).toMatchObject({ applied: 1, why: null })
+    expect(kindHere(t, id)).toBe('refund')
+  })
+
+  it('an income here made a refund elsewhere goes back to an income', async () => {
+    const t = await bootTab({ keys: ownerV4({ rows: 20, tombstones: 0 }).keys })
+    await afterBoot()
+    synced(t)
+    const id = must(liveIds(t)[0], 'id')
+    t.store.getState().updateExpense(id, { kind: 'income' })
+    port(t).applyRemote(kindOn(t, id, 'refund'))
+    expect(kindHere(t, id)).toBe('refund')
+    const r = await api(t)
+    const c = must(r.changes()[0], 'conflict')
+    expect(c.after?.kind).toBe('refund')
+    expect(await r.restoreChange(c.id)).toMatchObject({ applied: 1, why: null })
+    expect(kindHere(t, id)).toBe('income')
+  })
 })
 
 describe('an unreadable income that needs attention (T8c)', () => {
@@ -152,7 +190,8 @@ describe('an unreadable income that needs attention (T8c)', () => {
     rows.push(
       bad('q-income', { kind: 'income' }),
       bad('q-plain', {}),
-      bad('q-newer', { kind: 'refund' }),
+      bad('q-newer', { kind: 'transfer' }),
+      bad('q-refund', { kind: 'refund' }),
     )
     keys.expenses = JSON.stringify(rows)
     const t = await bootTab({ keys })
@@ -166,5 +205,7 @@ describe('an unreadable income that needs attention (T8c)', () => {
     expect(salvage('bad q-income')?.kind).toBe('income')
     expect(salvage('bad q-plain')).not.toHaveProperty('kind')
     expect(salvage('bad q-newer')).not.toHaveProperty('kind')
+    // a refund's Fix opens on Refund, with the category it was filed under
+    expect(salvage('bad q-refund')?.kind).toBe('refund')
   })
 })

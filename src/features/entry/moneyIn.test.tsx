@@ -174,7 +174,7 @@ describe('the Edit sheet: money in', () => {
   })
 
   it('a kind a newer SpendTrack wrote is said, offered no switch, and left exactly as it is', async () => {
-    await boot([{ ...KOPI, itemName: 'Shopee', kind: 'refund' }])
+    await boot([{ ...KOPI, itemName: 'Shopee', kind: 'transfer' }])
     const user = userEvent.setup()
     render(<EditExpenseSheet expense={view('e-1')} onClose={() => {}} />)
     expect(screen.getByRole('dialog', { name: 'Edit entry' })).toBeInTheDocument()
@@ -189,7 +189,7 @@ describe('the Edit sheet: money in', () => {
     await user.clear(amount)
     await user.type(amount, '26')
     await user.click(screen.getByRole('button', { name: 'Save changes' }))
-    expect(view('e-1')).toMatchObject({ amount: 26, ext: { kind: 'refund' } })
+    expect(view('e-1')).toMatchObject({ amount: 26, ext: { kind: 'transfer' } })
     expect(useUIStore.getState().toasts.at(-1)?.message).toBe('Entry updated')
   })
 })
@@ -228,7 +228,7 @@ describe('a Ledger row: money in', () => {
   })
 
   it('a kind this version does not know is listed plainly as not counted', () => {
-    row({ ...KOPI, itemName: 'Shopee', amount: 25, ext: { kind: 'refund' } })
+    row({ ...KOPI, itemName: 'Shopee', amount: 25, ext: { kind: 'transfer' } })
     const main = screen.getByRole('button', { name: 'Edit Shopee, S$25.00 not counted, Oct 19' })
     expect(main).toHaveTextContent('Newer kind')
     expect(main).toHaveTextContent('not counted')

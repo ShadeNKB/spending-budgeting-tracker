@@ -638,7 +638,9 @@ export function CommandPalette() {
                     <span
                       className={clsx(
                         'font-mono text-[13px] tabular-nums',
-                        kindOf(e) === 'income' ? 'text-income' : 'text-white',
+                        kindOf(e) === 'income' || kindOf(e) === 'refund'
+                          ? 'text-income'
+                          : 'text-white',
                       )}
                     >
                       {shownAmount(e, fmt)}

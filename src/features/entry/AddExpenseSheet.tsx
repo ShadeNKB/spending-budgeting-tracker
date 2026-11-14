@@ -36,7 +36,7 @@ interface Props {
     category?: string
     date?: DayKey
     notes?: string
-    /** Opens the sheet on Income (the Fix of an unreadable income). */
+    /** Opens the sheet on that kind (the Fix of an unreadable income or refund). */
     kind?: EntryKind
   }
   /** The entry was added (before the sheet closes): Recovery's Fix marks its row fixed. */
@@ -45,6 +45,15 @@ interface Props {
   addedNote?: string
   /** Where focus goes on close when the control that opened the sheet is gone. */
   returnFocus?: () => HTMLElement | null
+}
+
+/** What the sheet is adding, in its title and in the confirmation ("Added refund …"). */
+const NOUN: Record<EntryKind, string> = { expense: 'expense', income: 'income', refund: 'refund' }
+
+const PLACEHOLDER: Record<EntryKind, string> = {
+  expense: 'e.g. Coffee, Grab, Spotify',
+  income: 'e.g. Allowance, Pay, Sold bike',
+  refund: 'e.g. Returned shoes, Dinner split',
 }
 
 function formFrom(prefill: Props['prefill'], today: string) {
@@ -86,10 +95,11 @@ export function AddExpenseSheet({
 
   const [form, setForm] = useState(() => formFrom(prefill, today))
   const [errors, setErrors] = useState<ExpenseFormErrors>({})
-  // Income (F-058) is added from the same sheet: an expense every time it opens, unless what
-  // opened it says otherwise.
+  // Income and refunds (F-058) are added from the same sheet: an expense every time it opens,
+  // unless what opened it says otherwise.
   const [kind, setKind] = useState<EntryKind>(prefill?.kind ?? 'expense')
   const income = kind === 'income'
+  const refund = kind === 'refund'
 
   // Refill the form each time the sheet opens (SmartInput passes what was typed as a prefill),
   // and only then: refilling on later prefill or date changes would wipe what the user typed.
@@ -129,14 +139,15 @@ export function AddExpenseSheet({
       {
         itemName: form.itemName.trim(),
         amount: parseFloat(form.amount),
-        // Money in is filed under no category.
-        ...(income ? { kind } : { category: form.category || undefined }),
+        // Income is filed under no category; a refund under the one it comes off.
+        ...(income ? {} : { category: form.category || undefined }),
+        ...(kind === 'expense' ? {} : { kind }),
         // The picked day as it is: the store keeps it as the entry's day (P2-2).
         day: form.date,
         notes: form.notes.trim() || undefined,
       },
       (added) =>
-        `Added ${income ? 'income ' : ''}"${added.itemName}" · ${fmt(added.amount)}${isBackdated ? ` · ${dayLabel(form.date)}` : ''}${addedNote === undefined ? '' : `. ${addedNote}`}`,
+        `Added ${kind === 'expense' ? '' : `${NOUN[kind]} `}"${added.itemName}" · ${fmt(added.amount)}${isBackdated ? ` · ${dayLabel(form.date)}` : ''}${addedNote === undefined ? '' : `. ${addedNote}`}`,
       onAdded,
     )
     // Refused: the sheet stays open with everything typed, so the owner can fix what the
@@ -206,7 +217,7 @@ export function AddExpenseSheet({
     <Sheet
       open={open}
       onClose={onClose}
-      title={income ? 'Add income' : 'Add expense'}
+      title={`Add ${NOUN[kind]}`}
       side="bottom"
       returnFocus={returnFocus}
       footer={
@@ -229,7 +240,8 @@ export function AddExpenseSheet({
         className="flex flex-col gap-3 px-4 pb-6 pt-2"
       >
         {/* Which way the money went. Income: pay, an allowance, a sale. It is not spending, so
-            it takes no category and is in no spending total. */}
+            it takes no category and is in no spending total. Refund: money back for something
+            paid for. It is spending undone, so it takes the category it comes off. */}
         <div>
           <Segmented<EntryKind>
             label="Kind of entry"
@@ -239,8 +251,14 @@ export function AddExpenseSheet({
             options={[
               { value: 'expense', label: 'Expense' },
               { value: 'income', label: 'Income' },
+              { value: 'refund', label: 'Refund' },
             ]}
           />
+          {refund && (
+            <p className="mt-2 text-[12px] leading-relaxed text-[var(--text-secondary)]">
+              Money back for something you paid for. It comes off its category&apos;s spending.
+            </p>
+          )}
         </div>
 
         {/* Date selector. The presets wrap rather than scroll, as in the Edit sheet: every one
@@ -289,7 +307,7 @@ export function AddExpenseSheet({
         <Input
           ref={fields.itemName}
           label="What"
-          placeholder={income ? 'e.g. Allowance, Pay, Sold bike' : 'e.g. Coffee, Grab, Spotify'}
+          placeholder={PLACEHOLDER[kind]}
           value={form.itemName}
           onChange={(e) => set('itemName', e.target.value)}
           error={errors.itemName}

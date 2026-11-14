@@ -5,7 +5,7 @@
 // syncs and never deletes; the lists' own bookkeeping (seen marks, Fix, Discard) goes through the
 // engine's shedding writer. Memory-only, or once this device was wiped, nothing is written.
 import { displayList, resolver } from '../core/categories'
-import { KIND_INCOME, KIND_KEY, NOTES_INPUT_MAX, nullRecord } from '../core/constants'
+import { KIND_INCOME, KIND_KEY, KIND_REFUND, NOTES_INPUT_MAX, nullRecord } from '../core/constants'
 import { dayOf, isDateText, localDay, validDay } from '../core/dates'
 import { EMPTY_DOC } from '../core/doc'
 import { canon, fnv36 } from '../core/hash'
@@ -176,13 +176,14 @@ function salvageOf(raw: string, doc: Doc): AttentionItem['salvage'] {
   const category = text(own(o, 'category'))
   const listed = category === null ? null : resolver(doc.renames)(category)
   const notes = text(own(o, 'notes'))?.trim().slice(0, NOTES_INPUT_MAX) ?? ''
+  const kind = own(o, KIND_KEY)
   return {
     ...(validItemName(name) ? { itemName: name.trim() } : {}),
     ...(amount === null ? {} : { amount: amount.value }),
     ...(day === null ? {} : { day }),
     ...(listed !== null && displayList(doc).includes(listed) ? { category: listed } : {}),
     ...(notes === '' ? {} : { notes }),
-    ...(own(o, KIND_KEY) === KIND_INCOME ? { kind: KIND_INCOME } : {}),
+    ...(kind === KIND_INCOME || kind === KIND_REFUND ? { kind } : {}),
   }
 }
 
@@ -344,7 +345,7 @@ export function createRecovery(host: RecoveryHost): RecoveryApi {
       if (cur.x.s !== after.x.s || !same(kindIn(cur), now)) {
         if (!same(kindIn(cur), was)) moved = true
       } else if (was === undefined) patch.kind = 'expense'
-      else if (was === KIND_INCOME) patch.kind = KIND_INCOME
+      else if (was === KIND_INCOME || was === KIND_REFUND) patch.kind = was
     }
     if (Object.keys(patch).length === 0) return none(moved ? 'changed-since' : 'already')
     return apply((doc, ctx) => updateExpense(doc, ctx, cur.id, patch), 1)

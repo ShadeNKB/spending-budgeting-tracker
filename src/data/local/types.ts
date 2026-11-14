@@ -124,8 +124,8 @@ export interface AttentionItem {
     readonly day?: string
     readonly category?: string
     readonly notes?: string
-    /** The row was an income: its Fix opens the Add sheet on Income. */
-    readonly kind?: 'income'
+    /** The row was an income or a refund: its Fix opens the Add sheet on that kind. */
+    readonly kind?: 'income' | 'refund'
   } | null
 }
 

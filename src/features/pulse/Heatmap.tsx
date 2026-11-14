@@ -84,6 +84,13 @@ interface Day {
   label: string
 }
 
+/**
+ * A day's figure in words: what was spent, or what came back when its refunds were more than its
+ * spending ("S$20.00 back"), or that nothing was spent.
+ */
+const dayFigure = (total: number, fmt: (n: number) => string): string =>
+  total > 0 ? fmt(total) : total < 0 ? `${fmt(-total)} back` : 'No spending'
+
 const levelOf = (total: number, max: number) => {
   if (total <= 0) return 0
   const r = total / max
@@ -130,7 +137,7 @@ export function Heatmap({ data, today }: { data: HeatmapData; today: DayKey }) {
         key: d.date,
         level: levelOf(d.total, max),
         total: d.total,
-        label: `${weekdayShort(d.date)}, ${longDate(d.date)}: ${d.total > 0 ? fmt(d.total) : 'No spending'}`,
+        label: `${weekdayShort(d.date)}, ${longDate(d.date)}: ${dayFigure(d.total, fmt)}`,
       }
       const row = byRow[at % 7]
       if (row) row[week] = day
@@ -330,7 +337,7 @@ export function Heatmap({ data, today }: { data: HeatmapData; today: DayKey }) {
       >
         {read ? (
           <span className="text-[var(--text-secondary)]">
-            {`${shortDate(read.key)} · ${read.total > 0 ? fmt(read.total) : 'No spending'}`}
+            {`${shortDate(read.key)} · ${dayFigure(read.total, fmt)}`}
           </span>
         ) : (
           <span>

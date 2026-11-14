@@ -248,17 +248,19 @@ export function LedgerScreen() {
   )
 
   const filtered = useMemo(() => rowsToExpenses(index, rows), [index, rows])
-  // The total, and each day's, is spending, as on Pulse; listed entries of not-spending categories
-  // (F-057) and money in (F-058) are summed beside it, and entries of a kind this version does not
-  // know are counted as rows, so the lines together account for every row shown.
+  // The total, and each day's, is spending net of refunds, as on Pulse; listed entries of
+  // not-spending categories (F-057) and income (F-058) are summed beside it, and entries of a kind
+  // this version does not know are counted as rows, so the lines together account for every row
+  // shown. What the refunds took off is said under the total.
   const asideCategories = useExpenseStore((s) => s.asideCategories)
   const asideNames = useMemo(() => new Set(asideCategories), [asideCategories])
   const groups = useMemo(
     () => groupLedgerRows(index, rows, today, asideNames),
     [index, rows, today, asideNames],
   )
-  const { totalSum, asideSum, incomeSum, uncounted } = useMemo(() => {
+  const { totalSum, refundSum, asideSum, incomeSum, uncounted } = useMemo(() => {
     let cents = 0
+    let refunds = 0
     let aside = 0
     let income = 0
     let unknown = 0
@@ -270,10 +272,14 @@ export function LedgerScreen() {
       if (kind === 'income') income += c
       else if (kind === 'unknown') unknown += 1
       else if (asideNames.has(e.category)) aside += c
-      else cents += c
+      else {
+        cents += c
+        if (c < 0) refunds -= c
+      }
     }
     return {
       totalSum: cents / 100,
+      refundSum: refunds / 100,
       asideSum: aside / 100,
       incomeSum: income / 100,
       uncounted: unknown,
@@ -374,7 +380,12 @@ export function LedgerScreen() {
               <div className="text-[11px] text-[var(--text-tertiary)]">
                 {filtered.length} {filtered.length === 1 ? 'entry' : 'entries'}
               </div>
-              {asideSum > 0 && (
+              {refundSum > 0 && (
+                <div className="text-[11px] text-[var(--text-tertiary)]">
+                  after <span className="font-mono tabular-nums">{fmt(refundSum)}</span> in refunds
+                </div>
+              )}
+              {asideSum !== 0 && (
                 <div className="text-[11px] text-[var(--text-tertiary)]">
                   <span className="font-mono tabular-nums">{fmt(asideSum)}</span> not spending
                 </div>
@@ -560,10 +571,10 @@ export function LedgerScreen() {
                 <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
                   {g.label}
                 </h2>
-                {/* A day's spending. A day that holds none (income only, or entries that are
-                    not spending) shows no figure: "S$0.00" over "+S$790.00" reads as a sum
-                    gone wrong. */}
-                {g.total > 0 && (
+                {/* A day's spending, net of its refunds. A day with nothing to sum (income
+                    only, or entries that are not spending) shows no figure: "S$0.00" over
+                    "+S$790.00" reads as a sum gone wrong. */}
+                {g.counted > 0 && (
                   <span className="font-mono text-[11px] tabular-nums text-[var(--text-secondary)]">
                     {fmt(g.total)}
                   </span>

@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.20.0 — 2026-11-14
+
+Refunds, the second kind of money in: money that comes back for something you paid for comes off that category's spending.
+
+### Added
+
+- **Refunds** (F-058). The switch in the Add sheet and the Edit sheet is now **Expense | Income | Refund**. A refund is money back for something you paid for: a shop's refund, a friend paying their share of a dinner. It takes a name, an amount (typed as it came back, above zero), a day, notes, and a category: the one it comes off.
+- **A refund is negative spending, everywhere.** It comes off its category, its day, the month and the year: the Pulse total and average, the pace and the budgets, Top categories, the heatmap, the trend, the comparisons, the month in review and every Insights figure. A budget measures what was spent less what came back.
+- **Pulse says what came off**: "Refunds S$20.00 · taken off the total" under the period's total, for the month or the year on screen. The Today strip lists a refund with the day's spending.
+- **In the Ledger** a refund row shows **-S$20.00** in green with "refund" under it, in its category; the palette lists it the same way. The total says "after S$20.00 in refunds" under it, and each day's figure is net, so the rows of a day add up to the figure in its header. A category lists its refunds with its expenses.
+- **CSV export:** the Type column says `refund`. The amount stays positive and the Category cell is filled.
+
+### What does not change
+
+- **An expense and an income** are what they were. With no refund entered, every figure is what 0.19.0 showed.
+- **The amount stored is the amount typed.** No version, this one included, reads or writes a negative amount.
+- **Due soon and the forecast** never hold a refund: money back that recurs (a card's cashback) is not a charge.
+
+### Changed (engineering)
+
+- **`kind: "refund"` in the record's extras register**, beside 0.19.0's `income`: no wire field, merge rule or file format. A refund keeps its own category register (an income is stored under Other) and, like an expense, takes the category its name has learned and teaches it one. It holds nothing else in the extras, so the one-register constraint recorded in 0.19.0 does not bite here.
+- **One sign, in one place:** `signedCents` (`lib/ledgerIndex.ts`). The index every screen sums from holds a refund's cents below zero, and nothing else negates an amount. `splitSpending` puts a refund where an expense of its category goes (`spending`, or `aside` for a not-spending category) and leaves it out of `outgoing`, where recurring charges are looked for.
+- **What a net below zero could bend, each held by a test** (`lib/refund.test.ts`). Top categories' shares are of the categories with a net spend: one that refunds took below zero is not listed, and the rest never pass 100% between them. A budget's share used never reads below 0%, and its "left" is the arithmetic as it is (S$20 back in a S$100 category with nothing spent leaves S$120). A period whose net is below zero reads 100% less than the one before, never more than all of it; the last-7-days insight has the same floor. The month's largest entry is never a refund. Money back named like a monthly charge is not held out of the month-end projection as a charge paid. The heatmap says "S$20.00 back" for a day whose refunds passed its spending.
+- **A refund is in no recurring charge** (`utils/recurring.ts`): the detection skips it on whatever index it is given. Found by the new browser test before any review: Insights' forecast is built over spending, which now holds refunds, and three months of cashback came out as a monthly charge of S$8.00 to expect. One refund of a subscription no longer counts as a payment of it either.
+- **A Ledger day header shows its figure when the day has entries to sum** (it was: when the figure is above zero). A day of one refund reads "-S$20.00", an expense and its refund "S$0.00", and a day of income only still shows none.
+- **Recovery** lists and restores a refund like any kind ("Kind: Refund → Expense"), and shows its category beside it; the Fix of an unreadable refund opens the Add sheet on Refund.
+- `kind-v010.data.ts` carries a refund through the real 0.10.0 beside the income: listed, edited and pushed there, it comes back a refund with 0.10.0's amount, in its category.
+- The tests of "a kind this version does not know" name one that does not exist (`transfer`): they used `refund`.
+- Boot 498,519 / 561,580 B (63,061 B left), eager 398,388 / 466,908 B; all JS 684.5 / 740 KB (55.5 KB left): 1.9 KB for the slice.
+
+### Known limits
+
+- **Update both devices before entering a refund.** A device on 0.19.0 lists it as "Newer kind, not counted": its totals are too high by that refund until it is updated. A device on 0.18 or older shows it as an expense and adds it, so its totals are too high by twice the refund. Either keeps the entry exactly.
+- **A refund is not linked to the purchase it answers.** It comes off its category in the month it is dated: last month's purchase refunded today lowers this month, as on a bank statement.
+- The month-end projection runs a refund at the daily rate with the rest of the month's spending, as it does a one-off purchase.
+- A refund in a not-spending category is listed and in no total; its row says "not spending" (its minus still says money back).
+- Quick add and the palette's add are for expenses: a refund is added from the Add sheet.
+
 ## 0.19.0 — 2026-11-14
 
 T8c, the last slice of T8 (money in and smarter budgets): income. An entry can now be money that came in.

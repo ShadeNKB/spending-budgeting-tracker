@@ -197,7 +197,7 @@ export interface OpResult {
 }
 
 /** A kind an op writes (T8c). An expense is the absence of the key in the record's extras. */
-export type EntryKind = 'expense' | 'income'
+export type EntryKind = 'expense' | 'income' | 'refund'
 
 export interface NewExpenseInput {
   readonly itemName: string
@@ -211,7 +211,10 @@ export interface NewExpenseInput {
   readonly kind?: EntryKind
 }
 
-/** `notes: ''` clears the notes. A kind changes the extras register alone, never the category. */
+/**
+ * `notes: ''` clears the notes. A kind changes the extras register alone: the category moves only
+ * when one is sent with it.
+ */
 export type ExpensePatch = Partial<
   Pick<NewExpenseInput, 'itemName' | 'amount' | 'category' | 'day' | 'notes' | 'kind'>
 >

@@ -12,7 +12,7 @@ import { useInlineConfirm } from '../../hooks/useInlineConfirm'
 import { useCurrencySymbol, useFormatMoney } from '../../hooks/useFormatMoney'
 import { useToday } from '../../hooks/useToday'
 import { addDays, type DayKey } from '../../lib/dates'
-import { kindOf, type Kind } from '../../lib/kind'
+import { inSpending, kindOf, type Kind } from '../../lib/kind'
 import { entryDay } from '../../lib/ledgerIndex'
 import { DatePicker } from '../../ui/DatePicker'
 import { shieldKeyGesture } from '../../ui/pressShield'
@@ -53,7 +53,12 @@ function formFrom(expense: Expense, today: DayKey): EditForm {
 }
 
 /** What the sheet calls the entry, in its title and in the confirmation of a save. */
-const NOUN: Record<Kind, string> = { expense: 'Expense', income: 'Income', unknown: 'Entry' }
+const NOUN: Record<Kind, string> = {
+  expense: 'Expense',
+  income: 'Income',
+  refund: 'Refund',
+  unknown: 'Entry',
+}
 
 /** A mouse or trackpad: the sheet can open with the keyboard already in Item. */
 const hasFinePointer = () => window.matchMedia('(pointer: fine)').matches
@@ -137,9 +142,9 @@ export function EditExpenseSheet({
       useExpenseStore.getState().updateExpense(expense.id, {
         itemName: form.itemName.trim(),
         amount: parseFloat(form.amount),
-        // Only an expense has a category to change: money in keeps the one it is stored with,
-        // so turning it back into an expense finds it there.
-        ...(form.kind === 'expense' ? { category: form.category } : {}),
+        // An expense or a refund has a category to change: income keeps the one it is stored
+        // with, so turning it back into an expense finds it there.
+        ...(inSpending(form.kind) ? { category: form.category } : {}),
         day: form.date,
         notes: form.notes.trim(),
         // The kind goes only when the switch was moved. The sheet holds the entry as it was
@@ -222,8 +227,14 @@ export function EditExpenseSheet({
               options={[
                 { value: 'expense', label: 'Expense' },
                 { value: 'income', label: 'Income' },
+                { value: 'refund', label: 'Refund' },
               ]}
             />
+            {form.kind === 'refund' && (
+              <p className="mt-2 text-[12px] leading-relaxed text-[var(--text-secondary)]">
+                Money back for something you paid for. It comes off its category&apos;s spending.
+              </p>
+            )}
           </div>
         )}
         <Input
@@ -251,7 +262,7 @@ export function EditExpenseSheet({
           onKeyDown={saveOnEnter}
         />
 
-        {form.kind === 'expense' && (
+        {inSpending(form.kind) && (
           <div className="flex flex-col gap-1.5">
             <span
               id={categoryLabelId}
@@ -397,7 +408,7 @@ export function EditExpenseSheet({
 }
 
 /**
- * "Delete expense" (or income, or entry: the sheet's own word for it), then the question in its
+ * "Delete expense" (or income, refund or entry: the sheet's own word for it), then the question in its
  * place. Re-keyed on every opening of the sheet.
  */
 function DeleteExpense({
