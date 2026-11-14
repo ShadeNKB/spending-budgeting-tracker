@@ -32,6 +32,8 @@ import {
 //   request, row or topic carries the code or an entry's name. On Chromium and on WebKit.
 // AC-P18: the real 0.20.0 build refuses a typed private code, and on a device that already
 //   syncs privately it says a newer SpendTrack set sync up, sends nothing and keeps the code.
+// 3.2: with two tabs open, the one left on a plain code follows the device going private in the
+//   other, and sends the plain row nothing more.
 // AC-P19: the new states pass axe in both themes, with 44 px targets and no sideways scroll at
 //   320 px on the phone. 3.9: the owner replaces a copy marked newer, in the real panel.
 // Invented data; the seeded code is the codec's known-answer vector, never a real one.
@@ -287,6 +289,72 @@ test('AC-P18: 0.20.0 refuses a typed private code, and keeps a private setup it 
   await expect
     .poll(() => itemNames(b.page), { timeout: 30_000 })
     .toEqual(['new build kopi', 'old build bun'])
+})
+
+test('3.2: a second tab follows the device going private, and sends the plain row nothing more', async ({
+  browser,
+}) => {
+  test.setTimeout(240_000)
+  // one device, two tabs, both linked to a plain code
+  const a = await openDevice(browser, hostA.origin, {
+    syncCode: PLAIN_CODE,
+    seed: { expenses: JSON.stringify([entry('t-1', 'tab kopi', '2026-11-10')]) },
+  })
+  devices.push(a)
+  await expect.poll(() => relay.row(PLAIN_CODE) !== null, { timeout: 30_000 }).toBe(true)
+  const tabB = await a.context.newPage()
+  await tabB.goto(`${hostA.origin}/ledger`)
+  await waitForApp(tabB)
+
+  // in the second tab: Disconnect, then start a private sync
+  const sheet = await openSettingsTab(tabB, 'Sync')
+  await sheet.getByRole('button', { name: /Disconnect sync/ }).click()
+  await sheet
+    .getByRole('group', { name: 'Disconnect sync on this device?' })
+    .getByRole('button', { name: 'Disconnect', exact: true })
+    .click()
+  await sheet.getByRole('button', { name: 'Generate sync code for this device' }).click()
+  // the device remembers the plain code it left: a new code is a separate sync, and it asks
+  await sheet
+    .getByRole('group', { name: 'Start a separate sync?' })
+    .getByRole('button', { name: 'Make a new code', exact: true })
+    .click()
+  await expect(
+    toasts(tabB).getByText('Private sync code created. Enter it on your other device.'),
+  ).toBeVisible({ timeout: 30_000 })
+  const privateRow = () =>
+    relay
+      .writes(a.origin)
+      .map((q) => q.syncId ?? '')
+      .find((id) => DERIVED_ROW.test(id)) ?? ''
+  await expect.poll(privateRow, { timeout: 30_000 }).toMatch(DERIVED_ROW)
+  const row = privateRow()
+  await closeSettings(tabB)
+
+  // the first tab still holds the plain code in memory. An entry made there now must go out
+  // sealed, to the private row, and the plain row must be asked nothing
+  const mark = relay.log.length
+  const plainBefore = JSON.stringify(relay.row(PLAIN_CODE))
+  await quickAdd(a.page, 'after private 1.10')
+  await expect
+    .poll(
+      () => relay.log.slice(mark).filter((q) => q.syncId === row && q.outcome === 'ok').length,
+      {
+        timeout: 30_000,
+      },
+    )
+    .toBeGreaterThan(0)
+  await a.page.waitForTimeout(3000)
+  const since = relay.log.slice(mark)
+  expect(since.filter((q) => q.syncId === PLAIN_CODE)).toEqual([])
+  expect(JSON.stringify(relay.row(PLAIN_CODE))).toBe(plainBefore)
+  expect(JSON.stringify([since, relay.row(PLAIN_CODE)])).not.toContain('after private')
+  expect(relay.channels(PLAIN_CODE)).toBe(0)
+  // and the first tab now shows the private sync
+  const sheetA = await openSettingsTab(a.page, 'Sync')
+  await expect(
+    sheetA.getByText(/^Private sync: what this device sends is encrypted here first\./),
+  ).toBeVisible()
 })
 
 // ─── AC-P19: the new states, through the accessibility gate ──────────────────────────────────
