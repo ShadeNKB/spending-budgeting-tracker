@@ -66,6 +66,8 @@ const ERROR_LABEL: Record<SyncFailure['kind'], string> = {
   offline: "Offline — will sync when you're back",
   'too-large': 'Sync paused',
   moved: 'Sync paused',
+  'moved-private': 'Sync paused',
+  'no-cas': 'Sync paused',
   'update-required': 'Sync paused',
   reload: 'Sync paused',
   'not-found': 'Sync paused',

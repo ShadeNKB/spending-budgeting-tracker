@@ -27,9 +27,11 @@ import {
   REMOTE_COALESCE,
   STORM_CYCLES,
   STORM_WINDOW,
+  SCHEMA,
   WIRE_PUSH_MAX,
 } from '../data/core/constants'
-import { maskCode, normalizeUuid } from '../data/core/codes'
+import { maskCode, normalizeUuid, parseSyncCode } from '../data/core/codes'
+import { canCompress, deriveKeys, open, seal, type Envelope, type SyncKeys } from '../data/core/e2e'
 import { EMPTY_DOC, digestDoc, mergeDoc } from '../data/core/doc'
 import { fnv36 } from '../data/core/hash'
 import { newRev } from '../data/core/ids'
@@ -59,6 +61,8 @@ import { isRecord } from '../lib/backup'
 import { whenIdle } from '../lib/whenIdle'
 import { storage } from '../services/storage'
 import {
+  CAS_ON,
+  PAYLOAD_MAX_CHARS,
   PayloadTooLargeError,
   RELAY_PIN,
   SyncTransportError,
@@ -90,6 +94,7 @@ import {
   SYNC_RELOAD_MESSAGE,
   failingSinceMessage,
   failureSeverity,
+  isPrivateCode,
   keepCode,
   keptOffline,
   lookForNewBuild,
@@ -134,6 +139,10 @@ export function syncMessage(
       return 'No synced data found for this code. Check it on your other device.'
     case 'denied':
       return 'Sync paused: the sync server refused access. Your data is safe on this device.'
+    case 'moved-private':
+      return 'Sync was made private on your other device. Enter the private code shown there.'
+    case 'no-cas':
+      return 'Sync paused: this sync server cannot keep a private sync safe yet. Your data is safe on this device.'
     case 'off':
       return SYNC_OFF_MESSAGE
   }
@@ -288,7 +297,7 @@ let started = false
 let attachedPort: SyncPort | null = null
 let detachPort: (() => void) | null = null
 
-let topic: { readonly code: string; readonly value: Promise<string> } | null = null
+let bucket: { readonly code: string; readonly value: Promise<Bucket> } | null = null
 let lastView: SyncView | null = null
 let sizePct: number | null = null
 let sizeMeasured = false
@@ -358,10 +367,103 @@ function remember<T>(list: T[], value: T, size = ECHO_MEMORY) {
 /** "1 entry", "2,000 entries": counts read the same here as in Settings and the undo toasts. */
 const entries = (n: number): string => `${n.toLocaleString()} ${n === 1 ? 'entry' : 'entries'}`
 
-/** The realtime topic of a code, computed once per code (the raw code is never a topic). */
-function topicFor(code: string): Promise<string> {
-  if (topic?.code !== code) topic = { code, value: topicOf(code) }
-  return topic.value
+/**
+ * What the engine syncs with (PRIVATE-SYNC 3.1). `rowId` names the relay row and `topic` the
+ * Realtime channel: for a plain code the code itself and a hash of it; for a private code both
+ * are derived from its secret, so neither the code nor the secret is ever sent, or stored, as
+ * either. `keys` is null for a plain bucket.
+ */
+interface Bucket {
+  readonly kind: 'plain' | 'e2e'
+  readonly code: string
+  readonly rowId: string
+  readonly topic: string
+  readonly keys: SyncKeys | null
+}
+
+/** A stored private code that does not parse: nothing can be derived from it. */
+class BadCodeError extends Error {}
+
+async function deriveBucket(code: string): Promise<Bucket> {
+  if (!isPrivateCode(code)) {
+    return { kind: 'plain', code, rowId: code, topic: await topicOf(code), keys: null }
+  }
+  const parsed = parseSyncCode(code)
+  if (parsed.kind !== 'e2e') throw new BadCodeError()
+  const keys = await deriveKeys(parsed.secret)
+  return { kind: 'e2e', code, rowId: keys.rowId, topic: keys.topic, keys }
+}
+
+/** The bucket of a code, derived once per code (the raw code is never a row id or a topic). */
+function bucketFor(code: string): Promise<Bucket> {
+  if (bucket?.code !== code) bucket = { code, value: deriveBucket(code) }
+  return bucket.value
+}
+
+/** What a private row's payload is given as when it cannot be read: never merged, repaired. */
+const UNREADABLE: unknown = Object.freeze({ unreadable: true })
+
+const CODEC_DEADLINE_MS = 15_000
+
+/** `open` and `seal` under a deadline, like a request: a cycle never waits on them for good. */
+function deadline<T>(work: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error('The private sync codec did not answer.'))
+    }, CODEC_DEADLINE_MS)
+    work.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (err: unknown) => {
+        clearTimeout(timer)
+        reject(err instanceof Error ? err : new Error(String(err)))
+      },
+    )
+  })
+}
+
+type Read = { readonly kind: 'ok'; readonly pulled: Pulled | null } | { readonly kind: 'newer' }
+
+/**
+ * A private row's payload, opened before the merge section (3.3 step 2). The only valid content
+ * of a private row is an envelope that opens to a payload of the envelope's own revision;
+ * anything else, plaintext and a plaintext marker included, comes back UNREADABLE: no honest
+ * device writes it there, and merging it would let anyone who can write the table inject
+ * entries. `newer` is judged on the envelope's header, before any authentication. A plain
+ * bucket's payload goes through as it is.
+ */
+async function openPulled(b: Bucket, pulled: Pulled | null): Promise<Read> {
+  const sealed = pulled?.payload
+  if (b.keys === null || pulled === null || sealed === null || sealed === undefined) {
+    return { kind: 'ok', pulled }
+  }
+  const unreadable: Read = { kind: 'ok', pulled: { payload: UNREADABLE, etag: pulled.etag } }
+  const res = await deadline(open(sealed, b.keys))
+  if (!res.ok) return res.kind === 'newer' ? { kind: 'newer' } : unreadable
+  const inner = res.inner
+  const x5 = isRecord(inner) ? inner.x5 : undefined
+  const r = isRecord(sealed) ? sealed.r : undefined
+  if (!isRecord(x5) || typeof x5.rev !== 'string' || x5.rev !== r) return unreadable
+  return { kind: 'ok', pulled: { payload: inner, etag: pulled.etag } }
+}
+
+/**
+ * The one caller of `seal` (3.3 step 4). The IV is drawn here, from the platform's generator and
+ * never the engine's seeded one, fresh for every seal, a re-seal of the same payload included.
+ * Null: too large to seal.
+ */
+async function sealForRelay(json: string, keys: SyncKeys, rev: string): Promise<Envelope | null> {
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const res = await deadline(seal(json, keys, { r: rev, iv, z: canCompress() ? 1 : 0 }))
+  return res.ok ? res.envelope : null
+}
+
+/** This device syncs a private bucket: said in its registry entry. */
+const privateNow = (): boolean => {
+  const code = useSyncStore.getState().syncId
+  return code !== null && isPrivateCode(code)
 }
 
 // ---------------------------------------------------------------------------
@@ -441,26 +543,29 @@ const mergeable = (writer: WriterClass): boolean =>
 
 /** This device's registry entry as it should be now (P3-7). */
 function entryNow(port: SyncPort, now: number): DeviceInfo {
-  return registryEntry(port.doc().devices.get(port.deviceId()), APP, mode, now)
+  return registryEntry(port.doc().devices.get(port.deviceId()), APP, mode, now, privateNow())
 }
 
 /** This tab's registry entry needs a push of its own: a new app version or relay mode (P3-7). */
 const entryDue = (port: SyncPort, now: number): boolean =>
   registerFirst(port.doc().devices.get(port.deviceId()), entryNow(port, now))
 
-/** The relay copy this device last merged or wrote, when it belongs to `code` (P3-3). */
-function etagOf(port: SyncPort, code: string): string | null {
+/**
+ * The relay copy this device last merged or wrote, when it belongs to the row `row` (P3-3).
+ * Keyed by the row id, never by a private code: for a plain bucket the two are the same value.
+ */
+function etagOf(port: SyncPort, row: string): string | null {
   const meta = port.meta()
-  return meta.etagFor === fnv36(code) ? meta.lastEtag : null
+  return meta.etagFor === fnv36(row) ? meta.lastEtag : null
 }
 
 /**
  * The relay is at `etag`, merged here in this setup; `rev`: the local revision it holds all of
  * (null when it lacks something here).
  */
-function setEtag(port: SyncPort, code: string, etag: string, rev: number | null): void {
+function setEtag(port: SyncPort, row: string, etag: string, rev: number | null): void {
   const meta = port.meta()
-  const etagFor = fnv36(code)
+  const etagFor = fnv36(row)
   if (meta.lastEtag !== etag || meta.etagFor !== etagFor) port.setMeta({ lastEtag: etag, etagFor })
   held = { gen: setupGen, port, rev }
 }
@@ -845,7 +950,9 @@ function publishView(): void {
   const now = Date.now()
   const me = port.deviceId()
   const devices = new Map(port.doc().devices)
-  if (!devices.has(me)) devices.set(me, { name: '', app: APP, mode, e2e: false, seen: 0 })
+  if (!devices.has(me)) {
+    devices.set(me, { name: '', app: APP, mode, e2e: isPrivateCode(code), seen: 0 })
+  }
   const meta = port.meta()
   const seen = meta.legacySeen
   // The 0.10.0 device is listed (it never registers itself) until it registers again.
@@ -919,7 +1026,8 @@ const done = (result: SyncResult): Step => ({ kind: 'done', result })
  * commit it and decide what to push, with no await in between, so a local write can never be
  * overwritten by a merge of an older snapshot (F-001).
  */
-function mergeStep(code: string, pulled: Pulled | null, reason: CycleReason): Step {
+function mergeStep(b: Bucket, pulled: Pulled | null, reason: CycleReason): Step {
+  const code = b.code
   const port = livePort()
   if (port === null) return done(engineDown())
   const now = Date.now()
@@ -953,33 +1061,46 @@ function mergeStep(code: string, pulled: Pulled | null, reason: CycleReason): St
   const missing = pulled === null || raw === null || raw === undefined
   // A joined device that finds no relay copy writes nothing: the code may be mistyped (P3-5).
   if (missing && !established) return done(pause('not-found', syncMessage('not-found')))
-  const dec = missing ? MISSING : decodeWire(raw, 'remote', { reuse: port.doc(), at: now })
-  if (dec.writer === 'moved') return done(pause('moved', syncMessage('moved')))
+  // A private row that could not be read (openPulled): nothing to decode, and never merged.
+  const unreadable = raw === UNREADABLE
+  const dec =
+    missing || unreadable ? MISSING : decodeWire(raw, 'remote', { reuse: port.doc(), at: now })
+  if (dec.writer === 'moved') return done(fenceOut(b, raw, now))
   if (dec.writer === 'e2e') return done(pause('update-required', syncMessage('update-required')))
-  const repair = dec.writer === 'invalid'
+  // What opened is authenticated, and must still be this format's own payload (a newer one
+  // included): an old writer's shape inside an envelope is no copy of this bucket.
+  const foreign =
+    b.kind === 'e2e' && !missing && !unreadable && dec.writer !== 'v5' && dec.writer !== 'newer'
+  const repair = dec.writer === 'invalid' || unreadable || foreign
   if (repair) {
     // Kept for the owner (needs attention), never merged; pushed over at most every 10 minutes,
     // so two devices that disagree about the copy cannot overwrite each other in a loop, and
     // never by a device that has not synced with this code (it might not be ours to repair).
-    port.quarantine(dec.report.quarantined)
+    if (!unreadable) port.quarantine(dec.report.quarantined)
     if (!established || now - port.meta().repairAt < REPAIR_EVERY_MS) {
       throw new InvalidRemoteError()
     }
     // The quarantine entry holds an excerpt; the push over the copy waits until this device
     // keeps all of it (P2-8, P2-16: never overwrite the only copy of something).
-    if (!port.keepRelayCopy(raw)) throw new InvalidRemoteError()
+    // A private row's copy is not kept: what does not open under this bucket's key can be read
+    // by no device that holds the code, and unreadable copies must never fill storage.
+    if (b.kind === 'plain' && !port.keepRelayCopy(raw)) throw new InvalidRemoteError()
   }
 
   const snapRev = port.localRev()
   const sent = [...port.outbox()]
   // A newer SpendTrack's copy is merged too (its data is ours as well); it is only never pushed over.
-  if (!missing && (mergeable(dec.writer) || dec.writer === 'newer')) take(port.applyRemote(dec))
+  if (!missing && !repair && (mergeable(dec.writer) || dec.writer === 'newer')) {
+    take(port.applyRemote(dec))
+  }
   // An etag pushed ahead of this clock (a token is always after its base) is no write time. The
   // copy last merged here (the relay has not moved since) was judged then: a 0.10.0's if its
   // writer is the one last seen writing as 0.10.0.
   const wroteAt = missing ? null : etagTime(pulled.etag)
   const judged =
-    missing || !sameEtag(pulled.etag, etagOf(port, code)) ? null : writer !== port.meta().v5preDev
+    missing || !sameEtag(pulled.etag, etagOf(port, b.rowId))
+      ? null
+      : writer !== port.meta().v5preDev
   noteWriter(
     code,
     writerKind(
@@ -1028,7 +1149,7 @@ function mergeStep(code: string, pulled: Pulled | null, reason: CycleReason): St
       // Not for an old writer's copy, which may still lack what is here (§11.4).
       if (decision.kind === 'none' && (dec.writer === 'v5' || dec.writer === 'newer')) {
         // A newer writer's copy is never pushed over, so it may lack what is here.
-        setEtag(port, code, pulled.etag, dec.writer === 'v5' ? port.localRev() : null)
+        setEtag(port, b.rowId, pulled.etag, dec.writer === 'v5' ? port.localRev() : null)
       }
       establish(code)
     }
@@ -1042,12 +1163,12 @@ function mergeStep(code: string, pulled: Pulled | null, reason: CycleReason): St
   // The push carries when this device was last seen (excluded from the digest).
   if (port.doc().devices.get(me) !== entry) port.register(me, entry)
   const rev = newRev(() => port.rng())
-  const opts = { dev: me, rev, min: PLAIN_MIN, omitIds }
+  const opts = { dev: me, rev, min: b.kind === 'e2e' ? SCHEMA : PLAIN_MIN, omitIds }
   const chars = wireString(port.doc(), opts).length
   setSize(chars)
   if (chars > WIRE_PUSH_MAX) {
     // Merged, never pushed: polls may HEAD this copy until the relay moves on.
-    if (!missing && dec.writer === 'v5') setEtag(port, code, pulled.etag, null)
+    if (!missing && dec.writer === 'v5' && !repair) setEtag(port, b.rowId, pulled.etag, null)
     return done(pause('too-large', syncMessage('too-large', Math.round(chars / 1024))))
   }
   // Remembered before sending, so our own echo is filtered however early it arrives, and a
@@ -1069,7 +1190,8 @@ function mergeStep(code: string, pulled: Pulled | null, reason: CycleReason): St
 }
 
 /** After a push lands: the memo, the etag, the outbox and the repair stamp (never before, M4). */
-function landed(step: PushStep, code: string, etag: string): number {
+function landed(step: PushStep, b: Bucket, etag: string): number {
+  const code = b.code
   const port = livePort()
   if (port === null) return 0
   const now = Date.now()
@@ -1078,7 +1200,7 @@ function landed(step: PushStep, code: string, etag: string): number {
     lastRev: step.sent.rev,
     memo: commitPush(port.meta().memo, step.decision, now),
     lastEtag: etag,
-    etagFor: fnv36(code),
+    etagFor: fnv36(b.rowId),
     ...(repaired ? { repairAt: now } : {}),
   })
   // The push carried the doc as of `snapRev` (the merge section commits nothing local).
@@ -1094,9 +1216,7 @@ function landed(step: PushStep, code: string, etag: string): number {
   }
   // The other v5 devices hear it at once (best effort: row events and polling still carry it).
   const dev = port.deviceId()
-  void topicFor(code).then((t) => {
-    announce(t, { rev: step.sent.rev, dev })
-  })
+  announce(b.topic, { rev: step.sent.rev, dev })
   return waiting
 }
 
@@ -1119,8 +1239,8 @@ function pausedMerging(): boolean {
  * a pause that keeps merging), no news waits, and this device's registry entry is on the relay
  * as it is now.
  */
-function headable(port: SyncPort, code: string): boolean {
-  if (news.length > 0 || etagOf(port, code) === null) return false
+function headable(port: SyncPort, row: string): boolean {
+  if (news.length > 0 || etagOf(port, row) === null) return false
   if (held === null || held.gen !== setupGen || held.port !== port) return false
   if (pausedMerging()) return true
   return (
@@ -1143,32 +1263,61 @@ function unchanged(snapRev: number): SyncResult {
 
 /** Pull, merge, push: at most six attempts, the fourth forced after three crossings (§11.3). */
 async function attempts(
-  code: string,
+  b: Bucket,
   gen: number,
   reason: CycleReason,
   t: Transport,
 ): Promise<SyncResult> {
   const port = livePort()
   if (port === null) return engineDown()
-  if (HEAD_REASONS.has(reason) && headable(port, code)) {
+  // A private row is only ever written by compare-and-set (3.3): on a transport that upserts,
+  // a crossing write would be lost with nobody told.
+  if (b.kind === 'e2e' && t.mode === 'table' && !CAS_ON) {
+    return pause('no-cas', syncMessage('no-cas'))
+  }
+  if (HEAD_REASONS.has(reason) && headable(port, b.rowId)) {
     const snapRev = port.localRev()
-    const head = await t.head(code)
+    const head = await t.head(b.rowId)
     if (gen !== setupGen) return offResult()
-    if (sameEtag(head, etagOf(port, code))) return unchanged(snapRev)
+    if (sameEtag(head, etagOf(port, b.rowId))) return unchanged(snapRev)
     if (head === null && !established) return pause('not-found', syncMessage('not-found'))
   }
   let conflicts = 0
   for (let attempt = 0; attempt < CYCLE_ATTEMPTS_MAX; attempt++) {
-    const pulled = await t.pull(code)
+    const pulled = await t.pull(b.rowId)
     if (gen !== setupGen) return offResult()
-    const step = mergeStep(code, pulled, reason)
+    const read = await openPulled(b, pulled)
+    if (gen !== setupGen) return offResult()
+    if (read.kind === 'newer') {
+      // Judged on a header nobody signed: a cycle never writes over it (the owner can, 3.9).
+      // Remembered, so the next poll is a HEAD and does not pull and open it again.
+      if (pulled !== null) setEtag(port, b.rowId, pulled.etag, null)
+      return pause('update-required', syncMessage('update-required'))
+    }
+    const step = mergeStep(b, read.pulled, reason)
     if (step.kind === 'done') return step.result
+    // Sealed after the merge section, which stays synchronous (3.3 step 4).
+    let payload = step.wire
+    if (b.keys !== null) {
+      const sealed = await sealForRelay(JSON.stringify(step.wire), b.keys, step.sent.rev)
+      if (gen !== setupGen) {
+        forgetSent(step.sent)
+        return offResult()
+      }
+      if (sealed === null || JSON.stringify(sealed).length > PAYLOAD_MAX_CHARS) {
+        forgetSent(step.sent)
+        return pause('too-large', syncMessage('too-large', Math.round(step.chars / 1024)))
+      }
+      payload = sealed
+    }
     let res: PushOutcome
     try {
-      res = await t.push(code, step.wire, {
+      res = await t.push(b.rowId, payload, {
         base: step.base,
         // A forced write never creates: a row that vanished mid-cycle is inserted, not forced.
-        force: conflicts >= CAS_FORCE_AFTER && step.base !== null,
+        // A private row is never forced: every writer of one compare-and-sets, so there is no
+        // older build's upsert to break through, and a forced write skips the token check.
+        force: b.kind === 'plain' && conflicts >= CAS_FORCE_AFTER && step.base !== null,
         // A hide push outlives the page (pagehide and freeze may come while still 'visible').
         keepalive: reason === 'hide' || hidden(),
       })
@@ -1189,7 +1338,7 @@ async function attempts(
       continue
     }
     // The relay received this state, so "Synced" is honest.
-    return succeed(step.snapRev, true, step.changedLocal, landed(step, code, res.etag))
+    return succeed(step.snapRev, true, step.changedLocal, landed(step, b, res.etag))
   }
   throw new BusyError()
 }
@@ -1209,8 +1358,50 @@ const reprobeFor = (err: unknown, m: RelayMode): boolean =>
   err instanceof SyncTransportError &&
   ((m === 'table' && err.kind === 'permission') || (m === 'rpc' && err.kind === 'no-rpc'))
 
+/** The pause of a device fenced out of its plain bucket, by the marker's reason (3.7). */
+const fencedResult = (why: string): SyncResult =>
+  why === 'private'
+    ? pause('moved-private', syncMessage('moved-private'))
+    : pause('moved', syncMessage('moved'))
+
+/** The reason a moved marker gives (`x5.moved.why`), or '' when it gives none. */
+function movedWhy(raw: unknown): string {
+  const x5 = isRecord(raw) ? raw.x5 : undefined
+  const moved = isRecord(x5) ? x5.moved : undefined
+  return isRecord(moved) && typeof moved.why === 'string' ? moved.why : ''
+}
+
+/**
+ * This device pulled a moved marker. On a plain bucket the fence is persisted before the pause
+ * (3.7): from then on the device asks that row nothing, whatever the row holds later. A marker
+ * read out of a private bucket's envelope pauses for this session.
+ */
+function fenceOut(b: Bucket, raw: unknown, now: number): SyncResult {
+  if (b.kind !== 'plain') return pause('moved', syncMessage('moved'))
+  const why = movedWhy(raw)
+  try {
+    storage.setFenced(b.code, why, now)
+  } catch {
+    // storage refused: fenced for this session, and again at the next pull of the marker
+  }
+  return fencedResult(why)
+}
+
 async function cycle(code: string, gen: number, reason: CycleReason): Promise<SyncResult> {
+  // A fenced device makes no request (3.7).
+  const cfg = readConfig()
+  if (cfg?.kind === 'plain' && cfg.code === code && cfg.fenced !== undefined) {
+    return fencedResult(cfg.fenced.why)
+  }
   useSyncStore.setState({ cloudStatus: 'syncing' })
+  let b: Bucket
+  try {
+    b = await bucketFor(code)
+  } catch {
+    // a stored private code that no longer parses: there is no row to ask for
+    return gen === setupGen ? pause('not-found', syncMessage('not-found')) : offResult()
+  }
+  if (gen !== setupGen) return offResult()
   // A refusal the relay's answer to a fresh probe may explain asks again within the cycle.
   let reprobe = false
   for (let probe = 0; ; probe++) {
@@ -1219,7 +1410,7 @@ async function cycle(code: string, gen: number, reason: CycleReason): Promise<Sy
     let t: Transport
     try {
       const hint = hintOf(port)
-      const opened = await openTransport(code, hint, Date.now(), reprobe)
+      const opened = await openTransport(b.rowId, hint, Date.now(), reprobe)
       if (gen !== setupGen) return offResult()
       if (opened.hint.mode !== hint.mode || opened.hint.probedAt !== hint.probedAt) {
         port.setMeta({ transport: opened.hint.mode, probedAt: opened.hint.probedAt })
@@ -1230,7 +1421,7 @@ async function cycle(code: string, gen: number, reason: CycleReason): Promise<Sy
     }
     mode = t.mode
     try {
-      return await attempts(code, gen, reason, t)
+      return await attempts(b, gen, reason, t)
     } catch (err) {
       if (gen !== setupGen) return offResult()
       if (RELAY_PIN === 'auto' && reprobeFor(err, t.mode)) {
@@ -1396,6 +1587,8 @@ function digestOf(payload: Record<string, unknown>): string | null {
 function onRowChange(change: RemoteChange) {
   const port = getSyncPort()
   const code = useSyncStore.getState().syncId
+  // A private bucket subscribes to no row events (3.4); one that arrives is not for it.
+  if (code !== null && isPrivateCode(code)) return
   const at = change.updatedAt
   // Our own landed write, or the copy this device already holds (the same etag).
   if (at !== null && port !== null && code !== null && sameEtag(at, etagOf(port, code))) return
@@ -1506,13 +1699,19 @@ async function ensureSubscribed(gen: number): Promise<void> {
   const code = useSyncStore.getState().syncId
   if (code === null || gen !== setupGen || realtimeUnsub !== null || subscribingGen === gen) return
   if (hidden()) return
+  // A fenced device asks its old bucket nothing, live updates included (3.7).
+  const cfg = readConfig()
+  if (cfg?.kind === 'plain' && cfg.fenced !== undefined) return
   subscribingGen = gen
   connecting = true
   publishLive()
   try {
-    const rowEvents = !tableDenied && !rowEventsFailed
+    const b = await bucketFor(code)
+    // A private bucket hears Broadcast only (3.4): a row-event filter would carry its row id,
+    // and what it delivered would be an envelope.
+    const rowEvents = b.kind === 'plain' && !tableDenied && !rowEventsFailed
     const unsubscribe = await subscribeSync(
-      { topic: await topicFor(code), row: code, rowEvents },
+      { topic: b.topic, row: b.rowId, rowEvents },
       {
         onRowChange: (change) => {
           if (gen === setupGen) onRowChange(change)
@@ -1589,7 +1788,8 @@ export async function setupSync(syncId: string, user: boolean, join = false): Pr
   // what is known about the devices on it.
   const sameCode = useSyncStore.getState().syncId === syncId
   const saved = readConfig()
-  const savedHere = saved?.kind === 'plain' && saved.code === syncId ? saved : null
+  const savedHere =
+    (saved?.kind === 'plain' || saved?.kind === 'e2e') && saved.code === syncId ? saved : null
   established = join ? savedHere?.established === true : (savedHere?.established ?? true)
   keepCode(syncId, established)
   const gen = ++setupGen

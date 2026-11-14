@@ -49,6 +49,9 @@ const PAUSED: Record<SyncPauseReason, string> = {
   denied: 'refused',
   'not-found': 'code not found',
   moved: 'reload to update',
+  // not a reload: the owner has the code on the other device (PRIVATE-SYNC 3.7)
+  'moved-private': 'enter private code',
+  'no-cas': 'not available',
   'update-required': 'reload to update',
   reload: 'reload to update',
 }

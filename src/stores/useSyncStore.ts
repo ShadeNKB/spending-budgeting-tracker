@@ -14,11 +14,15 @@ export type SyncErrorKind = 'network' | 'server' | 'permission' | 'invalid' | 'b
 /**
  * Paused until something changes: `reload`, the sync engine's code did not load on this page and
  * only a reload fetches it again; `not-found`, a joined code has no relay copy (yet); `denied`,
- * the relay refused this device even through its sync functions.
+ * the relay refused this device even through its sync functions; `moved-private`, this
+ * device's plain sync was made private elsewhere and it needs the private code (a durable
+ * fence, PRIVATE-SYNC 3.7); `no-cas`, a private sync on a relay that cannot compare-and-set.
  */
 export type SyncPauseReason =
   | 'too-large'
   | 'moved'
+  | 'moved-private'
+  | 'no-cas'
   | 'update-required'
   | 'reload'
   | 'not-found'
@@ -124,6 +128,8 @@ export const SYNC_RELOAD_MESSAGE =
 const PAUSES: readonly string[] = [
   'too-large',
   'moved',
+  'moved-private',
+  'no-cas',
   'update-required',
   'reload',
   'not-found',
@@ -203,6 +209,7 @@ export function failureSeverity(
   switch (failure.kind) {
     case 'offline':
     case 'moved':
+    case 'moved-private': // fixed with the code from the other device
     case 'update-required':
     case 'reload':
       return 'warning'
@@ -215,6 +222,7 @@ export function failureSeverity(
     case 'too-large':
     case 'not-found':
     case 'denied':
+    case 'no-cas':
       return 'error'
   }
 }
@@ -280,6 +288,9 @@ function savedConfig(): SyncConfig | null {
 
 let codeWarned = false
 
+/** A private code in its display form (`ST5-…`): the shape only, the engine checks the rest. */
+export const isPrivateCode = (code: string): boolean => code.startsWith('ST5-')
+
 /**
  * Saves the sync code (`established` as storage.saveSyncId takes it). When storage refuses it
  * (full), the code still works for this session, but this device forgets it when SpendTrack
@@ -287,12 +298,21 @@ let codeWarned = false
  */
 export function keepCode(syncId: string, established?: boolean): void {
   try {
-    storage.saveSyncId(syncId, established)
+    if (isPrivateCode(syncId)) {
+      // Its own key (PRIVATE-SYNC 3.2). Left out, `established` keeps the flag the same code
+      // has (start-up re-saves the saved code), and a new code is established.
+      const cur = savedConfig()
+      const kept = cur?.kind === 'e2e' && cur.code === syncId ? cur.established : true
+      storage.savePrivateSync(syncId, established ?? kept)
+    } else {
+      storage.saveSyncId(syncId, established)
+    }
   } catch {
     // Checked below: the code may already be there (start-up re-saves the saved code).
   }
   const saved = savedConfig()
-  if ((saved?.kind === 'plain' && saved.code === syncId) || codeWarned) return
+  const here = (saved?.kind === 'plain' || saved?.kind === 'e2e') && saved.code === syncId
+  if (here || codeWarned) return
   codeWarned = true
   syncToast(
     'warning',

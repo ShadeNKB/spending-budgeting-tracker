@@ -42,6 +42,7 @@ export function registryEntry(
   app: string,
   mode: 'table' | 'rpc',
   now: number,
+  e2e = false,
 ): DeviceInfo {
   const rpcSince: Stamp | undefined =
     mode === 'rpc' ? (prev?.mode === 'rpc' ? (prev.rpcSince ?? now) : now) : undefined
@@ -50,7 +51,7 @@ export function registryEntry(
     app,
     mode,
     ...(rpcSince === undefined ? {} : { rpcSince }),
-    e2e: false,
+    e2e,
     seen: Math.max(now, (prev?.seen ?? 0) + 1),
   }
 }

@@ -55,6 +55,10 @@ const MSG: Record<SyncFailure['kind'], string> = {
   'too-large':
     "Sync paused: your data (1365 KB) is too large for the sync server. It's still saved here — export a backup.",
   moved: 'Sync moved to a newer version. Reload SpendTrack to update.',
+  'moved-private':
+    'Sync was made private on your other device. Enter the private code shown there.',
+  'no-cas':
+    'Sync paused: this sync server cannot keep a private sync safe yet. Your data is safe on this device.',
   'update-required': 'Sync moved to a newer version. Reload SpendTrack to update.',
   reload: SYNC_RELOAD_MESSAGE,
   'not-found': 'No synced data found for this code. Check it on your other device.',

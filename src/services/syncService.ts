@@ -22,7 +22,7 @@ import { SUPABASE_ANON_KEY, SUPABASE_URL } from './syncConfig'
 const TABLE = 'sync_buckets'
 const PAYLOAD_WARN_BYTES = 800 * 1024 // 800 KB — below Supabase free-tier 1 MB row limit
 // The last line of defence: the engine pauses at its own, lower push limit before sending.
-const PAYLOAD_MAX_CHARS = 1024 * 1024
+export const PAYLOAD_MAX_CHARS = 1024 * 1024
 const REQUEST_TIMEOUT_MS = 15_000
 /** Browsers cap the bodies of keepalive requests in flight at 64 KiB (bytes, not characters). */
 const KEEPALIVE_MAX_BYTES = 60_000
