@@ -3,6 +3,7 @@
 // codec's known-answer vector (a secret of bytes 00..0f), never a real one.
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeSt5 } from '../../data/core/codes'
+import { deriveKeys, open, seal } from '../../data/core/e2e'
 import { isRecord } from '../../lib/backup'
 import {
   SYNC_CODE,
@@ -220,6 +221,48 @@ describe('what is not an envelope of this bucket is never merged (AC-P4, AC-P5)'
     expect(names(phone)).toEqual(['Invented kopi'])
     // it was never fenced or paused by it
     expect(laptop.sync.useSyncStore.getState().lastError).toBeNull()
+  })
+
+  // The two variants only a holder of a key can make: both authenticate under some key, and
+  // neither is this bucket's own copy.
+  const SECRET = Uint8Array.from({ length: 16 }, (_, i) => i)
+  const freshIv = () => crypto.getRandomValues(new Uint8Array(12))
+  async function innerOf(): Promise<string> {
+    const opened = await open(envelope(), await deriveKeys(SECRET))
+    if (!opened.ok) throw new Error('the row did not open')
+    return JSON.stringify(opened.inner)
+  }
+
+  it('an authentic envelope whose inner revision is not the one on its label is not merged', async () => {
+    const laptop = await linked()
+    const relabelled = await seal(await innerOf(), await deriveKeys(SECRET), {
+      r: 'B'.repeat(22),
+      iv: freshIv(),
+      z: 0,
+    })
+    if (!relabelled.ok) throw new Error('the copy did not seal')
+    seedRow(ROW, relabelled.envelope)
+    // unreadable, so repaired: merged, the same entries would have left nothing to push
+    expect(await sync(laptop)).toMatchObject({ ok: true, pushed: true })
+    expect(envelope().r).not.toBe('B'.repeat(22))
+    expect(laptop.sync.useSyncStore.getState().lastError).toBeNull()
+  })
+
+  it('an envelope copied from another private sync is not merged', async () => {
+    const laptop = await linked()
+    const elsewhere = await deriveKeys(Uint8Array.from({ length: 16 }, (_, i) => 255 - i))
+    const foreign = await seal(await innerOf(), elsewhere, {
+      r: String(envelope().r),
+      iv: freshIv(),
+      z: 0,
+    })
+    if (!foreign.ok) throw new Error('the copy did not seal')
+    seedRow(ROW, foreign.envelope)
+    expect(await sync(laptop)).toMatchObject({ ok: true, pushed: true })
+    expect(envelope().ct).not.toBe(foreign.envelope.ct)
+    const phone = await bootDevice({ expenses: [] })
+    expect(await start(phone, true)).toMatchObject({ ok: true })
+    expect(names(phone)).toEqual(['Invented kopi'])
   })
 
   it('an older valid envelope put back loses nothing', async () => {
