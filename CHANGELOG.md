@@ -1,5 +1,47 @@
 # Changelog
 
+## 0.21.0 — 2026-11-15
+
+Private sync, first release: a sync started from now on is encrypted on the device before anything leaves it. A sync you already have is not changed.
+
+### Added
+
+- **A new sync is private.** Where the app uses the relay's sync functions or compare-and-set (`VITE_SYNC_RELAY=auto` or `rpc`, or `VITE_SYNC_CAS=on`), **Generate** makes a private code: `ST5-` and four groups of seven characters. What a device sends is encrypted on that device first (AES-GCM-256, the key derived from the code with HKDF-SHA256, both built into the browser). The relay holds one row of ciphertext under an id derived from the code, never under the code. Only a device with the code can read the synced copy, and a change made on the relay by anyone without the code is detected and never merged.
+- **Join takes a private code**, typed any way: lower case, spaces or dashes between the groups. The code checks itself, so one wrong character is caught before anything goes on the network ("One character of that code looks wrong. Check it against your other device."). A found code shows the same preview as before, and nothing is saved until **Join** is tapped again. Only the id derived from the code ever leaves the device.
+- **Settings › Sync says which kind of sync it is.** Before a sync exists: that a new one is encrypted on the device. Linked: "Private sync: what this device sends is encrypted here first. Only a device with this code can read the synced copy from now on." Backup's line about the relay copy follows the kind too.
+- **Replace the synced copy.** A private copy marked as a newer format pauses sync ("Reload SpendTrack to update"). That mark is read before the copy can be opened, so a damaged copy could carry it and no reload would help. When no new version is waiting, Settings › Sync then offers **Replace the synced copy**: it asks first, then writes this device's copy over it. Other devices keep their entries and add them back when they next sync.
+- **A device fenced out of a sync that was made private** says so ("Sync was made private on your other device. Enter the private code shown there."), shows the code field in place, and stops touching the old copy for good. Nothing makes a sync private yet: this is the receiving half of the next release.
+
+### What does not change
+
+- **A sync you already have stays exactly as it is**: its code, its behaviour, and its copy on the relay, which is not encrypted. Nothing in this release converts it. "Make sync private" for an existing sync is the next release.
+- **A plain code still joins and syncs**, and a build on the plain upsert transport still generates one.
+- **No new dependency.** The encryption is the browser's own (WebCrypto, Compression Streams).
+
+### Changed (engineering)
+
+- **A bucket in place of the bare code** (`stores/syncEngine.ts`): `{ kind, code, rowId, topic, keys }`. For a private code the row id (a version 8 UUID), the realtime topic and a non-extractable AES key are derived from the code's 16-byte secret; every request, channel name and stored etag uses the derived id. The code never leaves the device. The codec (`data/core/e2e.ts`) and the code format (`data/core/codes.ts`) were written and frozen earlier; this release is their first caller.
+- **The code has its own storage key**, `st5:synckey`, with a reader rule: where it is present the device is private, whatever `syncId` or `st5:sync` say, and the plain writer refuses. `st5:sync` holds only a marker (`{ kind: "e2e" }`) that 0.11.0 to 0.20.0 read as "set up by a newer SpendTrack", so an older build on the same storage neither syncs nor overwrites it. Disconnect forgets a private code (no Reconnect slot), "Remove from this device" wipes it, and the raw export never carries it.
+- **The private cycle**: pull, open, merge, seal, push. The merge stays the synchronous section it was; opening happens before it and sealing after, each under a deadline, and after each the cycle stops if the bucket changed meanwhile. Every seal draws a fresh IV from the browser's generator. A private row is written only by compare-and-set and never forced: after six crossings the cycle ends busy and the next one starts over. On a transport that can only upsert, a private sync pauses and writes nothing (`no-cas`).
+- **What is in a private row and is not an envelope that opens to its own revision is unreadable**: a failed authentication, a plaintext payload, a plaintext marker, an envelope copied from another row or relabelled. It is never merged and no copy of it is kept (no device that holds the code could read it); the row is repaired from this device's copy, at most every 10 minutes, and only by a device that has synced with this code.
+- **A durable fence** for a plain bucket that meets a moved marker: `fenced: { why, at }` is saved in the plain setup before the pause, and a fenced device makes no request. A marker that is later overwritten or deleted no longer un-fences a device. `why: "private"` pauses `moved-private`.
+- **Live updates** for a private sync use Broadcast on the derived topic only (`{ rev, dev }`, no content). Row events are never subscribed: their filter would carry the row id and their payload is ciphertext.
+- **The owner's replace** (`replaceRelayCopy`) is one ordinary cycle that treats the row as unreadable and skips the repair pace: under the lock, compare-and-set on the etag that cycle pulled, a write that lands first merged and not written over.
+- **The codec stays out of the start-up.** The local engine's snapshots used three helpers of `e2e.ts` (base64url and the compression check), which would have put the whole codec in the chunk every boot downloads; they moved to `data/core/b64url.ts`. Boot sync code 9,110 / 12,288 B, eager sync code 4,069 / 4,096 B (27 B left: the next release has to trim or raise it, with a note).
+- **Tests.** The real engine against the fake relay for the round trip, tampering, a newer format, conflicts, pending crypto (an edit or a Disconnect while a copy is being opened or sealed), the size limit with and without gzip, the fence, the join preview and the replace (`sync.private.test.ts`, 30 tests). In real browsers, Chromium and iPhone WebKit (`e2e/data-engine/private.data.ts`): two devices from Generate to edits both ways, with the relay's log checked for the code and for every entry's name; the real 0.20.0 build beside it; the new states through axe in both themes, 44 px targets and 320 px.
+- `scripts/build-mixed.mjs` builds `v020` from the v0.20.0 tag; the e2e relay logs an envelope's writer as `e2e`.
+- Boot 501,841 / 561,580 B (59,739 B left), eager 401,718 / 466,908 B; all JS 688.3 / 740 KB (51.7 KB left): 1.9 KB for the release where no relay is set. A deployed build's lazy sync engine grew by the codec.
+
+### Known limits
+
+- **It does not un-publish the past.** What a plain sync put on the relay stays readable there. This release does not move an existing sync; until the next one does, the way by hand is: Disconnect on both devices, Generate on one, Join on the other. Nothing is lost (each device keeps its entries and a join merges). The old plain row stays on the relay until it is deleted there.
+- **Update both devices before starting a private sync.** 0.20.0 and older refuse a private code ("That's a private sync code. Update SpendTrack on this device to use it."). An older build opened on a device that already syncs privately says a newer SpendTrack set sync up and does not sync until it is updated; the code is kept.
+- **The relay still sees what it must to pass a row along**: its size and how it changes, when it is written, the address a device connects from, and the device ids in live-update messages.
+- **Availability is not protected.** Anyone who can write the row can replace it with garbage; a device detects that and repairs the row from its own copy. The relay can also hand back an older valid copy: merging it changes nothing on a device that already holds newer entries.
+- **A device you no longer trust keeps the code.** There is no way to revoke one device: start a new sync on the others.
+- **Lose the code and every device, and the synced copy cannot be read by anyone.** Keep a backup export, as before.
+- A private code is long to type (28 characters). A QR code or pairing link is not built: it needs a new dependency or the code in a link.
+
 ## 0.20.0 — 2026-11-14
 
 Refunds, the second kind of money in: money that comes back for something you paid for comes off that category's spending.

@@ -1,6 +1,6 @@
 # Private sync (PR-6): spec
 
-Status: version 2, 15 Nov 2026. Version 1 was failed by two independent reviews (security; sync correctness) before any code was written: section 10 records what they found. This version splits the track into two releases and replaces the move's protocol.
+Status: version 2, 15 Nov 2026; release 1 built as written except where section 10 ("As built") says otherwise. Version 1 was failed by two independent reviews (security; sync correctness) before any code was written: section 10 records what they found. This version splits the track into two releases and replaces the move's protocol.
 
 Track T2's last piece ("end-to-end encryption with hashed row ids"). Written from the code as it stands at v0.20.0: the data-engine spec the source cites (`DATA-ENGINE-SPEC §10, §11, §13`) is not in this repository, so this document restates what the code froze and specifies what is still to build.
 
@@ -68,7 +68,7 @@ Derived once per code and cached in memory. Every place that takes "the code" to
 2. **Read** (async, before `mergeStep`). The only valid content of a private row is an envelope that opens:
    - `open` ok **and** the inner value is a v5 payload whose `x5.rev` equals the envelope's `r` → the inner value goes to `mergeStep` as a plaintext pull does today (decode, sanitise, classify);
    - `open` says `newer` (a later `st` or `k`, or gzip this browser cannot read) → pause `update-required`, remember the etag (so the HEAD short-cut does not re-open it every minute), never overwrite. This judgement is made on an unauthenticated header: a forged one cannot be told from a real one, so the owner has a way out (3.9);
-   - **everything else is `invalid`**: a failed authentication, a wrong shape, a plaintext v5 payload, a plaintext moved marker, an inner payload of any other writer class or with another revision. It is never merged. One raw copy is kept in quarantine (the newest replaces the last: unreadable copies must not fill storage), and the row is repaired from this device's copy under the gate that paces plaintext repairs today;
+   - **everything else is `invalid`**: a failed authentication, a wrong shape, a plaintext v5 payload, a plaintext moved marker, an inner payload of any other writer class or with another revision. It is never merged and **no copy of it is kept**: what does not open under this bucket's key can be read by no device that holds the code, so there is nothing for the owner to recover from it, and unreadable copies must never fill storage. The row is repaired from this device's copy under the gate that paces plaintext repairs today (at most every 10 minutes, and only by a device that has synced with this code);
    - no row → as today (create on first push for the device that started the bucket, `not-found` for one that joined).
 3. `mergeStep(bucket, opened, reason)`: the logic is unchanged. `news` (Realtime row payloads) is always empty for a private bucket. This device's registry entry carries `e2e: true`. The inner payload is encoded with `min: SCHEMA`.
 4. **Seal** (async, after `mergeStep`), through one wrapper, the only caller of `seal`: it draws the 12 IV bytes from `crypto.getRandomValues` at the call (never from the engine's seeded generator, never stored, a fresh draw for every seal, a re-seal included), `r` is the step's revision, `z` is 1 when `canCompress()`.
@@ -90,8 +90,9 @@ Broadcast on `keys.topic` only (`{rev, dev}`: no content). Row events (`postgres
 - a UUID → today's plain join, unchanged;
 - an `ST5` code that parses → derive the keys, pull the private row, open it, and return the preview a plain join shows (entries here, entries there) before anything is merged. Confirm → write `st5:synckey`, then the config, then run a cycle. The device is established only after an authenticated open;
 - an `ST5` code that does not parse → by reason: `length`, `symbol`, `range`, `checksum` ("One character of that code looks wrong. Check it against your other device.");
-- no row for the code → "No private sync was found for that code.";
-- a row that does not open → "That private sync cannot be read with this code." Nothing is joined.
+- no row for the code → "No private sync was found for that code. Check it on your other device.";
+- a row that does not open → the line a plain join has for a copy it cannot read ("The synced copy can't be read. Join from a device that synced it before."): the cause may be the code or the copy, and the owner's next step is the same. Nothing is joined;
+- a row marked as a newer format → "This sync was moved by a newer SpendTrack. Reload SpendTrack to update, then join."
 
 The code field turns off auto-capitalise, auto-correct and spell-check. A join never sends the code anywhere: only the derived row id leaves the device.
 
@@ -110,15 +111,16 @@ Nothing in release 1 writes a marker. The fence ships first so that every device
 
 ### 3.8 On screen
 
-- Settings › Sync, private bucket: the code masked as today (`••••-…-XXXX`), Show and Copy as today; "Private" on the status row; the line under it reads "What this device sends is encrypted here first. Only a device with this code can read the synced copy from now on."
+- Settings › Sync, private bucket: the code masked as today (`••••-…-XXXX`), Show and Copy as today; under the code, one line: "Private sync: what this device sends is encrypted here first. Only a device with this code can read the synced copy from now on." (No badge on the status row: the row says what sync is doing, and one sentence says what kind it is.)
+- Settings › Sync, not linked, on a build whose relay can keep a private sync safe (`privateSyncReady`: the sync functions, or compare-and-set on the table): the intro says a new sync is encrypted on the device, and Generate makes a private code. Other builds keep the "isn't encrypted yet" intro and make a plain code.
 - Settings › Sync, plain bucket: the existing "isn't encrypted yet" line stays (release 2 adds the action).
 - Backup panel: its sentence follows the bucket's kind.
-- The sync pill: `moved-private` reads "Enter private code" and opens Settings › Sync.
+- The sync pill: `moved-private` reads "enter private code" and `no-cas` "not available"; both open Settings › Sync.
 - Device list: unchanged ("This device", "Other device").
 
 ### 3.9 The owner's ways out
 
-- **A private row this device cannot read as current** (`update-required` on a private bucket, while no newer build is waiting): Settings › Sync offers "Replace the synced copy with this device's". Confirmed, it seals this device's copy and writes it by compare-and-set on the etag last pulled. This is the repair for a forged or damaged header.
+- **A private row this device cannot read as current** (`update-required` on a private bucket, while no newer build is waiting): Settings › Sync offers "Replace the synced copy", and asks first ("Replace the synced copy with this device's?", saying that other devices add their entries back when they next sync and that anything only the synced copy held is lost). Confirmed, it runs one ordinary cycle, under the lock, that treats the row as unreadable: nothing of it is merged, and this device's copy is sealed and written by compare-and-set on the etag that cycle pulled (never forced; a write that lands first is merged, not written over). It does not wait out the pace of automatic repairs, and it is not offered while a new build is waiting (Reload is the answer then) or on a plain sync. This is the repair for a forged or damaged header.
 - **Fenced with no code to enter**: the same panel says "No code? Disconnect, then start a new sync: your entries stay on this device."
 
 ## 4. Release 2: making an existing bucket private (gate D)
@@ -200,7 +202,7 @@ Each is a test at the level named. Unit tests run the real engine against the fa
 - **AC-P1.** A private cycle round-trips between two devices through a relay that holds only `{st,k,r,iv,z,ct}`. No entry's name, amount, category or note is in any row, topic or request.
 - **AC-P2.** Every request of a private bucket (the probe with `auto` and no hint, head, pull, push, the join preview), every channel name and every persisted `meta.sync` value carries the derived row id or topic. None contains the code or the secret.
 - **AC-P3.** An edit made while `open` or `seal` is pending is neither lost nor acked early. A bucket change (Disconnect, another tab) while either is pending stops the cycle without a write.
-- **AC-P4.** A flipped ciphertext bit, a swapped `r`, an envelope copied from another row, a plaintext v5 payload, a plaintext marker, an empty object, and an inner payload whose revision differs from `r`: each is quarantined (one copy kept in all), not merged, and repaired. An injected plaintext entry never appears on a device.
+- **AC-P4.** A flipped ciphertext bit, a swapped `r`, an envelope copied from another row, a plaintext v5 payload, a plaintext marker, an empty object, and an inner payload whose revision differs from `r`: each is never merged, never kept, and repaired. An injected plaintext entry never appears on a device.
 - **AC-P5.** An older valid envelope put back loses nothing and converges.
 - **AC-P6.** A newer envelope (`st` 6, `k` 2) pauses `update-required`, is not overwritten by any cycle, is not re-opened by the next poll, and is replaced only by the owner's action (3.9).
 - **AC-P7.** A private bucket is never force-written by a cycle: six conflicts end the cycle busy.
@@ -249,3 +251,15 @@ Version 1 (one release; the device flipped to private first, then created its ro
 - **J. Split the track** (correctness). Taken: release 1 carries the cycle, the join and the fence; release 2 carries the move.
 - Smaller points taken: the IV wrapper, one quarantined copy, revision equality of the inner payload, `range` among the join failures, the binding size limit, `needsReload`, the 60-day constant, 0.10.0's handling of an unknown config.
 - Checked and not a finding: the 7 Nov backup copy is in a private schema with row security on and no grants to the API roles (read-only catalog query, 15 Nov).
+
+### As built (release 1, 0.21.0)
+
+Where the build differs from the text first reviewed, and why. Each is reflected in the sections above.
+
+- **An unreadable private copy is not kept in quarantine** (3.3, AC-P4). Version 2 kept one raw copy. A copy that does not open under the bucket's key can be read by no device that holds the code: keeping it gives the owner nothing to recover and gives anyone who can write the row a way to put bytes in a device's storage.
+- **No "Private" badge** (3.8): one sentence under the code says it.
+- **The join's "cannot be read" line is the plain join's** (3.5).
+- **Generate follows the build** (3.6, 3.8): private where `privateSyncReady`, plain elsewhere, so a relay that can only upsert never gets a private row it would then refuse to write (`no-cas`).
+- **Replace is a cycle, not a separate writer** (3.9): it shares the lock, the compare-and-set and the conflict handling with every other write of a private row.
+- **Tests.** AC-P1 to P9 and P12 to P16 on the real engine against the fake relay (`src/stores/__tests__/sync.private.test.ts`); P10 in `src/services/storage.test.ts`; P11 in `src/data/local/__tests__/syncSeams.test.ts`; P17 to P19 and 3.9 in real browsers on Chromium and iPhone WebKit, P18 beside a build of the v0.20.0 tag (`e2e/data-engine/private.data.ts`).
+
