@@ -17,6 +17,8 @@ import {
   DEMO_PREFIX,
   EXTRA_KEY_RE,
   FIELD_KEYS,
+  KIND_INCOME,
+  KIND_KEY,
   LIVE_AND_DELETED,
   NAME_MAX,
   NOTES_INPUT_MAX,
@@ -24,12 +26,14 @@ import {
   PREF_TEXT_MAX,
   UNDO_MS,
   isReserved,
+  nullRecord,
 } from './constants'
 import { dayOf, todayDay, validDay } from './dates'
 import { EMPTY_DOC, deriveExpenses, joinRename, keyUnion, mergeDoc } from './doc'
 import { canon } from './hash'
 import { contentKey, dedupeRoot, newId, newRev, reviveId, rootKey } from './ids'
 import {
+  EMPTY_EXTRAS,
   addRecord,
   editRecord,
   materialize,
@@ -39,13 +43,15 @@ import {
   reviveRecord,
   type RecordPatch,
 } from './record'
-import { isJson, validCurrency, validMapKey, validName } from './sanitize'
+import { extrasFit, isJson, validCurrency, validMapKey, validName } from './sanitize'
 import { tick } from './stamp'
 import type {
   BudgetReg,
   Doc,
+  EntryKind,
   ExpensePatch,
   ExpenseRec,
+  Extras,
   FieldKey,
   ImportPlan,
   Json,
@@ -70,6 +76,7 @@ export type OpErrorCode =
   | 'category'
   | 'day'
   | 'notes'
+  | 'kind'
   | 'budget'
   | 'currency'
   | 'pref'
@@ -141,6 +148,35 @@ function checkNotes(notes: string): string | null {
 }
 
 // ── helpers ─────────────────────────────────────────────────────────────────────────────────
+
+function checkKind(kind: unknown): EntryKind {
+  if (kind === 'expense' || kind === KIND_INCOME) return kind
+  throw new OpError('kind', 'Choose expense or income.')
+}
+
+/** True for a record this version reads as an income. */
+const isIncome = (rec: ExpenseRec): boolean =>
+  Object.hasOwn(rec.x.v, KIND_KEY) && rec.x.v[KIND_KEY] === KIND_INCOME
+
+/**
+ * `x` with the kind set (T8c): the key is absent for an expense, and every other key, known to
+ * this version or not, stays. The same object when nothing changes. Refuses what the wire would
+ * drop on the next read (a record already at the extras limit).
+ */
+function withKind(x: Extras, kind: EntryKind): Extras {
+  const current = Object.hasOwn(x, KIND_KEY) ? x[KIND_KEY] : undefined
+  if (kind === 'expense' ? current === undefined : current === kind) return x
+  const keys = Object.keys(x).filter((k) => k !== KIND_KEY)
+  if (kind !== 'expense') keys.push(KIND_KEY)
+  const out = nullRecord<Json>()
+  for (const k of keys.sort()) {
+    Object.defineProperty(out, k, { value: k === KIND_KEY ? kind : x[k], enumerable: true })
+  }
+  const next: Extras = Object.freeze(out)
+  if (!extrasFit(next))
+    throw new OpError('kind', 'This entry holds too much other data to change what kind it is.')
+  return next
+}
 
 const result = (doc: Doc, touched: Touched, undo?: UndoEntry): OpResult =>
   undo === undefined ? { doc, touched } : { doc, touched, undo }
@@ -257,13 +293,23 @@ export function addExpense(doc: Doc, ctx: OpCtx, input: NewExpenseInput): OpResu
   const day = checkDay(input.day ?? todayDay(ctx.wall))
   const notes = input.notes === undefined ? null : checkNotes(input.notes)
   const res = resolver(doc.renames)
+  const kind = input.kind === undefined ? 'expense' : checkKind(input.kind)
+  // An income is filed under no category: stored as Other, which teaches no item its category
+  // below, whatever category came with it (the caller's own pick from past entries, often).
   const category =
-    input.category === undefined
-      ? (mappingLookup(doc, name) ?? OTHER)
-      : res(checkCategory(doc, input.category))
+    kind === KIND_INCOME
+      ? OTHER
+      : input.category === undefined
+        ? (mappingLookup(doc, name) ?? OTHER)
+        : res(checkCategory(doc, input.category))
+  const x = withKind(EMPTY_EXTRAS, kind)
   let id = newId(ctx.rng)
   while (doc.expenses.has(id) || doc.tombs.has(id)) id = newId(ctx.rng)
-  const rec = addRecord(id, { n: name, a: amount, c: category, day, o: notes }, ctx)
+  const rec = addRecord(
+    id,
+    { n: name, a: amount, c: category, day, o: notes, ...(x === EMPTY_EXTRAS ? {} : { x }) },
+    ctx,
+  )
   const touched: Touched = [[`ex:${id}`, rec.C]]
   const categories = listed(doc, category)
   if (categories !== doc.categories) touched.push([`cat:${category}`, rec.C])
@@ -286,12 +332,23 @@ export function updateExpense(doc: Doc, ctx: OpCtx, id: string, patch: ExpensePa
   const res = resolver(doc.renames)
   // a field sent back unchanged is not new input: a longer name or note kept from v0.8, or a day at
   // the edge of the window, never blocks an edit of another field
-  const rp: { n?: string; a?: number; c?: string; day?: string; o?: string | null } = {}
+  const rp: {
+    n?: string
+    a?: number
+    c?: string
+    day?: string
+    o?: string | null
+    x?: Extras
+  } = {}
   if (patch.itemName !== undefined && patch.itemName !== rec.n.v) rp.n = checkName(patch.itemName)
   if (patch.amount !== undefined) rp.a = checkAmount(patch.amount)
   if (patch.category !== undefined) rp.c = res(checkCategory(doc, patch.category))
   if (patch.day !== undefined && patch.day !== dayOf(rec)) rp.day = checkDay(patch.day)
   if (patch.notes !== undefined && patch.notes !== (rec.o.v ?? '')) rp.o = checkNotes(patch.notes)
+  if (patch.kind !== undefined) {
+    const x = withKind(rec.x.v, checkKind(patch.kind))
+    if (x !== rec.x.v) rp.x = x
+  }
   const next = editRecord(rec, rp satisfies RecordPatch, ctx)
   if (next === rec) return unchanged(doc)
   const fields = changedFields(rec, next)
@@ -301,8 +358,9 @@ export function updateExpense(doc: Doc, ctx: OpCtx, id: string, patch: ExpensePa
   if (categories !== doc.categories) touched.push([`cat:${next.c.v}`, t])
   // A changed category is a correction to learn from (F-056): the next entry of that name files
   // there, as an add teaches it. Like an add's, an Undo leaves what was learned.
+  // An income's category is not shown and says nothing about where its name's expenses go.
   let mappings = doc.mappings
-  if (fields.includes('c') && next.c.v !== OTHER) {
+  if (fields.includes('c') && next.c.v !== OTHER && !isIncome(next)) {
     const key = mappingKey(next.n.v)
     const old = doc.mappings.get(key)
     if (validMapKey(key) && (old === undefined || res(old.v) !== next.c.v)) {

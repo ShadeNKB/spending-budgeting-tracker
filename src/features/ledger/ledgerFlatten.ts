@@ -6,6 +6,7 @@ import {
   weekdayShort,
   type DayKey,
 } from '../../lib/dates'
+import { categoryOf, kindOf } from '../../lib/kind'
 import type { LedgerIndex } from '../../lib/ledgerIndex'
 import type { Expense } from '../../types'
 
@@ -32,6 +33,7 @@ export function ledgerRowDateLabel(key: DayKey | null, today: DayKey): string {
 /**
  * Narrow already-ordered index rows to one category (`'all'` = any) and a search over the name,
  * category and notes. The search ignores case and surrounding spaces ("Kopi" finds "kopi").
+ * Only an expense is in a category: money in is listed under "all" alone.
  */
 export function filterLedgerRows(
   index: LedgerIndex,
@@ -39,11 +41,13 @@ export function filterLedgerRows(
   { category, search }: { category: string; search: string },
 ): number[] {
   const q = search.trim().toLowerCase()
-  return rows.filter(
-    (r) =>
-      (category === 'all' || index.expenses[r]?.category === category) &&
-      (q === '' || index.searchText(r).includes(q)),
-  )
+  return rows.filter((r) => {
+    const e = index.expenses[r]
+    return (
+      (category === 'all' || (e !== undefined && categoryOf(e) === category)) &&
+      (q === '' || index.searchText(r).includes(q))
+    )
+  })
 }
 
 export interface LedgerGroup {
@@ -58,8 +62,9 @@ export interface LedgerGroup {
 /**
  * Group already-ordered index rows (newest day first, unreadable dates last) into day sections
  * in one pass, with totals summed in cents. A day's total is its spending: an entry in a
- * not-spending category (`aside`, F-057) is listed under its day and left out of that day's sum, as
- * it is left out of every other total.
+ * not-spending category (`aside`, F-057), money in, or an entry of a kind this version does not
+ * know (F-058) is listed under its day and left out of that day's sum, as it is left out of
+ * every other spending total.
  */
 export function groupLedgerRows(
   index: LedgerIndex,
@@ -86,7 +91,8 @@ export function groupLedgerRows(
       current = { group, cents: 0 }
     }
     current.group.items.push(expense)
-    if (aside?.has(expense.category) !== true) current.cents += index.cents[r] ?? 0
+    if (kindOf(expense) === 'expense' && aside?.has(expense.category) !== true)
+      current.cents += index.cents[r] ?? 0
   }
   if (current) current.group.total = current.cents / 100
   return groups

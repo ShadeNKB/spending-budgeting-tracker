@@ -61,21 +61,24 @@ export function InsightsScreen() {
   const setAddSheetOpen = useUIStore((s) => s.setAddSheetOpen)
   const fmt = useFormatMoney()
   const today = useToday()
-  // Spending only, as on Pulse: not-spending entries (F-057) are in no figure here.
+  // Spending only, as on Pulse: not-spending entries (F-057) and money in (F-058) are in no
+  // figure here.
   const budgets = spendingBudgets(allBudgets, asideCategories)
-  const index = getLedgerIndex(splitSpending(expenses, asideCategories).spending)
+  const { spending, outgoing } = splitSpending(expenses, asideCategories)
+  const index = getLedgerIndex(spending)
 
   const insights = useMemo(
     () => computeInsights(index, budgets, today, fmt, monthBudget),
     [index, budgets, today, fmt, monthBudget],
   )
   const recurring = detectRecurring(index) // memoised per index
-  // Charges to log are looked for among every entry: a monthly transfer that is not spending is
-  // still one to be reminded of (the forecast above stays spending only). With no such category
-  // it is the same index, and the same detection.
+  // Charges to log are looked for among every expense: a monthly transfer that is not spending is
+  // still one to be reminded of (the forecast above stays spending only). Money in is not a
+  // charge: Log would enter a monthly allowance as an expense. With no not-spending category and
+  // no money in it is the same index, and the same detection.
   const due = useMemo(
-    () => dueSoon(detectRecurring(getLedgerIndex(expenses)), today),
-    [expenses, today],
+    () => dueSoon(detectRecurring(getLedgerIndex(outgoing)), today),
+    [outgoing, today],
   )
   const forecast = useMemo(
     () => forecastDailyFromRecurring(recurring, today, FORECAST_DAYS),

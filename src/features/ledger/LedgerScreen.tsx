@@ -14,6 +14,7 @@ import { EmptyState } from '../../ui/EmptyState'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { useToday } from '../../hooks/useToday'
 import { ledgerRange, ledgerRangeLabel, shortDateYear } from '../../lib/dates'
+import { kindOf } from '../../lib/kind'
 import { getLedgerIndex, rowsInRange, rowsToExpenses } from '../../lib/ledgerIndex'
 import { SmartInput } from '../entry/SmartInput'
 import { deleteUndoId } from '../entry/expenseForm'
@@ -248,22 +249,35 @@ export function LedgerScreen() {
 
   const filtered = useMemo(() => rowsToExpenses(index, rows), [index, rows])
   // The total, and each day's, is spending, as on Pulse; listed entries of not-spending categories
-  // (F-057) are summed beside it, so the two always account for every row shown.
+  // (F-057) and money in (F-058) are summed beside it, and entries of a kind this version does not
+  // know are counted as rows, so the lines together account for every row shown.
   const asideCategories = useExpenseStore((s) => s.asideCategories)
   const asideNames = useMemo(() => new Set(asideCategories), [asideCategories])
   const groups = useMemo(
     () => groupLedgerRows(index, rows, today, asideNames),
     [index, rows, today, asideNames],
   )
-  const { totalSum, asideSum } = useMemo(() => {
+  const { totalSum, asideSum, incomeSum, uncounted } = useMemo(() => {
     let cents = 0
     let aside = 0
+    let income = 0
+    let unknown = 0
     for (const r of rows) {
+      const e = index.expenses[r]
+      if (!e) continue
       const c = index.cents[r] ?? 0
-      if (asideNames.has(index.expenses[r]?.category ?? '')) aside += c
+      const kind = kindOf(e)
+      if (kind === 'income') income += c
+      else if (kind === 'unknown') unknown += 1
+      else if (asideNames.has(e.category)) aside += c
       else cents += c
     }
-    return { totalSum: cents / 100, asideSum: aside / 100 }
+    return {
+      totalSum: cents / 100,
+      asideSum: aside / 100,
+      incomeSum: income / 100,
+      uncounted: unknown,
+    }
   }, [index, rows, asideNames])
 
   const lastDelete = useRef<Change | null>(null)
@@ -363,6 +377,16 @@ export function LedgerScreen() {
               {asideSum > 0 && (
                 <div className="text-[11px] text-[var(--text-tertiary)]">
                   <span className="font-mono tabular-nums">{fmt(asideSum)}</span> not spending
+                </div>
+              )}
+              {incomeSum > 0 && (
+                <div className="text-[11px] text-[var(--text-tertiary)]">
+                  <span className="font-mono tabular-nums">+{fmt(incomeSum)}</span> money in
+                </div>
+              )}
+              {uncounted > 0 && (
+                <div className="text-[11px] text-[var(--text-tertiary)]">
+                  {uncounted} not counted
                 </div>
               )}
             </div>

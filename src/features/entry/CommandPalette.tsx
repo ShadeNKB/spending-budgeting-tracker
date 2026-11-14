@@ -43,6 +43,7 @@ import { announce, retract } from '../../ui/announce'
 import { shieldKeyGesture } from '../../ui/pressShield'
 import { addAndConfirm } from './expenseForm'
 import { ledgerEntryHref } from '../ledger/ledgerParams'
+import { filedUnder } from '../../lib/kind'
 import type { ExpenseView } from '../../types'
 
 type Action = {
@@ -618,7 +619,7 @@ export function CommandPalette() {
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-white">{e.itemName}</div>
                       <div className="text-[11px] text-[var(--text-tertiary)]">
-                        {e.category} / {formatKey(e.day, 'MMM d')}
+                        {filedUnder(e)} / {formatKey(e.day, 'MMM d')}
                       </div>
                     </div>
                     <span className="font-mono text-[13px] tabular-nums text-white">

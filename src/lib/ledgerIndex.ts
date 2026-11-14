@@ -1,4 +1,5 @@
 import { dayKeyOfStored, keyToLocalNoon, readStored, type DayKey, type DayRange } from './dates'
+import { filedUnder } from './kind'
 import type { Expense } from '../types'
 
 /**
@@ -126,7 +127,8 @@ function buildIndex(expenses: readonly Expense[]): LedgerIndex {
     const hit = texts[r]
     if (hit !== undefined) return hit
     const e = expenses[r]
-    const text = e ? `${e.itemName}\0${e.category}\0${e.notes ?? ''}`.toLowerCase() : ''
+    // what the row shows: an income is found by "income", never by the category it is stored with
+    const text = e ? `${e.itemName}\0${filedUnder(e)}\0${e.notes ?? ''}`.toLowerCase() : ''
     texts[r] = text
     return text
   }

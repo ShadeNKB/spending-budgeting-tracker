@@ -86,8 +86,9 @@ export function PulseScreen() {
   useEffect(() => whenIdle(preloadMonthlyBars), [])
 
   // Every figure on this screen is spending: entries in a not-spending category (money moved, not
-  // spent) are summed on their own line and leave the rest, budgets included (F-057).
-  const { spending, aside } = splitSpending(expenses, asideCategories)
+  // spent) and money in are each summed on their own line and leave the rest, budgets included
+  // (F-057, F-058).
+  const { spending, aside, income } = splitSpending(expenses, asideCategories)
   const budgets = spendingBudgets(allBudgets, asideCategories)
   const index = getLedgerIndex(spending)
   // The arrows page the period the switch shows, also while the screen is catching up with it:
@@ -115,13 +116,12 @@ export function PulseScreen() {
   const a = yearData ?? monthData
   // What the period on screen holds of not-spending entries, future-dated ones included, as its
   // total holds them.
+  const periodRange = yearData ? yearRange(yearData.year) : monthRange(monthData.monthKey)
   const asideTotal =
-    aside.length === 0
-      ? 0
-      : sumRange(
-          getLedgerIndex(aside),
-          yearData ? yearRange(yearData.year) : monthRange(monthData.monthKey),
-        ).cents / 100
+    aside.length === 0 ? 0 : sumRange(getLedgerIndex(aside), periodRange).cents / 100
+  // Money in over the same period, and what is left of it after the period's spending.
+  const incomeCents = income.length === 0 ? 0 : sumRange(getLedgerIndex(income), periodRange).cents
+  const leftCents = incomeCents - Math.round(a.periodTotal * 100)
   // A category opens the Ledger over the period on screen: a past month or year as its days.
   const ledgerPeriod: LedgerPeriod = yearData
     ? yearOffset === 0
@@ -316,6 +316,22 @@ export function PulseScreen() {
                     Not spending{' '}
                     <span className="font-mono tabular-nums text-white">{fmt(asideTotal)}</span>
                     <span className="text-[var(--text-tertiary)]"> · not in the total</span>
+                  </div>
+                )}
+
+                {incomeCents > 0 && (
+                  <div className="mt-1 text-[12px] text-[var(--text-secondary)]">
+                    Money in{' '}
+                    <span className="font-mono tabular-nums text-white">
+                      {fmt(incomeCents / 100)}
+                    </span>
+                    <span className="text-[var(--text-tertiary)]">
+                      {' · '}
+                      <span className="font-mono tabular-nums">
+                        {fmt(Math.abs(leftCents) / 100)}
+                      </span>{' '}
+                      {leftCents >= 0 ? 'more than spent' : 'less than spent'}
+                    </span>
                   </div>
                 )}
 

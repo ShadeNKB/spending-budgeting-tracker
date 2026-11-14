@@ -196,18 +196,24 @@ export interface OpResult {
   readonly created?: ExpenseRec
 }
 
+/** A kind an op writes (T8c). An expense is the absence of the key in the record's extras. */
+export type EntryKind = 'expense' | 'income'
+
 export interface NewExpenseInput {
   readonly itemName: string
   readonly amount: number
+  /** Ignored for an income: it is filed under no category (stored as Other). */
   readonly category?: string
   /** 'yyyy-MM-dd'; defaults to today's local day. */
   readonly day?: string
   readonly notes?: string
+  /** Left out: an expense. */
+  readonly kind?: EntryKind
 }
 
-/** `notes: ''` clears the notes. */
+/** `notes: ''` clears the notes. A kind changes the extras register alone, never the category. */
 export type ExpensePatch = Partial<
-  Pick<NewExpenseInput, 'itemName' | 'amount' | 'category' | 'day' | 'notes'>
+  Pick<NewExpenseInput, 'itemName' | 'amount' | 'category' | 'day' | 'notes' | 'kind'>
 >
 
 export type Origin = 'local-envelope' | 'local-v4' | 'remote' | 'file' | 'snapshot'

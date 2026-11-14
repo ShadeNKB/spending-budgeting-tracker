@@ -118,6 +118,16 @@ export const KNOWN_RECORD_KEYS: ReadonlySet<string> = new Set([
 ])
 
 export const OTHER = 'Other'
+
+/**
+ * The extras key that says what kind of entry a record is (T8c). Absent: an expense, as every
+ * record was before it. It rides in the extras register, which every v5 version keeps verbatim
+ * for fields it does not know: no new wire field, and a version that has never heard of it
+ * neither loses it nor changes it.
+ */
+export const KIND_KEY = 'kind'
+/** Money that came in (pay, an allowance, a sale): not spending, and filed under no category. */
+export const KIND_INCOME = 'income'
 /**
  * Report reason of a record a source lists both live and deleted that does not stay live (the
  * tombstone won, or a fold left the id out); its original is kept in `SanitizeReport.repairs`.

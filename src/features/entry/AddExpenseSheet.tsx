@@ -4,6 +4,7 @@ import { CalendarDays, ChevronDown } from 'lucide-react'
 import { Sheet } from '../../ui/Sheet'
 import { Input } from '../../ui/Input'
 import { Button } from '../../ui/Button'
+import { Segmented } from '../../ui/Segmented'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useToast } from '../../hooks/useToast'
 import { useHaptic } from '../../hooks/useHaptic'
@@ -22,6 +23,7 @@ import {
   type ExpenseFormErrors,
   type ExpenseFormField,
 } from './expenseForm'
+import type { EntryKind } from '../../data/core/types'
 import type { ExpenseView } from '../../types'
 
 interface Props {
@@ -82,6 +84,9 @@ export function AddExpenseSheet({
 
   const [form, setForm] = useState(() => formFrom(prefill, today))
   const [errors, setErrors] = useState<ExpenseFormErrors>({})
+  // Money in (F-058) is added from the same sheet: an expense every time it opens.
+  const [kind, setKind] = useState<EntryKind>('expense')
+  const income = kind === 'income'
 
   // Refill the form each time the sheet opens (SmartInput passes what was typed as a prefill),
   // and only then: refilling on later prefill or date changes would wipe what the user typed.
@@ -94,6 +99,7 @@ export function AddExpenseSheet({
     if (open) {
       setForm(formFrom(prefill, today))
       setErrors({})
+      setKind('expense')
     }
   }
 
@@ -120,19 +126,21 @@ export function AddExpenseSheet({
       {
         itemName: form.itemName.trim(),
         amount: parseFloat(form.amount),
-        category: form.category || undefined,
+        // Money in is filed under no category.
+        ...(income ? { kind } : { category: form.category || undefined }),
         // The picked day as it is: the store keeps it as the entry's day (P2-2).
         day: form.date,
         notes: form.notes.trim() || undefined,
       },
       (added) =>
-        `Added "${added.itemName}" · ${fmt(added.amount)}${isBackdated ? ` · ${dayLabel(form.date)}` : ''}${addedNote === undefined ? '' : `. ${addedNote}`}`,
+        `Added ${income ? 'income ' : ''}"${added.itemName}" · ${fmt(added.amount)}${isBackdated ? ` · ${dayLabel(form.date)}` : ''}${addedNote === undefined ? '' : `. ${addedNote}`}`,
       onAdded,
     )
     // Refused: the sheet stays open with everything typed, so the owner can fix what the
     // message names.
     if (created === null) return
     setForm({ itemName: '', amount: '', category: '', date: today, notes: '' })
+    setKind('expense')
     onClose()
   }
 
@@ -195,7 +203,7 @@ export function AddExpenseSheet({
     <Sheet
       open={open}
       onClose={onClose}
-      title="Add expense"
+      title={income ? 'Add income' : 'Add expense'}
       side="bottom"
       returnFocus={returnFocus}
       footer={
@@ -217,6 +225,21 @@ export function AddExpenseSheet({
         }}
         className="flex flex-col gap-3 px-4 pb-6 pt-2"
       >
+        {/* Which way the money went. Income: pay, an allowance, a sale. It is not spending, so
+            it takes no category and is in no spending total. */}
+        <div>
+          <Segmented<EntryKind>
+            label="Kind of entry"
+            value={kind}
+            onChange={setKind}
+            size="sm"
+            options={[
+              { value: 'expense', label: 'Expense' },
+              { value: 'income', label: 'Income' },
+            ]}
+          />
+        </div>
+
         {/* Date selector. The presets wrap rather than scroll, as in the Edit sheet: every one
             stays in sight on a narrow phone ("Pick date" drops to a second row). 36 px pills
             8 px apart, so their 44 px touch areas meet without overlapping, row to row too. */}
@@ -263,7 +286,7 @@ export function AddExpenseSheet({
         <Input
           ref={fields.itemName}
           label="What"
-          placeholder="e.g. Coffee, Grab, Spotify"
+          placeholder={income ? 'e.g. Allowance, Pay, Sold bike' : 'e.g. Coffee, Grab, Spotify'}
           value={form.itemName}
           onChange={(e) => set('itemName', e.target.value)}
           error={errors.itemName}
@@ -287,79 +310,81 @@ export function AddExpenseSheet({
           onKeyDown={onEnter}
         />
 
-        <div className="flex flex-col gap-1.5">
-          <span
-            id={categoryLabelId}
-            className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]"
-          >
-            Category
-            {suggestion !== null && (
-              <span className="normal-case tracking-normal text-[var(--text-tertiary)]">
-                {' '}
-                · suggested from your entries
-              </span>
-            )}
-          </span>
-          {/* 36 px chips 8 px apart: each gets a 44 px hit area on touch, none overlapping. */}
-          <div role="group" aria-labelledby={categoryLabelId} className="flex flex-wrap gap-2">
-            {categories.slice(0, 8).map((c) => (
-              <button
-                type="button"
-                key={c}
-                aria-pressed={form.category === c}
-                // Named as suggested, in one piece (a hidden span beside the text is read with
-                // a stray space before its comma).
-                aria-label={suggestion === c ? `${c}, suggested` : undefined}
-                onClick={() => set('category', form.category === c ? '' : c)}
-                className={`tap-target inline-flex h-9 items-center gap-1 rounded-full border px-3 text-[12px] font-medium transition ${
-                  form.category === c
-                    ? 'border-transparent text-surface-0'
-                    : suggestion === c
-                      ? 'border-dashed text-white'
-                      : 'border-white/[0.08] text-[var(--text-secondary)] hover:text-white'
-                }`}
-                style={
-                  form.category === c
-                    ? { background: chosenChipFill(c) }
-                    : suggestion === c
-                      ? { borderColor: chosenChipFill(c) }
-                      : undefined
-                }
-              >
-                {c}
-              </button>
-            ))}
-            {categories.length > 8 && (
-              // A chip like its neighbours: the 12 px label is drawn here, and the native select
-              // sits invisibly on top to take the tap (8 px taller on touch: a 44 px target).
-              // Touch screens floor the select's own text at 16 px (index.css, against iOS focus
-              // zoom), which would make this chip bigger than the rest. The chip draws the
-              // select's focus ring.
-              <div className="field-focus relative inline-flex h-9 max-w-full items-center rounded-full border border-white/[0.08] bg-surface-2 pl-3 pr-6 text-[12px] text-[var(--text-secondary)]">
-                <span aria-hidden className="min-w-0 truncate">
-                  {categories.slice(8).includes(shown) ? shown : 'More…'}
+        {!income && (
+          <div className="flex flex-col gap-1.5">
+            <span
+              id={categoryLabelId}
+              className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]"
+            >
+              Category
+              {suggestion !== null && (
+                <span className="normal-case tracking-normal text-[var(--text-tertiary)]">
+                  {' '}
+                  · suggested from your entries
                 </span>
-                <select
-                  aria-label="More categories"
-                  value={form.category}
-                  onChange={(e) => set('category', e.target.value)}
-                  className="field-control absolute inset-0 h-full w-full cursor-pointer appearance-none rounded-full opacity-0 [@media(pointer:coarse)]:-inset-y-1 [@media(pointer:coarse)]:h-auto"
+              )}
+            </span>
+            {/* 36 px chips 8 px apart: each gets a 44 px hit area on touch, none overlapping. */}
+            <div role="group" aria-labelledby={categoryLabelId} className="flex flex-wrap gap-2">
+              {categories.slice(0, 8).map((c) => (
+                <button
+                  type="button"
+                  key={c}
+                  aria-pressed={form.category === c}
+                  // Named as suggested, in one piece (a hidden span beside the text is read with
+                  // a stray space before its comma).
+                  aria-label={suggestion === c ? `${c}, suggested` : undefined}
+                  onClick={() => set('category', form.category === c ? '' : c)}
+                  className={`tap-target inline-flex h-9 items-center gap-1 rounded-full border px-3 text-[12px] font-medium transition ${
+                    form.category === c
+                      ? 'border-transparent text-surface-0'
+                      : suggestion === c
+                        ? 'border-dashed text-white'
+                        : 'border-white/[0.08] text-[var(--text-secondary)] hover:text-white'
+                  }`}
+                  style={
+                    form.category === c
+                      ? { background: chosenChipFill(c) }
+                      : suggestion === c
+                        ? { borderColor: chosenChipFill(c) }
+                        : undefined
+                  }
                 >
-                  <option value="">More…</option>
-                  {categories.slice(8).map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-                <ChevronDown
-                  size={10}
-                  className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
-                />
-              </div>
-            )}
+                  {c}
+                </button>
+              ))}
+              {categories.length > 8 && (
+                // A chip like its neighbours: the 12 px label is drawn here, and the native select
+                // sits invisibly on top to take the tap (8 px taller on touch: a 44 px target).
+                // Touch screens floor the select's own text at 16 px (index.css, against iOS focus
+                // zoom), which would make this chip bigger than the rest. The chip draws the
+                // select's focus ring.
+                <div className="field-focus relative inline-flex h-9 max-w-full items-center rounded-full border border-white/[0.08] bg-surface-2 pl-3 pr-6 text-[12px] text-[var(--text-secondary)]">
+                  <span aria-hidden className="min-w-0 truncate">
+                    {categories.slice(8).includes(shown) ? shown : 'More…'}
+                  </span>
+                  <select
+                    aria-label="More categories"
+                    value={form.category}
+                    onChange={(e) => set('category', e.target.value)}
+                    className="field-control absolute inset-0 h-full w-full cursor-pointer appearance-none rounded-full opacity-0 [@media(pointer:coarse)]:-inset-y-1 [@media(pointer:coarse)]:h-auto"
+                  >
+                    <option value="">More…</option>
+                    {categories.slice(8).map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown
+                    size={10}
+                    className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
+                  />
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         <Input
           label="Notes (optional)"
