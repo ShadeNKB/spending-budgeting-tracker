@@ -83,6 +83,16 @@ describe('the Reconnect slot (st5:synckey:prev)', () => {
     expect(readPrevious(NOW)).toBeNull()
   })
 
+  // PRIVATE-SYNC 3.2, AC-P9: Disconnect on a private device leaves its code in no key.
+  it('never keeps a private code, and clears an older plain code the device has left behind', () => {
+    const NOW = 1_000_000
+    keepPrevious('11111111-1111-4111-8111-111111111111', NOW)
+    expect(localStorage.getItem(PREV_KEY)).not.toBeNull()
+    keepPrevious('ST5-0004106-1050R3G-G28A1C6-0T3GFS3', NOW)
+    expect(localStorage.getItem(PREV_KEY)).toBeNull()
+    expect(readPrevious(NOW)).toBeNull()
+  })
+
   it('forgets the slot on request', () => {
     keepPrevious(CODE, NOW)
     forgetPrevious()
