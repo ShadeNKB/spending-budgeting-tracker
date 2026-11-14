@@ -3,6 +3,7 @@ import { AlertTriangle, TrendingUp } from 'lucide-react'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { colorFromString } from '../../lib/analytics'
 import type { CategoryBudgetStat } from '../../lib/analytics'
+import { netFigure } from '../../lib/kind'
 import { ledgerCategoryHref, type LedgerPeriod } from '../ledger/ledgerParams'
 
 /**
@@ -76,8 +77,10 @@ export function BudgetActual({
                   {ahead && <TrendingUp size={11} className="shrink-0 text-warning" />}
                 </div>{' '}
                 <div className="flex shrink-0 items-center gap-2 font-mono text-[12px] tabular-nums min-[360px]:max-md:text-[13px]">
+                  {/* Below zero the row says what came back: "S$12.00 back / S$150.00" is why
+                      more than the budget is left. */}
                   <span className={over ? 'text-negative' : ahead ? 'text-warning' : 'text-white'}>
-                    {fmt(it.total)}
+                    {netFigure(it.total, fmt)}
                   </span>{' '}
                   {/* Under 360 px the name needs this room (with four-digit amounts it had none
                       left); the note under the bar says what is left of the budget. */}

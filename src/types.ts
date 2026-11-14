@@ -16,7 +16,7 @@ export interface Expense {
   updatedAt?: string
   /**
    * Fields beside the ones above, as the data core carries them. `kind` is read from here
-   * (lib/kind.ts): absent for an expense, `'income'` for money in.
+   * (lib/kind.ts): absent for an expense, `'income'` for money in, `'refund'` for money back.
    */
   ext?: Readonly<Record<string, Json>>
 }

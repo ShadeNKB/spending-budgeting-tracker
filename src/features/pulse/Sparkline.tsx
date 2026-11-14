@@ -1,6 +1,7 @@
 import { useId } from 'react'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { seriesSummary, useChartScrub } from '../../hooks/useChartScrub'
+import { netFigure } from '../../lib/kind'
 
 const VB_W = 400
 const AXIS_LABEL = 'text-[10px] text-[var(--text-tertiary)]'
@@ -78,7 +79,14 @@ export function Sparkline({
     return [x, y] as const
   })
   const path = points.map(([x, y], i) => (i === 0 ? `M${x},${y}` : `L${x},${y}`)).join(' ')
-  const area = `${path} L${VB_W},${height} L0,${height} Z`
+  // The fill is anchored to zero, where the line starts from. With every point at zero or above
+  // that is the foot of the chart. Once refunds take a point below zero the scale makes room
+  // under the baseline: the fill then closes on the baseline, never on the foot (which would
+  // paint days of no spending as a band of it), and a hairline marks where zero is.
+  const dips = min < 0
+  const zeroY = height - ((0 - min) / range) * (height - 2) - 1
+  const base = dips ? zeroY : height
+  const area = `${path} L${VB_W},${base} L0,${base} Z`
 
   const lastPoint = points[points.length - 1]
   const activePoint = active !== null ? points[active] : undefined
@@ -93,7 +101,7 @@ export function Sparkline({
         {...props}
         aria-label={label}
         aria-describedby={summaryId}
-        aria-valuetext={`${labels[value] ?? ''} · ${fmt(data[value] ?? 0)}`}
+        aria-valuetext={`${labels[value] ?? ''} · ${netFigure(data[value] ?? 0, fmt)}`}
         data-chart="trend"
         className={`relative w-full cursor-crosshair touch-pan-y select-none rounded-md ${className ?? ''}`}
         style={{ height }}
@@ -106,6 +114,18 @@ export function Sparkline({
           style={{ height }}
         >
           <path d={area} fill={fill} />
+          {dips && (
+            <line
+              data-zero-line=""
+              x1={0}
+              y1={zeroY}
+              x2={VB_W}
+              y2={zeroY}
+              stroke="var(--chart-axis)"
+              strokeWidth={1}
+              vectorEffect="non-scaling-stroke"
+            />
+          )}
           {/* The drawing is stretched to its box (the wide Pulse card is 672 px for 400 units):
               strokes keep their width, and the dots are zero-length round strokes, so they
               stay round where a circle would be drawn as an oval. */}
@@ -163,7 +183,7 @@ export function Sparkline({
               <div className="text-[10px] text-[var(--text-tertiary)]">{activeLabel}</div>
             )}
             <div className="font-mono text-[11px] font-semibold tabular-nums text-white">
-              {fmt(activeValue)}
+              {netFigure(activeValue, fmt)}
             </div>
           </div>
         )}

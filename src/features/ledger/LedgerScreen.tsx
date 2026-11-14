@@ -14,13 +14,13 @@ import { EmptyState } from '../../ui/EmptyState'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { useToday } from '../../hooks/useToday'
 import { ledgerRange, ledgerRangeLabel, shortDateYear } from '../../lib/dates'
-import { kindOf } from '../../lib/kind'
+import { netFigure } from '../../lib/kind'
 import { getLedgerIndex, rowsInRange, rowsToExpenses } from '../../lib/ledgerIndex'
 import { SmartInput } from '../entry/SmartInput'
 import { deleteUndoId } from '../entry/expenseForm'
 import { LedgerRow } from './LedgerRow'
 import { VirtualLedgerList } from './VirtualLedgerList'
-import { filterLedgerRows, groupLedgerRows } from './ledgerFlatten'
+import { filterLedgerRows, groupLedgerRows, showsDayFigure, sumLedgerRows } from './ledgerFlatten'
 import { EditExpenseSheet } from './EditExpenseSheet'
 import { useToast } from '../../hooks/useToast'
 import { changingNow, shieldGesture, type Change } from '../../ui/pressShield'
@@ -248,37 +248,17 @@ export function LedgerScreen() {
   )
 
   const filtered = useMemo(() => rowsToExpenses(index, rows), [index, rows])
-  // The total, and each day's, is spending, as on Pulse; listed entries of not-spending categories
-  // (F-057) and money in (F-058) are summed beside it, and entries of a kind this version does not
-  // know are counted as rows, so the lines together account for every row shown.
+  // The total, and each day's, is spending net of refunds, as on Pulse; listed entries of
+  // not-spending categories (F-057) and income (F-058) are summed beside it, and entries of a kind
+  // this version does not know are counted as rows, so the lines together account for every row
+  // shown. What the refunds took off is said under the total.
   const asideCategories = useExpenseStore((s) => s.asideCategories)
   const asideNames = useMemo(() => new Set(asideCategories), [asideCategories])
   const groups = useMemo(
     () => groupLedgerRows(index, rows, today, asideNames),
     [index, rows, today, asideNames],
   )
-  const { totalSum, asideSum, incomeSum, uncounted } = useMemo(() => {
-    let cents = 0
-    let aside = 0
-    let income = 0
-    let unknown = 0
-    for (const r of rows) {
-      const e = index.expenses[r]
-      if (!e) continue
-      const c = index.cents[r] ?? 0
-      const kind = kindOf(e)
-      if (kind === 'income') income += c
-      else if (kind === 'unknown') unknown += 1
-      else if (asideNames.has(e.category)) aside += c
-      else cents += c
-    }
-    return {
-      totalSum: cents / 100,
-      asideSum: aside / 100,
-      incomeSum: income / 100,
-      uncounted: unknown,
-    }
-  }, [index, rows, asideNames])
+  const sums = useMemo(() => sumLedgerRows(index, rows, asideNames), [index, rows, asideNames])
 
   const lastDelete = useRef<Change | null>(null)
   const handleDelete = useCallback(
@@ -369,24 +349,32 @@ export function LedgerScreen() {
             )}
             <div className="text-right">
               <div className="font-mono text-[16px] font-semibold tabular-nums text-white">
-                {fmt(totalSum)}
+                {fmt(sums.total)}
               </div>
+              {/* Right under the figure it explains, amount first like the lines below. */}
+              {sums.refunded > 0 && (
+                <div className="text-[11px] text-[var(--text-tertiary)]">
+                  <span className="font-mono tabular-nums">{fmt(sums.refunded)}</span> refunds taken
+                  off
+                </div>
+              )}
               <div className="text-[11px] text-[var(--text-tertiary)]">
                 {filtered.length} {filtered.length === 1 ? 'entry' : 'entries'}
               </div>
-              {asideSum > 0 && (
+              {sums.aside !== 0 && (
                 <div className="text-[11px] text-[var(--text-tertiary)]">
-                  <span className="font-mono tabular-nums">{fmt(asideSum)}</span> not spending
+                  <span className="font-mono tabular-nums">{netFigure(sums.aside, fmt)}</span> not
+                  spending
                 </div>
               )}
-              {incomeSum > 0 && (
+              {sums.income > 0 && (
                 <div className="text-[11px] text-[var(--text-tertiary)]">
-                  <span className="font-mono tabular-nums">+{fmt(incomeSum)}</span> income
+                  <span className="font-mono tabular-nums">+{fmt(sums.income)}</span> income
                 </div>
               )}
-              {uncounted > 0 && (
+              {sums.uncounted > 0 && (
                 <div className="text-[11px] text-[var(--text-tertiary)]">
-                  {uncounted} newer kind, not counted
+                  {sums.uncounted} newer kind, not counted
                 </div>
               )}
             </div>
@@ -560,10 +548,10 @@ export function LedgerScreen() {
                 <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
                   {g.label}
                 </h2>
-                {/* A day's spending. A day that holds none (income only, or entries that are
-                    not spending) shows no figure: "S$0.00" over "+S$790.00" reads as a sum
-                    gone wrong. */}
-                {g.total > 0 && (
+                {/* A day's spending, net of its refunds. A day with nothing to sum (income
+                    only, or entries that are not spending) shows no figure: "S$0.00" over
+                    "+S$790.00" reads as a sum gone wrong. */}
+                {showsDayFigure(g) && (
                   <span className="font-mono text-[11px] tabular-nums text-[var(--text-secondary)]">
                     {fmt(g.total)}
                   </span>

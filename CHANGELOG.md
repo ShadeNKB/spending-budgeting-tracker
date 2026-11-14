@@ -1,5 +1,50 @@
 # Changelog
 
+## 0.20.0 — 2026-11-14
+
+Refunds, the second kind of money in: money that comes back for something you paid for comes off that category's spending.
+
+### Added
+
+- **Refunds** (F-058). The switch in the Add sheet and the Edit sheet is now **Expense | Income | Refund**. A refund is money back for something you paid for: a shop's refund, a friend paying their share of a dinner. It takes a name, an amount (typed as it came back, above zero), a day, notes, and the category it comes off. The Add sheet asks for that category when none is picked and it has learned none for the name, and its confirmation names it ("Added refund "Dinner split" · S$5.00 · off Food & Dining").
+- **A refund is negative spending, everywhere.** It comes off its category, its day, the month and the year: the Pulse total and average, the pace and the budgets, Top categories, the heatmap, the trend, the comparisons, the month in review and every Insights figure. A budget measures what was spent less what came back.
+- **Pulse says what came off**: "Refunds S$20.00 · taken off the total" under the period's total, for the month or the year on screen. Top categories lists a category that got more back than was spent in it last, as "S$12.00 back": left out, the list would not add up to the total above it. The Today strip lists a refund with the day's spending.
+- **In the Ledger** a refund row shows **-S$20.00** in green with "refund" under it, in its category; the palette lists it as "Food & Dining / Oct 5 / refund". "S$20.00 refunds taken off" sits right under the total, and each day's figure is net: a day's expenses and refunds add up to the figure in its header. A category lists its refunds with its expenses, and a search for "refund" lists them all.
+- **A figure with no rows beside it says money back in words.** "Today S$7.20 back" on Pulse, a point of the trend, a bar, a day on the heatmap, a budget's row: a bare minus there reads as a mistake. Beside its rows (a Ledger day, the Today strip) the minus stays, because the rows add up to it.
+- **CSV export:** the Type column says `refund`. The amount stays positive and the Category cell is filled.
+
+### What does not change
+
+- **An expense and an income** are what they were. With no refund entered, every figure is what 0.19.0 showed.
+- **The amount stored is the amount typed.** No version, this one included, reads or writes a negative amount.
+- **Due soon and the forecast** never hold a refund: money back that recurs (a card's cashback) is not a charge.
+
+### Changed (engineering)
+
+- **`kind: "refund"` in the record's extras register**, beside 0.19.0's `income`: no wire field, merge rule or file format. A refund keeps its own category register (an income is stored under Other) and, like an expense, takes the category its name has learned and teaches it one. It holds nothing else in the extras, so the one-register constraint recorded in 0.19.0 does not bite here.
+- **One sign for every sum, in one place:** `signedCents` (`lib/ledgerIndex.ts`). The index every screen sums from holds a refund's cents below zero, and no sum negates an amount anywhere else (`shownAmount` and `netFigure` in `lib/kind.ts` sign the text of a row and of a figure). `splitSpending` puts a refund where an expense of its category goes (`spending`, or `aside` for a not-spending category) and leaves it out of `outgoing`, where recurring charges are looked for.
+- **What a net below zero could bend, each held by a test.** Top categories' shares are of the categories with a net spend, so those never pass 100% between them; one below zero is listed after them with no share. A budget's share used never reads below 0%, and its "left" is the arithmetic as it is (S$20 back in a S$100 category with nothing spent leaves S$120; the row says "S$20.00 back" beside it). A period whose net is below zero reads 100% less than the one before, never more than all of it; the last-7-days insight has the same floor. The month's largest entry is never a refund. A heatmap day says "S$20.00 back", and opens in the Ledger whenever it has entries, whatever they net to.
+- **The month-end projection and refunds.** Money back named like a monthly charge is not held out as a charge paid; and a monthly charge refunded in the same month was not paid for it, so both rows run at the daily rate, where they cancel. Found by the data-safety review: the charge was held out as paid while its refund was extrapolated, which projected a refunded rent far below zero and silenced the pace insight.
+- **A refund is in no recurring charge** (`utils/recurring.ts`): the detection skips it on whatever index it is given. Found by the new browser test before any review: Insights' forecast is built over spending, which now holds refunds, and three months of cashback came out as a monthly charge of S$8.00 to expect. One refund of a subscription no longer counts as a payment of it either.
+- **The trend's fill is anchored to zero** (`Sparkline.tsx`). Once a day goes below zero the scale makes room under the baseline; the fill then closes on the baseline, which a hairline marks, where it used to close on the foot of the chart and paint every day of no spending as a band of it. Found by the design review, as was Top categories not adding up to the total.
+- **A chart's description for screen readers** says "S$20.00 back in this period." when the period holds refunds alone; it said "No spending in this period." beside a figure below zero (review).
+- **A Ledger day header** shows its figure when it is above zero, as before, or when the day's sum holds a refund: a day of one refund reads "-S$20.00", an expense and its refund "S$0.00", and a day of income only still shows none. The Ledger's sums are one tested function (`sumLedgerRows`).
+- **Recovery** lists and restores a refund like any kind ("Kind: Refund → Expense"), shows its category beside it, and puts a kind and a category changed in one edit back together; the Fix of an unreadable refund opens the Add sheet on Refund.
+- **Settings › Categories** says "3 entries" where a category's count holds a refund ("3 expenses" otherwise), in the row and in the questions before a delete or a merge.
+- `kind-v010.data.ts` carries a refund through the real 0.10.0 beside the income: listed, edited and pushed there, it comes back a refund with 0.10.0's amount, in its category.
+- The tests of "a kind this version does not know" name one that does not exist (`transfer`): they used `refund`.
+- Boot 500,120 / 561,580 B (61,460 B left), eager 399,989 / 466,908 B; all JS 686.4 / 740 KB (53.6 KB left): 3.8 KB for the slice.
+
+### Known limits
+
+- **Update both devices before entering a refund.** A device on 0.19.0 lists it as "Newer kind, not counted": its totals are too high by that refund until it is updated, and its Fix of an unreadable refund would open on Expense. A device on 0.18 or older shows it as an expense and adds it, so its totals are too high by twice the refund; its Due soon can also offer a refund that recurs, and a Log there adds a real expense. Any of them keeps the entry exactly.
+- **A refund is not linked to the purchase it answers.** It comes off its category in the month it is dated: last month's purchase refunded today lowers this month, as on a bank statement.
+- The month-end projection runs a refund at the daily rate with the rest of the month's spending, as it does a one-off purchase.
+- A refund in a not-spending category is in no spending total: it is netted into the "not spending" line, which reads "S$40.00 back not spending" for a category that holds refunds alone. Its row says "refund, not spending".
+- A budgeted category that got more back than was spent in it shows more left than its budget ("S$12.00 back / S$150.00 · 0% used · S$162.00 left"): the money back is room.
+- Month in review counts a refund among the month's entries, and counts days by their net spend: a day of refunds alone is not one of its "days".
+- Quick add and the palette's add are for expenses: a refund is added from the Add sheet.
+
 ## 0.19.0 — 2026-11-14
 
 T8c, the last slice of T8 (money in and smarter budgets): income. An entry can now be money that came in.

@@ -129,6 +129,11 @@ export const KIND_KEY = 'kind'
 /** Money that came in (pay, an allowance, a sale): not spending, and filed under no category. */
 export const KIND_INCOME = 'income'
 /**
+ * Money back for something paid for (a shop's refund, a friend paying their share). It keeps
+ * its category and is negative spending there: the amount itself stays positive.
+ */
+export const KIND_REFUND = 'refund'
+/**
  * Report reason of a record a source lists both live and deleted that does not stay live (the
  * tombstone won, or a fold left the id out); its original is kept in `SanitizeReport.repairs`.
  */

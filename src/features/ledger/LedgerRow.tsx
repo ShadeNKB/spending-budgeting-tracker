@@ -5,7 +5,7 @@ import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { categoryAvatarStyle } from '../../lib/analytics'
 import { initialOf } from '../../lib/format'
-import { filedUnder, kindOf, shownAmount } from '../../lib/kind'
+import { filedUnder, inSpending, kindOf, shownAmount } from '../../lib/kind'
 import { toastJustLeft } from '../../ui/pressShield'
 import { useSwipeReveal } from './useSwipeReveal'
 import type { Expense } from '../../types'
@@ -45,9 +45,8 @@ export const LedgerRow = memo(function LedgerRow({
   const swipe = useSwipeReveal()
   const kind = kindOf(expense)
   // In a not-spending category (F-057): listed, and in no total. The row says so in words.
-  const aside = useExpenseStore(
-    (s) => kind === 'expense' && s.asideCategories.includes(expense.category),
-  )
+  const filed = inSpending(kind)
+  const aside = useExpenseStore((s) => filed && s.asideCategories.includes(expense.category))
 
   // The click that ends a drag is no tap; a tap on a revealed row closes it.
   const handleRowClick = () => {
@@ -79,17 +78,25 @@ export const LedgerRow = memo(function LedgerRow({
     onDelete(expense.id, e.nativeEvent.timeStamp)
   }
 
-  // An income carries its sign and the word under it: colour alone would not say it.
+  // An income or a refund carries its sign and a word under it: colour alone would not say it.
   const amount = shownAmount(expense, fmt)
-  /** What the row says under its amount when it is in no spending total. */
+  /**
+   * What the row says under its amount when it is not plain spending, on screen and to a screen
+   * reader alike. A refund in a not-spending category says both: what it is, and why no total
+   * moved.
+   */
   const tag =
     kind === 'income'
       ? 'income'
       : kind === 'unknown'
         ? 'not counted'
-        : aside
-          ? 'not spending'
-          : null
+        : kind === 'refund'
+          ? aside
+            ? 'refund, not spending'
+            : 'refund'
+          : aside
+            ? 'not spending'
+            : null
   const deleteName = `Delete ${expense.itemName}, ${amount}, ${dateLabel}`
 
   return (
@@ -138,7 +145,7 @@ export const LedgerRow = memo(function LedgerRow({
           onClick={handleRowClick}
           onKeyDown={onRowKeyDown}
           aria-keyshortcuts="Delete"
-          aria-label={`Edit ${expense.itemName}, ${amount}${tag === null ? '' : ` ${tag}`}${kind === 'expense' ? `, ${expense.category}` : ''}, ${dateLabel}`}
+          aria-label={`Edit ${expense.itemName}, ${amount}${tag === null ? '' : ` ${tag}`}${filed ? `, ${expense.category}` : ''}, ${dateLabel}`}
           className="focus-inset flex min-w-0 flex-1 items-center gap-3 py-3 pl-3 pr-2 text-left md:pl-4"
         >
           <span
@@ -174,7 +181,9 @@ export const LedgerRow = memo(function LedgerRow({
                   ? 'text-income'
                   : aside || kind === 'unknown'
                     ? 'text-[var(--text-secondary)]'
-                    : 'text-white',
+                    : kind === 'refund'
+                      ? 'text-income'
+                      : 'text-white',
               )}
             >
               {amount}

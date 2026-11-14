@@ -25,6 +25,7 @@ const group = (key: string | null, items: Expense[]): LedgerGroup => ({
   rowDateLabel: key ?? 'Unknown date',
   items,
   total: items.reduce((s, e) => s + e.amount, 0),
+  refunds: 0,
 })
 
 describe('ledger labels', () => {
@@ -150,6 +151,7 @@ describe('flattenLedgerGroups', () => {
       key: '2026-06-13',
       label: '2026-06-13',
       total: 12,
+      refunds: 0,
     })
     expect(flat[1]).toMatchObject({ kind: 'row', expense: { id: 'a' }, dateLabel: '2026-06-13' })
     expect(flat[2]).toMatchObject({ kind: 'row', expense: { id: 'b' } })
@@ -159,6 +161,7 @@ describe('flattenLedgerGroups', () => {
       key: '2026-06-12',
       label: '2026-06-12',
       total: 3,
+      refunds: 0,
     })
     expect(flat[4]).toMatchObject({ kind: 'row', expense: { id: 'c' } })
   })

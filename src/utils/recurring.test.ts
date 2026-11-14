@@ -424,3 +424,38 @@ describe('a charge logged today is not listed today (T8b, review finding 4)', ()
     expect(dueSoon(logged, '2026-09-26').map((d) => [d.due, d.inDays])).toEqual([['2026-10-01', 5]])
   })
 })
+
+describe('refunds are not charges (F-058, second slice)', () => {
+  const refund = (id: string, itemName: string, date: string, amount = 15): Expense => ({
+    ...expense(id, itemName, date, amount),
+    ext: { kind: 'refund' },
+  })
+
+  it('money back that repeats is no recurring charge, on any index it is given', () => {
+    const rows = [
+      refund('c1', 'Card cashback', '2026-07-19', 8),
+      refund('c2', 'Card cashback', '2026-08-19', 8),
+      refund('c3', 'Card cashback', '2026-09-19', 8),
+    ]
+    expect(detect(rows)).toEqual([])
+    expect(sum(forecastDailyFromRecurring(detect(rows), '2026-10-18', 35))).toBe(0)
+    expect(dueSoon(detect(rows), '2026-10-18')).toEqual([])
+  })
+
+  it('a refund of a subscription is not a payment of it: the charge keeps its count and amount', () => {
+    const charges = [
+      expense('1', 'Netflix', '2026-01-01'),
+      expense('2', 'Netflix', '2026-02-01'),
+      expense('3', 'Netflix', '2026-03-01'),
+    ]
+    const alone = must(detect(charges)[0])
+    const withRefund = must(detect([...charges, refund('r', 'Netflix', '2026-03-05')])[0])
+    expect(withRefund).toMatchObject({
+      key: 'netflix',
+      avgAmount: 15,
+      nextDue: alone.nextDue,
+      periodicity: 'monthly',
+    })
+    expect(withRefund.occurrences).toHaveLength(3)
+  })
+})

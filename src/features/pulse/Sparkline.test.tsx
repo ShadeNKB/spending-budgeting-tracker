@@ -70,3 +70,42 @@ describe('Sparkline', () => {
     expect(container).toBeEmptyDOMElement()
   })
 })
+
+describe('Sparkline below zero (refunds)', () => {
+  const area = (container: HTMLElement) =>
+    container.querySelector('svg path')?.getAttribute('d') ?? ''
+  const zeroLine = (container: HTMLElement) => container.querySelector('[data-zero-line]')
+
+  it('with nothing below zero the fill closes on the foot of the chart, and no baseline is drawn', () => {
+    const { container } = render(
+      <Sparkline data={[10, 20, 30, 0]} labels={LABELS} label={NAME} height={40} />,
+    )
+    expect(area(container)).toMatch(/L400,40 L0,40 Z$/)
+    expect(zeroLine(container)).toBeNull()
+  })
+
+  it('a day below zero: the fill closes on zero, which a hairline marks, not on the foot', () => {
+    // -30 .. 30 over 38 px: zero sits halfway, at y = 40 - 19 - 1 = 20
+    const { container } = render(
+      <Sparkline data={[0, 30, -30, 0]} labels={LABELS} label={NAME} height={40} />,
+    )
+    expect(area(container)).toMatch(/L400,20 L0,20 Z$/)
+    const line = zeroLine(container)
+    expect(line).toHaveAttribute('y1', '20')
+    expect(line).toHaveAttribute('y2', '20')
+    expect(line).toHaveAttribute('stroke', 'var(--chart-axis)')
+  })
+
+  it('reads a point below zero as money back, in the slider and in the tooltip', () => {
+    render(<Sparkline data={[0, 30, -30, 0]} labels={LABELS} label={NAME} />)
+    const slider = screen.getByRole('slider', { name: NAME })
+    act(() => {
+      slider.focus()
+    })
+    fireEvent.keyDown(slider, { key: 'Home' })
+    fireEvent.keyDown(slider, { key: 'ArrowRight' })
+    fireEvent.keyDown(slider, { key: 'ArrowRight' })
+    expect(slider).toHaveAttribute('aria-valuetext', 'Sep 30 · S$30.00 back')
+    expect(screen.getByText('S$30.00 back')).toBeInTheDocument()
+  })
+})

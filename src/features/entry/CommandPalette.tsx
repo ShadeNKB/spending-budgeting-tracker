@@ -106,7 +106,8 @@ interface SearchRow {
 }
 const searchRow = (e: ExpenseView): SearchRow => ({
   itemName: e.itemName,
-  category: filedUnder(e),
+  // a refund is found by its category and by the word its row carries
+  category: kindOf(e) === 'refund' ? `${filedUnder(e)} refund` : filedUnder(e),
   notes: e.notes ?? '',
 })
 
@@ -633,12 +634,16 @@ export function CommandPalette() {
                       <div className="truncate text-white">{e.itemName}</div>
                       <div className="text-[11px] text-[var(--text-tertiary)]">
                         {filedUnder(e)} / {formatKey(e.day, 'MMM d')}
+                        {/* in words too: a green minus alone would say it by sign and colour */}
+                        {kindOf(e) === 'refund' && ' / refund'}
                       </div>
                     </div>
                     <span
                       className={clsx(
                         'font-mono text-[13px] tabular-nums',
-                        kindOf(e) === 'income' ? 'text-income' : 'text-white',
+                        kindOf(e) === 'income' || kindOf(e) === 'refund'
+                          ? 'text-income'
+                          : 'text-white',
                       )}
                     >
                       {shownAmount(e, fmt)}

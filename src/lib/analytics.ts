@@ -41,7 +41,9 @@ import type { CategoryBudgets, Expense } from '../types'
 
 export interface CategoryStat {
   readonly category: string
+  /** Net of refunds. Below zero for a category that got more back than was spent in it. */
   readonly total: number
+  /** Of what the categories with a net spend hold between them; 0 for one below zero. */
   readonly share: number
 }
 
@@ -108,9 +110,15 @@ export interface CategoryBudgetStat {
   readonly projected: number | null
 }
 
+/** A day of the heatmap: its net, and how many entries made it. */
+export interface HeatmapDay extends DayPoint {
+  /** Entries of the day. A day with some can be opened, also at a net of zero or less. */
+  readonly count: number
+}
+
 export interface HeatmapData {
   /** Sunday-start weeks: 13 full weeks plus the anchor's (partial) week. */
-  readonly days: readonly DayPoint[]
+  readonly days: readonly HeatmapDay[]
   readonly start: DayKey
   readonly end: DayKey
 }
@@ -135,6 +143,8 @@ export interface MonthAnalytics {
   /** Whole month, future-dated rows included. */
   readonly periodTotal: number
   readonly periodCount: number
+  /** What refunds took off `periodTotal` (it is net of them already); 0 with none. */
+  readonly periodRefunded: number
   /** The month's largest single entry (the newest of equals); null for an empty month. */
   readonly biggest: NotableEntry | null
   readonly comparison: PeriodComparison
@@ -170,6 +180,8 @@ export interface YearAnalytics {
   readonly isCurrent: boolean
   readonly periodTotal: number
   readonly periodCount: number
+  /** What refunds took off `periodTotal` (it is net of them already); 0 with none. */
+  readonly periodRefunded: number
   readonly comparison: PeriodComparison
   readonly monthlyTotals: readonly MonthTotal[]
   /**
@@ -199,8 +211,9 @@ export interface WeekAnalytics {
 
 const fromCents = (cents: number): number => cents / 100
 
+// Refunds can take a period's net below zero: that reads as 100% less, never as more than all.
 const changeOf = (curCents: number, prevCents: number): number | null =>
-  prevCents > 0 ? (curCents - prevCents) / prevCents : null
+  prevCents > 0 ? Math.max(-1, (curCents - prevCents) / prevCents) : null
 
 /** The current period so far vs its like-for-like window; nothing logged yet → no comparison. */
 const changeSoFar = (curCents: number, prevCents: number): number | null =>
@@ -216,16 +229,28 @@ export function categoryTotals(index: LedgerIndex, range: DayRange): Map<string,
   return totals
 }
 
-function topCategories(totals: Map<string, number>, totalCents: number): CategoryStat[] {
-  return Array.from(totals)
+/**
+ * The six categories with the most spent, net of their refunds, then every category refunds
+ * took below zero (most back first). A share is of what the categories with a net spend hold
+ * between them, so those never pass 100%; with no category below zero that is the period's
+ * total. The ones below zero are listed because their money back is in that total: a list
+ * without them would not add up to the figure above it.
+ */
+function topCategories(totals: Map<string, number>): CategoryStat[] {
+  let spentCents = 0
+  for (const c of totals.values()) if (c > 0) spentCents += c
+  const byName = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0)
+  const all = Array.from(totals)
+  const spent = all
     .filter(([, c]) => c > 0)
-    .sort(([a, ca], [b, cb]) => cb - ca || (a < b ? -1 : a > b ? 1 : 0))
+    .sort(([a, ca], [b, cb]) => cb - ca || byName(a, b))
     .slice(0, 6)
-    .map(([category, c]) => ({
-      category,
-      total: fromCents(c),
-      share: totalCents > 0 ? c / totalCents : 0,
-    }))
+  const back = all.filter(([, c]) => c < 0).sort(([a, ca], [b, cb]) => ca - cb || byName(a, b))
+  return [...spent, ...back].map(([category, c]) => ({
+    category,
+    total: fromCents(c),
+    share: c > 0 && spentCents > 0 ? c / spentCents : 0,
+  }))
 }
 
 const daySeries = (index: LedgerIndex, days: readonly DayKey[]): DayPoint[] =>
@@ -237,7 +262,11 @@ export const computeTrailingDaily = (index: LedgerIndex, end: DayKey, days: numb
 
 function heatmapEndingAt(index: LedgerIndex, end: DayKey): HeatmapData {
   const start = sundayOnOrBefore(addDays(end, -13 * 7))
-  return { days: daySeries(index, enumerateDays({ start, end })), start, end }
+  const days = enumerateDays({ start, end }).map((date): HeatmapDay => {
+    const day = index.byDay.get(date)
+    return { date, total: fromCents(day?.cents ?? 0), count: day?.count ?? 0 }
+  })
+  return { days, start, end }
 }
 
 /** Valid caps only: own keys, finite, at least one cent (a cap that rounds to 0 is unset). */
@@ -248,7 +277,8 @@ export const activeCaps = (budgets: CategoryBudgets): [string, number][] =>
  * This month's monthly charges per category, in cents: rows whose item appears exactly once this
  * month (up to `end`) and once in each of the two months before (Spotify on the 1st, rent on the
  * 28th). They are paid for the month, so projecting them at the daily run rate would count them
- * again.
+ * again. A charge refunded this month was not paid for it: it is held out of nothing, and runs
+ * at the daily rate with its refund, where the two cancel.
  */
 function paidMonthlyCharges(
   index: LedgerIndex,
@@ -259,11 +289,19 @@ function paidMonthlyCharges(
   const oneBack = addMonths(monthKey, -1)
   // Per item: how often it appears in each of the three months, and its row this month.
   const seen = new Map<string, { twoBack: number; oneBack: number; now: number; row: number }>()
+  // Items with money back this month.
+  const refunded = new Set<string>()
   const range = { start: monthRange(twoBack).start, end }
   for (const r of rowsInRange(index, range)) {
     const name = itemKey(index.expenses[r]?.itemName ?? '')
     if (!name) continue
     const month = index.dayKeys[r]?.slice(0, 7)
+    // Money back is no charge, whatever its name. (A row that counts below zero: a refund
+    // of less than half a cent counts as nothing, like an expense of that size.)
+    if ((index.cents[r] ?? 0) < 0) {
+      if (month !== twoBack && month !== oneBack) refunded.add(name)
+      continue
+    }
     const entry = seen.get(name) ?? { twoBack: 0, oneBack: 0, now: 0, row: r }
     if (month === twoBack) entry.twoBack++
     else if (month === oneBack) entry.oneBack++
@@ -274,7 +312,8 @@ function paidMonthlyCharges(
     seen.set(name, entry)
   }
   const paid = new Map<string, number>()
-  for (const entry of seen.values()) {
+  for (const [name, entry] of seen) {
+    if (refunded.has(name)) continue
     if (entry.twoBack !== 1 || entry.oneBack !== 1 || entry.now !== 1) continue
     const category = index.expenses[entry.row]?.category ?? ''
     paid.set(category, (paid.get(category) ?? 0) + (index.cents[entry.row] ?? 0))
@@ -334,11 +373,13 @@ export function computeMonthAnalytics(
 
   const rows = rowsInRange(index, range)
   let totalCents = 0
+  let refundCents = 0
   let biggestRow = -1
   const catCents = new Map<string, number>()
   for (const r of rows) {
     const c = index.cents[r] ?? 0
     totalCents += c
+    if (c < 0) refundCents -= c
     // rows come newest first: of equal amounts the newest stays
     if (c > 0 && (biggestRow < 0 || c > (index.cents[biggestRow] ?? 0))) biggestRow = r
     const category = index.expenses[r]?.category ?? ''
@@ -410,7 +451,8 @@ export function computeMonthAnalytics(
         category,
         total: fromCents(spentC),
         budget: fromCents(capC),
-        used: capC > 0 ? spentC / capC : 0,
+        // never below none: refunds past the category's spending leave it at 0% used
+        used: capC > 0 ? Math.max(0, spentC) / capC : 0,
         expected: dom / dim,
         left: fromCents(Math.max(0, capC - spentC)),
         status,
@@ -442,7 +484,7 @@ export function computeMonthAnalytics(
       scope: whole ? 'all' : 'categories',
       cap: fromCents(measuredCap),
       spent: fromCents(measured),
-      used: measured / measuredCap,
+      used: Math.max(0, measured) / measuredCap,
       expected: dom / dim,
       left: fromCents(leftCents),
       perDay: daysLeft === null ? null : fromCents(leftCents) / daysLeft,
@@ -461,6 +503,7 @@ export function computeMonthAnalytics(
     isCurrent,
     periodTotal: fromCents(totalCents),
     periodCount: rows.length,
+    periodRefunded: fromCents(refundCents),
     biggest,
     comparison,
     todayTotal: fromCents(todayCents),
@@ -471,7 +514,7 @@ export function computeMonthAnalytics(
     daysLeft,
     dailyAverage: fromCents(totalCents) / dom,
     budget,
-    topCategories: topCategories(catCents, totalCents),
+    topCategories: topCategories(catCents),
     categoryBudgets,
     daily: isCurrent
       ? computeTrailingDaily(index, today, 30)
@@ -504,9 +547,11 @@ export function computeYearAnalytics(
   const monthCents = new Array<number>(12).fill(0)
   const catCents = new Map<string, number>()
   let totalCents = 0
+  let refundCents = 0
   for (const r of rows) {
     const c = index.cents[r] ?? 0
     totalCents += c
+    if (c < 0) refundCents -= c
     const m = Number(index.dayKeys[r]?.slice(5, 7) ?? '1') - 1
     monthCents[m] = (monthCents[m] ?? 0) + c
     const category = index.expenses[r]?.category ?? ''
@@ -561,12 +606,13 @@ export function computeYearAnalytics(
     isCurrent,
     periodTotal: fromCents(totalCents),
     periodCount: rows.length,
+    periodRefunded: fromCents(refundCents),
     comparison,
     monthlyTotals,
     monthlyAverage: fromCents(totalCents) / Math.max(1, monthsElapsed),
     monthsElapsed,
     highestMonth,
-    topCategories: topCategories(catCents, totalCents),
+    topCategories: topCategories(catCents),
     sparkline: { values: plotted.map((m) => m.total), labels: plotted.map((m) => m.label) },
     heatmap: heatmapEndingAt(index, isCurrent ? today : range.end),
   }

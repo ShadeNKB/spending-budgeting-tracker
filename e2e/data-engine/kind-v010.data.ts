@@ -16,7 +16,8 @@ import {
 // keeps without knowing them. 0.10.0 is the first v5 release, so what holds for it holds for
 // every release since. An income made by this build, then listed, edited and pushed by 0.10.0 on
 // the same storage and the same sync code, is still an income: on the relay, in what 0.10.0
-// stored, and on this build again, with the amount 0.10.0 gave it. Invented data.
+// stored, and on this build again, with the amount 0.10.0 gave it. A refund (the second kind)
+// goes the same way beside it, and keeps its category. Invented data.
 
 let relay: Relay
 let host: StaticHost
@@ -55,7 +56,7 @@ function onRelay(item: string, field: string): unknown {
 const stored = async (page: Page, item: string): Promise<Record<string, unknown> | undefined> =>
   (await storedRows(page)).find((r) => r.itemName === item) as Record<string, unknown> | undefined
 
-test('an income survives 0.10.0: listed, edited and pushed there, it comes back an income', async ({
+test('an income and a refund survive 0.10.0: listed, edited and pushed there, each comes back what it was', async ({
   browser,
 }) => {
   test.setTimeout(240_000)
@@ -79,6 +80,24 @@ test('an income survives 0.10.0: listed, edited and pushed there, it comes back 
   expect(onRelay('allowance', 'amount')).toBe(790)
   expect(await stored(page, 'allowance')).toMatchObject({ amount: 790, kind: 'income' })
 
+  await page.keyboard.press('Control+n')
+  await page
+    .getByRole('dialog', { name: 'Add expense' })
+    .getByRole('radio', { name: 'Refund' })
+    .click()
+  const refundSheet = page.getByRole('dialog', { name: 'Add refund' })
+  await refundSheet.getByRole('textbox', { name: 'What' }).fill('returned cable')
+  await refundSheet.getByRole('spinbutton', { name: 'Amount' }).fill('20')
+  await refundSheet.getByRole('button', { name: 'Shopping', exact: true }).click()
+  await refundSheet.getByRole('button', { name: 'Add', exact: true }).click()
+  await expect(
+    page.getByRole('button', { name: /^Edit returned cable, -.*20\.00 refund, Shopping, / }),
+  ).toBeVisible()
+  await expect.poll(() => onRelay('returned cable', 'kind'), { timeout: 30_000 }).toBe('refund')
+  // the amount goes over the wire as typed: no version reads a negative amount
+  expect(onRelay('returned cable', 'amount')).toBe(20)
+  expect(onRelay('returned cable', 'category')).toBe('Shopping')
+
   // Rolled back: 0.10.0 on the same origin, the same storage, the same code. It knows no kinds:
   // the entry is a row like any other there, and an edit of its amount is an edit like any other.
   host.serve(build('v010'))
@@ -89,6 +108,14 @@ test('an income survives 0.10.0: listed, edited and pushed there, it comes back 
   // What 0.10.0 pushed, and what it stored, still say what the entry is.
   expect(onRelay('allowance', 'kind')).toBe('income')
   expect(await stored(page, 'allowance')).toMatchObject({ amount: 800, kind: 'income' })
+  await editAmount(page, 'returned cable', '25')
+  await expect.poll(() => onRelay('returned cable', 'amount'), { timeout: 30_000 }).toBe(25)
+  expect(onRelay('returned cable', 'kind')).toBe('refund')
+  expect(await stored(page, 'returned cable')).toMatchObject({
+    amount: 25,
+    category: 'Shopping',
+    kind: 'refund',
+  })
 
   // Forward again: an income, with 0.10.0's amount, and in no spending total.
   host.serve(build('candidate'))
@@ -99,4 +126,10 @@ test('an income survives 0.10.0: listed, edited and pushed there, it comes back 
   await expect(page.getByText(/800\.00 income$/)).toBeVisible()
   expect(await stored(page, 'allowance')).toMatchObject({ amount: 800, kind: 'income' })
   expect(onRelay('allowance', 'kind')).toBe('income')
+  // and a refund, with 0.10.0's amount, off its category
+  await expect(
+    page.getByRole('button', { name: /^Edit returned cable, -.*25\.00 refund, Shopping, / }),
+  ).toBeVisible()
+  await expect(page.getByText(/25\.00 refunds taken off$/)).toBeVisible()
+  expect(onRelay('returned cable', 'kind')).toBe('refund')
 })

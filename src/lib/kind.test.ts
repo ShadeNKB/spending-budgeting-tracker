@@ -39,7 +39,7 @@ describe('kindOf (T8c)', () => {
 
   it('reads income, and calls anything else unknown rather than guessing', () => {
     expect(kindOf(income('2026-10-10', 790))).toBe('income')
-    for (const raw of ['refund', 'Income', '', 0, 1, null, true, ['income'], { v: 'income' }]) {
+    for (const raw of ['transfer', 'Income', '', 0, 1, null, true, ['income'], { v: 'income' }]) {
       expect(kindOf(at('2026-10-02', 5, 'Food', { kind: raw })), JSON.stringify(raw)).toBe(
         'unknown',
       )
@@ -59,8 +59,8 @@ describe('kindOf (T8c)', () => {
     const fmt = (n: number) => `S$${n.toFixed(2)}`
     expect(shownAmount(income('2026-10-10', 790), fmt)).toBe('+S$790.00')
     expect(shownAmount(at('2026-10-02', 5, 'Food'), fmt)).toBe('S$5.00')
-    expect(shownAmount(at('2026-10-02', 5, 'Food', { kind: 'refund' }), fmt)).toBe('S$5.00')
-    expect(filedUnder(at('2026-10-02', 5, 'Food', { kind: 'refund' }))).toBe('Newer kind')
+    expect(shownAmount(at('2026-10-02', 5, 'Food', { kind: 'transfer' }), fmt)).toBe('S$5.00')
+    expect(filedUnder(at('2026-10-02', 5, 'Food', { kind: 'transfer' }))).toBe('Newer kind')
   })
 })
 
@@ -70,7 +70,7 @@ describe('splitSpending with kinds (T8c)', () => {
   const PAY = income('2026-10-10', 790)
   // an income keeps whatever category it is stored with, a not-spending one too
   const SOLD = income('2026-10-11', 200, 'Investment')
-  const NEWER = at('2026-10-12', 25, 'Food', { kind: 'refund' })
+  const NEWER = at('2026-10-12', 25, 'Food', { kind: 'transfer' })
   const ROWS: readonly Expense[] = [FOOD, INVEST, PAY, SOLD, NEWER]
 
   it('every entry is in exactly one of spending, aside, income and unknown', () => {
@@ -118,7 +118,7 @@ describe('the Ledger with kinds (T8c)', () => {
   const FOOD = at('2026-10-10', 12.5, 'Food')
   const PAY: Expense = { ...income('2026-10-10', 790), itemName: 'Allowance' }
   const OTHER = at('2026-10-10', 3, 'Other')
-  const NEWER = at('2026-10-10', 25, 'Food', { kind: 'refund' })
+  const NEWER = at('2026-10-10', 25, 'Food', { kind: 'transfer' })
   const index = getLedgerIndex([FOOD, PAY, OTHER, NEWER])
   const rows = rowsInRange(index, null)
 
@@ -154,14 +154,14 @@ describe('the CSV export with kinds (T8c)', () => {
     const csv = expensesToCsv([
       { ...at('2026-10-02', 12.5, 'Food'), itemName: 'Lunch' },
       { ...income('2026-10-10', 790), itemName: 'Allowance', notes: 'November' },
-      { ...at('2026-10-12', 25, 'Shopping', { kind: 'refund' }), itemName: 'Shopee' },
+      { ...at('2026-10-12', 25, 'Shopping', { kind: 'transfer' }), itemName: 'Shopee' },
       { ...at('2026-10-13', 1, 'Food', { kind: 7 }), itemName: 'Odd' },
     ])
     expect(csv).toBe(
       '﻿Date,Item,Category,Amount,Notes,Type\r\n' +
         '"2026-10-02","Lunch","Food","12.5","","expense"\r\n' +
         '"2026-10-10","Allowance","","790","November","income"\r\n' +
-        '"2026-10-12","Shopee","","25","","refund"\r\n' +
+        '"2026-10-12","Shopee","","25","","transfer"\r\n' +
         '"2026-10-13","Odd","","1","","other"\r\n',
     )
   })
