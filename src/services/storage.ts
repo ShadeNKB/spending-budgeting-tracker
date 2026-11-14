@@ -360,13 +360,17 @@ export const storage = {
   /**
    * Saves a private code (3.2, 3.5): the key first, read back before anything else changes,
    * then `st5:sync` as the private marker, then the plain mirror goes. A plain setup (and its
-   * fence) is replaced. Throws when the code has not the shape of one, or storage did not
-   * keep it: nothing else was changed then.
+   * fence) is replaced. `established` left out keeps the flag the same code already has
+   * (start-up re-saves the saved code); a code new to this device is established. Throws
+   * when the code has not the shape of one, or storage did not keep it: nothing else was
+   * changed then.
    */
-  savePrivateSync(code: string, established: boolean): void {
+  savePrivateSync(code: string, flag?: boolean): void {
     if (!PRIVATE_CODE.test(code)) throw new RangeError('Not a private sync code.')
-    const same = privateKey()
-    const at = same?.code === code ? same.at : Date.now()
+    const held = privateKey()
+    const same = held?.code === code ? held : null
+    const at = same === null ? Date.now() : same.at
+    const established = flag ?? same?.established ?? true
     const value = JSON.stringify({ code, at, established })
     safeSet(PRIVATE_KEY, value)
     if (read(PRIVATE_KEY) !== value) throw new Error('This browser did not keep the code.')

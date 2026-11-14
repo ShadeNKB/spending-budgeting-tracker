@@ -51,6 +51,8 @@ describe('ALL_KEYS', () => {
     expect(KEY_PREFIXES).toEqual(['st5:', 'spendtrack:'])
     expect(isSpendTrackKey('st5:snap:123')).toBe(true)
     expect(isSpendTrackKey('st5:q:expenses:1')).toBe(true)
+    // a private sync's code (PRIVATE-SYNC AC-P9): Remove from this device takes it too
+    expect(isSpendTrackKey('st5:synckey')).toBe(true)
     expect(isSpendTrackKey('sb-xyz-auth-token')).toBe(false)
   })
 

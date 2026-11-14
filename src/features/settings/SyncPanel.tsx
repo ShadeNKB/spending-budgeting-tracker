@@ -476,7 +476,6 @@ function SyncContent() {
   const setupSync = useSyncStore((s) => s.setupSync)
   const disconnectSync = useSyncStore((s) => s.disconnectSync)
   const triggerSync = useSyncStore((s) => s.triggerSync)
-  const replaceRelayCopy = useSyncStore((s) => s.replaceRelayCopy)
   const buildWaiting = useSyncExternalStore(subscribeNewBuild, newBuildWaiting)
   const toast = useToast()
 
@@ -694,7 +693,15 @@ function SyncContent() {
     setConfirmReplace(false)
     // The question leaves: its button comes back, busy, and takes focus.
     focusNext.current = 'replace'
-    void runRequest(setReplacing, replaceRelayCopy, (result) => {
+    // The engine's own action, reached as Generate reaches it: the chunk is loaded on demand.
+    const replace = async (): Promise<SyncResult> => {
+      try {
+        return await (await loadSyncEngine()).replaceRelayCopy()
+      } catch {
+        return { ok: false, error: 'reload', message: SYNC_RELOAD_MESSAGE }
+      }
+    }
+    void runRequest(setReplacing, replace, (result) => {
       if (result.ok) {
         // The pause is over and this block leaves with it: focus goes to Sync now.
         syncNow.current?.focus()

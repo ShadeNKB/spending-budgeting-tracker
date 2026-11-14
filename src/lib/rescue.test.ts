@@ -142,6 +142,8 @@ describe('collectRawStorage', () => {
         ['st5:q:st5:db:1', '5|abc|{"f"'],
         ['st5:sync', '{"kind":"plain","code":"invented-code"}'],
         ['st5:synckey:prev', '{"code":"invented-code","until":1}'],
+        // a private sync's code, in its own key (PRIVATE-SYNC AC-P9)
+        ['st5:synckey', '{"code":"ST5-invented-code","at":1,"established":true}'],
         ['st5:q:st5:sync:1', '{"kind":"pla'],
         ['st5:q:syncId:1', 'invented-code'],
       ]),

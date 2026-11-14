@@ -301,7 +301,7 @@ describe('a newer format, and conflicts (AC-P6, AC-P7, AC-P8)', () => {
 describe("the owner's way out of a copy marked newer (3.9)", () => {
   const NEWER = { st: 6, k: 1, r: 'B'.repeat(22), iv: 'A'.repeat(16), z: 0, ct: 'AAAA' }
   const pushCalls = () => requestsOf('rpc').filter((c) => c.fn === 'st_sync_push')
-  const replace = (d: Device) => run(d.sync.useSyncStore.getState().replaceRelayCopy())
+  const replace = async (d: Device) => run((await d.sync.loadSyncEngine()).replaceRelayCopy())
 
   it('replaces it with this device’s copy, by compare-and-set on the copy just pulled', async () => {
     const laptop = await bootDevice({ expenses: [expense('e1', { itemName: 'Invented kopi' })] })

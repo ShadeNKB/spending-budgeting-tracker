@@ -3,7 +3,7 @@
 // with "z1|" + base64url(gzip(body)) where CompressionStream exists. Restoring one is an import
 // restore (revive, never delete), so it survives sync.
 import { SNAP_BYTES, SNAP_DAILY, SNAP_PRE } from '../core/constants'
-import { b64urlDecode, b64urlEncode, canCompress } from '../core/e2e'
+import { b64urlDecode, b64urlEncode, canCompress } from '../core/b64url'
 import { isPlainObject, own } from '../core/sanitize'
 import type { Doc } from '../core/types'
 import { wireString } from '../core/wire'

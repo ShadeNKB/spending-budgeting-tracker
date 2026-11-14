@@ -17,7 +17,12 @@ import {
   type SyncResult,
   type SyncView,
 } from '../../stores/useSyncStore'
-import { newPrivateCode, previewJoin, type JoinPreview } from '../../stores/syncEngine'
+import {
+  newPrivateCode,
+  previewJoin,
+  replaceRelayCopy,
+  type JoinPreview,
+} from '../../stores/syncEngine'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useUIStore } from '../../stores/useUIStore'
 
@@ -35,7 +40,11 @@ vi.mock('../../services/syncConfig', async (importOriginal) => ({
   },
 }))
 // The engine is stubbed: the panel reaches it only through loadSyncEngine() (Join's preview).
-vi.mock('../../stores/syncEngine', () => ({ previewJoin: vi.fn(), newPrivateCode: vi.fn() }))
+vi.mock('../../stores/syncEngine', () => ({
+  previewJoin: vi.fn(),
+  newPrivateCode: vi.fn(),
+  replaceRelayCopy: vi.fn(),
+}))
 vi.mock('../../stores/useSyncStore', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../stores/useSyncStore')>()),
   loadSyncEngine: vi.fn(() => import('../../stores/syncEngine')),
@@ -172,6 +181,7 @@ afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
   vi.mocked(previewJoin).mockReset()
+  vi.mocked(replaceRelayCopy).mockReset()
   vi.unstubAllGlobals()
 })
 
@@ -1609,8 +1619,8 @@ describe('a private sync, and a device fenced out of one', () => {
     }
 
     it('asks first, says what is lost, and replaces only on the answer', async () => {
-      const replaceRelayCopy = vi.fn(() => Promise.resolve(OK))
-      connectedPanel({ ...paused(), replaceRelayCopy })
+      vi.mocked(replaceRelayCopy).mockImplementation(() => Promise.resolve(OK))
+      connectedPanel(paused())
       expect(
         screen.getByText(
           'Reloaded and still paused? The synced copy may be damaged. This device can replace it with its own copy.',
@@ -1630,8 +1640,8 @@ describe('a private sync, and a device fenced out of one', () => {
     })
 
     it('Cancel replaces nothing and hands focus back to the button', () => {
-      const replaceRelayCopy = vi.fn(() => Promise.resolve(OK))
-      connectedPanel({ ...paused(), replaceRelayCopy })
+      vi.mocked(replaceRelayCopy).mockImplementation(() => Promise.resolve(OK))
+      connectedPanel(paused())
       fireEvent.click(within(ask()).getByRole('button', { name: 'Cancel' }))
       expect(replaceRelayCopy).not.toHaveBeenCalled()
       expect(replaceButton()).toHaveFocus()
@@ -1639,14 +1649,15 @@ describe('a private sync, and a device fenced out of one', () => {
 
     it('is busy while it runs, keeps focus, and cannot be asked twice', async () => {
       let finish: (result: SyncResult) => void = () => {}
-      const replaceRelayCopy = vi.fn(
+      vi.mocked(replaceRelayCopy).mockImplementation(
         () =>
           new Promise<SyncResult>((resolve) => {
             finish = resolve
           }),
       )
-      connectedPanel({ ...paused(), replaceRelayCopy })
+      connectedPanel(paused())
       fireEvent.click(within(ask()).getByRole('button', { name: 'Replace' }))
+      await settle()
       const busy = screen.getByRole('button', { name: 'Replacing…' })
       expect(busy).toHaveFocus()
       expect(busy).toHaveAttribute('aria-disabled', 'true')

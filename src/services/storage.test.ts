@@ -491,6 +491,17 @@ describe('a private sync code (PR-6)', () => {
     expect(key()).toEqual({ code: OTHER, at: 9000, established: false })
   })
 
+  it('with no flag given, a code keeps the flag it has, and a code new here is established', async () => {
+    const { storage } = await fresh()
+    storage.savePrivateSync(CODE, false)
+    storage.savePrivateSync(CODE)
+    expect(storage.getSyncConfig()).toEqual({ kind: 'e2e', code: CODE, established: false })
+    storage.savePrivateSync(OTHER)
+    expect(storage.getSyncConfig()).toEqual({ kind: 'e2e', code: OTHER, established: true })
+    storage.savePrivateSync(OTHER)
+    expect(storage.getSyncConfig()).toEqual({ kind: 'e2e', code: OTHER, established: true })
+  })
+
   it('a key that storage does not keep is an error, with the plain setup left as it was', async () => {
     const { storage } = await fresh()
     storage.saveSyncId(UUID)

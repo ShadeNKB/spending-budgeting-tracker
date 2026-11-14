@@ -114,11 +114,6 @@ interface SyncState {
   setupSync: (syncId: string, opts?: { join?: boolean }) => Promise<SyncResult>
   disconnectSync: () => void
   triggerSync: (opts?: { resetBackoff?: boolean }) => Promise<SyncResult>
-  /**
-   * The owner's way out of a private synced copy this device cannot read as current
-   * (PRIVATE-SYNC 3.9): replaces it with this device's copy. Nothing on a plain sync.
-   */
-  replaceRelayCopy: () => Promise<SyncResult>
   scheduleSyncPush: () => void
 }
 
@@ -311,15 +306,9 @@ export const isPrivateCode = (code: string): boolean => code.startsWith('ST5-')
  */
 export function keepCode(syncId: string, established?: boolean): void {
   try {
-    if (isPrivateCode(syncId)) {
-      // Its own key (PRIVATE-SYNC 3.2). Left out, `established` keeps the flag the same code
-      // has (start-up re-saves the saved code), and a new code is established.
-      const cur = savedConfig()
-      const kept = cur?.kind === 'e2e' && cur.code === syncId ? cur.established : true
-      storage.savePrivateSync(syncId, established ?? kept)
-    } else {
-      storage.saveSyncId(syncId, established)
-    }
+    // A private code has its own key (PRIVATE-SYNC 3.2).
+    if (isPrivateCode(syncId)) storage.savePrivateSync(syncId, established)
+    else storage.saveSyncId(syncId, established)
   } catch {
     // Checked below: the code may already be there (start-up re-saves the saved code).
   }
@@ -496,13 +485,6 @@ export const useSyncStore = create<SyncState>((set, get) => ({
     if (!syncEnabled || syncId === null) return Promise.resolve(offResult())
     // No engine yet: its chunk failed to load during setup, so set up again.
     return engine ? engine.triggerSync(opts) : setup(syncId, true)
-  },
-
-  replaceRelayCopy: () => {
-    const { syncId } = get()
-    // No engine, no pause to answer: the pause this action ends is the engine's own.
-    if (!syncEnabled || syncId === null || engine === null) return Promise.resolve(offResult())
-    return engine.replaceRelayCopy()
   },
 
   scheduleSyncPush: () => {
