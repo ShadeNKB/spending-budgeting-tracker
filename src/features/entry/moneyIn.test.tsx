@@ -33,6 +33,8 @@ async function boot(rows: readonly object[]) {
   localStorage.clear()
   localStorage.setItem('expenses', JSON.stringify(rows))
   await useExpenseStore.getState().hydrate()
+  // After the boot: a device's first currency follows its time zone, and a boot puts it back.
+  useUIStore.setState({ toasts: [], currency: 'SGD' })
 }
 
 function view(id: string): ExpenseView {
@@ -50,7 +52,6 @@ beforeEach(() => {
     value: scrollIntoView,
     configurable: true,
   })
-  useUIStore.setState({ toasts: [], currency: 'SGD' })
 })
 afterEach(() => {
   vi.unstubAllGlobals()
