@@ -83,6 +83,7 @@ const failure = (kind: SyncFailure['kind'], extra: Partial<SyncFailure> = {}): S
 })
 const FOUND: JoinPreview = {
   kind: 'found',
+  code: CODE,
   here: 2,
   synced: 5,
   after: 7,

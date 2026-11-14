@@ -95,6 +95,7 @@ describe('previewJoin (AC-E21): exact counts, nothing written', () => {
     const phone = await bootDevice({ expenses: [] })
     expect(await preview(phone)).toEqual({
       kind: 'found',
+      code: JOINED,
       here: 0,
       synced: 3,
       after: 3,
@@ -108,6 +109,7 @@ describe('previewJoin (AC-E21): exact counts, nothing written', () => {
     const phone = await bootDevice({ expenses: [expense('e1'), expense('e2')] })
     expect(await preview(phone)).toEqual({
       kind: 'found',
+      code: JOINED,
       here: 2,
       synced: 0,
       after: 2,
@@ -132,6 +134,7 @@ describe('previewJoin (AC-E21): exact counts, nothing written', () => {
     const phone = await bootDevice({ expenses: [expense('e1'), expense('e2')] })
     expect(await preview(phone)).toEqual({
       kind: 'found',
+      code: JOINED,
       here: 2,
       synced: 1,
       after: 2,

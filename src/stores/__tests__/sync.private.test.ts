@@ -332,3 +332,70 @@ describe('transports and the fence (AC-P14, AC-P16)', () => {
     expect(phone.sync.useSyncStore.getState().lastError).toBeNull()
   })
 })
+
+describe('the join preview for a private code (AC-P12)', () => {
+  const preview = async (d: Device, input: string) =>
+    run((await d.sync.loadSyncEngine()).previewJoin(input))
+
+  it('a code that fails its check says what is wrong, and asks the relay nothing', async () => {
+    const phone = await bootDevice({ expenses: [expense('e2')] })
+    const requests = relay().requests.length
+    const wrong = `${CODE.slice(0, -1)}${CODE.endsWith('3') ? '4' : '3'}`
+    const message = async (input: string): Promise<string> => {
+      const p = await preview(phone, input)
+      return p.kind === 'failed' && p.result.error === 'invalid' ? p.result.message : p.kind
+    }
+    expect(await message(wrong)).toContain('One character of that code')
+    expect(await message('ST5-0004106')).toContain('too short or too long')
+    expect(await preview(phone, 'not a code')).toMatchObject({
+      kind: 'failed',
+      result: { message: "That code isn't valid." },
+    })
+    expect(relay().requests.length).toBe(requests)
+  })
+
+  it('a valid code with no row is "not found", asked for by its derived row only', async () => {
+    const phone = await bootDevice({ expenses: [expense('e2')] })
+    expect(await preview(phone, CODE)).toEqual({ kind: 'not-found', private: true })
+    expect(seenByRelay()).not.toContain('ST5')
+    expect(requestsOf('rpc').every((c) => c.args?.p_row === ROW)).toBe(true)
+  })
+
+  it('shows what joining would do before anything is merged or saved, however the code was typed', async () => {
+    const laptop = await bootDevice({
+      expenses: [expense('e1', { itemName: 'Invented kopi' }), expense('e3')],
+    })
+    await start(laptop)
+    await idle(500)
+    const phone = await bootDevice({ expenses: [expense('e2', { itemName: 'Invented teh' })] })
+    const row = rowPayload(ROW)
+    const typed = ` ${CODE.toLowerCase().replace(/-/g, ' ')} `
+    expect(await preview(phone, typed)).toEqual({
+      kind: 'found',
+      code: CODE,
+      here: 1,
+      synced: 2,
+      after: 3,
+      removed: 0,
+      unreadable: 0,
+    })
+    // read-only: nothing merged, nothing saved, nothing written
+    expect(names(phone)).toEqual(['Invented teh'])
+    expect(phone.storage.getItem('st5:synckey')).toBeNull()
+    expect(phone.sync.useSyncStore.getState().syncId).toBeNull()
+    expect(rowPayload(ROW)).toEqual(row)
+  })
+
+  it('a row that does not open with this code is unreadable: nothing is joined', async () => {
+    const laptop = await bootDevice({ expenses: [expense('e1')] })
+    await start(laptop)
+    await idle(500)
+    seedRow(ROW, { ...envelope(), ct: flip(envelope().ct) })
+    const phone = await bootDevice({ expenses: [] })
+    expect(await preview(phone, CODE)).toEqual({ kind: 'unreadable' })
+    seedRow(ROW, payloadOf([expense('evil')]))
+    expect(await preview(phone, CODE)).toEqual({ kind: 'unreadable' })
+    seedRow(ROW, { st: 6, k: 1, r: 'B'.repeat(22), iv: 'A'.repeat(16), z: 0, ct: 'AAAA' })
+    expect(await preview(phone, CODE)).toEqual({ kind: 'newer' })
+  })
+})

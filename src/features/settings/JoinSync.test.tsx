@@ -17,6 +17,7 @@ vi.mock('../../stores/useSyncStore', async (importOriginal) => ({
 const CODE = '11111111-2222-4333-8444-55555555a1b2'
 const FOUND: JoinPreview = {
   kind: 'found',
+  code: CODE,
   here: 12,
   synced: 641,
   after: 653,
@@ -118,7 +119,15 @@ describe('JoinSync: the preview (AC-E21 counts, AC-U3)', () => {
   })
 
   it('says how many entries the join removes, and that a copy stays here', async () => {
-    stubEngine({ kind: 'found', here: 1234, synced: 2, after: 1236, removed: 3, unreadable: 0 })
+    stubEngine({
+      kind: 'found',
+      code: CODE,
+      here: 1234,
+      synced: 2,
+      after: 1236,
+      removed: 3,
+      unreadable: 0,
+    })
     await join(CODE)
     expect(screen.getByRole('group', { name: 'Join this sync?' })).toHaveAccessibleDescription(
       'This device: 1,234 entries · Synced: 2 entries · After joining: about 1,236 entries. 3 entries here were deleted on your other devices and go when you join; a copy is kept on this device.',
@@ -126,7 +135,15 @@ describe('JoinSync: the preview (AC-E21 counts, AC-U3)', () => {
   })
 
   it('speaks of one entry in the singular, and sets unreadable ones aside', async () => {
-    stubEngine({ kind: 'found', here: 1, synced: 1, after: 1, removed: 1, unreadable: 1 })
+    stubEngine({
+      kind: 'found',
+      code: CODE,
+      here: 1,
+      synced: 1,
+      after: 1,
+      removed: 1,
+      unreadable: 1,
+    })
     await join(CODE)
     expect(screen.getByRole('group', { name: 'Join this sync?' })).toHaveAccessibleDescription(
       "This device: 1 entry · Synced: 1 entry · After joining: about 1 entry. 1 entry here was deleted on your other devices and goes when you join; a copy is kept on this device. 1 synced entry can't be read; it's set aside, not merged.",
@@ -134,7 +151,15 @@ describe('JoinSync: the preview (AC-E21 counts, AC-U3)', () => {
   })
 
   it('a join that removes entries here asks in the danger colour, its button naming the loss', async () => {
-    stubEngine({ kind: 'found', here: 60, synced: 0, after: 0, removed: 60, unreadable: 0 })
+    stubEngine({
+      kind: 'found',
+      code: CODE,
+      here: 60,
+      synced: 0,
+      after: 0,
+      removed: 60,
+      unreadable: 0,
+    })
     await join(CODE)
     const group = screen.getByRole('group', { name: 'Join this sync?' })
     expect(group).toHaveClass('border-negative/30')
@@ -152,7 +177,15 @@ describe('JoinSync: the preview (AC-E21 counts, AC-U3)', () => {
   })
 
   it('counts an empty device and an empty synced copy as found, never "not found"', async () => {
-    stubEngine({ kind: 'found', here: 0, synced: 0, after: 0, removed: 0, unreadable: 2 })
+    stubEngine({
+      kind: 'found',
+      code: CODE,
+      here: 0,
+      synced: 0,
+      after: 0,
+      removed: 0,
+      unreadable: 2,
+    })
     await join(CODE)
     expect(screen.getByRole('group', { name: 'Join this sync?' })).toHaveAccessibleDescription(
       "This device: 0 entries · Synced: 0 entries · After joining: about 0 entries. Nothing here is removed. 2 synced entries can't be read; they're set aside, not merged.",

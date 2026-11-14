@@ -30,7 +30,7 @@ import {
   SCHEMA,
   WIRE_PUSH_MAX,
 } from '../data/core/constants'
-import { maskCode, normalizeUuid, parseSyncCode } from '../data/core/codes'
+import { maskCode, normalizeUuid, parseSyncCode, type St5Failure } from '../data/core/codes'
 import { canCompress, deriveKeys, open, seal, type Envelope, type SyncKeys } from '../data/core/e2e'
 import { EMPTY_DOC, digestDoc, mergeDoc } from '../data/core/doc'
 import { fnv36 } from '../data/core/hash'
@@ -152,6 +152,13 @@ export function syncMessage(
 export const FULL_RELAY_MESSAGE = 'The sync relay is full. Your changes are saved on this device.'
 export const REPAIRED_MESSAGE = 'The sync copy was damaged. Restored it from this device.'
 const INVALID_CODE_MESSAGE = "That code isn't valid."
+/** What is wrong with a typed private code, by the reason its check gives (PRIVATE-SYNC 3.5). */
+const PRIVATE_CODE_MESSAGE: Record<St5Failure, string> = {
+  length: 'That private code is too short or too long. Paste the full code from your other device.',
+  symbol: 'That private code has a character no code uses. Check it against your other device.',
+  range: 'One character of that code looks wrong. Check it against your other device.',
+  checksum: 'One character of that code looks wrong. Check it against your other device.',
+}
 
 // ---------------------------------------------------------------------------
 // Tuning
@@ -1859,13 +1866,16 @@ export function scheduleSyncPush(): void {
 export type JoinPreview =
   | {
       kind: 'found'
+      /** The code as it is saved and shown: a UUID, or a private code in its display form. */
+      code: string
       here: number
       synced: number
       after: number
       removed: number
       unreadable: number
     }
-  | { kind: 'not-found' }
+  /** No relay copy for the code. `private`: it was a private code (the words differ). */
+  | { kind: 'not-found'; private?: boolean }
   /** A moved marker, a newer schema, or a private (e2e) copy. */
   | { kind: 'newer' }
   /** The relay copy cannot be read at all. */
@@ -1885,16 +1895,33 @@ const failedPreview = (
  * set aside.
  */
 export async function previewJoin(input: string): Promise<JoinPreview> {
-  const code = normalizeUuid(input)
-  if (code === null) return failedPreview('invalid', INVALID_CODE_MESSAGE)
+  // A UUID is today's plain code; anything else is read as a private code, and its own failure
+  // says what is wrong with it (PRIVATE-SYNC 3.5). Nothing is derived from a code that fails.
+  const parsed = parseSyncCode(input)
+  if (parsed.kind === 'invalid') {
+    const typed = input.trim().toLowerCase().startsWith('st5')
+    return failedPreview(
+      'invalid',
+      typed ? PRIVATE_CODE_MESSAGE[parsed.reason] : INVALID_CODE_MESSAGE,
+    )
+  }
+  const code = parsed.kind === 'plain' ? (normalizeUuid(input) ?? parsed.code) : parsed.code
   if (isOffline()) return failedPreview('offline', syncMessage('offline'))
   if (!(await engineReady())) return failedPreview('reload', syncMessage('reload'))
   const port = livePort()
   if (port === null) return failedPreview('reload', syncMessage('reload'))
   let pulled: Pulled | null
+  let b: Bucket
   try {
-    const { transport } = await openTransport(code, hintOf(port), Date.now(), false)
-    pulled = await transport.pull(code)
+    // Only the derived row id leaves the device: a private code is never sent anywhere.
+    b = await bucketFor(code)
+    const { transport } = await openTransport(b.rowId, hintOf(port), Date.now(), false)
+    pulled = await transport.pull(b.rowId)
+    if (b.keys !== null) {
+      const read = await openPulled(b, pulled)
+      if (read.kind === 'newer') return { kind: 'newer' }
+      pulled = read.pulled
+    }
   } catch (err) {
     const kind = kindOf(err)
     if (kind === 'network' && isOffline()) return failedPreview('offline', syncMessage('offline'))
@@ -1902,18 +1929,24 @@ export async function previewJoin(input: string): Promise<JoinPreview> {
     return failedPreview(kind, full ? FULL_RELAY_MESSAGE : syncMessage(kind))
   }
   if (pulled === null || pulled.payload === null || pulled.payload === undefined) {
-    return { kind: 'not-found' }
+    return b.kind === 'e2e' ? { kind: 'not-found', private: true } : { kind: 'not-found' }
   }
+  // A private row that does not open with this code: nothing is joined.
+  if (pulled.payload === UNREADABLE) return { kind: 'unreadable' }
   const local = port.doc()
   const dec = decodeWire(pulled.payload, 'remote', { reuse: local, at: Date.now() })
   if (dec.writer === 'moved' || dec.writer === 'e2e' || dec.writer === 'newer') {
     return { kind: 'newer' }
   }
-  if (dec.writer === 'invalid') return { kind: 'unreadable' }
+  // Inside an envelope only this format's own payload is a copy of the bucket (3.3).
+  if (dec.writer === 'invalid' || (b.kind === 'e2e' && dec.writer !== 'v5')) {
+    return { kind: 'unreadable' }
+  }
   const omit = port.omitIds()
   const m = mergeDoc(local, dec.doc)
   return {
     kind: 'found',
+    code,
     here: liveCount(local, omit),
     synced: dec.doc.expenses.size,
     after: liveCount(m.doc, omit),
