@@ -68,9 +68,12 @@ export function VirtualLedgerList({
                   <h2 className="text-[11px] font-semibold uppercase tracking-[0.08em] text-[var(--text-secondary)]">
                     {item.label}
                   </h2>
-                  <span className="font-mono text-[11px] tabular-nums text-[var(--text-secondary)]">
-                    {fmt(item.total)}
-                  </span>
+                  {/* No figure for a day with no spending (LedgerScreen's grouped view). */}
+                  {item.total > 0 && (
+                    <span className="font-mono text-[11px] tabular-nums text-[var(--text-secondary)]">
+                      {fmt(item.total)}
+                    </span>
+                  )}
                 </div>
               ) : (
                 <div className="border-b border-white/[0.04]">

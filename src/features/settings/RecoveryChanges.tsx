@@ -16,6 +16,10 @@ import {
 } from '../../stores/useExpenseStore'
 import { PagedList, ROW_ACTION, RecoveryRow, RecoverySection, When } from './RecoveryRow'
 
+/** A record's kind in words (T8c): an expense has none stored. */
+const kindLabel = (kind: string | undefined): string =>
+  kind === undefined ? 'Expense' : kind === 'income' ? 'Income' : 'Newer kind'
+
 // Changes from your other device, in Recovery (PR-4 track spec §3.2, F-004): what a sync merge
 // replaced or removed here, from the journal. Restore puts this device's version back as a new,
 // dated change that syncs; it never brings back what was deleted (or changed) again since.
@@ -94,7 +98,8 @@ export function RecoveryChanges({
     <span className="text-white/90">
       {r.itemName === '' ? 'Unnamed entry' : r.itemName}
       {r.amount !== null && <> · {money(r.amount)}</>}
-      {r.category !== null && ` · ${r.category}`}
+      {/* Only an expense is in a category: an income says what it is there. */}
+      {r.kind !== undefined ? ` · ${kindLabel(r.kind)}` : r.category !== null && ` · ${r.category}`}
       {r.day !== null && ` · ${dayText(r.day)}`}
     </span>
   )
@@ -104,6 +109,7 @@ export function RecoveryChanges({
     const text = (v: string | null) => v ?? 'none'
     const lines = [
       ['Name', before.itemName, after.itemName],
+      ['Kind', kindLabel(before.kind), kindLabel(after.kind)],
       ['Category', before.category, after.category],
       ['Day', before.day, after.day],
       ['Notes', before.notes, after.notes],

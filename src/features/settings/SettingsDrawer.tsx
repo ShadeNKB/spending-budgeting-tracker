@@ -33,6 +33,7 @@ import { syncEnabled } from '../../services/syncConfig'
 import { useToast } from '../../hooks/useToast'
 import { useCurrencySymbol, useFormatMoney } from '../../hooks/useFormatMoney'
 import { colorFromString } from '../../lib/analytics'
+import { categoryOf } from '../../lib/kind'
 
 const SECTIONS = [
   ['categories', Tags, 'Categories'],
@@ -367,9 +368,10 @@ function CategoriesPanel() {
     return true
   }
 
-  // A Map: a category may be named "__proto__" or "constructor".
+  // A Map: a category may be named "__proto__" or "constructor". Only expenses are in a
+  // category: money in is stored under one it never shows.
   const counts = new Map(
-    categories.map((c) => [c, expenses.filter((e) => e.category === c).length]),
+    categories.map((c) => [c, expenses.filter((e) => categoryOf(e) === c).length]),
   )
   // Focus after a delete moves along the rows that can be deleted (Other cannot).
   const deletable = categories.filter((c) => c !== OTHER)

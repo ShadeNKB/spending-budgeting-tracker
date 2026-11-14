@@ -4,6 +4,7 @@ import { Trash2 } from 'lucide-react'
 import { Sheet } from '../../ui/Sheet'
 import { Input } from '../../ui/Input'
 import { Button } from '../../ui/Button'
+import { Segmented } from '../../ui/Segmented'
 import { InlineConfirm } from '../../ui/InlineConfirm'
 import { undoAction, useExpenseStore } from '../../stores/useExpenseStore'
 import { useToast } from '../../hooks/useToast'
@@ -11,6 +12,7 @@ import { useInlineConfirm } from '../../hooks/useInlineConfirm'
 import { useCurrencySymbol, useFormatMoney } from '../../hooks/useFormatMoney'
 import { useToday } from '../../hooks/useToday'
 import { addDays, type DayKey } from '../../lib/dates'
+import { kindOf, type Kind } from '../../lib/kind'
 import { entryDay } from '../../lib/ledgerIndex'
 import { DatePicker } from '../../ui/DatePicker'
 import { shieldKeyGesture } from '../../ui/pressShield'
@@ -23,9 +25,12 @@ import {
   type ExpenseFormErrors,
   type ExpenseFormField,
 } from '../entry/expenseForm'
+import type { EntryKind } from '../../data/core/types'
 import type { Expense } from '../../types'
 
 interface EditForm {
+  /** `unknown`: a kind a newer SpendTrack wrote. The sheet leaves it exactly as it is. */
+  kind: Kind
   itemName: string
   amount: string
   category: string
@@ -36,6 +41,7 @@ interface EditForm {
 
 function formFrom(expense: Expense, today: DayKey): EditForm {
   return {
+    kind: kindOf(expense),
     itemName: expense.itemName,
     amount: expense.amount.toString(),
     category: expense.category,
@@ -45,6 +51,9 @@ function formFrom(expense: Expense, today: DayKey): EditForm {
     notes: expense.notes ?? '',
   }
 }
+
+/** What the sheet calls the entry, in its title and in the confirmation of a save. */
+const NOUN: Record<Kind, string> = { expense: 'Expense', income: 'Income', unknown: 'Entry' }
 
 /** A mouse or trackpad: the sheet can open with the keyboard already in Item. */
 const hasFinePointer = () => window.matchMedia('(pointer: fine)').matches
@@ -81,6 +90,7 @@ export function EditExpenseSheet({
   }, [])
 
   const [form, setForm] = useState<EditForm>({
+    kind: 'expense',
     itemName: '',
     amount: '',
     category: 'Other',
@@ -127,9 +137,15 @@ export function EditExpenseSheet({
       useExpenseStore.getState().updateExpense(expense.id, {
         itemName: form.itemName.trim(),
         amount: parseFloat(form.amount),
-        category: form.category,
+        // Only an expense has a category to change: money in keeps the one it is stored with,
+        // so turning it back into an expense finds it there.
+        ...(form.kind === 'expense' ? { category: form.category } : {}),
         day: form.date,
         notes: form.notes.trim(),
+        // The kind goes only when the switch was moved. The sheet holds the entry as it was
+        // when it opened: sent back unchanged, that kind would undo one the other device set
+        // meanwhile (or erase a newer version's) on a save that only meant to fix a note.
+        ...(form.kind === 'unknown' || form.kind === kindOf(expense) ? {} : { kind: form.kind }),
       })
     } catch (err) {
       // The sheet stays open with the edits, so the owner can fix what the message names.
@@ -141,7 +157,7 @@ export function EditExpenseSheet({
     const after = useExpenseStore.getState().undoStack.at(-1)?.id
     const undo =
       after !== before && after?.startsWith(`update-${expense.id}-`) === true ? after : undefined
-    toast.success('Expense updated', {
+    toast.success(`${NOUN[form.kind]} updated`, {
       undoId: undo,
       action: undo === undefined ? undefined : undoAction(toast, undo),
     })
@@ -174,7 +190,7 @@ export function EditExpenseSheet({
     <Sheet
       open={!!expense}
       onClose={onClose}
-      title="Edit expense"
+      title={`Edit ${NOUN[form.kind].toLowerCase()}`}
       side={isMobile ? 'bottom' : 'right'}
       width={420}
       returnFocus={returnFocus}
@@ -189,6 +205,27 @@ export function EditExpenseSheet({
         }}
         className="flex flex-col gap-4 p-5"
       >
+        {form.kind === 'unknown' ? (
+          <p className="rounded-xl border border-white/[0.06] bg-surface-2/55 px-3 py-2 text-[12px] leading-relaxed text-[var(--text-secondary)]">
+            This entry came from a newer version of SpendTrack. It is listed here and left out of
+            every total. Update SpendTrack on this device to see it in full.
+          </p>
+        ) : (
+          <div>
+            <Segmented<EntryKind>
+              label="Kind of entry"
+              value={form.kind}
+              onChange={(v) => {
+                setField('kind', v)
+              }}
+              size="sm"
+              options={[
+                { value: 'expense', label: 'Expense' },
+                { value: 'income', label: 'Income' },
+              ]}
+            />
+          </div>
+        )}
         <Input
           ref={fields.itemName}
           label="Item"
@@ -214,62 +251,64 @@ export function EditExpenseSheet({
           onKeyDown={saveOnEnter}
         />
 
-        <div className="flex flex-col gap-1.5">
-          <span
-            id={categoryLabelId}
-            className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]"
-          >
-            Category
-          </span>
-          {/* 36 px chips 8 px apart: each gets a 44 px hit area on touch, none overlapping. */}
-          <div role="group" aria-labelledby={categoryLabelId} className="flex flex-wrap gap-2">
-            {categories.slice(0, 8).map((c) => {
-              const selected = form.category === c
-              return (
-                <button
-                  key={c}
-                  type="button"
-                  aria-pressed={selected}
-                  onClick={() => setField('category', selected ? 'Other' : c)}
-                  className={`tap-target inline-flex h-9 items-center gap-1 rounded-full border px-3 text-[12px] font-medium transition ${
-                    selected
-                      ? 'border-transparent text-surface-0'
-                      : 'border-white/[0.08] text-[var(--text-secondary)] hover:text-white'
-                  }`}
-                  style={selected ? { background: chosenChipFill(c) } : undefined}
-                >
-                  {c}
-                </button>
-              )
-            })}
-            {categories.length > 8 && (
-              // A chip like its neighbours (as in AddExpenseSheet): the 12 px label is drawn
-              // here, and the native select sits invisibly on top to take the tap (8 px taller
-              // on touch: a 44 px target). Touch screens floor the select's own text at 16 px
-              // (index.css, against iOS focus zoom). The chip draws the select's focus ring.
-              <div className="field-focus relative inline-flex h-9 max-w-full items-center rounded-full border border-white/[0.08] bg-surface-2 pl-3 pr-6 text-[12px] text-[var(--text-secondary)]">
-                <span aria-hidden className="min-w-0 truncate">
-                  {categories.slice(8).includes(form.category) ? form.category : 'More…'}
-                </span>
-                <select
-                  aria-label="More categories"
-                  value={categories.slice(8).includes(form.category) ? form.category : ''}
-                  onChange={(e) => {
-                    if (e.target.value) setField('category', e.target.value)
-                  }}
-                  className="field-control absolute inset-0 h-full w-full cursor-pointer appearance-none rounded-full opacity-0 [@media(pointer:coarse)]:-inset-y-1 [@media(pointer:coarse)]:h-auto"
-                >
-                  <option value="">More…</option>
-                  {categories.slice(8).map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            )}
+        {form.kind === 'expense' && (
+          <div className="flex flex-col gap-1.5">
+            <span
+              id={categoryLabelId}
+              className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]"
+            >
+              Category
+            </span>
+            {/* 36 px chips 8 px apart: each gets a 44 px hit area on touch, none overlapping. */}
+            <div role="group" aria-labelledby={categoryLabelId} className="flex flex-wrap gap-2">
+              {categories.slice(0, 8).map((c) => {
+                const selected = form.category === c
+                return (
+                  <button
+                    key={c}
+                    type="button"
+                    aria-pressed={selected}
+                    onClick={() => setField('category', selected ? 'Other' : c)}
+                    className={`tap-target inline-flex h-9 items-center gap-1 rounded-full border px-3 text-[12px] font-medium transition ${
+                      selected
+                        ? 'border-transparent text-surface-0'
+                        : 'border-white/[0.08] text-[var(--text-secondary)] hover:text-white'
+                    }`}
+                    style={selected ? { background: chosenChipFill(c) } : undefined}
+                  >
+                    {c}
+                  </button>
+                )
+              })}
+              {categories.length > 8 && (
+                // A chip like its neighbours (as in AddExpenseSheet): the 12 px label is drawn
+                // here, and the native select sits invisibly on top to take the tap (8 px taller
+                // on touch: a 44 px target). Touch screens floor the select's own text at 16 px
+                // (index.css, against iOS focus zoom). The chip draws the select's focus ring.
+                <div className="field-focus relative inline-flex h-9 max-w-full items-center rounded-full border border-white/[0.08] bg-surface-2 pl-3 pr-6 text-[12px] text-[var(--text-secondary)]">
+                  <span aria-hidden className="min-w-0 truncate">
+                    {categories.slice(8).includes(form.category) ? form.category : 'More…'}
+                  </span>
+                  <select
+                    aria-label="More categories"
+                    value={categories.slice(8).includes(form.category) ? form.category : ''}
+                    onChange={(e) => {
+                      if (e.target.value) setField('category', e.target.value)
+                    }}
+                    className="field-control absolute inset-0 h-full w-full cursor-pointer appearance-none rounded-full opacity-0 [@media(pointer:coarse)]:-inset-y-1 [@media(pointer:coarse)]:h-auto"
+                  >
+                    <option value="">More…</option>
+                    {categories.slice(8).map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Date selector — presets + custom picker */}
         {(() => {
@@ -344,14 +383,32 @@ export function EditExpenseSheet({
 
         {!isMobile && <div className="flex gap-2 pt-1">{actions}</div>}
 
-        {expense && <DeleteExpense key={session} expense={expense} onDeleted={onClose} />}
+        {expense && (
+          <DeleteExpense
+            key={session}
+            expense={expense}
+            noun={NOUN[form.kind].toLowerCase()}
+            onDeleted={onClose}
+          />
+        )}
       </div>
     </Sheet>
   )
 }
 
-/** "Delete expense", then the question in its place. Re-keyed on every opening of the sheet. */
-function DeleteExpense({ expense, onDeleted }: { expense: Expense; onDeleted: () => void }) {
+/**
+ * "Delete expense" (or income, or entry: the sheet's own word for it), then the question in its
+ * place. Re-keyed on every opening of the sheet.
+ */
+function DeleteExpense({
+  expense,
+  noun,
+  onDeleted,
+}: {
+  expense: Expense
+  noun: string
+  onDeleted: () => void
+}) {
   const toast = useToast()
   const confirm = useInlineConfirm<'delete'>()
 
@@ -382,7 +439,7 @@ function DeleteExpense({ expense, onDeleted }: { expense: Expense; onDeleted: ()
           onClick={() => confirm.ask('delete')}
           className="tap-target flex w-full items-center justify-center gap-1.5 rounded-[10px] border border-white/[0.06] py-2.5 text-[12px] text-[var(--text-tertiary)] transition hover:border-negative/30 hover:bg-negative/10 hover:text-negative"
         >
-          <Trash2 size={13} aria-hidden /> Delete expense
+          <Trash2 size={13} aria-hidden /> Delete {noun}
         </button>
       )}
     </div>

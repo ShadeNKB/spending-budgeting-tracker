@@ -337,11 +337,31 @@ for (const motion of MOTIONS) {
     }, testInfo) => {
       test.skip(isPhone(testInfo), 'a mouse double click')
       await load(page, '/ledger', SIXTY, motion)
-      const sheet = await openEdit(page, testInfo)
-      const box = await sheet.getByRole('button', { name: 'Save changes' }).boundingBox()
+      // Where Save sits is the sheet's own layout; what lies under it is the list's (0.19.0 put a
+      // row above the sheet's fields, and Save came to rest over a day header). So: measure Save,
+      // close, bring a row under that point, and open the sheet again.
+      const measured = await openEdit(page, testInfo)
+      const box = await measured.getByRole('button', { name: 'Save changes' }).boundingBox()
       if (!box) throw new Error('no Save')
       const x = box.x + box.width / 2
       const y = box.y + box.height / 2
+      await page.keyboard.press('Escape')
+      await expectGone(measured)
+      const rowAt = () =>
+        page.evaluate(
+          ([px, py]) =>
+            document.elementFromPoint(px ?? 0, py ?? 0)?.closest('[data-ledger-row]') !== null,
+          [x, y],
+        )
+      for (let i = 0; i < 8 && !(await rowAt()); i++) {
+        await page.evaluate(() => {
+          window.scrollBy(0, 16)
+        })
+      }
+      expect(await rowAt(), 'a ledger row lies where Save will be').toBe(true)
+      const sheet = await openEdit(page, testInfo)
+      const again = await sheet.getByRole('button', { name: 'Save changes' }).boundingBox()
+      expect(again, 'Save is where it was measured').toEqual(box)
       await page.mouse.move(x, y)
       await page.mouse.down({ clickCount: 1 })
       await page.mouse.up({ clickCount: 1 })

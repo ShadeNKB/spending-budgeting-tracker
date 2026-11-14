@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.19.0 — 2026-11-14
+
+T8c, the last slice of T8 (money in and smarter budgets): income. An entry can now be money that came in.
+
+### Added
+
+- **Income** (F-058). The Add sheet and the Edit sheet have an **Expense | Income** switch. Income is money that came in: pay, an allowance, a sale. It takes a name, an amount, a day and notes, and no category.
+- **Income on Pulse.** Under the period's total: "Income S$790.00 · S$178.00 more than spent" (or "less than spent"), for the month or the year on screen. Shown once the period holds an income.
+- **Income in the Ledger.** An income row shows **+S$790.00** in green with "income" under it, and "Income" where an expense has its category; the palette lists it the same way, under **Entries** (the heading said Expenses). The Ledger's total and each day's total stay spending; income is summed on its own line ("+S$790.00 income"). A search for "income" lists them all. A category filter lists expenses only.
+- **A day with no spending shows no figure in its Ledger header.** A day that held only not-spending entries said "S$0.00" above them; over an income that read as a sum gone wrong.
+- **CSV export: a Type column**, last, saying `expense` or `income`. The five columns before it are where they always were, and amounts stay positive. An income's Category cell is empty.
+
+### What does not change
+
+- **Every spending figure.** The total, the pace, the comparison with last month, budgets, Top categories, the heatmap, the trend, the forecast and every Insights figure are spending, as before: income is in none of them.
+- **Every entry made before today.** An expense is an entry without the new field, so nothing already stored is rewritten.
+- **Due soon** never offers an income (Log would enter an allowance as an expense).
+
+### Changed (engineering)
+
+- **The kind of an entry lives in its record's extras register** (`kind: "income"`; absent for an expense). Every v5 release (0.10.0 to 0.18.1) keeps a record's fields it does not know, through its own edits, merges, backups and pushes, so there is no new wire field, merge rule or file format, and no v5 release drops it. (The data files that do this are byte for byte the same in all eleven releases.) `kind-v010.data.ts` proves it against the real 0.10.0 build: an income made here, then listed, edited and pushed by 0.10.0 on the same storage and sync code, comes back an income with 0.10.0's amount.
+- `addExpense` and `updateExpense` (data/core/ops.ts) take a kind. A kind change stamps the extras register alone, never the category: an income turned back into an expense finds its category where it was. Other extras are kept. The ops refuse a kind they do not write, and a change the wire would drop on the next read (`extrasFit`).
+- **A kind this version does not know is listed, can be edited, and is counted nowhere** ("not counted"; the Edit sheet says a newer SpendTrack made it and leaves the kind as it is). A later version can add a kind without this one counting it as spending.
+- **Recovery knows a kind.** A kind another device changed over a pending edit here is listed with both kinds ("Kind: Income → Expense") and Restore puts this device's back, by the rule every field follows; the Fix of an unreadable income opens the Add sheet on Income. Found by the data-safety review: the change was journaled, and the row showed no difference and answered "It's already back".
+- **The Edit sheet sends a kind only when its switch was moved.** It holds the entry as it was when it opened; sent back unchanged, that kind would have undone one the other device set meanwhile, on a save that only fixed a note (review).
+- **The large-amount check reads expenses only.** Two incomes of 790 among twenty rows lifted its bar to 1,580, and "450" typed for 4.50 went straight in (review).
+- The palette searches what a row shows: an income is found by "income", as in the Ledger.
+- One split by kind and by not-spending category (`lib/spending.ts`): `spending`, `aside`, `income`, `unknown`, and `outgoing` (every expense, where recurring charges are looked for). Pulse and Insights still build their one index over `spending`.
+- On a light-theme Ledger row the income green is one step darker (green-800): the row's hover fill left green-700 at 4.45:1 for 14 px text. Found by the new axe check in `e2e/money-in.spec.ts`.
+- Boot 497,685 / 561,580 B (63,895 B left), eager 397,590 / 466,908 B; all JS 682.6 / 740 KB (57.4 KB left).
+
+### Known limits
+
+- **A device still on 0.18 or older shows an income as an expense**, and counts it as one, until it is updated: under Other, or under the category the entry had before it was made an income. It keeps the entry exactly, and cannot know what the field means. Its Due soon can also offer a monthly income, and a Log there adds a real expense. Update both devices before adding income.
+- A device on 0.9.x (before the v5 engine; neither of the owner's is) keeps the field through its own edits, but an edit it makes to a copy it pulled before the kind was set replaces the whole record, kind included.
+- The kind shares one last-writer-wins register with whatever else a later version keeps in a record's extras: two devices changing different extras of one entry at the same moment keep the later write whole. The refunds slice has to write what it adds in the same write as the kind.
+- **Refunds and paybacks are not here yet.** Money that comes back for something bought (a refund, a friend's share of a dinner) should come off that category's spending, not sit beside it as income. That is the next slice: it makes spending a signed sum, and every chart has to be checked for it. Until then, edit the expense down to what it really cost.
+- Quick add and the palette's add are for expenses: income is added from the Add sheet.
+- The Today strip on Pulse lists today's spending; an income added today is in the Ledger.
+
 ## 0.18.1 — 2026-11-13
 
 Room in the bundle before T8's last slice (money in). Nothing on screen changes; the app starts on about 56 KB less JavaScript.

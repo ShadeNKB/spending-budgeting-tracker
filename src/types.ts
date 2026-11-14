@@ -14,12 +14,17 @@ export interface Expense {
   notes?: string
   createdAt: string
   updatedAt?: string
+  /**
+   * Fields beside the ones above, as the data core carries them. `kind` is read from here
+   * (lib/kind.ts): absent for an expense, `'income'` for money in.
+   */
+  ext?: Readonly<Record<string, Json>>
 }
 
 /**
  * What components receive from the store: a live entry, identity-stable while unchanged.
- * `day` is always present (`rec.day ?? localDay(date)` in this device's zone); `ext` holds
- * pass-through fields from newer versions.
+ * `day` is always present (`rec.day ?? localDay(date)` in this device's zone); `ext` holds the
+ * entry's kind and pass-through fields from newer versions.
  */
 export interface ExpenseView extends Expense {
   readonly day: string

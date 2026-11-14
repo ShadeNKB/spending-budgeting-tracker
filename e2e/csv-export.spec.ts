@@ -63,7 +63,8 @@ const SEED = [
   },
 ].map((e) => ({ ...e, createdAt: '2026-03-10T12:00:00' }))
 
-const HEADER = ['Date', 'Item', 'Category', 'Amount', 'Notes']
+// Type is the last column (0.19.0): the five before it are where they always were.
+const HEADER = ['Date', 'Item', 'Category', 'Amount', 'Notes', 'Type']
 
 // The Ledger screen and the toast host are lazy chunks; cold, under a parallel run, they
 // can take longer than the default 5 s to arrive. Wait for them, never for a fixed time.
@@ -71,12 +72,12 @@ const LAZY_CHUNK = { timeout: 15_000 }
 
 // Keyed by the exported Item cell, since the two exporters order rows differently.
 const EXPECTED: Record<string, string[]> = {
-  'Kopi O': ['2026-03-14', 'Kopi O', 'Food', '1.8', 'less sugar, more ice'],
-  [`'${HYPERLINK}`]: ['2026-03-13', `'${HYPERLINK}`, 'Shopping', '25', ''],
-  [`'${CMD}`]: ['2026-03-12', `'${CMD}`, 'Transport', '14.2', ''],
-  'Gift card': ['2026-03-11', 'Gift card', "'@SUM(1+1)", '50', ''],
-  'Shoe refund': ['2026-03-15', 'Shoe refund', 'Shopping', '12.5', "'-2+3"],
-  鸡饭: ['2026-03-10', '鸡饭', 'Food', '4.5', 'line one\n"quoted" line two'],
+  'Kopi O': ['2026-03-14', 'Kopi O', 'Food', '1.8', 'less sugar, more ice', 'expense'],
+  [`'${HYPERLINK}`]: ['2026-03-13', `'${HYPERLINK}`, 'Shopping', '25', '', 'expense'],
+  [`'${CMD}`]: ['2026-03-12', `'${CMD}`, 'Transport', '14.2', '', 'expense'],
+  'Gift card': ['2026-03-11', 'Gift card', "'@SUM(1+1)", '50', '', 'expense'],
+  'Shoe refund': ['2026-03-15', 'Shoe refund', 'Shopping', '12.5', "'-2+3", 'expense'],
+  鸡饭: ['2026-03-10', '鸡饭', 'Food', '4.5', 'line one\n"quoted" line two', 'expense'],
 }
 
 /** Minimal RFC 4180 reader: quoted cells, doubled quotes, CRLF records. */
@@ -208,6 +209,6 @@ test.describe('CSV export with no expenses', () => {
     const exportButton = page.getByRole('button', { name: 'Export to CSV' })
     const [download] = await Promise.all([page.waitForEvent('download'), exportButton.click()])
     const bytes = await readDownload(download)
-    expect(bytes.toString('utf8')).toBe('\uFEFFDate,Item,Category,Amount,Notes\r\n')
+    expect(bytes.toString('utf8')).toBe('\uFEFFDate,Item,Category,Amount,Notes,Type\r\n')
   })
 })

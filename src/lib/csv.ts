@@ -1,4 +1,5 @@
 import type { Expense } from '../types'
+import { KIND_KEY, kindOf } from './kind'
 import { entryDay } from './ledgerIndex'
 
 // One CSV writer for every export. The text inside an expense can come from an
@@ -12,7 +13,8 @@ import { entryDay } from './ledgerIndex'
  */
 const FORMULA_LEADER = /^(?:[\t\r]|\s*[=+\-@\uFF1D\uFF0B\uFF0D\uFF20])/
 
-const HEADER = 'Date,Item,Category,Amount,Notes'
+// Type is the last column, added in 0.19.0: the five before it are where they always were.
+const HEADER = 'Date,Item,Category,Amount,Notes,Type'
 
 // Excel reads a file without a byte order mark as the local code page, so
 // non-ASCII item names (鸡饭, café, emoji) would otherwise show as mojibake.
@@ -45,15 +47,31 @@ export function csvDay(expense: Expense): string {
   return entryDay(expense) ?? expense.date
 }
 
-/** The CSV export of `expenses`: BOM, header, one row per expense, CRLF line endings. */
+/**
+ * The Type cell: `expense`, `income`, or the kind's own word when a newer SpendTrack wrote one
+ * this version does not know (`other` when it is not text).
+ */
+export function csvType(expense: Expense): string {
+  const kind = kindOf(expense)
+  if (kind !== 'unknown') return kind
+  const raw = expense.ext?.[KIND_KEY]
+  return typeof raw === 'string' && raw !== '' ? raw : 'other'
+}
+
+/**
+ * The CSV export of `expenses`: BOM, header, one row per entry, CRLF line endings. Amounts are
+ * positive for every type: the Type column says which way the money went. Only an expense has a
+ * category.
+ */
 export function expensesToCsv(expenses: readonly Expense[]): string {
   const rows = expenses.map((e) =>
     [
       toCsvCell(csvDay(e)),
       toCsvCell(e.itemName),
-      toCsvCell(e.category),
+      toCsvCell(kindOf(e) === 'expense' ? e.category : ''),
       toCsvCell(e.amount),
       toCsvCell(e.notes),
+      toCsvCell(csvType(e)),
     ].join(','),
   )
   return BOM + [HEADER, ...rows].join(EOL) + EOL

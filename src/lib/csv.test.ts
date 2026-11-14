@@ -159,12 +159,12 @@ describe('csvDay', () => {
 describe('expensesToCsv', () => {
   it('starts with a BOM, uses CRLF, and ends with a line break', () => {
     const csv = expensesToCsv([expense()])
-    expect(csv.startsWith('\uFEFFDate,Item,Category,Amount,Notes\r\n')).toBe(true)
+    expect(csv.startsWith('\uFEFFDate,Item,Category,Amount,Notes,Type\r\n')).toBe(true)
     expect(csv.endsWith('\r\n')).toBe(true)
     expect(csv.replace(/\r\n/g, '')).not.toMatch(/\n/)
   })
 
-  it('writes one quoted row per expense in Date, Item, Category, Amount, Notes order', () => {
+  it('writes one quoted row per expense in Date, Item, Category, Amount, Notes, Type order', () => {
     const csv = expensesToCsv([
       expense({ itemName: 'Kopi', amount: 1.8, notes: 'with "kaya" toast' }),
       expense({
@@ -177,19 +177,19 @@ describe('expensesToCsv', () => {
       }),
     ])
     expect(csv).toBe(
-      '\uFEFFDate,Item,Category,Amount,Notes\r\n' +
-        '"2026-03-14","Kopi","Food","1.8","with ""kaya"" toast"\r\n' +
-        `"2026-03-15","'=HYPERLINK(""http://attacker.example"",""x"")","'@SUM(1+1)","-12.5",""\r\n`,
+      '\uFEFFDate,Item,Category,Amount,Notes,Type\r\n' +
+        '"2026-03-14","Kopi","Food","1.8","with ""kaya"" toast","expense"\r\n' +
+        `"2026-03-15","'=HYPERLINK(""http://attacker.example"",""x"")","'@SUM(1+1)","-12.5","","expense"\r\n`,
     )
   })
 
   it('gives a BOM and header only for no expenses', () => {
-    expect(expensesToCsv([])).toBe('\uFEFFDate,Item,Category,Amount,Notes\r\n')
+    expect(expensesToCsv([])).toBe('\uFEFFDate,Item,Category,Amount,Notes,Type\r\n')
   })
 
   it('exports a record with a broken date instead of throwing', () => {
     const csv = expensesToCsv([expense({ date: 'garbage' })])
-    expect(csv).toContain('\r\n"garbage","Kopi","Food","1.8",""\r\n')
+    expect(csv).toContain('\r\n"garbage","Kopi","Food","1.8","","expense"\r\n')
   })
 
   it('builds 5,000 rows in under 200 ms', () => {

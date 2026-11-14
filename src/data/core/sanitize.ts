@@ -194,6 +194,15 @@ function cleanExtras(o: Readonly<Record<string, unknown>>): { extras: Extras; dr
   return { extras: Object.freeze(extras), dropped }
 }
 
+/**
+ * True when a decode keeps every key of `x` as it is. An op that writes extras checks it first,
+ * so it never stores what the next read of the record would drop.
+ */
+export function extrasFit(x: Extras): boolean {
+  const cleaned = cleanExtras(x)
+  return !cleaned.dropped && Object.keys(cleaned.extras).length === Object.keys(x).length
+}
+
 function sanitizeUnsafe(raw: unknown): SanitizeExpenseResult {
   if (!isPlainObject(raw)) return { kind: 'quarantine', reason: 'not-object' }
   const id = own(raw, 'id')

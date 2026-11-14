@@ -25,12 +25,14 @@ export interface RecordValues {
   readonly c: string
   readonly day: string
   readonly o: string | null
+  /** The whole extras object (the op built and checked it); none when left out. */
+  readonly x?: Extras
 }
 
 /** Field edits an op may make. `day` moves `date` to local noon unless the date is on that day. */
 export type RecordPatch = Partial<RecordValues>
 
-const EMPTY_EXTRAS: Extras = Object.freeze(nullRecord<Json>())
+export const EMPTY_EXTRAS: Extras = Object.freeze(nullRecord<Json>())
 
 type AnyReg = ExpenseRec[FieldKey]
 const regOf = (rec: ExpenseRec, f: FieldKey): AnyReg => rec[f]
@@ -328,17 +330,26 @@ export function addRecord(id: string, v: RecordValues, ctx: OpCtx): ExpenseRec {
     c: reg(v.c),
     d: reg<DateValue>({ date: localNoonIso(v.day), day: v.day }),
     o: reg(v.o),
-    x: reg(EMPTY_EXTRAS),
+    x: reg(v.x ?? EMPTY_EXTRAS),
   }
 }
 
 /** Stamps only the fields whose value changes, all at one tick above their own stamps. */
 export function editRecord(rec: ExpenseRec, patch: RecordPatch, ctx: OpCtx): ExpenseRec {
-  const next: { n?: string; a?: number; c?: string; d?: DateValue; o?: string | null } = {}
+  const next: {
+    n?: string
+    a?: number
+    c?: string
+    d?: DateValue
+    o?: string | null
+    x?: Extras
+  } = {}
   if (patch.n !== undefined && patch.n !== rec.n.v) next.n = patch.n
   if (patch.a !== undefined && patch.a !== rec.a.v) next.a = patch.a
   if (patch.c !== undefined && patch.c !== rec.c.v) next.c = patch.c
   if (patch.o !== undefined && patch.o !== rec.o.v) next.o = patch.o
+  if (patch.x !== undefined && patch.x !== rec.x.v && canon(patch.x) !== canon(rec.x.v))
+    next.x = patch.x
   if (patch.day !== undefined) {
     const current = rec.d.v
     const currentDay = current.day ?? localDay(current.date)
@@ -359,6 +370,7 @@ export function editRecord(rec: ExpenseRec, patch: RecordPatch, ctx: OpCtx): Exp
     ...(next.c === undefined ? {} : { c: at(next.c) }),
     ...(next.d === undefined ? {} : { d: at(next.d) }),
     ...(next.o === undefined ? {} : { o: at(next.o) }),
+    ...(next.x === undefined ? {} : { x: at(next.x) }),
   }
 }
 

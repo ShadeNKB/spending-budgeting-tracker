@@ -1,13 +1,21 @@
-import { memo, type KeyboardEvent, type MouseEvent } from 'react'
+import { memo, type CSSProperties, type KeyboardEvent, type MouseEvent } from 'react'
 import clsx from 'clsx'
 import { Trash2 } from 'lucide-react'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useFormatMoney } from '../../hooks/useFormatMoney'
 import { categoryAvatarStyle } from '../../lib/analytics'
 import { initialOf } from '../../lib/format'
+import { filedUnder, kindOf, shownAmount } from '../../lib/kind'
 import { toastJustLeft } from '../../ui/pressShield'
 import { useSwipeReveal } from './useSwipeReveal'
 import type { Expense } from '../../types'
+
+/** An income wears the app's green where an expense wears its category's hue. */
+const INCOME_AVATAR: CSSProperties & Record<'--cat', string> = {
+  '--cat': 'var(--positive)',
+  background: 'var(--positive-dim)',
+  boxShadow: '0 0 0 1px color-mix(in srgb, var(--positive) 19%, transparent)',
+}
 
 /**
  * One ledger row: tap (or Enter) to edit; swipe left, the trash button or the Delete key to
@@ -35,8 +43,11 @@ export const LedgerRow = memo(function LedgerRow({
 }) {
   const fmt = useFormatMoney()
   const swipe = useSwipeReveal()
+  const kind = kindOf(expense)
   // In a not-spending category (F-057): listed, and in no total. The row says so in words.
-  const aside = useExpenseStore((s) => s.asideCategories.includes(expense.category))
+  const aside = useExpenseStore(
+    (s) => kind === 'expense' && s.asideCategories.includes(expense.category),
+  )
 
   // The click that ends a drag is no tap; a tap on a revealed row closes it.
   const handleRowClick = () => {
@@ -68,7 +79,17 @@ export const LedgerRow = memo(function LedgerRow({
     onDelete(expense.id, e.nativeEvent.timeStamp)
   }
 
-  const amount = fmt(expense.amount)
+  // An income carries its sign and the word under it: colour alone would not say it.
+  const amount = shownAmount(expense, fmt)
+  /** What the row says under its amount when it is in no spending total. */
+  const tag =
+    kind === 'income'
+      ? 'income'
+      : kind === 'unknown'
+        ? 'not counted'
+        : aside
+          ? 'not spending'
+          : null
   const deleteName = `Delete ${expense.itemName}, ${amount}, ${dateLabel}`
 
   return (
@@ -117,12 +138,12 @@ export const LedgerRow = memo(function LedgerRow({
           onClick={handleRowClick}
           onKeyDown={onRowKeyDown}
           aria-keyshortcuts="Delete"
-          aria-label={`Edit ${expense.itemName}, ${amount}${aside ? ' not spending' : ''}, ${expense.category}, ${dateLabel}`}
+          aria-label={`Edit ${expense.itemName}, ${amount}${tag === null ? '' : ` ${tag}`}${kind === 'expense' ? `, ${expense.category}` : ''}, ${dateLabel}`}
           className="focus-inset flex min-w-0 flex-1 items-center gap-3 py-3 pl-3 pr-2 text-left md:pl-4"
         >
           <span
             className="cat-avatar flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-[12px] font-bold text-[var(--cat)]"
-            style={categoryAvatarStyle(expense.category, 0.19)}
+            style={kind === 'income' ? INCOME_AVATAR : categoryAvatarStyle(expense.category, 0.19)}
             aria-hidden
           >
             {initialOf(expense.itemName)}
@@ -135,7 +156,7 @@ export const LedgerRow = memo(function LedgerRow({
             {/* On a narrow row the notes give way first (they only take the space left over),
                 then the category; the date never does, so "Aug 19, 2025" is never cut to "Aug 1…". */}
             <span className="flex min-w-0 text-[11px] text-[var(--text-tertiary)] min-[360px]:max-md:text-[12px]">
-              <span className="truncate">{expense.category}</span>
+              <span className="truncate">{filedUnder(expense)}</span>
               <span className="shrink-0 whitespace-nowrap">&nbsp;· {dateLabel}</span>
               {expense.notes && (
                 <span className="min-w-0 flex-1 truncate text-[var(--text-muted)]">
@@ -149,14 +170,18 @@ export const LedgerRow = memo(function LedgerRow({
             <span
               className={clsx(
                 'block font-mono text-[14px] tabular-nums min-[360px]:max-md:text-[15px]',
-                aside ? 'text-[var(--text-secondary)]' : 'text-white',
+                kind === 'income'
+                  ? 'text-income'
+                  : aside || kind === 'unknown'
+                    ? 'text-[var(--text-secondary)]'
+                    : 'text-white',
               )}
             >
               {amount}
             </span>
-            {aside && (
+            {tag !== null && (
               <span className="block text-[11px] text-[var(--text-tertiary)] min-[360px]:max-md:text-[12px]">
-                not spending
+                {tag}
               </span>
             )}
           </span>
