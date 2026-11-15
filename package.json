@@ -45,6 +45,7 @@
     "size": "node scripts/check-bundle-size.mjs",
     "size:relay": "node scripts/check-relay-weight.mjs",
     "check:backups": "node scripts/check-no-backups.mjs",
+    "check:playwright-image": "node scripts/check-playwright-image.mjs",
     "hooks:install": "node -e \"require('node:fs').chmodSync('.githooks/pre-commit', 0o755)\" && git config core.hooksPath .githooks",
     "a11y": "playwright test e2e/a11y.spec.ts e2e/keyboard.spec.ts",
     "e2e": "playwright test",
