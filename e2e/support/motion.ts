@@ -115,6 +115,18 @@ export interface ToastLook extends Look {
   hit: boolean
 }
 
+/**
+ * What a toast showed the moment its entrance took effect: its box turned `data-state="open"`
+ * (or was added open), read as the DOM changed, on the frames' timeline (ms). That is what the
+ * entrance's first frame shows, painted or not: a busy WebKit can paint its first frame of the
+ * toast when the 350 ms entrance is over. Read only once the box is open, never while it shows
+ * its starting look, so the reading cannot start a transition the app did not.
+ */
+export interface ToastEntrance {
+  t: number
+  look: ToastLook
+}
+
 export interface RowLook {
   /** How far the row's content is off its place, CSS px (negative: swiped left). */
   x: number
@@ -131,6 +143,8 @@ export interface Frame {
   boxes: number
   layer?: LayerLook
   toasts?: ToastLook[]
+  /** Every toast whose entrance took effect so far in the recording, in that order. */
+  entered?: ToastEntrance[]
   row?: RowLook | null
 }
 
@@ -246,46 +260,64 @@ export async function startRecording(page: Page, watch: Watch): Promise<string> 
           clock: { ...clock },
         }
       }
-      const toastLooks = (): ToastLook[] => {
-        const region = document.querySelector('[role="region"][aria-label="Notifications"]')
-        if (!region) return []
-        return [...region.children].flatMap((el) => {
-          if (!(el instanceof HTMLElement)) return []
-          if (el.dataset.e2eToast === undefined) {
-            window.__e2eToastSeq = (window.__e2eToastSeq ?? 0) + 1
-            el.dataset.e2eToast = `t${String(window.__e2eToastSeq)}`
-          }
-          const base = look(el)
-          // The countdown: a 2 px bar along the bottom (offsetHeight ignores transforms).
-          const bar = [...el.querySelectorAll<HTMLElement>('*')].find(
-            (n) =>
-              n.offsetHeight === 2 &&
-              n.offsetWidth > 0 &&
-              getComputedStyle(n).position === 'absolute',
-          )
-          const scale = (n: HTMLElement) => n.getBoundingClientRect().width / n.offsetWidth
-          const { x, y, width, height } = base.box
-          const hit = document.elementFromPoint(x + width / 2, y + height / 2)
-          // Offsets are layout, before any transform, from the offset parent's padding edge.
-          const parent = el.offsetParent
-          const origin = parent?.getBoundingClientRect()
-          return [
-            {
-              ...base,
-              key: el.dataset.e2eToast ?? '',
-              text: (el.textContent ?? '').trim(),
-              place: {
-                x: (origin?.x ?? 0) + (parent?.clientLeft ?? 0) + el.offsetLeft,
-                y: (origin?.y ?? 0) + (parent?.clientTop ?? 0) + el.offsetTop,
-                width: el.offsetWidth,
-                height: el.offsetHeight,
-              },
-              bar: bar ? scale(bar) / scale(el) : null,
-              hit: hit !== null && el.contains(hit),
+      const toastRegion = () =>
+        document.querySelector('[role="region"][aria-label="Notifications"]')
+      const toastLook = (el: Element): ToastLook[] => {
+        if (!(el instanceof HTMLElement)) return []
+        if (el.dataset.e2eToast === undefined) {
+          window.__e2eToastSeq = (window.__e2eToastSeq ?? 0) + 1
+          el.dataset.e2eToast = `t${String(window.__e2eToastSeq)}`
+        }
+        const base = look(el)
+        // The countdown: a 2 px bar along the bottom (offsetHeight ignores transforms).
+        const bar = [...el.querySelectorAll<HTMLElement>('*')].find(
+          (n) =>
+            n.offsetHeight === 2 &&
+            n.offsetWidth > 0 &&
+            getComputedStyle(n).position === 'absolute',
+        )
+        const scale = (n: HTMLElement) => n.getBoundingClientRect().width / n.offsetWidth
+        const { x, y, width, height } = base.box
+        const hit = document.elementFromPoint(x + width / 2, y + height / 2)
+        // Offsets are layout, before any transform, from the offset parent's padding edge.
+        const parent = el.offsetParent
+        const origin = parent?.getBoundingClientRect()
+        return [
+          {
+            ...base,
+            key: el.dataset.e2eToast ?? '',
+            text: (el.textContent ?? '').trim(),
+            place: {
+              x: (origin?.x ?? 0) + (parent?.clientLeft ?? 0) + el.offsetLeft,
+              y: (origin?.y ?? 0) + (parent?.clientTop ?? 0) + el.offsetTop,
+              width: el.offsetWidth,
+              height: el.offsetHeight,
             },
-          ]
-        })
+            bar: bar ? scale(bar) / scale(el) : null,
+            hit: hit !== null && el.contains(hit),
+          },
+        ]
       }
+      const toastLooks = (): ToastLook[] => [...(toastRegion()?.children ?? [])].flatMap(toastLook)
+      const entered: ToastEntrance[] = []
+      // Toasts shown before the recording began made their entrance before it.
+      const enteredBoxes = new Set<Element>(toastRegion()?.children ?? [])
+      const noteEntrances = () => {
+        for (const el of toastRegion()?.children ?? []) {
+          if (enteredBoxes.has(el) || !(el instanceof HTMLElement)) continue
+          if (el.dataset.state !== 'open') continue
+          enteredBoxes.add(el)
+          const t = performance.now()
+          for (const look of toastLook(el)) entered.push({ t, look })
+        }
+      }
+      const entrances = w.toasts === true ? new MutationObserver(noteEntrances) : null
+      entrances?.observe(document.body, {
+        subtree: true,
+        childList: true,
+        attributes: true,
+        attributeFilter: ['data-state'],
+      })
       const rowLook = (id: string): RowLook | null => {
         const row = document.querySelector(`[data-ledger-row="${CSS.escape(id)}"]`)
         const button = row?.querySelector('button[aria-label^="Edit "]')
@@ -311,7 +343,10 @@ export async function startRecording(page: Page, watch: Watch): Promise<string> 
           const frame: Frame = { t, after: previous, boxes: boxes() }
           previous = t
           if (w.layer !== undefined) frame.layer = layerLook(w.layer)
-          if (w.toasts) frame.toasts = toastLooks()
+          if (w.toasts) {
+            frame.toasts = toastLooks()
+            frame.entered = [...entered]
+          }
           if (w.row !== undefined) frame.row = rowLook(w.row)
           frames.push(frame)
           let holds = false
@@ -346,6 +381,7 @@ export async function startRecording(page: Page, watch: Watch): Promise<string> 
           const enough = elapsed >= (w.minMs ?? 0) && held >= 3
           if (elapsed >= w.maxMs || enough || window.__e2eMotionStop?.[key] === true) {
             observer?.disconnect()
+            entrances?.disconnect()
             resolve(frames)
           } else requestAnimationFrame(tick)
         }

@@ -25,6 +25,7 @@ import {
   stubRelayEnv,
   type Device,
 } from '../../__tests__/fakeRelay'
+import { realWorkPending, trackRealWork, untrackRealWork } from '../../__tests__/realWork'
 
 vi.mock(
   '@supabase/supabase-js',
@@ -53,27 +54,34 @@ const realTick = (): Promise<void> =>
     channel.port2.postMessage(null)
   })
 
+/**
+ * One step of the fake clock, taken only once no WebCrypto call or gzip stream is in flight.
+ * Until then only real tasks run: real work takes what it takes on this machine, and none of
+ * that becomes fake time, so a fake budget or deadline is reached at the same point however
+ * loaded the machine is.
+ */
+async function step(done: () => boolean): Promise<void> {
+  while (realWorkPending() > 0 && !done()) await realTick()
+  if (done()) return
+  await vi.advanceTimersByTimeAsync(20)
+  await realTick()
+}
+
 /** Runs the fake clock and real tasks in turn until `promise` settles (or `ms` of fake time). */
 async function run<T>(promise: Promise<T>, ms = 8000): Promise<T> {
   const state = { settled: false }
   const mark = () => {
     state.settled = true
   }
+  const settled = () => state.settled
   promise.then(mark, mark)
-  for (let waited = 0; waited < ms; waited += 20) {
-    if (state.settled) break
-    await vi.advanceTimersByTimeAsync(20)
-    await realTick()
-  }
+  for (let waited = 0; waited < ms && !settled(); waited += 20) await step(settled)
   return promise
 }
 
-/** Runs the clocks until `done()` holds (real crypto takes what it takes under load). */
+/** Runs the clocks until `done()` holds (or `ms` of fake time). */
 async function until(done: () => boolean, ms = 30_000): Promise<void> {
-  for (let waited = 0; waited < ms && !done(); waited += 20) {
-    await vi.advanceTimersByTimeAsync(20)
-    await realTick()
-  }
+  for (let waited = 0; waited < ms && !done(); waited += 20) await step(done)
 }
 
 /** Lets cycles that nobody awaits (a commit's push, a poll) run out. */
@@ -97,6 +105,7 @@ beforeEach(() => {
   resetRelay()
   migrate('004')
   steadyRandom()
+  trackRealWork()
 })
 
 afterEach(() => {
@@ -106,6 +115,7 @@ afterEach(() => {
   vi.unstubAllEnvs()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+  untrackRealWork()
   Object.defineProperty(navigator, 'onLine', { value: true, configurable: true })
 })
 
@@ -127,6 +137,18 @@ const envelope = (): Record<string, unknown> => {
 /** Everything the relay was ever sent or holds, as text. */
 const seenByRelay = (): string =>
   JSON.stringify([relay().requests, relay().pushes, [...relay().rows.entries()]])
+/**
+ * Whether `seen` names `code` in any form a request could carry it: whole, without its prefix,
+ * or as the bare secret, in either case. Never by the three letters `ST5` alone: a few KB of
+ * random base64url ciphertext holds those by chance about once in a hundred runs.
+ */
+const namesCode = (seen: string, code: string): boolean => {
+  const flat = seen.toLowerCase()
+  const whole = code.toLowerCase()
+  return [whole, whole.slice(4), whole.replace(/-/g, '').slice(3)].some((form) =>
+    flat.includes(form),
+  )
+}
 const storedText = (d: Device): string => {
   const out: string[] = []
   for (let i = 0; i < d.storage.length; i++) {
@@ -158,9 +180,11 @@ describe('a private bucket round-trips on ciphertext alone (AC-P1, AC-P2)', () =
     expect(envelope()).toMatchObject({ st: 5, k: 1 })
     // nothing the relay saw names an entry, the code or its secret
     const seen = seenByRelay()
-    for (const word of ['Invented', 'kopi', 'laksa', 'ST5', CODE.replace(/-/g, '').slice(3)]) {
+    for (const word of ['Invented', 'kopi', 'laksa']) {
       expect(seen, word).not.toContain(word)
     }
+    expect(namesCode(seen, CODE)).toBe(false)
+    expect(namesCode(`p_row=${CODE.replace(/-/g, '').slice(3).toLowerCase()}`, CODE)).toBe(true)
     // every call named the derived row, by the sync functions, never forced
     const calls = requestsOf('rpc')
     expect(calls.length).toBeGreaterThan(3)
@@ -525,7 +549,7 @@ describe('the join preview for a private code (AC-P12)', () => {
   it('a valid code with no row is "not found", asked for by its derived row only', async () => {
     const phone = await bootDevice({ expenses: [expense('e2')] })
     expect(await preview(phone, CODE)).toEqual({ kind: 'not-found', private: true })
-    expect(seenByRelay()).not.toContain('ST5')
+    expect(namesCode(seenByRelay(), CODE)).toBe(false)
     expect(requestsOf('rpc').every((c) => c.args?.p_row === ROW)).toBe(true)
   })
 
@@ -585,7 +609,7 @@ describe('starting a new private sync (AC-P13)', () => {
     const rows = [...relay().rows.keys()]
     expect(rows).toHaveLength(1)
     expect(rows[0]).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-8[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/)
-    expect(seenByRelay()).not.toContain('ST5')
+    expect(namesCode(seenByRelay(), made)).toBe(false)
 
     const phone = await bootDevice({ expenses: [] })
     const preview = await run((await phone.sync.loadSyncEngine()).previewJoin(made))
