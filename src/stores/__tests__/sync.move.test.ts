@@ -96,15 +96,21 @@ const idle = (ms = 4000) => run(new Promise<void>((resolve) => setTimeout(resolv
 interface Locks {
   /** Another tab takes the lock and is frozen before it lets go. */
   freeze(): void
+  /** While on, every request is refused at once (a page that may not lock). */
+  refuse(on: boolean): void
 }
 
 function installLocks(): Locks {
   let tail: Promise<void> = Promise.resolve()
+  const state = { refusing: false }
   const request = (
     _name: string,
     opts: { signal?: AbortSignal },
     callback: () => Promise<unknown>,
   ): Promise<unknown> => {
+    if (state.refusing) {
+      return Promise.reject(new DOMException('Locks are not allowed', 'SecurityError'))
+    }
     const before = tail
     let release: () => void = () => undefined
     tail = new Promise((resolve) => {
@@ -137,6 +143,9 @@ function installLocks(): Locks {
   return {
     freeze: () => {
       void request('st5:sync', {}, () => new Promise(() => undefined))
+    },
+    refuse: (on) => {
+      state.refusing = on
     },
   }
 }
@@ -366,7 +375,7 @@ interface Moment {
  * the move made: after each write of the sync keys, before each relay write (that is, after
  * the write before it), and at the end.
  */
-async function recordMove(d: Device): Promise<Moment[]> {
+async function recordMove(d: Device, during?: () => void): Promise<Moment[]> {
   const moments: Moment[] = []
   const take = (label: string) => {
     moments.push({ label, items: itemsOf(d.storage), rows: copyRows() })
@@ -381,8 +390,14 @@ async function recordMove(d: Device): Promise<Moment[]> {
     remove(key)
     if (SYNC_KEYS.has(key)) take(`after removing ${key}`)
   })
+  let ran = false
   relay().beforeWrite = ({ row }) => {
     take(`before a write to ${row === SYNC_CODE ? 'the plain row' : 'a private row'}`)
+    // the other device's write lands while the move makes its private row
+    if (row !== SYNC_CODE && !ran) {
+      ran = true
+      during?.()
+    }
   }
   const moved = await makePrivate(d)
   relay().beforeWrite = null
@@ -437,55 +452,76 @@ describe('the switch, as the running tab sees it (AC-M19)', () => {
 })
 
 describe('a crash after any write of steps 3 to 5 (AC-M1)', () => {
-  it('ends with one live private row, the plain row holding this device’s marker, and both converged after the join', async () => {
-    const { laptop, phone } = await plainPair()
-    const phoneItems = itemsOf(phone.storage)
-    store(phone).disconnectSync()
-    const moments = await recordMove(laptop)
-    store(laptop).disconnectSync()
-    const labels = moments.map((m) => m.label)
-    // each write of steps 3 to 5 has a moment after it: the private row made, the record, the
-    // key, the config, the mirror removed, the marker, and the private cycle after it
-    for (const label of [
-      'before a write to a private row',
-      'after writing st5:synckey:move',
-      'after writing st5:synckey',
-      'after writing st5:sync',
-      'after removing syncId',
-      'before a write to the plain row',
-      'after the move',
-    ]) {
-      expect(labels).toContain(label)
-    }
-    for (const m of moments) {
-      restoreRows(m.rows)
-      const lap = await reboot(m.items)
-      await idle(3000)
-      if (codeOf(lap) === SYNC_CODE) {
-        // crashed before the switch: still plain, and what the crash left does not block the press
-        expect(record(lap), m.label).toBeNull()
-        expect(await makePrivate(lap), m.label).toMatchObject({ ok: true })
+  it.each([
+    ['', false],
+    [', the phone having written the old row during the move (the absorb’s writes)', true],
+  ])(
+    'ends with one live private row, the plain row holding this device’s marker, and both converged after the join%s',
+    async (_label, phoneWrote) => {
+      const { laptop, phone } = await plainPair()
+      offline(phone, true)
+      if (phoneWrote) add(phone, 'Invented laksa')
+      await idle(1000) // saved on the phone before its storage is copied
+      const phoneWrite = plainWriteOf(phone)
+      const expected = phoneWrote
+        ? ['Invented kopi', 'Invented laksa', 'Invented teh']
+        : ['Invented kopi', 'Invented teh']
+      const phoneItems = itemsOf(phone.storage)
+      store(phone).disconnectSync()
+      const moments = await recordMove(
+        laptop,
+        phoneWrote
+          ? () => {
+              writeAsOther(SYNC_CODE, phoneWrite)
+            }
+          : undefined,
+      )
+      if (phoneWrote) expect(names(laptop)).toContain('Invented laksa')
+      store(laptop).disconnectSync()
+      const labels = moments.map((m) => m.label)
+      // each write of steps 3 to 5 has a moment after it: the private row made, the record, the
+      // key, the config, the mirror removed, the marker, and the private cycle after it
+      for (const label of [
+        'before a write to a private row',
+        'after writing st5:synckey:move',
+        'after writing st5:synckey',
+        'after writing st5:sync',
+        'after removing syncId',
+        'before a write to the plain row',
+        'after the move',
+      ]) {
+        expect(labels).toContain(label)
       }
-      const code = codeOf(lap) ?? ''
-      expect(code.startsWith('ST5-'), m.label).toBe(true)
-      await until(() => record(lap)?.phase === 'retired')
-      expect(markerOnPlain(), m.label).toMatchObject({ why: 'private', by: LAPTOP })
-      const row = await rowIdOf(code)
-      const orphans = [...relay().rows].filter(([k]) => k !== SYNC_CODE && k !== row)
-      const ph = await reboot(phoneItems)
-      await until(() => store(ph).lastError?.kind === 'moved-private')
-      expect(store(ph).lastError?.kind, m.label).toBe('moved-private')
-      expect(await join(ph, code), m.label).toMatchObject({ ok: true })
-      await until(() => unsynced(ph) === 0)
-      expect(await sync(lap), m.label).toMatchObject({ ok: true })
-      expect(names(lap), m.label).toEqual(['Invented kopi', 'Invented teh'])
-      expect(names(ph), m.label).toEqual(['Invented kopi', 'Invented teh'])
-      // a row the crash left is an orphan: nobody writes it again
-      for (const [k, v] of orphans) expect(rowStamp(k), m.label).toBe(v.updated_at)
-      store(lap).disconnectSync()
-      store(ph).disconnectSync()
-    }
-  }, 600_000)
+      for (const m of moments) {
+        restoreRows(m.rows)
+        const lap = await reboot(m.items)
+        await idle(3000)
+        if (codeOf(lap) === SYNC_CODE) {
+          // crashed before the switch: still plain, and what the crash left does not block the press
+          expect(await makePrivate(lap), m.label).toMatchObject({ ok: true })
+        }
+        const code = codeOf(lap) ?? ''
+        expect(code.startsWith('ST5-'), m.label).toBe(true)
+        await until(() => record(lap)?.phase === 'retired')
+        expect(markerOnPlain(), m.label).toMatchObject({ why: 'private', by: LAPTOP })
+        const row = await rowIdOf(code)
+        const orphans = [...relay().rows].filter(([k]) => k !== SYNC_CODE && k !== row)
+        const ph = await reboot(phoneItems)
+        await until(() => store(ph).lastError?.kind === 'moved-private')
+        expect(store(ph).lastError?.kind, m.label).toBe('moved-private')
+        expect(await join(ph, code), m.label).toMatchObject({ ok: true })
+        await until(() => unsynced(ph) === 0)
+        expect(await sync(lap), m.label).toMatchObject({ ok: true })
+        expect(names(lap), m.label).toEqual(expected)
+        expect(names(ph), m.label).toEqual(expected)
+        // a row the crash left is an orphan: nobody writes it again
+        for (const [k, v] of orphans) expect(rowStamp(k), m.label).toBe(v.updated_at)
+        store(lap).disconnectSync()
+        store(ph).disconnectSync()
+      }
+    },
+    600_000,
+  )
 })
 
 describe('the record, in a key of its own (AC-M2)', () => {
@@ -536,6 +572,8 @@ describe('the record, in a key of its own (AC-M2)', () => {
     store(laptop).disconnectSync()
     const other = (await engineOf(laptop)).newPrivateCode()
     expect(other).not.toBe(code)
+    // past the grace a young record gets (another tab may be between the switch's two writes)
+    vi.setSystemTime(Date.now() + 3 * MINUTE)
     for (const variant of ['no key', 'another bucket'] as const) {
       const copy = new Map(items)
       if (variant === 'no key') {
@@ -715,9 +753,15 @@ describe('edits during the move (AC-M5)', () => {
       return undefined
     }
     // step 3: while the private row is sealed
+    const pending = { afterThree: -1, atReadBack: -1 }
     whilePending('encrypt', () => {
       made.push('Invented three')
       add(laptop, 'Invented three')
+      pending.afterThree = unsynced(laptop)
+    })
+    // the read-back, at the end of step 3: nothing was acknowledged by making the private row
+    whilePending('decrypt', () => {
+      pending.atReadBack = unsynced(laptop)
     })
     // step 5: as the marker lands (step 4 has no await: nothing can run inside it)
     onWriteTo(
@@ -731,6 +775,8 @@ describe('edits during the move (AC-M5)', () => {
     relay().pullLatencyFor = null
     expect(moved).toMatchObject({ ok: true })
     expect(made).toEqual(['Invented two', 'Invented three', 'Invented five'])
+    expect(pending.afterThree).toBeGreaterThan(0)
+    expect(pending.atReadBack).toBe(pending.afterThree)
     await until(() => unsynced(laptop) === 0)
     await idle(500)
     // nothing made after step 2 went to the old row
@@ -1421,5 +1467,195 @@ describe('with migration 006: a forced plain write over the marker (AC-M15)', ()
     vi.setSystemTime(NOW + 100 * DAY + 361 * DAY)
     pruneStale()
     expect(relay().rows.has(SYNC_CODE)).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Second review (15 Nov): findings fixed test-first
+// ---------------------------------------------------------------------------
+
+describe('"another private device has joined" needs the code (AC-M13b)', () => {
+  /** A plain payload on the old row that lists a made-up device as a private one (`e: 1`). */
+  function forgeJoinedDevice(): void {
+    const payload = rowPayload(SYNC_CODE)
+    if (!isRecord(payload) || !isRecord(payload.x5) || !isRecord(payload.x5.devs)) {
+      throw new Error('no registry on the plain row')
+    }
+    const entry = payload.x5.devs[PHONE]
+    if (!isRecord(entry)) throw new Error('no phone entry')
+    payload.x5.devs.fake01 = { ...entry, e: 1, at: Date.now() }
+    writeAsOther(SYNC_CODE, payload)
+  }
+  const forgedMarker = {
+    version: '4.0',
+    expenses: 'moved',
+    categories: [],
+    categoryMappings: {},
+    x5: {
+      schema: 5,
+      minor: 0,
+      min: 99,
+      moved: { at: '2026-11-19T08:00:00.000Z', why: 'private', by: 'zzz999' },
+    },
+  }
+
+  it.each(['merged at step 2', 'merged at the absorb'])(
+    'a forged entry %s leaves the device alone, watching, and contested; a real join ends all three, and a reload keeps it',
+    async (when) => {
+      const { laptop, phone } = await plainPair()
+      offline(phone, true)
+      if (when === 'merged at step 2') forgeJoinedDevice()
+      else onWriteTo(privateRow, forgeJoinedDevice)
+      const moved = await makePrivate(laptop)
+      expect(moved).toMatchObject({ ok: true })
+      // the forged entry is in the registry, claiming a private device
+      expect(laptop.expense.getSyncPort()?.doc().devices.get('fake01')?.e2e).toBe(true)
+      expect(moveOf(laptop)).toMatchObject({ alone: true })
+      expect(moveOf(laptop)?.lines).toContain(NEXT)
+      expect(moveOf(laptop)?.disconnect).toContain(
+        'No other device has this sync code yet. Copy it first: a device waiting for it cannot join without it.',
+      )
+      // the close watch runs
+      const heads = callsOn(SYNC_CODE, 'st_sync_head')
+      expect(await sync(laptop)).toMatchObject({ ok: true })
+      expect(callsOn(SYNC_CODE, 'st_sync_head')).toBe(heads + 1)
+      // a marker naming another device: contested, and it stays so while alone
+      writeAsOther(SYNC_CODE, forgedMarker)
+      expect(await sync(laptop)).toMatchObject({ ok: true })
+      expect(moveOf(laptop)?.contested).toBe(true)
+      expect(await sync(laptop)).toMatchObject({ ok: true })
+      expect(moveOf(laptop)?.contested).toBe(true)
+      expect(record(laptop)?.joined).toBeUndefined()
+      // a real join: the laptop opens a copy the phone sealed
+      offline(phone, false)
+      expect(await sync(phone)).toMatchObject({ ok: false, error: 'moved-private' })
+      expect(await join(phone, codeMade(moved))).toMatchObject({ ok: true })
+      await until(() => unsynced(phone) === 0)
+      expect(await sync(laptop)).toMatchObject({ ok: true })
+      expect(moveOf(laptop)).toMatchObject({ alone: false, contested: false })
+      expect(record(laptop)).toMatchObject({ joined: true, contested: false })
+      const heads2 = callsOn(SYNC_CODE, 'st_sync_head')
+      expect(await sync(laptop)).toMatchObject({ ok: true })
+      expect(callsOn(SYNC_CODE, 'st_sync_head')).toBe(heads2)
+      // a reload keeps the answer
+      const items = itemsOf(laptop.storage)
+      store(laptop).disconnectSync()
+      const again = await reboot(items)
+      await idle(2000)
+      expect(record(again)).toMatchObject({ joined: true })
+      expect(moveOf(again)?.alone).toBe(false)
+    },
+  )
+})
+
+describe('the absorb is recorded before the merge (S-F2)', () => {
+  it('a record that cannot be written at that moment merges nothing; the payload is merged once, later', async () => {
+    const { laptop, phone } = await plainPair()
+    offline(phone, true)
+    add(phone, 'Invented laksa')
+    const phoneWrite = plainWriteOf(phone)
+    onWriteTo(privateRow, () => {
+      writeAsOther(SYNC_CODE, phoneWrite)
+    })
+    const set = laptop.storage.setItem.bind(laptop.storage)
+    const refusing = { on: true }
+    vi.spyOn(laptop.storage, 'setItem').mockImplementation((key, value) => {
+      if (refusing.on && key === 'st5:synckey:move' && value.includes('"absorbed":"')) {
+        throw new DOMException('full', 'QuotaExceededError')
+      }
+      set(key, value)
+    })
+    const moved = await makePrivate(laptop)
+    expect(moved).toMatchObject({ ok: true })
+    expect(names(laptop)).not.toContain('Invented laksa')
+    expect(record(laptop)).toMatchObject({ phase: 'retiring', absorbed: null })
+    expect(markerOnPlain()).toBeNull()
+    refusing.on = false
+    expect(await sync(laptop)).toMatchObject({ ok: true })
+    await until(() => record(laptop)?.phase === 'retired')
+    expect(names(laptop)).toContain('Invented laksa')
+    expect(typeof record(laptop)?.absorbed).toBe('string')
+    expect(markerOnPlain()).toMatchObject({ by: LAPTOP })
+  })
+})
+
+describe('a record that cannot be kept after the switch (S-F4)', () => {
+  it('is said plainly: the old row is closed this session, and never "keeps trying"', async () => {
+    const { laptop } = await plainPair()
+    const set = laptop.storage.setItem.bind(laptop.storage)
+    const lost = { on: false }
+    vi.spyOn(laptop.storage, 'setItem').mockImplementation((key, value) => {
+      if (lost.on && key === 'st5:synckey:move') {
+        throw new DOMException('full', 'QuotaExceededError')
+      }
+      set(key, value)
+      // the record goes right after the switch, and storage takes no new one
+      if (key === 'st5:synckey') {
+        laptop.storage.removeItem('st5:synckey:move')
+        lost.on = true
+      }
+    })
+    const moved = await makePrivate(laptop)
+    expect(moved).toMatchObject({ ok: true })
+    expect(record(laptop)).toBeNull()
+    const lines = moveOf(laptop)?.lines ?? []
+    expect(lines[0]).toBe(
+      "This device couldn't save its note of the move, so it stops closing the old sync when SpendTrack closes. Free up space on this device.",
+    )
+    expect(lines).not.toContain(NOT_CLOSED)
+    expect(lines).not.toContain('Closing the old sync…')
+    // this session still closes it
+    expect(markerOnPlain()).toMatchObject({ why: 'private', by: LAPTOP })
+    expect(moveOf(laptop)?.phase).toBe('retired')
+  })
+})
+
+describe('the old row only under the sync lock (C-F1)', () => {
+  it('a cycle run without the lock neither absorbs nor writes a marker; the next one with it does', async () => {
+    const { laptop, phone } = await plainPair()
+    offline(phone, true)
+    const moments = await recordMove(laptop)
+    store(laptop).disconnectSync()
+    // a crash right after the switch: the record is `retiring`, the old row still plain
+    const crash = moments.find((m) => m.label === 'after removing syncId')
+    if (crash === undefined) throw new Error('no such moment')
+    restoreRows(crash.rows)
+    add(phone, 'Invented rendang')
+    writeAsOther(SYNC_CODE, plainWriteOf(phone))
+    const plainNow = rowPayload(SYNC_CODE)
+    locks.refuse(true)
+    const lap = await reboot(crash.items)
+    await idle(3000)
+    expect(codeOf(lap)?.startsWith('ST5-')).toBe(true)
+    expect(store(lap).lastError).toBeNull()
+    expect(record(lap)).toMatchObject({ phase: 'retiring', absorbed: null })
+    expect(names(lap)).not.toContain('Invented rendang')
+    expect(rowPayload(SYNC_CODE)).toEqual(plainNow)
+    locks.refuse(false)
+    expect(await sync(lap)).toMatchObject({ ok: true })
+    await until(() => record(lap)?.phase === 'retired')
+    expect(names(lap)).toContain('Invented rendang')
+    expect(markerOnPlain()).toMatchObject({ by: LAPTOP })
+  })
+})
+
+describe('a press that is refused answers its own caller only (C-F2)', () => {
+  it('an edit and Sync now in the same turn get a real cycle, not the move’s answer', async () => {
+    const { laptop } = await plainPair()
+    migrate('rollback 005') // the lockdown probe answers: the move stops at step 1
+    relay().latency.pull = 200
+    const engine = await engineOf(laptop)
+    const first = store(laptop).triggerSync()
+    // while that cycle is on the wire: an edit, Sync now and the press, all in the next turn
+    add(laptop, 'Invented laksa')
+    const now = store(laptop).triggerSync()
+    const press = engine.makePrivate()
+    const [before, synced, moved] = await run(Promise.all([first, now, press]))
+    expect(moved).toEqual({ ok: false, message: LOCKDOWN })
+    // whichever turn the move ran in, every other request got a real cycle's answer
+    expect(before).toMatchObject({ ok: true })
+    expect(synced).toMatchObject({ ok: true, pushed: true })
+    expect(JSON.stringify(rowPayload(SYNC_CODE))).toContain('Invented laksa')
+    expect(unsynced(laptop)).toBe(0)
   })
 })

@@ -63,6 +63,7 @@ import {
   sweepVoidMove,
   writeMove,
   type MoveRecord,
+  type Young,
 } from '../data/sync/move'
 import { moveOffered } from '../data/sync/offer'
 import {
@@ -245,6 +246,8 @@ interface Waiter {
   resolve: (result: SyncResult) => void
   /** Asked for by the owner (Sync now, Generate, Connect): the panel shows the result. */
   user: boolean
+  /** The press of "Make sync private": answered by the move, never by another cycle. */
+  move?: true
 }
 let running = false
 let runningReason: CycleReason | null = null
@@ -1338,6 +1341,7 @@ async function attempts(
     const read = await openPulled(b, pulled)
     if (gen !== setupGen) return offResult()
     let toMerge = read.kind === 'ok' ? read.pulled : null
+    noteJoined(b, toMerge, port)
     if (read.kind === 'newer') {
       if (!ownerReplace() || pulled === null) {
         // Judged on a header nobody signed: a cycle never writes over it (the owner can, 3.9).
@@ -1494,7 +1498,16 @@ function followSaved(): SyncResult {
   return offResult()
 }
 
-async function cycle(code: string, gen: number, reason: CycleReason): Promise<SyncResult> {
+/**
+ * One cycle. `locked`: it holds the sync lock (an ordinary cycle not granted it within 35 s,
+ * and a hide cycle, run without it): only then does it touch the old row of a move (4.3, 4.4).
+ */
+async function cycle(
+  code: string,
+  gen: number,
+  reason: CycleReason,
+  locked = false,
+): Promise<SyncResult> {
   if (changedElsewhere(code)) return followSaved()
   // A fenced device makes no request (3.7).
   const cfg = readConfig()
@@ -1551,7 +1564,7 @@ async function cycle(code: string, gen: number, reason: CycleReason): Promise<Sy
       }
       return fail(err, reason)
     }
-    return keepOldRowClosed(b, gen, reason, t, result)
+    return keepOldRowClosed(b, gen, reason, t, result, locked)
   }
 }
 
@@ -1569,9 +1582,9 @@ const isLockManager = (value: unknown): value is LockManager =>
  * A tab that holds the lock too long (frozen in the background) cannot stop this one syncing:
  * the merge is a join, so two cycles at once only cost a push.
  */
-async function withLock(run: () => Promise<SyncResult>): Promise<SyncResult> {
+async function withLock(run: (locked: boolean) => Promise<SyncResult>): Promise<SyncResult> {
   const locks = lockManager()
-  if (locks === null) return run()
+  if (locks === null) return run(false)
   const giveUp = new AbortController()
   const timer = setTimeout(() => {
     giveUp.abort()
@@ -1582,14 +1595,14 @@ async function withLock(run: () => Promise<SyncResult>): Promise<SyncResult> {
     return await locks.request(LOCK_NAME, { signal: giveUp.signal }, () => {
       lock.granted = true
       clearTimeout(timer)
-      return run()
+      return run(true)
     })
   } catch (err) {
     // A cycle that failed inside the lock fails as it would without one.
     if (lock.granted) throw err
     // Never granted: another tab held it too long (a frozen tab), or this page may not lock.
     clearTimeout(timer)
-    return run()
+    return run(false)
   }
 }
 
@@ -1607,8 +1620,11 @@ async function runCycle(reason: CycleReason): Promise<SyncResult> {
   // A hide push must start before the page is frozen: a lock grant may wait for a later task.
   if (reason === 'hide') return cycle(code, gen, reason)
   // The owner pressed "Make sync private" in this setup: this cycle is the move (4.3).
-  if (moveAsk?.gen === gen && moveAsk.result === null) return moveUnderLock(moveAsk, code, gen)
-  return withLock(() => cycle(code, gen, reason))
+  if (moveAsk?.gen === gen && moveAsk.result === null) {
+    moveRan = true
+    return moveUnderLock(moveAsk, code, gen)
+  }
+  return withLock((locked) => cycle(code, gen, reason, locked))
 }
 
 // Read through a function: cycles change these while the loop awaits.
@@ -1632,11 +1648,25 @@ async function runLoop(): Promise<void> {
       } catch (err) {
         result = fail(err, reason)
       }
+      const moved = moveRan
+      moveRan = false
       lastCycleAt = Date.now()
       if (gen === setupGen) {
         publishPending()
         publishView()
         schedulePoll()
+      }
+      if (moved) {
+        // The move answers its own caller. Every other request that came in with it (a local
+        // change, Sync now) gets a cycle of its own next, not the move's answer.
+        const others = current.filter((w) => w.move !== true)
+        for (const waiter of current) if (waiter.move === true) waiter.resolve(result)
+        current = []
+        if (others.length > 0) {
+          queued.unshift(...others)
+          nextReason = strongest(nextReason, reason)
+        }
+        continue
       }
       for (const waiter of current) waiter.resolve(result)
       current = []
@@ -1656,10 +1686,10 @@ async function runLoop(): Promise<void> {
   }
 }
 
-function requestCycle(reason: CycleReason, user = false): Promise<SyncResult> {
+function requestCycle(reason: CycleReason, user = false, move = false): Promise<SyncResult> {
   if (!configured()) return Promise.resolve(offResult())
   return new Promise((resolve) => {
-    queued.push({ resolve, user })
+    queued.push(move ? { resolve, user, move } : { resolve, user })
     nextReason = strongest(nextReason, reason)
     if (running) again = true
     else void runLoop()
@@ -2000,6 +2030,8 @@ const MOVE_FAILED_MESSAGE =
 const MOVE_CHANGED_MESSAGE = 'Sync was changed in another tab. Nothing was made private here.'
 const CLOSING_LINE = 'Closing the old sync…'
 const NOT_CLOSED_LINE = 'The old sync is not closed yet. This device keeps trying.'
+const UNSAVED_LINE =
+  "This device couldn't save its note of the move, so it stops closing the old sync when SpendTrack closes. Free up space on this device."
 const NEXT_LINE = 'Next: enter this code on your other device. It stops syncing until you do.'
 const CONTESTED_LINE =
   "Another device may also have made this sync private. If your other device asks for a sync code, enter this one there. Only if it shows a code of its own: Disconnect one of them, then enter the other's code there. Your entries stay on each device and are merged."
@@ -2016,10 +2048,17 @@ const CLOSE_WATCH_MS = 7 * DAY_MS
 /** The marker is forced once this many compare-and-sets of it conflicted in a row (4.3). */
 const MARKER_FORCE_AFTER = 3
 
+/** This iteration of the loop ran the move (its waiters are told apart from the others). */
+let moveRan = false
 /** The owner pressed "Make sync private" in setup `gen`; `result` is the move's, once it ran. */
 let moveAsk: { readonly gen: number; result: MoveResult | null } | null = null
 /** The move's record for the private bucket this tab syncs, as last read or written (the view). */
 let moveRec: MoveRecord | null = null
+/**
+ * The record could not be kept after the switch: the old row is closed and watched only while
+ * this tab stays open. Said in Settings, in place of "keeps trying".
+ */
+let moveUnsaved = false
 /** Step 5 has not closed the old row yet, and its last try ended without the marker. */
 let retireStalled = false
 /** Something was written to the old row after it was closed (4.4; said for this session). */
@@ -2029,36 +2068,78 @@ let keptThisSession = false
 
 function forgetMove(): void {
   moveRec = null
+  moveUnsaved = false
   retireStalled = false
   straggler = false
+  keptThisSession = false
 }
 
 /** Removes a record that belongs to nothing (4.2). Never fails; decides nothing it cannot. */
-function sweepMove(): void {
-  void sweepVoidMove().catch(() => undefined)
+function sweepMove(young: Young): void {
+  void sweepVoidMove(young).catch(() => undefined)
 }
 
-/** The record for this private bucket, or null; one for another bucket is void and removed. */
+/**
+ * The record for this private bucket, or null; one for another bucket is void and removed. A
+ * record this session could not save is the one in memory (it lasts as long as the tab).
+ */
 function loadMove(b: Bucket): MoveRecord | null {
-  moveRec = dropVoidMove(b.rowId)
+  const stored = dropVoidMove(b.rowId)
+  if (stored !== null || !moveUnsaved) moveRec = stored
   return moveRec
 }
 
+/**
+ * Writes the record. While this session's record could not be saved, it is kept in memory and
+ * written again at every change (written at last, it is saved again); otherwise a write that
+ * fails throws, and nothing changes.
+ */
 function saveMove(rec: MoveRecord): MoveRecord {
+  if (moveUnsaved) {
+    moveRec = rec
+    try {
+      writeMove(rec)
+      moveUnsaved = false
+    } catch {
+      // still in memory only
+    }
+    return rec
+  }
   writeMove(rec)
   moveRec = rec
   return rec
 }
 
 /**
- * Another device has written this bucket as a private one: its entry says `e2e` (4.4). The
- * private row starts with the plain row's registry, so the other device is listed from the
- * first write: listed as a plain one, it has not joined.
+ * Another device has joined this private bucket. With a move's record, only on evidence that
+ * needs the code: this device opened an envelope that device wrote on the private row (the
+ * record's `joined`, noted by `noteJoined`). The registry cannot say it there: the private row
+ * starts with the plain row's registry, and a plain payload merged at step 2 or at the absorb
+ * may carry an entry that claims `e2e` for any device. Without a record (a sync Generate
+ * started) no plain payload was ever merged into it, and another entry that says `e2e` is
+ * another private device's.
  */
-function joinedPrivately(port: SyncPort): boolean {
+function joinedPrivately(rec: MoveRecord | null, port: SyncPort): boolean {
+  if (rec !== null) return rec.joined === true
   const me = port.deviceId()
   for (const [id, d] of port.doc().devices) if (id !== me && d.e2e) return true
   return false
+}
+
+/**
+ * A private row's copy this device opened was written by another device: that device holds the
+ * code, so it has joined (4.4). Kept in the move's record, so a reload keeps the answer.
+ */
+function noteJoined(b: Bucket, opened: Pulled | null, port: SyncPort): void {
+  const writer = writerOf(opened?.payload)
+  if (b.kind !== 'e2e' || writer === null || writer === port.deviceId()) return
+  const rec = loadMove(b)
+  if (rec === null || rec.joined === true) return
+  try {
+    saveMove({ ...rec, joined: true })
+  } catch {
+    // asked again at the next copy that device writes
+  }
 }
 
 /** The device a moved marker names (`x5.moved.by`), or null. */
@@ -2140,6 +2221,8 @@ async function examineOldRow(
   t: Transport,
   port: SyncPort,
 ): Promise<Examined> {
+  // another tab may have changed the sync while the old row was pulled
+  if (changedElsewhere(b.code)) return 'open'
   const raw = pulled?.payload
   if (pulled === null || raw === null || raw === undefined) {
     return (await closeOldRow(rec, null, b, gen, t, port)) ? 'closed' : 'open'
@@ -2165,11 +2248,12 @@ async function examineOldRow(
       : 'open'
   }
   if (!keeping && rec.absorbed === null && mergeable(dec.writer)) {
-    // A merge that cannot be saved (no room for its safety copy) throws: nothing is recorded,
-    // and the step is tried again.
+    // Recorded before the merge: a record that cannot be written stops the step with nothing
+    // merged, and a merge that then fails (no room for its safety copy) is the one absorb lost.
+    // Never two: what a device wrote there is still on that device, and arrives when it joins.
+    const absorbed = saveMove({ ...rec, absorbed: pulled.etag })
     absorb(dec, port)
     held = null // the cycle that carries it to the private row is a full one
-    const absorbed = saveMove({ ...rec, absorbed: pulled.etag })
     await closeOldRow(absorbed, pulled.etag, b, gen, t, port)
     return 'absorbed'
   }
@@ -2207,7 +2291,7 @@ async function keepingCheck(
   port: SyncPort,
 ): Promise<void> {
   const now = Date.now()
-  const alone = !joinedPrivately(port)
+  const alone = !joinedPrivately(rec, port)
   // The contested notice goes once another private device has joined (4.5).
   const kept = alone || !rec.contested ? rec : saveMove({ ...rec, contested: false })
   const close = alone && now - kept.at < CLOSE_WATCH_MS
@@ -2230,7 +2314,8 @@ async function keepingCheck(
 }
 
 /**
- * After a private cycle that reached the relay, never a hide cycle: step 5 again while the old
+ * After a private cycle that reached the relay under the lock, never a hide cycle: step 5 again
+ * while the old
  * row is not closed, else the keeping check. Neither is a sync failure (4.3 step 6): the cycle's
  * own result stands, whatever happens to the old row.
  */
@@ -2240,8 +2325,13 @@ async function keepOldRowClosed(
   reason: CycleReason,
   t: Transport,
   result: SyncResult,
+  locked: boolean,
 ): Promise<SyncResult> {
-  if (!result.ok || b.kind !== 'e2e' || reason === 'hide' || gen !== setupGen) return result
+  // Only under the sync lock: a cycle that ran without it (not granted in 35 s) leaves the old
+  // row to the next one that holds it, so two tabs never absorb or mark it at once.
+  if (!locked || !result.ok || b.kind !== 'e2e' || reason === 'hide' || gen !== setupGen) {
+    return result
+  }
   const port = livePort()
   if (port === null) return result
   try {
@@ -2274,6 +2364,7 @@ function offeredNow(): boolean {
     fenced: plain?.fenced !== undefined,
     locks: lockManager() !== null,
     cas: mode === 'rpc' || CAS_ON,
+    me: port.deviceId(),
     devices: port.doc().devices,
     legacySeen: port.meta().legacySeen,
     now: Date.now(),
@@ -2295,9 +2386,10 @@ function moveViewOf(port: SyncPort, code: string): MoveView {
   }
   const phase = moveRec?.phase ?? null
   const contested = moveRec?.contested === true
-  const alone = !joinedPrivately(port)
+  const alone = !joinedPrivately(moveRec, port)
   const lines: string[] = []
-  if (phase === 'retiring') lines.push(retireStalled ? NOT_CLOSED_LINE : CLOSING_LINE)
+  if (moveUnsaved) lines.push(UNSAVED_LINE)
+  else if (phase === 'retiring') lines.push(retireStalled ? NOT_CLOSED_LINE : CLOSING_LINE)
   if (alone) lines.push(NEXT_LINE)
   if (contested) lines.push(CONTESTED_LINE)
   if (straggler) lines.push(STRAGGLER_LINE)
@@ -2309,7 +2401,7 @@ function moveViewOf(port: SyncPort, code: string): MoveView {
 
 /** Settings › Sync was opened: a record that belongs to nothing is removed (4.2). */
 export async function sweepMoveRecord(): Promise<void> {
-  await sweepVoidMove()
+  await sweepVoidMove('spare')
   publishView()
 }
 
@@ -2324,7 +2416,7 @@ export function makePrivate(): Promise<MoveResult> {
   }
   const ask: { readonly gen: number; result: MoveResult | null } = { gen: setupGen, result: null }
   moveAsk = ask
-  return requestCycle('manual', true)
+  return requestCycle('manual', true, true)
     .then(
       (r): MoveResult =>
         ask.result ?? { ok: false, message: r.ok ? MOVE_UNAVAILABLE_MESSAGE : r.message },
@@ -2454,11 +2546,12 @@ async function moveSteps(
   // 1. The relay must refuse the table (005): only its permission refusal lets the move go on.
   if ((await probeLockdown()) !== 'locked') return stop(MOVE_LOCKDOWN_MESSAGE)
   if (gen !== setupGen) return stop(MOVE_CHANGED_MESSAGE, offResult())
-  await sweepVoidMove()
+  // Under the lock no other tab can be between the switch's two writes: a record with no key
+  // held is void, however young.
+  await sweepVoidMove('remove')
   if (!offeredNow()) return stop(MOVE_UNAVAILABLE_MESSAGE)
   const secret = crypto.getRandomValues(new Uint8Array(16))
   const nextCode = encodeSt5(secret)
-  secret.fill(0)
   let next: Bucket
   try {
     next = await deriveBucket(nextCode)
@@ -2518,13 +2611,16 @@ async function moveSteps(
     if (readConfig()?.kind !== 'e2e') removeMove()
     return stop(MOVE_FAILED_MESSAGE, plain)
   }
-  // Another tab's sweep may have read the record as void between the two writes.
+  // The record must still be there (removed by hand, or by a sweep of an older build): written
+  // again, or, when storage refuses, kept in memory and said in Settings.
+  let unsaved = false
   try {
     if (readMove() === null) writeMove(rec)
   } catch {
-    // the record is lost: the old row stays open until the owner moves again
+    unsaved = true
   }
   const gen2 = takeBucket(nextCode, next, rec, port)
+  moveUnsaved = unsaved
   ask.result = { ok: true, code: nextCode }
   publishView()
   // 5. Retire the old row, in the same lock grant; then a private cycle carries to the new row
@@ -2559,7 +2655,9 @@ export function stop(): void {
   // A Disconnect removes the setup right after this returns: its move's record, void from then
   // on, goes with it (4.2). Another tab's change followed here keeps a record that is still its
   // bucket's: the sweep removes only what is void.
-  queueMicrotask(sweepMove)
+  queueMicrotask(() => {
+    sweepMove('remove')
+  })
 }
 
 export function triggerSync(opts?: { resetBackoff?: boolean }): Promise<SyncResult> {
@@ -2788,7 +2886,7 @@ export function start(): void {
   if (started) return
   started = true
   // A move that failed half-way left a record that belongs to nothing (4.2).
-  sweepMove()
+  sweepMove('spare')
   void whenHydrated().then(() => {
     livePort()
     publishView()

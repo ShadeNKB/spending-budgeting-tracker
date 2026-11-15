@@ -33,7 +33,11 @@
 // cycle, R7 the marker never forced, R8 forced before three conflicts, R9 the post-absorb cycle
 // answered by a HEAD, R10 a record of another bucket acted on, R11 a merge in the keeping check,
 // R12 the keeping check counting every registry entry, R13 the keeping check stopping for good
-// once a second device appears, R14 the foreign-marker branch dropping the key; and PR-2's
+// once a second device appears, R14 the foreign-marker branch dropping the key; after its
+// second review, R15 a forged registry entry taken for a joined device, R16 the old row touched
+// without the lock, R17 the absorb merged before it is recorded, R18 a refused move answering
+// every request of its turn, R19 a sweep without the switch's grace, R20 a lost record shown as
+// "keeps trying"; and PR-2's
 // two survivors by name, M23 (absorb's raw copy of a damaged envelope ignored) and M34 (outbox
 // written with sync off).
 // A mutation may need more than one edit (`edits`); each anchor must occur exactly once.
@@ -442,9 +446,8 @@ const SYNC_MUTATIONS = [
     id: 'R2',
     name: 'The move runs without the sync lock',
     file: 'src/stores/syncEngine.ts',
-    find: '  if (moveAsk?.gen === gen && moveAsk.result === null) return moveUnderLock(moveAsk, code, gen)\n',
-    replace:
-      '  if (moveAsk?.gen === gen && moveAsk.result === null) return moveSteps(moveAsk, code, gen)\n',
+    find: '    return moveUnderLock(moveAsk, code, gen)\n',
+    replace: '    return moveSteps(moveAsk, code, gen)\n',
     expect: 'AC-M8: a tab not granted the lock is refused and writes nothing',
   },
   {
@@ -524,8 +527,8 @@ const SYNC_MUTATIONS = [
     id: 'R10',
     name: 'A record whose `for` is not this bucket is acted on',
     file: 'src/stores/syncEngine.ts',
-    find: '  moveRec = dropVoidMove(b.rowId)\n',
-    replace: '  moveRec = readMove()\n',
+    find: '  const stored = dropVoidMove(b.rowId)\n',
+    replace: '  const stored = readMove()\n',
     expect: 'AC-M2: a record for another bucket is never acted on',
   },
   {
@@ -542,10 +545,10 @@ const SYNC_MUTATIONS = [
   },
   {
     id: 'R12',
-    name: 'The keeping check counts every registry entry, not the private ones',
+    name: 'The keeping check counts every writer as a joined device, this one included',
     file: 'src/stores/syncEngine.ts',
-    find: '  for (const [id, d] of port.doc().devices) if (id !== me && d.e2e) return true\n',
-    replace: '  for (const [id] of port.doc().devices) if (id !== me) return true\n',
+    find: "  if (b.kind !== 'e2e' || writer === null || writer === port.deviceId()) return\n",
+    replace: "  if (b.kind !== 'e2e' || writer === null) return\n",
     expect: 'AC-M13: a HEAD after every cycle while no other private device has joined',
   },
   {
@@ -565,6 +568,61 @@ const SYNC_MUTATIONS = [
       '    const contested = rec.contested || (by !== null && by !== port.deviceId())\n' +
       '    if (by !== port.deviceId()) storage.saveSyncId(null)\n',
     expect: 'AC-M7 / AC-M6: the private key is kept whoever the marker names',
+  },
+  {
+    id: 'R15',
+    name: 'A device listed as private in the registry counts as joined (a forged `e: 1`)',
+    file: 'src/stores/syncEngine.ts',
+    find: '  if (rec !== null) return rec.joined === true\n',
+    replace: '  if (rec !== null && rec.joined === true) return true\n',
+    expect: 'AC-M13b: a forged entry leaves the device alone, watching, and contested',
+  },
+  {
+    id: 'R16',
+    name: 'A cycle that ran without the lock touches the old row',
+    file: 'src/stores/syncEngine.ts',
+    find: "  if (!locked || !result.ok || b.kind !== 'e2e' || reason === 'hide' || gen !== setupGen) {\n",
+    replace: "  if (!result.ok || b.kind !== 'e2e' || reason === 'hide' || gen !== setupGen) {\n",
+    expect: 'C-F1: a cycle run without the lock neither absorbs nor writes a marker',
+  },
+  {
+    id: 'R17',
+    name: 'The absorb is merged before it is recorded (a failed record write merges it again)',
+    file: 'src/stores/syncEngine.ts',
+    edits: [
+      { find: '    const absorbed = saveMove({ ...rec, absorbed: pulled.etag })\n', replace: '' },
+      {
+        find: '    absorb(dec, port)\n',
+        replace:
+          '    absorb(dec, port)\n' +
+          '    const absorbed = saveMove({ ...rec, absorbed: pulled.etag })\n',
+      },
+    ],
+    expect: 'S-F2: a record that cannot be written at that moment merges nothing',
+  },
+  {
+    id: 'R18',
+    name: "A refused move's answer goes to every request that came in with it",
+    file: 'src/stores/syncEngine.ts',
+    find: '      if (moved) {\n',
+    replace: '      if (moved && current.length < 0) {\n',
+    expect: 'C-F2: an edit and Sync now in the same turn get a real cycle',
+  },
+  {
+    id: 'R19',
+    name: 'A sweep removes a young record another tab is switching with (no grace)',
+    file: 'src/data/sync/move.ts',
+    find: "    young === 'spare' &&\n",
+    replace: '    false &&\n',
+    expect: 'C-F3: B does not remove the record A is switching with',
+  },
+  {
+    id: 'R20',
+    name: 'A record lost after the switch is shown as "keeps trying"',
+    file: 'src/stores/syncEngine.ts',
+    find: '  moveUnsaved = unsaved\n',
+    replace: '  void unsaved\n',
+    expect: 'S-F4: a record that cannot be kept after the switch is said plainly',
   },
   {
     id: 'M23',

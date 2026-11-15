@@ -26,6 +26,7 @@ const facts = (over: Partial<OfferFacts> = {}): OfferFacts => ({
   fenced: false,
   locks: true,
   cas: true,
+  me: 'dev001',
   devices: new Map([
     ['dev001', device()],
     ['dev002', device({ app: '0.22.0' })],
@@ -78,10 +79,15 @@ describe('moveOffered (AC-M12)', () => {
     expect(moveOffered(withOther({ app: '0.9.2', seen: NOW - STALE_AFTER_MS }))).toBe(false)
   })
 
-  it('counts this device too: one of its own tabs on an older release is a device left behind', () => {
+  it('leaves out this device’s own entry: the build asking is this one', () => {
     expect(moveOffered(facts({ devices: new Map([['dev001', device({ app: '0.20.0' })]]) }))).toBe(
-      false,
+      true,
     )
+    expect(
+      moveOffered(
+        facts({ me: 'dev009', devices: new Map([['dev001', device({ app: '0.20.0' })]]) }),
+      ),
+    ).toBe(false)
   })
 
   it('is not offered while an older writer was seen within 60 days', () => {

@@ -23,6 +23,8 @@ export interface OfferFacts {
   readonly locks: boolean
   /** This device's transport compare-and-sets (the sync functions, or CAS on the table). */
   readonly cas: boolean
+  /** This device's id: its own entry is left out (this build is the one asking). */
+  readonly me: string
   /** The registry of the plain row, as this device holds it. */
   readonly devices: ReadonlyMap<string, DeviceInfo>
   /** When an older writer was last seen writing the plain row (`meta.legacySeen`). */
@@ -44,7 +46,7 @@ function leftBehind(d: DeviceInfo, now: number): boolean {
 export function moveOffered(f: OfferFacts): boolean {
   if (f.kind !== 'plain' || !f.established || f.paused || f.fenced) return false
   if (!f.locks || !f.cas) return false
-  for (const d of f.devices.values()) if (leftBehind(d, f.now)) return false
+  for (const [id, d] of f.devices) if (id !== f.me && leftBehind(d, f.now)) return false
   const { v084, v085, v5pre } = f.legacySeen
   return [v084, v085, v5pre].every((at) => at === undefined || f.now - at > STALE_AFTER_MS)
 }
