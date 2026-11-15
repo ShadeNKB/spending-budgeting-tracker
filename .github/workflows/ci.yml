@@ -37,6 +37,10 @@ jobs:
       - name: Backup guard
         run: npm run check:backups
 
+      # The e2e shards' container image must carry the browsers of this @playwright/test version.
+      - name: Playwright image guard
+        run: npm run check:playwright-image
+
       - name: Typecheck
         run: npm run typecheck
 
@@ -104,9 +108,17 @@ jobs:
   # timeout from the first real runs.
   e2e-shard:
     name: E2E shard ${{ matrix.shard }}/3
-    # Pinned: ubuntu-latest moved to 26.04 in Oct 2026, where Playwright 1.60 cannot install its
-    # browsers. Move to ubuntu-latest again with the Playwright upgrade that supports it.
+    # The host only runs the container below, so its Ubuntu version no longer decides whether the
+    # browsers install. Kept at 24.04 (the image's own base) so the job changes one thing at a time.
     runs-on: ubuntu-24.04
+    # Playwright's image carries the browsers and their system packages, so no apt install runs
+    # here (apt could not reach Ubuntu's package hosts on 11-12 Nov 2026). Its tag must match
+    # @playwright/test: `npm run check:playwright-image` in Validate fails when it does not.
+    # --user 1001 is the runner's user, as Playwright's CI docs give it, so checkout, the npm
+    # cache and HOME stay writable; --ipc=host keeps Chromium from running out of shared memory.
+    container:
+      image: mcr.microsoft.com/playwright:v1.60.0-noble
+      options: --user 1001 --ipc=host
     needs: validate
     timeout-minutes: 25
     strategy:
@@ -132,9 +144,6 @@ jobs:
         with:
           name: dist
           path: dist
-
-      - name: Install Playwright browsers
-        run: npx playwright install --with-deps chromium webkit
 
       - name: E2E
         run: npm run e2e -- --shard=${{ matrix.shard }}/3
