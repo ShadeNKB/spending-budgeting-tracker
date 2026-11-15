@@ -14,8 +14,6 @@
   <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React 19" />
   <img src="https://img.shields.io/badge/TypeScript-Strict-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
   <img src="https://img.shields.io/badge/PWA-Installable-8B5CF6?style=flat-square" alt="PWA" />
-  <img src="https://img.shields.io/badge/bundle-81%20KB%20gzip-22C55E?style=flat-square" alt="Bundle 81 KB gzip" />
-  <img src="https://img.shields.io/badge/tests-39%20passing-22C55E?style=flat-square" alt="39 tests passing" />
   <img src="https://img.shields.io/badge/audit-0%20vulns-22C55E?style=flat-square" alt="0 vulnerabilities" />
   <img src="https://img.shields.io/badge/license-MIT-22D3EE?style=flat-square" alt="MIT" />
 </p>
@@ -48,8 +46,8 @@ Most personal-finance apps are built around syncing, subscriptions, and dashboar
 - **Friction-free entry.** Type `coffee 4.50 yesterday` and it's in. The smart parser infers item, amount, date, and category from one line.
 - **Real-time pacing.** A live month-pace ring tells you whether you're on track without opening a spreadsheet.
 - **Yours to theme.** Light, Dark, and System themes — a warm, soft palette that's AA-clean in both. Pick from 8 currencies.
-- **Optional cross-device sync.** A single UUID code pairs your phone and laptop — no accounts, no passwords, paste once and you're done.
-- **Production-grade.** Strict TypeScript, a passing Vitest suite, sub-100 KB gzipped initial JS, fully PWA-installable.
+- **Optional cross-device sync.** A single sync code pairs your phone and laptop — no accounts, no passwords, paste once and you're done. Where the relay's sync functions are on, a new sync is private: encrypted on the device before anything leaves it.
+- **Production-grade.** Strict TypeScript, Vitest and Playwright suites with an accessibility gate, startup size budgets checked in CI, fully PWA-installable.
 
 ### Design choices
 
@@ -61,17 +59,17 @@ Most personal-finance apps are built around syncing, subscriptions, and dashboar
 
 ## Highlights
 
-|                       |                                                                                                                              |
-| --------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| **Smart entry**       | Natural-language parser → category, amount, date inferred from one line                                                      |
-| **Pulse dashboard**   | Month/year totals, daily-pace ring, sparkline trend, category mix, 14-week activity heatmap                                  |
-| **Ledger**            | Search, filter, edit, undo. Multi-criteria filters live in the URL so views are bookmarkable. List virtualizes past 150 rows |
-| **Insights**          | Recurring-charge detection, 14-day forecast, week-over-week comparisons, anomaly callouts                                    |
-| **Budgets**           | Per-category monthly caps with side-by-side actual-vs-budget bars                                                            |
-| **Theming**           | Light / Dark / System — a warm, soft palette (AA-clean in both themes). 8 selectable currencies                              |
-| **Cross-device sync** | Optional. UUID code pairs devices. Per-expense Last-Write-Wins merge. Tombstone-safe deletes. Realtime push.                 |
-| **PWA**               | Installable on iOS & Android. Works fully offline. CSS-keyframe route transitions (no React-state animations that can stall) |
-| **Privacy**           | No account. No analytics. No tracking. Data is local unless you generate a sync code                                         |
+|                       |                                                                                                                                    |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **Smart entry**       | Natural-language parser → category, amount, date inferred from one line                                                            |
+| **Pulse dashboard**   | Month/year totals, daily-pace ring, sparkline trend, category mix, 14-week activity heatmap                                        |
+| **Ledger**            | Search, filter, edit, undo. Multi-criteria filters live in the URL so views are bookmarkable. List virtualizes past 150 rows       |
+| **Insights**          | Recurring-charge detection, 14-day forecast, week-over-week comparisons, anomaly callouts                                          |
+| **Budgets**           | Per-category monthly caps with side-by-side actual-vs-budget bars                                                                  |
+| **Theming**           | Light / Dark / System — a warm, soft palette (AA-clean in both themes). 8 selectable currencies                                    |
+| **Cross-device sync** | Optional. One code pairs devices. Per-field merge. Dated deletes. Realtime push. Private (encrypted) sync on the relay's functions |
+| **PWA**               | Installable on iOS & Android. Works fully offline. CSS-keyframe route transitions (no React-state animations that can stall)       |
+| **Privacy**           | No account. No analytics. No tracking. Data is local unless you generate a sync code                                               |
 
 ---
 
@@ -124,7 +122,7 @@ cp .env.example .env.local
 # then apply supabase/migrations in your Supabase SQL editor (see supabase/README.md).
 ```
 
-See [`.env.example`](.env.example) for the 3-step setup.
+See [`.env.example`](.env.example) for the setup.
 
 ---
 
@@ -137,9 +135,9 @@ npm run preview    # Preview production build locally
 npm run lint       # ESLint
 npm run typecheck  # tsc --noEmit (strict)
 npm run test:run   # Vitest, single run
-npm run verify     # every gate: typecheck, lint, format, tests, build, bundle size, smoke
+npm run verify     # every gate: backup guard, typecheck, lint, format, tests, build, size budgets, smoke
 npm run e2e        # Playwright (Chromium + iPhone WebKit), incl. the accessibility gate
-npm run e2e:data   # data-engine release gate: this build beside 0.9.2 on a fake relay
+npm run e2e:data   # data-engine release gate: this build beside older releases on a fake relay
 ```
 
 ---
@@ -170,7 +168,7 @@ On load, the data engine boots from `localStorage`. Every action — adding an e
 
 ### Cross-device sync (opt-in)
 
-When sync is configured (Supabase env vars + a UUID sync code paired between devices):
+When sync is configured (Supabase env vars + a sync code paired between devices):
 
 - **Each device keeps a full copy.** Cloud is a relay between them.
 - **Per-field merge** (v5 wire, additive over the v4 payload so 0.9.2 devices still read it): each field of an entry, each budget, item pick and category rename converges on its newest change; deletions are dated, so Undo and Restore travel too.
@@ -183,20 +181,20 @@ When sync is configured (Supabase env vars + a UUID sync code paired between dev
 - **Single in-flight cycle** (with a cross-tab lock) prevents push-during-pull races; compare-and-set writes (behind `VITE_SYNC_CAS=on`) stop two crossing pushes from overwriting each other.
 - **Backoff** on push failure (2 s × 2ⁿ⁻¹, cap 60 s, ±20 % jitter), paused while hidden or offline; resets on success, `online` and coming back to the app.
 - **Payload guard** pauses sync before a push passes 1 MB (Supabase row limit), with a clear message and a size meter from 70 %.
-- **No accounts.** The anon key is public and this table grants broad anon access, so anyone with the key can read the relay copy; the 122-bit UUID is what a device needs to change it. Do not treat this model as hardened multi-user SaaS security. The relay functions and the table lockdown (migrations 004/005, `VITE_SYNC_RELAY`) close that gap once you apply them ([`supabase/README.md`](supabase/README.md)).
+- **Private sync** (0.21.0, where `VITE_SYNC_RELAY=auto` or `rpc`, or `VITE_SYNC_CAS=on`): **Generate** makes an `ST5-` code; each device encrypts what it sends (AES-GCM-256, key derived from the code with HKDF-SHA256, both built into the browser), and the relay row sits under an id derived from the code, never the code. A sync made before that, or on a build without those settings, is a plain sync and is not encrypted.
+- **No accounts.** For a plain sync, the anon key is public and this table grants broad anon access, so anyone with the key can read the relay copy; the 122-bit UUID is what a device needs to change it. Do not treat this model as hardened multi-user SaaS security. The relay functions and the table lockdown (migrations 004/005, `VITE_SYNC_RELAY`) close that gap once you apply them ([`supabase/README.md`](supabase/README.md)).
 
 See [`src/data/core`](src/data/core) for the merge logic and [`src/stores/syncEngine.ts`](src/stores/syncEngine.ts) for the cycle.
 
 ### Performance
 
-|                               |                                                         |
-| ----------------------------- | ------------------------------------------------------- |
-| Main bundle (gzip)            | **81 KB**                                               |
-| Total initial download (gzip) | ~190 KB                                                 |
-| Settings drawer               | code-split (lazy)                                       |
-| Supabase JS SDK               | lazy `import()` — only loaded when sync is configured   |
-| Hydration                     | deferred to `useEffect` to keep first paint unblocked   |
-| Route transitions             | CSS keyframe (no React-state animations that can stall) |
+|                   |                                                                                                     |
+| ----------------- | --------------------------------------------------------------------------------------------------- |
+| Size budgets      | `npm run size` (all JS and CSS) and `npm run size:relay` (startup) print each number and its budget |
+| Data engine       | its own chunk, preloaded and started before React renders; the shell says it is loading until then  |
+| Overlays          | Settings, palette, Add sheet and toasts are lazy, mounted after first paint                         |
+| Sync engine + SDK | lazy `import()` — only loaded when sync is used                                                     |
+| Route transitions | CSS keyframe (no React-state animations that can stall)                                             |
 
 ### Stability
 
@@ -234,7 +232,7 @@ You need your own free Supabase project. This is what stores the synced data —
 
 ### 1 · Generate a sync code (Device A — typically your laptop)
 
-Settings → **Sync** → **Generate sync code for this device**. The code shows masked (`••••-…-1a2b`): tap **Copy**, or **Show** to read it.
+Settings → **Sync** → **Generate sync code for this device**. The code shows masked: tap **Copy**, or **Show** to read it. On a build with the relay's sync functions it is a private `ST5-` code; update every device to 0.21.0 or later before joining it, since older versions refuse it.
 
 ### 2 · Join from Device B (your phone)
 
@@ -248,7 +246,7 @@ Add an expense on Device A. It appears on Device B within a second via Supabase 
 
 Tablet, work browser, another browser profile — join the same code in Settings → Sync. There's no device limit, and Settings → Sync → **Devices** lists every device with its version.
 
-> **Share the code only with your own devices.** Anyone with it can change your synced data. The relay copy isn't encrypted yet, so until the database lockdown (migration 005) anyone with the app's public key could read it. **Disconnect** keeps the code on that device for 30 days (**Reconnect** is one tap); if you lose it, copy it from another linked device. Generating a new code starts a separate sync; old buckets are pruned after 90 days if you schedule `prune_stale_sync_buckets()`.
+> **Share the code only with your own devices.** Anyone with it can change your synced data. A private sync's relay copy is encrypted and only a device with the code can read it; a plain sync's copy is not, so until the database lockdown (migration 005) anyone with the app's public key could read it. **Disconnect** keeps the code on that device for 30 days (**Reconnect** is one tap); if you lose it, copy it from another linked device. Generating a new code starts a separate sync; old buckets are pruned after 90 days if you schedule `prune_stale_sync_buckets()`.
 
 ### How sync actually works
 
@@ -278,7 +276,7 @@ Device A                                    Device B
 - **Backoff** on push failure (2 s → 60 s with jitter), paused in the background, and a check every minute while the app is open if Realtime is unavailable.
 - **Realtime auto-reconnect** on `CLOSED / CHANNEL_ERROR / TIMED_OUT`, on a hashed topic.
 - **Payload guard** pauses sync before a push passes 1 MB (Supabase row limit).
-- **No accounts.** Until migration 005 is applied, the relay copy is readable with the public anon key; the 122-bit UUID is what it takes to change it. Fine for a personal Supabase relay, not a hardened multi-user SaaS boundary.
+- **No accounts.** For a plain sync, until migration 005 is applied, the relay copy is readable with the public anon key; the 122-bit UUID is what it takes to change it. A private sync's copy is ciphertext. Fine for a personal Supabase relay, not a hardened multi-user SaaS boundary.
 
 Full architecture: [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) · [`src/services/syncService.ts`](src/services/syncService.ts).
 
@@ -295,13 +293,13 @@ No. SpendTrack has no built-in account system. Sync is opt-in and runs against <
 <details>
 <summary><b>Where is my data stored?</b></summary>
 <br/>
-By default: in your browser's <code>localStorage</code> on the device you're using. Nothing leaves the device. If you opt into sync, an encrypted-in-transit copy is also stored in your Supabase project's <code>sync_buckets</code> table — under a row keyed by your UUID sync code.
+By default: in your browser's <code>localStorage</code> on the device you're using. Nothing leaves the device. If you opt into sync, a copy is also stored in your Supabase project's <code>sync_buckets</code> table: for a plain sync, under a row keyed by your sync code; for a private sync, encrypted on the device, under an id derived from the code.
 </details>
 
 <details>
 <summary><b>What happens if I edit on two devices at the same time?</b></summary>
 <br/>
-Each expense has an <code>updatedAt</code> timestamp. The newer edit wins (last-write-wins) per expense. Deletes propagate via a tombstone list, so a deleted expense never resurrects.
+Each field of an entry (name, amount, category, date, notes) carries its own stamp, and the newer change wins per field, so an amount edited on one device and a category changed on the other both survive. Deletions are dated, so a deleted entry does not come back, and an Undo or a Restore travels too.
 </details>
 
 <details>
@@ -343,7 +341,7 @@ Yes. Settings → <b>Appearance</b> offers <b>Light</b>, <b>Dark</b>, and <b>Sys
 <details>
 <summary><b>Is my data encrypted?</b></summary>
 <br/>
-In transit (HTTPS to Supabase): yes. At rest in <code>localStorage</code> or Supabase: no, it's plain JSON, and until migration 005 is applied anyone with this app's public key could read the relay copy. Your sync code is what it takes to change it, so share it only with your own devices.
+In transit (HTTPS to Supabase): yes. In <code>localStorage</code>: no, it's plain JSON. On the relay: a private sync (0.21.0, on the relay's sync functions) is encrypted on the device and only a device with the code can read it; a plain sync is plain JSON, and until migration 005 is applied anyone with this app's public key could read it. Your sync code is what it takes to change it, so share it only with your own devices.
 </details>
 
 ---
@@ -374,7 +372,7 @@ Browser <code>localStorage</code> caps around 5–10 MB. SpendTrack catches the 
 <details>
 <summary><b>The app feels stale after I deploy a new version</b></summary>
 <br/>
-Service workers occasionally serve a cached shell. Hard reload (Ctrl+Shift+R / Cmd+Shift+R), or close and reopen the installed PWA. The new SW activates immediately on next visit thanks to <code>skipWaiting</code>.
+A new version installs in the background and waits: the app shows a banner, and the update applies when you accept it. If no banner shows, hard reload (Ctrl+Shift+R / Cmd+Shift+R), or close and reopen the installed PWA.
 </details>
 
 <details>
@@ -395,11 +393,11 @@ This was a real bug fixed in v0.5.0 (PR #9). If you see it on the deployed site,
 | Routing   | React Router v7                                                              |
 | Lists     | @tanstack/react-virtual (ledger windowing past 150 rows)                     |
 | Animation | CSS transitions + Web Animations API (no library; springs as `linear()`)     |
-| Search    | Fuse.js (smart-entry parser)                                                 |
+| Search    | Fuse.js (smart category, palette search, recurring detection)                |
 | Dates     | date-fns                                                                     |
 | Sync      | Supabase Postgres + Realtime (lazy-loaded, opt-in)                           |
 | PWA       | vite-plugin-pwa, Workbox                                                     |
-| Testing   | Vitest, Testing Library, curl-based preview smoke                            |
+| Testing   | Vitest, Testing Library, Playwright + axe-core, PGlite, preview smoke        |
 | Deploy    | Vercel                                                                       |
 
 ---
@@ -409,16 +407,17 @@ This was a real bug fixed in v0.5.0 (PR #9). If you see it on the deployed site,
 ```
 src/
   app/          Shell, routing, top/tab bar, sync status pill
+  data/         Data engine: core (pure merge, ops, codec), local (storage engine), sync
   features/     pulse · ledger · insights · entry · settings
   ui/           Reusable primitives (Card, Button, Sheet, Pill, …)
-  stores/       Zustand stores (expense, sync, ui)
+  stores/       Zustand stores (expense, sync, ui) and the sync engine
   services/     storage layer, syncService (Supabase relay)
   lib/          analytics, format, download helpers
   utils/        parseExpense, insights, recurring, helpers
   hooks/        useToast, useHotkeys, useHaptic
-public/         favicon, manifest
+public/         favicon, icons, fonts (the manifest is generated by vite-plugin-pwa)
 supabase/       sync migrations and their checks (supabase/README.md)
-docs/           user guide, screenshots
+docs/           user guide, screenshots, project brain (docs/brain)
 ```
 
 ---
