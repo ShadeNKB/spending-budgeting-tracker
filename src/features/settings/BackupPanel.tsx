@@ -20,8 +20,7 @@ import { shieldGesture } from '../../ui/pressShield'
 import { useInlineConfirm } from '../../hooks/useInlineConfirm'
 import { useToast } from '../../hooks/useToast'
 import { importWithReload } from '../../lib/chunkReload'
-import { diffDays, toDayKey, todayKey } from '../../lib/dates'
-import { downloadCSV, downloadJSON } from '../../lib/download'
+import { downloadCSV } from '../../lib/download'
 import { expensesToCsv } from '../../lib/csv'
 import {
   useExpenseStore,
@@ -31,6 +30,7 @@ import {
 import { isPrivateCode, useSyncStore } from '../../stores/useSyncStore'
 import { useUIStore, type SettingsControl } from '../../stores/useUIStore'
 import { syncEnabled } from '../../services/syncConfig'
+import { lastBackupLine, useBackupDownload } from './backupDownload'
 import { ClearData } from './ClearData'
 import { ImportPreview } from './ImportPreview'
 import { NeedsAttentionCard } from './NeedsAttentionCard'
@@ -92,16 +92,7 @@ export function BackupPanel() {
     row.focus()
   }, [])
 
-  const downloadBackup = () => {
-    downloadJSON(
-      `spendtrack-backup-${formatDate(new Date(), 'yyyy-MM-dd')}.json`,
-      useExpenseStore.getState().exportBackup(),
-    )
-    // "Last backup" here, only once the browser has the file: a download that throws records
-    // nothing (ClearData catches it and removes nothing).
-    useExpenseStore.getState().markBackedUp()
-    toast.success('Backup downloaded')
-  }
+  const downloadBackup = useBackupDownload()
 
   const exportCsv = () => {
     downloadCSV(`spendtrack-${formatDate(new Date(), 'yyyy-MM-dd')}.csv`, expensesToCsv(expenses))
@@ -225,14 +216,6 @@ export function BackupPanel() {
 
 /** "1 entry", "2,000 entries" (the thousands as in every other count). */
 const entries = (n: number): string => `${n.toLocaleString()} ${n === 1 ? 'entry' : 'entries'}`
-
-/** "Last backup: today", "Last backup: 3 days ago" (local calendar days). */
-function lastBackupLine(lastBackupAt: number | null, today = todayKey()): string {
-  if (lastBackupAt === null) return 'No backup downloaded yet'
-  const days = Math.max(0, diffDays(toDayKey(new Date(lastBackupAt)), today))
-  if (days === 0) return 'Last backup: today'
-  return `Last backup: ${String(days)} ${days === 1 ? 'day' : 'days'} ago`
-}
 
 // Older WebKit has no navigator.storage at all, whatever lib.dom says (as data/local/persist.ts).
 const storageOf = (nav: Navigator): { readonly persist?: () => Promise<boolean> } | undefined =>

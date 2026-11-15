@@ -28,7 +28,14 @@ export function plainTopic(code: string): string {
   return `st:${hex.slice(0, 32)}`
 }
 
-export type BuildName = 'candidate' | 'candidate-flags' | 'v020' | 'v010' | 'v092'
+export type BuildName =
+  | 'candidate'
+  | 'candidate-flags'
+  | 'v020'
+  | 'v020-flags'
+  | 'v021'
+  | 'v010'
+  | 'v092'
 
 /** A build made by scripts/build-mixed.mjs. */
 export function build(name: BuildName): BuildToServe {

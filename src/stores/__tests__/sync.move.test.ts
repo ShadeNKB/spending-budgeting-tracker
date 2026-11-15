@@ -241,8 +241,8 @@ async function plainPair(): Promise<{ laptop: Device; phone: Device }> {
 }
 
 const CONTESTED =
-  "Another device may also have made this sync private. If your other device asks for a sync code, enter this one there. Only if it shows a code of its own: Disconnect one of them, then enter the other's code there. Your entries stay on each device and are merged."
-const NEXT = 'Next: enter this code on your other device. It stops syncing until you do.'
+  "Another device may also have made this sync private. If your other device asks for a sync code, enter this one there. If it shows a different sync code instead: Disconnect on one device, then enter the other device's code on it. Your entries stay on each device and are merged."
+const NEXT = 'Next: enter this code on your other devices. They stop syncing until you do.'
 const STRAGGLER =
   'Something was written to the old sync after it was closed. If a device of yours is still on it, update it and enter this sync code there.'
 const NOT_CLOSED = 'The old sync is not closed yet. This device keeps trying.'
@@ -451,6 +451,28 @@ describe('the switch, as the running tab sees it (AC-M19)', () => {
   })
 })
 
+describe('how Settings shows each line (tones, one per line)', () => {
+  it('the next-step line is a note; a plain sync has no lines and no tones', async () => {
+    const { laptop } = await plainPair()
+    expect(moveOf(laptop)).toMatchObject({ lines: [], tones: [] })
+    expect(await makePrivate(laptop)).toMatchObject({ ok: true })
+    expect(moveOf(laptop)?.lines).toEqual([NEXT])
+    expect(moveOf(laptop)?.tones).toEqual(['note'])
+  })
+
+  it('"not closed yet" is a warning, and every line has its tone', async () => {
+    const { laptop, phone } = await plainPair()
+    offline(phone, true)
+    relay().beforeWrite = (w) => {
+      if (w.row === SYNC_CODE && !w.force) seedRow(SYNC_CODE, rowPayload(SYNC_CODE))
+    }
+    expect(await makePrivate(laptop)).toMatchObject({ ok: true })
+    relay().beforeWrite = null
+    expect(moveOf(laptop)?.lines).toEqual([NOT_CLOSED, NEXT])
+    expect(moveOf(laptop)?.tones).toEqual(['warning', 'note'])
+  })
+})
+
 describe('a crash after any write of steps 3 to 5 (AC-M1)', () => {
   it.each([
     ['', false],
@@ -548,7 +570,7 @@ describe('the record, in a key of its own (AC-M2)', () => {
     expect(moveOf(laptop)?.lines[0]).toBe(NOT_CLOSED)
     expect(moveOf(laptop)?.disconnect).toEqual([
       'The old sync is not closed yet. A device still on it keeps syncing there, unencrypted.',
-      'No other device has this sync code yet. Copy it first: a device waiting for it cannot join without it.',
+      "No other device has this sync code yet. A device waiting for it can't join without it.",
     ])
     // a tab still on 0.21.0 (or one following the setup) saves it again, from scratch
     privateSetupWrittenBy0210(laptop, code)
@@ -1513,7 +1535,7 @@ describe('"another private device has joined" needs the code (AC-M13b)', () => {
       expect(moveOf(laptop)).toMatchObject({ alone: true })
       expect(moveOf(laptop)?.lines).toContain(NEXT)
       expect(moveOf(laptop)?.disconnect).toContain(
-        'No other device has this sync code yet. Copy it first: a device waiting for it cannot join without it.',
+        "No other device has this sync code yet. A device waiting for it can't join without it.",
       )
       // the close watch runs
       const heads = callsOn(SYNC_CODE, 'st_sync_head')

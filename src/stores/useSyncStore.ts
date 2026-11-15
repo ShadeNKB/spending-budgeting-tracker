@@ -86,6 +86,9 @@ export interface SyncView {
   readonly move?: MoveView
 }
 
+/** How Settings › Sync shows a line of the move: a note, or a warning the owner may act on. */
+export type MoveTone = 'note' | 'warning'
+
 /** What Settings › Sync shows of making a sync private (PRIVATE-SYNC 4.1, 4.3 to 4.5). */
 export interface MoveView {
   /** A plain sync: "Make sync private" is offered. Why not, when it is not, is not said. */
@@ -100,6 +103,8 @@ export interface MoveView {
   readonly straggler: boolean
   /** The lines under the code, in the spec's words, in order. */
   readonly lines: readonly string[]
+  /** One per line of `lines`: a note (what happens next, or by itself) or a warning. */
+  readonly tones: readonly MoveTone[]
   /** What the Disconnect (and "Remove from this device") question adds. */
   readonly disconnect: readonly string[]
 }

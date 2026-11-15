@@ -43,11 +43,17 @@ function previewText(p: Found): string {
     p.removed === 0
       ? 'Nothing here is removed.'
       : `${entries(p.removed)} here ${p.removed === 1 ? 'was' : 'were'} deleted on your other devices and ${p.removed === 1 ? 'goes' : 'go'} when you join; a copy is kept on this device.`
+  // A "Delete everywhere" made here while fenced is carried out at the join (PRIVATE-SYNC 4.5).
+  const there = p.deletesThere ?? 0
+  const deletesThere =
+    there === 0
+      ? ''
+      : ` ${entries(there)} deleted on this device ${there === 1 ? 'is' : 'are'} removed from your other devices when you join.`
   const unreadable =
     p.unreadable === 0
       ? ''
       : ` ${p.unreadable.toLocaleString()} synced ${p.unreadable === 1 ? "entry can't be read; it's" : "entries can't be read; they're"} set aside, not merged.`
-  return `${counts} ${removed}${unreadable}`
+  return `${counts} ${removed}${deletesThere}${unreadable}`
 }
 
 /** What a preview that found nothing to join says under the field. */

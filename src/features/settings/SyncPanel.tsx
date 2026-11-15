@@ -38,6 +38,7 @@ import {
   type SyncFailure,
   type SyncResult,
 } from '../../stores/useSyncStore'
+import type { MoveResult } from '../../stores/syncEngine'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useUIStore } from '../../stores/useUIStore'
 import { privateSyncReady, syncEnabled } from '../../services/syncConfig'
@@ -46,6 +47,7 @@ import { useToast } from '../../hooks/useToast'
 import { ARIA_DISABLED, DemoQuestion, JoinSync } from './JoinSync'
 import { SyncCode } from './SyncCode'
 import { SyncDevices } from './SyncDevices'
+import { MoveLines, MoveOffer } from './SyncMove'
 import {
   forgetPrevious,
   keepPrevious,
@@ -249,7 +251,10 @@ function setupFailure(
 }
 
 /** Controls that take focus after a view swap (see `focusNext`). */
-type FocusTarget = 'sync-now' | 'generate' | 'reconnect' | 'disconnect' | 'replace'
+type FocusTarget = 'sync-now' | 'generate' | 'reconnect' | 'disconnect' | 'replace' | 'make-private'
+
+/** Said once a plain sync was made private here: the new code is on screen now. */
+const MOVED_MESSAGE = 'Sync made private. Enter the new sync code on your other devices.'
 
 const BANNER_TONE: Record<BannerTone, string> = {
   error: 'border-negative/20 bg-negative/10 text-negative',
@@ -473,6 +478,7 @@ function SyncContent() {
   const pendingLocal = useSyncStore((s) => s.pendingLocal)
   const pending = useSyncStore((s) => s.pending)
   const waitingForOld = useSyncStore((s) => s.waitingForOld)
+  const move = useSyncStore((s) => s.view?.move)
   const resumes = useSyncStore(syncsWhenOnline)
   const setupSync = useSyncStore((s) => s.setupSync)
   const disconnectSync = useSyncStore((s) => s.disconnectSync)
@@ -487,6 +493,9 @@ function SyncContent() {
   // The owner's way out of a private copy this device cannot read (PRIVATE-SYNC 3.9).
   const [confirmReplace, setConfirmReplace] = useState(false)
   const [replacing, setReplacing] = useState(false)
+  // "Make sync private" (PRIVATE-SYNC 4.5): its question, and the move while it runs.
+  const [confirmMove, setConfirmMove] = useState(false)
+  const [moving, setMoving] = useState(false)
   const syncNow = useRef<HTMLButtonElement | null>(null)
   // Generate while this device remembers a code it left (F-050): one sync or two?
   const [askSeparate, setAskSeparate] = useState(false)
@@ -505,6 +514,7 @@ function SyncContent() {
   const focusNext = useRef<FocusTarget | null>(null)
   const statusId = useId()
   const reconnectHintId = useId()
+  const moveHintId = useId()
   useFailingTurn(lastError)
   // Replace answers a private copy this device cannot read as current, with no newer build to
   // reload into (PRIVATE-SYNC 3.9). That pause can end by itself, when the other device
@@ -523,6 +533,29 @@ function SyncContent() {
     }
     replaceShown.current = canReplace
   }, [canReplace])
+  // The engine offers the move on a plain sync it can make private (4.1). The offer can go while
+  // its question is open (the sync paused, an old device wrote): the question is taken back, and
+  // a block that leaves with focus inside it hands the focus to Sync now, as Replace's does.
+  const canMove = syncId !== null && !isPrivateCode(syncId) && move?.offered === true
+  if (!canMove && confirmMove) setConfirmMove(false)
+  // A running move keeps its busy button only while the sync is still plain: once the switch has
+  // made it private (the old row may take a while to close), the block leaves with the old code.
+  const moveShown = syncId !== null && !isPrivateCode(syncId) && (canMove || moving)
+  const moveWasShown = useRef(false)
+  useEffect(() => {
+    if (moveWasShown.current && !moveShown && document.activeElement === document.body) {
+      syncNow.current?.focus()
+    }
+    moveWasShown.current = moveShown
+  }, [moveShown])
+  // A move that failed half-way may have left a record that belongs to nothing: it is removed as
+  // the panel opens (4.2), by the engine, which a linked device has loaded already.
+  useEffect(() => {
+    if (useSyncStore.getState().syncId === null) return
+    loadSyncEngine()
+      .then((engine) => engine.sweepMoveRecord())
+      .catch(() => undefined)
+  }, [])
   // "Synced · 2m ago" ages while the panel stays open, as on the pill; a retry counts down.
   useTick(lastError?.retryAt === undefined ? 15_000 : 5_000)
 
@@ -540,10 +573,10 @@ function SyncContent() {
   }
 
   /** Runs one panel request; `report` sees its result only if no Disconnect came between. */
-  const runRequest = async (
+  const runRequest = async <T,>(
     setBusy: (busy: boolean) => void,
-    request: () => Promise<SyncResult>,
-    report: (result: SyncResult) => void,
+    request: () => Promise<T>,
+    report: (result: T) => void,
   ) => {
     const gen = ++requestGen.current
     setBusy(true)
@@ -728,6 +761,28 @@ function SyncContent() {
     })
   }
 
+  const handleMove = () => {
+    setConfirmMove(false)
+    // The question leaves: its button comes back, busy, and takes focus.
+    focusNext.current = 'make-private'
+    // The engine's own action, reached as Replace reaches it: the chunk is loaded on demand.
+    const makePrivate = async (): Promise<MoveResult> => {
+      try {
+        return await (await loadSyncEngine()).makePrivate()
+      } catch {
+        return { ok: false, message: SYNC_RELOAD_MESSAGE }
+      }
+    }
+    void runRequest(setMoving, makePrivate, (result) => {
+      if (result.ok) {
+        // This device is private now and the offer leaves with the plain sync: focus goes to
+        // Sync now, and the new code is on screen under it.
+        syncNow.current?.focus()
+        toast.success(MOVED_MESSAGE)
+      } else toast.warning(result.message)
+    })
+  }
+
   /** Stops syncing here. A plain code is remembered for 30 days for a one-tap Reconnect. */
   const handleDisconnect = (code: string | null) => {
     if (code !== null) keepPrevious(code, Date.now())
@@ -737,6 +792,8 @@ function SyncContent() {
     setManualSyncing(false)
     setReplacing(false)
     setConfirmReplace(false)
+    setMoving(false)
+    setConfirmMove(false)
     disconnectSync()
     setConfirmDisconnect(false)
     toast.info('Sync disconnected')
@@ -1044,10 +1101,36 @@ function SyncContent() {
             field above is where the new one goes, and one code on screen is enough. */}
         {lastError?.kind !== 'moved-private' && <SyncCode code={syncId} />}
         {isPrivateCode(syncId) && (
-          <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
-            Private sync: what this device sends is encrypted here first. Only a device with this
-            code can read the synced copy from now on.
-          </p>
+          <>
+            <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
+              Private sync: what this device sends is encrypted here first. Only a device with this
+              code can read the synced copy from now on.
+            </p>
+            {/* What the engine says of a move this device made: closing the old sync, the next
+                step, contested, a write to the old sync after it was closed (PRIVATE-SYNC
+                4.5). Only a private sync has them; the switch itself is said by its toast. */}
+            <MoveLines lines={move?.lines ?? []} tones={move?.tones ?? []} />
+          </>
+        )}
+        {moveShown && (
+          <MoveOffer
+            asking={confirmMove}
+            moving={moving}
+            buttonRef={focusWhenShown('make-private')}
+            hintId={moveHintId}
+            onAsk={() => {
+              if (moving) return
+              // The question takes this button's place: a double tap's second tap must not
+              // answer it.
+              shieldGesture()
+              setConfirmMove(true)
+            }}
+            onConfirm={handleMove}
+            onCancel={() => {
+              focusNext.current = 'make-private'
+              setConfirmMove(false)
+            }}
+          />
         )}
         <CodeSafety />
       </div>
@@ -1057,10 +1140,14 @@ function SyncContent() {
       <div className="border-t border-white/[0.06] pt-3">
         {disconnect(
           syncId,
-          // Disconnect forgets a private code for good (PRIVATE-SYNC 3.2): there is no Reconnect.
-          isPrivateCode(syncId)
-            ? 'This device stops syncing and forgets the sync code. Copy it first if you may link this device again. Your data stays here and on your other devices.'
-            : 'This device stops syncing. Your data stays on this device, on your other devices and in the relay.',
+          [
+            // Disconnect forgets a private code for good (PRIVATE-SYNC 3.2): there is no Reconnect.
+            isPrivateCode(syncId)
+              ? 'This device stops syncing and forgets the sync code. Copy it first if you may link this device again. Your data stays here and on your other devices.'
+              : 'This device stops syncing. Your data stays on this device, on your other devices and in the relay.',
+            // While the old sync is open, or no other device has the new code yet (4.5).
+            ...(move?.disconnect ?? []),
+          ].join(' '),
         )}
       </div>
       <AppVersion />
