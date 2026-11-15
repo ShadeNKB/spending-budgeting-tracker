@@ -43,8 +43,17 @@ CREATE PUBLICATION supabase_realtime;
 ALTER PUBLICATION supabase_realtime OWNER TO ${OWNER};
 `
 
-export type Migration = '001' | '002' | '003' | '004' | '004-rollback' | '005' | '005-rollback'
-export type CheckFile = 'preflight' | '004_verify' | '005_verify'
+export type Migration =
+  | '001'
+  | '002'
+  | '003'
+  | '004'
+  | '004-rollback'
+  | '005'
+  | '005-rollback'
+  | '006'
+  | '006-rollback'
+export type CheckFile = 'preflight' | '004_verify' | '005_verify' | '006_verify'
 
 const MIGRATION_FILES: Readonly<Record<Migration, string>> = {
   '001': 'migrations/001_sync.sql',
@@ -54,12 +63,15 @@ const MIGRATION_FILES: Readonly<Record<Migration, string>> = {
   '004-rollback': 'migrations/004_sync_rpc.rollback.sql',
   '005': 'migrations/005_sync_lockdown.sql',
   '005-rollback': 'migrations/005_sync_lockdown.rollback.sql',
+  '006': 'migrations/006_sync_sticky_marker.sql',
+  '006-rollback': 'migrations/006_sync_sticky_marker.rollback.sql',
 }
 
 const CHECK_FILES: Readonly<Record<CheckFile, string>> = {
   preflight: 'checks/000_preflight_readonly.sql',
   '004_verify': 'checks/004_verify.sql',
   '005_verify': 'checks/005_verify.sql',
+  '006_verify': 'checks/006_verify.sql',
 }
 
 /** Every SQL file under supabase/, as text (through Vite, like the source scans in this folder). */

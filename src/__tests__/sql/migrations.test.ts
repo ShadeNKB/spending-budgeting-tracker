@@ -278,6 +278,7 @@ describe('the files as git commits them', () => {
         'checks/000_preflight_readonly.sql',
         'checks/004_verify.sql',
         'checks/005_verify.sql',
+        'checks/006_verify.sql',
         'migrations/001_sync.sql',
         'migrations/002_sync_indexes.sql',
         'migrations/003_harden_prune_search_path.sql',
@@ -285,6 +286,8 @@ describe('the files as git commits them', () => {
         'migrations/004_sync_rpc.sql',
         'migrations/005_sync_lockdown.rollback.sql',
         'migrations/005_sync_lockdown.sql',
+        'migrations/006_sync_sticky_marker.rollback.sql',
+        'migrations/006_sync_sticky_marker.sql',
       ].map((f) => `/supabase/${f}`),
     )
     // .gitattributes normalises to LF on commit, and no formatter reads SQL

@@ -252,7 +252,9 @@ describe('the runbook quotes what the checks print', () => {
 describe("the runbook's optional cleanup of CAS-check rows", () => {
   const sqlBlocks = [...runbook.matchAll(/```sql\n([\s\S]*?)```/g)].map((m) => m[1] ?? '')
   const countSql = sqlBlocks.find((s) => s.trimStart().startsWith('SELECT count(*)')) ?? ''
-  const deleteSql = sqlBlocks.find((s) => s.trimStart().startsWith('DELETE')) ?? ''
+  // the runbook has another DELETE (the 006 recovery of one moved row): this one names verify-cas
+  const deleteSql =
+    sqlBlocks.find((s) => s.trimStart().startsWith('DELETE') && s.includes('verify-cas')) ?? ''
 
   it('counts and removes only the throwaway rows the script wrote, after the lockdown too', async () => {
     expect(countSql).toContain("payload->>'spendtrack' = 'verify-cas'")
