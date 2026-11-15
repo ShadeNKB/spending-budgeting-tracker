@@ -34,6 +34,8 @@ const changes = (n: number): string => `${n.toLocaleString()} ${n === 1 ? 'chang
  */
 export function ClearData({ onDownloadBackup }: { onDownloadBackup: () => void }) {
   const synced = useSyncStore((s) => s.syncId !== null)
+  // While the old sync is open, or no other device has the new code yet (PRIVATE-SYNC 4.5).
+  const moveLines = useSyncStore((s) => s.view?.move?.disconnect)
   // Everywhere means the owner's own rows: a demo build's sample rows never sync (P2-22), so a
   // count with them in would promise to delete on the other devices what they never had.
   const count = useExpenseStore((s) =>
@@ -198,6 +200,7 @@ export function ClearData({ onDownloadBackup }: { onDownloadBackup: () => void }
                   ? `${changes(unsynced)} on this device ${unsynced === 1 ? "hasn't" : "haven't"} synced yet, so only a backup keeps ${unsynced === 1 ? 'it' : 'them'}.`
                   : 'Your other devices and the sync copy keep everything.'}{' '}
                 This device forgets its data and its sync code.
+                {moveLines !== undefined && moveLines.length > 0 && ` ${moveLines.join(' ')}`}
                 {backedUp ? (
                   <span className="mt-2 block font-medium text-[var(--text-secondary)]">
                     Backup downloaded.

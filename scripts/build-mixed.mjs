@@ -5,6 +5,11 @@
 //   candidate-flags  this worktree with VITE_SYNC_CAS=on and VITE_SYNC_RELAY=auto (PR-5 runbook)
 //   v020             `git archive v0.20.0`: the last release before private sync, which must
 //                    refuse a private code and keep a private setup it cannot read (PR-6)
+//   v020-flags       the same tree with the sync flags on, as a deployed 0.20.0 runs: after the
+//                    lockdown it reads the relay only through its sync functions, so it is the
+//                    0.20.0 that can meet a sync made private (PR-6 release 2, AC-M17)
+//   v021             `git archive v0.21.0` with the sync flags on: release 1, the device that is
+//                    fenced by a sync made private and joins it with the typed code (AC-M16)
 //   v010             `git archive v0.10.0` (else PR-2's final commit 02a2e40; ST5_E2E_V010_REF
 //                    overrides): what a device that has not reloaded since PR-2 runs (app 0.10.0)
 //   v092             `git archive v0.9.2`: what the owner's phone may still run (app 0.9.2, PR-0)
@@ -20,7 +25,7 @@
 // relay added to connect-src, for the suite's server.
 //
 // Output (ST5_E2E_CACHE, default node_modules/.cache/st5-e2e): candidate/, candidate-flags/,
-// v020/, v010/, v092/, *.csp, *.stamp and manifest.json. An archived tree is extracted next to them
+// v020/, v020-flags/, v021/, v010/, v092/, *.csp, *.stamp and manifest.json. An archived tree is extracted next to them
 // only while it builds, then removed with its junction: 0.10.0's junction points back at this
 // worktree's node_modules, which holds the cache, and a tree left behind would be a loop for any
 // walker that follows junctions. Usage: node scripts/build-mixed.mjs [--skip-candidate] [--force]
@@ -54,11 +59,21 @@ const BASE_ENV = {
   VITE_DEMO_MODE: '',
 }
 
-/** The archived releases: the ref to build, and where its dependency set lives. */
+/** The archived releases: the ref to build, where its dependency set lives, and its flags. */
 const ARCHIVED = {
   v020: {
     refs: ['v0.20.0'],
     modules: resolve(process.env.ST5_E2E_V020_MODULES ?? join(ROOT, 'node_modules')),
+  },
+  'v020-flags': {
+    refs: ['v0.20.0'],
+    modules: resolve(process.env.ST5_E2E_V020_MODULES ?? join(ROOT, 'node_modules')),
+    flags: FLAGS,
+  },
+  v021: {
+    refs: ['v0.21.0'],
+    modules: resolve(process.env.ST5_E2E_V021_MODULES ?? join(ROOT, 'node_modules')),
+    flags: FLAGS,
   },
   v010: {
     refs: process.env.ST5_E2E_V010_REF ? [process.env.ST5_E2E_V010_REF] : ['v0.10.0', '02a2e40'],
@@ -164,10 +179,11 @@ function commitOf(refs) {
 }
 
 function buildArchived(name) {
-  const { refs, modules } = ARCHIVED[name]
+  const { refs, modules, flags } = ARCHIVED[name]
   const { ref, commit } = commitOf(refs)
   const out = join(CACHE, name)
-  const stamp = `${commit} ${RELAY}`
+  const stamp =
+    flags === undefined ? `${commit} ${RELAY}` : `${commit} ${RELAY} ${JSON.stringify(flags)}`
   if (fresh(name, stamp)) {
     console.log(`[build-mixed] ${name} is current (${ref}, ${commit.slice(0, 7)})`)
     return { ref, commit }
@@ -193,7 +209,7 @@ function buildArchived(name) {
       process.platform === 'win32' ? 'junction' : 'dir',
     )
     console.log(`[build-mixed] ${name}: ${ref} (${commit.slice(0, 7)}) → ${out}`)
-    viteBuild(src, join(modules, 'vite/bin/vite.js'), out, { ...BASE_ENV, ...NO_FLAGS })
+    viteBuild(src, join(modules, 'vite/bin/vite.js'), out, { ...BASE_ENV, ...(flags ?? NO_FLAGS) })
     writeFileSync(
       join(CACHE, `${name}.csp`),
       cspWithRelay(readFileSync(join(src, 'vercel.json'), 'utf8'), RELAY),
@@ -212,6 +228,8 @@ function main() {
   const version = skipCandidate ? null : buildWorktree('candidate', NO_FLAGS)
   if (!skipCandidate) buildWorktree('candidate-flags', FLAGS)
   const v020 = buildArchived('v020')
+  const v020flags = buildArchived('v020-flags')
+  const v021 = buildArchived('v021')
   const v010 = buildArchived('v010')
   const v092 = buildArchived('v092')
   const entry = (name) => ({ dir: join(CACHE, name), csp: join(CACHE, `${name}.csp`) })
@@ -221,6 +239,13 @@ function main() {
     candidate: { ...entry('candidate'), version, flags: NO_FLAGS },
     'candidate-flags': { ...entry('candidate-flags'), version, flags: FLAGS },
     v020: { ...entry('v020'), ref: v020.ref, commit: v020.commit },
+    'v020-flags': {
+      ...entry('v020-flags'),
+      ref: v020flags.ref,
+      commit: v020flags.commit,
+      flags: FLAGS,
+    },
+    v021: { ...entry('v021'), ref: v021.ref, commit: v021.commit, flags: FLAGS },
     v010: { ...entry('v010'), ref: v010.ref, commit: v010.commit },
     v092: { ...entry('v092'), ref: v092.ref, commit: v092.commit },
   }

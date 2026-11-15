@@ -136,9 +136,10 @@ export interface Relay {
   enablePostgresChanges(): void
   /**
    * Holds every payload read (table pull, st_sync_pull) until the returned release is called, so
-   * two devices can be made to pull the same copy and cross their pushes.
+   * two devices can be made to pull the same copy and cross their pushes. With `syncId`, only the
+   * reads of that row wait (a step that reads one row held while another goes on).
    */
-  holdReads(): () => void
+  holdReads(syncId?: string): () => void
   /** Payload reads waiting on a hold. */
   heldReads(): number
   /** Every table and RPC request answers `status` (a failing relay), until `fault(null)`. */
@@ -451,13 +452,15 @@ export async function startRelay(port = 4219): Promise<Relay> {
   let rowEvents = true
   let realtime = true
   let hold: Promise<void> | null = null
+  /** The one row a hold is for; null: every row. */
+  let holdRow: string | null = null
   /** Lets every read waiting on the hold go (a reset or close never leaves one hanging). */
   let releaseHold = (): void => undefined
   let waiting = 0
   let faultStatus: number | null = null
   /** A payload read waits here while a hold is on. */
-  const gate = async (): Promise<void> => {
-    if (hold === null) return
+  const gate = async (syncId: string | null): Promise<void> => {
+    if (hold === null || (holdRow !== null && holdRow !== syncId)) return
     waiting++
     try {
       await hold
@@ -766,7 +769,7 @@ export async function startRelay(port = 4219): Promise<Relay> {
         )
         return
       }
-      if (kind === 'pull') await gate()
+      if (kind === 'pull') await gate(syncId)
       const row = syncId === null ? undefined : rows.get(syncId)
       note({ method, kind, origin, syncId, writer: null, outcome: row ? 'ok' : 'missing' })
       const list = row === undefined || syncId === null ? [] : [pick(columns, syncId, row)]
@@ -920,7 +923,7 @@ export async function startRelay(port = 4219): Promise<Relay> {
       return
     }
     if (name === 'st_sync_pull') {
-      await gate()
+      await gate(syncId)
       note({
         method: 'POST',
         kind: 'rpc',
@@ -1164,15 +1167,19 @@ export async function startRelay(port = 4219): Promise<Relay> {
     enablePostgresChanges: () => {
       rowEvents = true
     },
-    holdReads: () => {
+    holdReads: (syncId) => {
       let release = (): void => undefined
       const held = new Promise<void>((resolve) => {
         release = resolve
       })
       hold = held
+      holdRow = syncId ?? null
       releaseHold = release
       return () => {
-        if (hold === held) hold = null
+        if (hold === held) {
+          hold = null
+          holdRow = null
+        }
         release()
       }
     },

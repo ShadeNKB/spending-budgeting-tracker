@@ -120,6 +120,7 @@ import {
   noSyncSurface,
   syncToast,
   useSyncStore,
+  type MoveTone,
   type MoveView,
   type SyncErrorKind,
   type SyncPauseReason,
@@ -2381,6 +2382,7 @@ function moveViewOf(port: SyncPort, code: string): MoveView {
       alone: false,
       straggler: false,
       lines: [],
+      tones: [],
       disconnect: [],
     }
   }
@@ -2388,15 +2390,23 @@ function moveViewOf(port: SyncPort, code: string): MoveView {
   const contested = moveRec?.contested === true
   const alone = !joinedPrivately(moveRec, port)
   const lines: string[] = []
-  if (moveUnsaved) lines.push(UNSAVED_LINE)
-  else if (phase === 'retiring') lines.push(retireStalled ? NOT_CLOSED_LINE : CLOSING_LINE)
-  if (alone) lines.push(NEXT_LINE)
-  if (contested) lines.push(CONTESTED_LINE)
-  if (straggler) lines.push(STRAGGLER_LINE)
+  const tones: MoveTone[] = []
+  // A note is what happens next or by itself; a warning, what the owner may have to act on.
+  const say = (line: string, tone: MoveTone) => {
+    lines.push(line)
+    tones.push(tone)
+  }
+  if (moveUnsaved) say(UNSAVED_LINE, 'warning')
+  else if (phase === 'retiring') {
+    say(retireStalled ? NOT_CLOSED_LINE : CLOSING_LINE, retireStalled ? 'warning' : 'note')
+  }
+  if (alone) say(NEXT_LINE, 'note')
+  if (contested) say(CONTESTED_LINE, 'warning')
+  if (straggler) say(STRAGGLER_LINE, 'warning')
   const disconnect: string[] = []
   if (phase === 'retiring') disconnect.push(DISCONNECT_RETIRING_LINE)
   if (alone) disconnect.push(DISCONNECT_ALONE_LINE)
-  return { offered: false, phase, contested, alone, straggler, lines, disconnect }
+  return { offered: false, phase, contested, alone, straggler, lines, tones, disconnect }
 }
 
 /** Settings › Sync was opened: a record that belongs to nothing is removed (4.2). */

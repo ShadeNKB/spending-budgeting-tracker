@@ -18,10 +18,13 @@ import {
   type SyncView,
 } from '../../stores/useSyncStore'
 import {
+  makePrivate,
   newPrivateCode,
   previewJoin,
   replaceRelayCopy,
+  sweepMoveRecord,
   type JoinPreview,
+  type MoveResult,
 } from '../../stores/syncEngine'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useUIStore } from '../../stores/useUIStore'
@@ -44,10 +47,17 @@ vi.mock('../../stores/syncEngine', () => ({
   previewJoin: vi.fn(),
   newPrivateCode: vi.fn(),
   replaceRelayCopy: vi.fn(),
+  makePrivate: vi.fn(),
+  sweepMoveRecord: vi.fn(() => Promise.resolve()),
+}))
+// Loaded once and kept, as the real loadSyncEngine keeps its promise: the panel's sweep on
+// opening and a later press share the one load.
+const engineLoad = vi.hoisted(() => ({
+  promise: null as Promise<typeof import('../../stores/syncEngine')> | null,
 }))
 vi.mock('../../stores/useSyncStore', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../stores/useSyncStore')>()),
-  loadSyncEngine: vi.fn(() => import('../../stores/syncEngine')),
+  loadSyncEngine: vi.fn(() => (engineLoad.promise ??= import('../../stores/syncEngine'))),
 }))
 
 const CODE = '11111111-1111-4111-8111-11111111a1b2'
@@ -182,6 +192,8 @@ afterEach(() => {
   vi.restoreAllMocks()
   vi.mocked(previewJoin).mockReset()
   vi.mocked(replaceRelayCopy).mockReset()
+  vi.mocked(makePrivate).mockReset()
+  vi.mocked(sweepMoveRecord).mockClear()
   vi.unstubAllGlobals()
 })
 
@@ -1712,5 +1724,339 @@ describe('a private sync, and a device fenced out of one', () => {
       expect(replaceButton()).toBeNull()
       expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument()
     })
+  })
+})
+
+// PRIVATE-SYNC 4.5: "Make sync private" on a plain sync, and what the engine says after it.
+describe('making a plain sync private', () => {
+  const NEW_CODE = 'ST5-0004106-1050R3G-G28A1C6-0T3GFS3'
+  const QUESTION = 'Make sync private?'
+  const DETAIL =
+    "This device makes a new, encrypted synced copy and closes the old one. Your other device stops syncing until you enter the new sync code there; one that hasn't synced lately needs updating first. What the old sync held could be read on the server until now, and that isn't undone."
+  const NEXT = 'Next: enter this code on your other device. It stops syncing until you do.'
+  const CLOSING = 'Closing the old sync…'
+  const NOT_CLOSED = 'The old sync is not closed yet. This device keeps trying.'
+  const UNSAVED =
+    "This device couldn't save its note of the move, so it stops closing the old sync when SpendTrack closes. Free up space on this device."
+  const CONTESTED =
+    "Another device may also have made this sync private. If your other device asks for a sync code, enter this one there. Only if it shows a code of its own: Disconnect one of them, then enter the other's code there. Your entries stay on each device and are merged."
+  const STRAGGLER =
+    'Something was written to the old sync after it was closed. If a device of yours is still on it, update it and enter this sync code there.'
+  const LOCKDOWN =
+    "This sync's server still allows direct reads. Make sync private after the database lockdown."
+  const BUSY = 'Sync is busy in another tab. Try again in a moment.'
+
+  type Move = NonNullable<SyncView['move']>
+  const moveView = (over: Partial<Move> = {}): Move => ({
+    offered: false,
+    phase: null,
+    contested: false,
+    alone: false,
+    straggler: false,
+    lines: [],
+    tones: [],
+    disconnect: [],
+    ...over,
+  })
+  const offered = () => ({ view: view({ move: moveView({ offered: true }) }) })
+  const moveButton = () => screen.queryByRole('button', { name: 'Make sync private' })
+  const ask = () => {
+    const button = moveButton()
+    if (button === null) throw new Error('no Make sync private button')
+    fireEvent.click(button)
+    return screen.getByRole('group', { name: QUESTION })
+  }
+  /** The private sync the store holds once the move switched (the engine sets it). */
+  const switched = (over: Partial<Move>) => {
+    useSyncStore.setState({ syncId: NEW_CODE, view: view({ move: moveView(over) }) })
+  }
+  /** A line as the eye sees it (its words are read from the live region). */
+  const shownLine = (text: string) =>
+    screen.queryAllByText(text).find((el) => el.closest('[aria-hidden="true"]') !== null)
+  /** The same line in the move's live region. */
+  const spokenLine = (text: string) =>
+    screen.queryAllByText(text).find((el) => el.closest('[role="status"]') !== null)
+
+  it('the void sweep runs once as a linked panel opens, never on an unlinked one', async () => {
+    const { unmount } = render(<SyncPanel />)
+    await settle()
+    expect(sweepMoveRecord).not.toHaveBeenCalled()
+    unmount()
+    connectedPanel(offered())
+    await settle()
+    expect(sweepMoveRecord).toHaveBeenCalledTimes(1)
+    act(() => {
+      useSyncStore.setState({ lastSyncAt: NOW + 1000 })
+    })
+    await settle()
+    expect(sweepMoveRecord).toHaveBeenCalledTimes(1)
+  })
+
+  it('is not shown where the engine does not offer it, before the engine says, nor on a private sync', () => {
+    const { unmount } = connectedPanel({ view: view({ move: moveView() }) })
+    expect(moveButton()).toBeNull()
+    unmount()
+    const before = connectedPanel({ view: view() })
+    expect(moveButton()).toBeNull()
+    before.unmount()
+    connectedPanel({ syncId: NEW_CODE, view: view({ move: moveView({ offered: true }) }) })
+    expect(moveButton()).toBeNull()
+  })
+
+  it('offered: says the sync is not encrypted, and asks first in the button’s place, Cancel focused', () => {
+    connectedPanel(offered())
+    expect(moveButton()).toHaveAccessibleDescription(
+      "This sync isn't encrypted. Making it private encrypts what your devices send from now on.",
+    )
+    const question = ask()
+    expect(moveButton()).toBeNull()
+    expect(within(question).getByRole('button', { name: 'Cancel' })).toHaveFocus()
+    expect(question).toHaveAccessibleDescription(`${DETAIL} No backup downloaded yet.`)
+    expect(makePrivate).not.toHaveBeenCalled()
+  })
+
+  it('the question says how old the last backup is, and Export beside it downloads one', () => {
+    const exportBackup = vi.fn(() => ({}))
+    const markBackedUp = vi.fn(() => {
+      useExpenseStore.setState({
+        facts: { ...useExpenseStore.getState().facts, lastBackupAt: NOW },
+      })
+    })
+    useExpenseStore.setState({
+      facts: { ...useExpenseStore.getState().facts, lastBackupAt: NOW - 3 * DAY },
+      exportBackup: exportBackup as unknown as ReturnType<
+        typeof useExpenseStore.getState
+      >['exportBackup'],
+      markBackedUp,
+    })
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: () => 'blob:x' })
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: () => undefined })
+    const clicked = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    try {
+      connectedPanel(offered())
+      expect(ask()).toHaveAccessibleDescription(`${DETAIL} Last backup: 3 days ago.`)
+      fireEvent.click(screen.getByRole('button', { name: 'Export backup' }))
+      expect(exportBackup).toHaveBeenCalledTimes(1)
+      expect(markBackedUp).toHaveBeenCalledTimes(1)
+      expect(clicked).toHaveBeenCalledTimes(1)
+      expect(toasts()).toEqual([['success', 'Backup downloaded']])
+      expect(screen.getByRole('group', { name: QUESTION })).toHaveAccessibleDescription(
+        `${DETAIL} Last backup: today.`,
+      )
+      expect(makePrivate).not.toHaveBeenCalled()
+    } finally {
+      Reflect.deleteProperty(URL, 'createObjectURL')
+      Reflect.deleteProperty(URL, 'revokeObjectURL')
+    }
+  })
+
+  it('Cancel makes nothing private and hands focus back to the button', () => {
+    connectedPanel(offered())
+    fireEvent.click(within(ask()).getByRole('button', { name: 'Cancel' }))
+    expect(makePrivate).not.toHaveBeenCalled()
+    expect(moveButton()).toHaveFocus()
+  })
+
+  it('confirmed: busy while it runs, keeps focus, runs once; then the code, the next step, a toast and Sync now focused', async () => {
+    let finish: (result: MoveResult) => void = () => {}
+    vi.mocked(makePrivate).mockImplementation(
+      () =>
+        new Promise<MoveResult>((resolve) => {
+          finish = resolve
+        }),
+    )
+    connectedPanel(offered())
+    fireEvent.click(within(ask()).getByRole('button', { name: 'Make private' }))
+    await settle()
+    const busy = screen.getByRole('button', { name: 'Making sync private…' })
+    expect(busy).toHaveFocus()
+    expect(busy).toHaveAttribute('aria-disabled', 'true')
+    fireEvent.click(busy)
+    expect(screen.queryByRole('group', { name: QUESTION })).toBeNull()
+    await act(async () => {
+      switched({ phase: 'retired', alone: true, lines: [NEXT], tones: ['note'] })
+      finish({ ok: true, code: NEW_CODE })
+      await Promise.resolve()
+    })
+    await settle()
+    expect(makePrivate).toHaveBeenCalledTimes(1)
+    expect(toasts()).toEqual([
+      ['success', 'Sync made private. Enter the new sync code on your other device.'],
+    ])
+    expect(screen.getByRole('button', { name: 'Sync now' })).toHaveFocus()
+    expect(moveButton()).toBeNull()
+    expect(screen.getByRole('button', { name: 'Show code' })).toBeInTheDocument()
+    expect(screen.getByText(/^Private sync: what this device sends/)).toBeInTheDocument()
+    expect(shownLine(NEXT)).toBeDefined()
+    expect(spokenLine(NEXT)).toBeDefined()
+    expect(document.body.textContent).not.toContain('0004106')
+  })
+
+  it('once the switch made it private while the old sync still closes, the busy button leaves and Sync now has focus', async () => {
+    let finish: (result: MoveResult) => void = () => {}
+    vi.mocked(makePrivate).mockImplementation(
+      () =>
+        new Promise<MoveResult>((resolve) => {
+          finish = resolve
+        }),
+    )
+    connectedPanel(offered())
+    fireEvent.click(within(ask()).getByRole('button', { name: 'Make private' }))
+    await settle()
+    expect(screen.getByRole('button', { name: 'Making sync private…' })).toHaveFocus()
+    act(() => {
+      switched({ phase: 'retiring', alone: true, lines: [CLOSING, NEXT], tones: ['note', 'note'] })
+    })
+    expect(screen.queryByRole('button', { name: 'Making sync private…' })).toBeNull()
+    expect(screen.queryByText(/isn't encrypted/)).toBeNull()
+    expect(screen.getByRole('button', { name: 'Sync now' })).toHaveFocus()
+    expect(shownLine(CLOSING)).toBeDefined()
+    await act(async () => {
+      finish({ ok: true, code: NEW_CODE })
+      await Promise.resolve()
+    })
+    expect(toasts()).toEqual([
+      ['success', 'Sync made private. Enter the new sync code on your other device.'],
+    ])
+  })
+
+  it.each([
+    ['the lockdown is not applied', LOCKDOWN],
+    ['another tab holds the lock', BUSY],
+  ])(
+    'refused (%s): the engine’s words in a warning toast, the button back and focused',
+    async (_why, message) => {
+      vi.mocked(makePrivate).mockImplementation(() => Promise.resolve({ ok: false, message }))
+      connectedPanel(offered())
+      fireEvent.click(within(ask()).getByRole('button', { name: 'Make private' }))
+      await settle()
+      expect(toasts()).toEqual([['warning', message]])
+      expect(moveButton()).toHaveFocus()
+      expect(useSyncStore.getState().syncId).toBe(CODE)
+    },
+  )
+
+  it('an engine that cannot load says so, and the button stays', async () => {
+    vi.mocked(makePrivate).mockImplementation(() => Promise.reject(new Error('chunk')))
+    connectedPanel(offered())
+    fireEvent.click(within(ask()).getByRole('button', { name: 'Make private' }))
+    await settle()
+    expect(toasts()).toEqual([['warning', SYNC_RELOAD_MESSAGE]])
+    expect(moveButton()).not.toBeNull()
+  })
+
+  it('when the offer goes while its question is open, the question goes and Sync now has focus', () => {
+    connectedPanel(offered())
+    ask()
+    act(() => {
+      useSyncStore.setState({ view: view({ move: moveView({ offered: false }) }) })
+    })
+    expect(screen.queryByRole('group', { name: QUESTION })).toBeNull()
+    expect(moveButton()).toBeNull()
+    expect(screen.getByRole('button', { name: 'Sync now' })).toHaveFocus()
+    // and the question is not waiting there when the offer comes back
+    act(() => {
+      useSyncStore.setState(offered())
+    })
+    expect(screen.queryByRole('group', { name: QUESTION })).toBeNull()
+    expect(moveButton()).not.toBeNull()
+    expect(makePrivate).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['closing the old sync, as a note', CLOSING, 'note'],
+    ['the next step, as a note', NEXT, 'note'],
+    ['not closed yet, as a warning', NOT_CLOSED, 'warning'],
+    ['the record not saved, as a warning', UNSAVED, 'warning'],
+    ['contested, as a warning', CONTESTED, 'warning'],
+    ['a write to the old sync after it closed, as a warning', STRAGGLER, 'warning'],
+  ] as const)('shows the engine’s line under the code: %s', (_label, line, tone) => {
+    connectedPanel({
+      syncId: NEW_CODE,
+      view: view({ move: moveView({ lines: [line], tones: [tone] }) }),
+    })
+    const box = shownLine(line)?.closest('p')
+    expect(box).toBeTruthy()
+    if (tone === 'warning') expect(box?.className).toContain('text-warning')
+    else expect(box?.className).toContain('text-[var(--text-secondary)]')
+    expect(spokenLine(line)).toBeDefined()
+  })
+
+  it('announces a line that appears while the panel is open, and lets one go', () => {
+    connectedPanel({
+      syncId: NEW_CODE,
+      view: view({ move: moveView({ phase: 'retiring', lines: [CLOSING], tones: ['note'] }) }),
+    })
+    const region = spokenLine(CLOSING)?.closest('[role="status"]')
+    act(() => {
+      switched({ phase: 'retired', contested: true, lines: [CONTESTED], tones: ['warning'] })
+    })
+    // the same region, always mounted: what is added to it is read out
+    expect(spokenLine(CONTESTED)?.closest('[role="status"]')).toBe(region)
+    expect(screen.queryByText(CLOSING)).toBeNull()
+    act(() => {
+      switched({ phase: 'retired' })
+    })
+    expect(screen.queryByText(CONTESTED)).toBeNull()
+  })
+
+  it('Disconnect’s question adds what the engine says while the old sync is open or nobody has the code', () => {
+    const extra = [
+      'The old sync is not closed yet. A device still on it keeps syncing there, unencrypted.',
+      'No other device has this sync code yet. Copy it first: a device waiting for it cannot join without it.',
+    ]
+    connectedPanel({
+      syncId: NEW_CODE,
+      view: view({ move: moveView({ phase: 'retiring', alone: true, disconnect: extra }) }),
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Disconnect sync/ }))
+    expect(
+      screen.getByRole('group', { name: 'Disconnect sync on this device?' }),
+    ).toHaveAccessibleDescription(
+      `This device stops syncing and forgets the sync code. Copy it first if you may link this device again. Your data stays here and on your other devices. ${extra.join(' ')}`,
+    )
+  })
+
+  it('Disconnect during a move frees the button and drops the late answer', async () => {
+    let finish: (result: MoveResult) => void = () => {}
+    vi.mocked(makePrivate).mockImplementation(
+      () =>
+        new Promise<MoveResult>((resolve) => {
+          finish = resolve
+        }),
+    )
+    useSyncStore.setState({
+      disconnectSync: vi.fn(() => {
+        useSyncStore.setState({ syncId: null, view: null })
+      }),
+    })
+    connectedPanel(offered())
+    fireEvent.click(within(ask()).getByRole('button', { name: 'Make private' }))
+    await settle()
+    fireEvent.click(screen.getByRole('button', { name: /Disconnect sync/ }))
+    fireEvent.click(
+      within(screen.getByRole('group', { name: 'Disconnect sync on this device?' })).getByRole(
+        'button',
+        { name: 'Disconnect' },
+      ),
+    )
+    await act(async () => {
+      finish({ ok: true, code: NEW_CODE })
+      await Promise.resolve()
+    })
+    expect(toasts()).toEqual([['info', 'Sync disconnected']])
+  })
+
+  it('a fenced device’s join preview says how many entries this device will delete on the others', async () => {
+    vi.mocked(previewJoin).mockImplementation(() =>
+      Promise.resolve({ ...FOUND, code: NEW_CODE, deletesThere: 3 }),
+    )
+    connectedPanel({ cloudStatus: 'paused', lastError: failure('moved-private') })
+    fireEvent.change(screen.getByLabelText('Sync code'), { target: { value: NEW_CODE } })
+    fireEvent.click(screen.getByRole('button', { name: 'Join' }))
+    await settle()
+    expect(screen.getByRole('group', { name: 'Join this sync?' })).toHaveAccessibleDescription(
+      'This device: 2 entries · Synced: 5 entries · After joining: about 7 entries. Nothing here is removed. 3 entries deleted on this device go from your other devices when you join.',
+    )
   })
 })

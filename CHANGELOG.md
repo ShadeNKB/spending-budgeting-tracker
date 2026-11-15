@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.22.0 — 2026-11-15
+
+Private sync, second release: a sync you already have can be made private from Settings › Sync. Only after the database lockdown (migration 005): before it the button refuses and changes nothing. It protects what is sent from now on; what the old sync put on the relay was readable there until then, and stays as it was.
+
+### Added
+
+- **Make sync private.** On a plain sync, Settings › Sync offers **Make sync private** when every device on the sync runs 0.21.0 or later through the relay's sync functions (a device not seen for 60 days does not count), no older SpendTrack has written the sync in 60 days, and the browser can hold the sync lock. Otherwise the button is not shown. It asks first ("Make sync private?"): this device makes a new, encrypted synced copy and closes the old one; the other device stops syncing until the new sync code is entered there, and one that has not synced lately needs updating first; what the old sync held could be read on the server until now, and that is not undone. The question says how old the last backup is, with **Export backup** beside it.
+- **What happens when you confirm.** This device checks that the relay refuses direct table reads (the lockdown), syncs the old copy once more, makes the private copy and reads it back, and only then switches: the new code shows in place of the old one, and the old copy on the relay is closed with a marker that says the sync moved. A refusal changes nothing and says why: "This sync's server still allows direct reads. Make sync private after the database lockdown.", or "Sync is busy in another tab. Try again in a moment."
+- **Under the code, after the switch**, the engine's own lines: "Closing the old sync…" while it closes; "The old sync is not closed yet. This device keeps trying." if that takes longer; "Next: enter this code on your other device. It stops syncing until you do." until another device has written to the private sync; a contested notice if another device made the same sync private too (enter this device's code where a code is asked for, and only if the other device shows a code of its own, Disconnect one of them); and a notice if something was written to the old sync after it was closed. Amber for what may need you, plain text for what happens by itself.
+- **The other device** meets the marker and asks for the new code (0.21.0 already does: "Sync was made private on your other device. Enter the new sync code shown there."). Joining keeps its entries and merges them. Its join preview now also says how many entries deleted on that device go from the others when it joins.
+- **Disconnect and "Remove from this device"** add, while the old sync is still open, that a device still on it keeps syncing there unencrypted, and, while no other device has the new code, to copy it first.
+
+### What does not change
+
+- **Nothing happens until you press the button.** A device that never makes its sync private behaves as on 0.21.0. A sync started with Generate where the relay's sync functions are in use is already private.
+- **Nothing is un-published.** What the plain sync put on the relay was readable there with the app's public key until the lockdown, and its old row stays on the relay (closed, holding only the marker) until it is pruned or deleted.
+- **Your entries stay on each device.** The move adds one encrypted copy and closes the old one; it deletes nothing on any device.
+
+### Changed (engineering)
+
+- **The screen of the move** (`features/settings/SyncMove.tsx`, used by `SyncPanel.tsx`): the offer, its question and the busy state, and the engine's lines under the code. Every word under the code is the engine's (`view.move.lines`); the engine now also publishes one tone per line (`view.move.tones`: `note` or `warning`), so the panel shows a warning as its amber banner and a note as plain text. That field is the only addition to what the engine publishes; it is built in the lazy engine and adds no start-up bytes. The panel removes a move record that belongs to nothing when it opens (`sweepMoveRecord`), through the engine a linked device has loaded already. The lines have one live region of their own, mounted with a private sync, so a line that appears while the panel is open is read out.
+- **One backup action.** Backup's download and its "Last backup" line moved to `features/settings/backupDownload.ts`, used by Backup and by the move's question.
+- **The join preview's second count** (`deletesThere`) is shown beside the existing ones.
+- **Tests.** Unit: every new state of the panel (`SyncPanel.test.tsx`), the remove question's extra lines (`ClearData.test.tsx`), the line tones on the real engine (`sync.move.test.ts`). Real browsers, Chromium and iPhone WebKit (`e2e/data-engine/move-private.data.ts`): AC-M16 (one device makes sync private through the panel; the real 0.21.0 build on the other fences, joins with the typed code, edits flow both ways; since the move the relay's log holds only this device's marker on the old row and envelopes on a derived row id), AC-M17 (the real 0.20.0 build, with its sync flags as deployed, meets the marker, pauses and never writes the old row), AC-M18 (the question, closing the old sync, the next step, contested, a write after closing and Disconnect's warning, through axe in both themes, 44 px targets and 320 px; the lockdown check refusing on a relay that still answers the table).
+- `scripts/build-mixed.mjs` builds `v021` from the v0.21.0 tag and `v020-flags` from v0.20.0, both with the sync flags on (a deployed build's; after the lockdown a build without them cannot reach the relay at all). The e2e relay's `holdReads` can hold the reads of one row.
+- No start-up bytes: eager sync code 4,069 / 4,096 B (27 B left, unchanged), boot sync code 9,265 / 12,288 B, eager 401,713 / 466,908 B, boot 501,836 / 561,580 B where no relay is set; all JS 688.4 / 740 KB. The screen is in the Settings chunk, loaded when Settings opens.
+
+### Known limits
+
+- **The lockdown must come first.** The button checks it when pressed and refuses before it. A lockdown made by hand that still lets the public key write the table would pass that check: a refused read does not prove refused writes, and checking writes would mean writing.
+- **Without migration 006 the old row is kept closed only while the device that moved is open.** If someone who knows the old code writes over the marker while that device is closed, a device that has not yet entered the new code syncs unencrypted on the old row until the mover is opened again, which then closes it again and says so. With 006 the relay itself refuses that write. 006 is optional and is applied by hand, with 005 or before using the button.
+- **Update both devices first.** The button is not offered while a device on 0.20.0 or older has synced in the last 60 days. A 0.20.0 that was away longer meets the marker, pauses with "Sync moved to a newer version", and does not write; update it and enter the new code.
+- **One code for both.** If both devices make the sync private at the same moment (or someone forges a marker), each keeps a private sync of its own and the panel says how to end with one; nothing is lost.
+- The other device needs the new code typed in (28 characters). A QR code or pairing link is still not built.
+
 ## 0.21.0 — 2026-11-15
 
 Private sync, first release: where the app uses the relay's sync functions, a sync started from now on is encrypted on the device before anything leaves it. A sync you already have is not changed.

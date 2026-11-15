@@ -451,6 +451,28 @@ describe('the switch, as the running tab sees it (AC-M19)', () => {
   })
 })
 
+describe('how Settings shows each line (tones, one per line)', () => {
+  it('the next-step line is a note; a plain sync has no lines and no tones', async () => {
+    const { laptop } = await plainPair()
+    expect(moveOf(laptop)).toMatchObject({ lines: [], tones: [] })
+    expect(await makePrivate(laptop)).toMatchObject({ ok: true })
+    expect(moveOf(laptop)?.lines).toEqual([NEXT])
+    expect(moveOf(laptop)?.tones).toEqual(['note'])
+  })
+
+  it('"not closed yet" is a warning, and every line has its tone', async () => {
+    const { laptop, phone } = await plainPair()
+    offline(phone, true)
+    relay().beforeWrite = (w) => {
+      if (w.row === SYNC_CODE && !w.force) seedRow(SYNC_CODE, rowPayload(SYNC_CODE))
+    }
+    expect(await makePrivate(laptop)).toMatchObject({ ok: true })
+    relay().beforeWrite = null
+    expect(moveOf(laptop)?.lines).toEqual([NOT_CLOSED, NEXT])
+    expect(moveOf(laptop)?.tones).toEqual(['warning', 'note'])
+  })
+})
+
 describe('a crash after any write of steps 3 to 5 (AC-M1)', () => {
   it.each([
     ['', false],

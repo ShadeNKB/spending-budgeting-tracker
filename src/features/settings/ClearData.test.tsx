@@ -265,6 +265,45 @@ describe('ClearData with sync on', () => {
     expect(removeHere).toHaveBeenCalledTimes(1)
   })
 
+  it('after a move, the remove question adds what the engine says while the old sync is open (PRIVATE-SYNC 4.5)', async () => {
+    const extra = [
+      'The old sync is not closed yet. A device still on it keeps syncing there, unencrypted.',
+      'No other device has this sync code yet. Copy it first: a device waiting for it cannot join without it.',
+    ]
+    const user = userEvent.setup()
+    seed(4, { sync: true, unsynced: 3 })
+    useSyncStore.setState({
+      view: {
+        codeMasked: null,
+        transport: 'rpc',
+        live: 'on',
+        devices: [],
+        legacy: { v084At: null, v085At: null, v5preAt: null },
+        sizePct: null,
+        allCurrent: true,
+        lockdown: null,
+        move: {
+          offered: false,
+          phase: 'retiring',
+          contested: false,
+          alone: true,
+          straggler: false,
+          lines: [],
+          tones: [],
+          disconnect: extra,
+        },
+      },
+    })
+    await user.click(
+      screen.getByRole('button', { name: 'Remove SpendTrack from this device only' }),
+    )
+    expect(
+      screen.getByRole('group', { name: 'Remove SpendTrack data from this device?' }),
+    ).toHaveAccessibleDescription(
+      `3 changes on this device haven't synced yet, so only a backup keeps them. This device forgets its data and its sync code. ${extra.join(' ')}`,
+    )
+  })
+
   it('a backup that cannot download removes nothing and goes back to the trigger', async () => {
     const user = userEvent.setup()
     seed(2, { sync: true })

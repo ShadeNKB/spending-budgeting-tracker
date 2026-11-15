@@ -133,7 +133,7 @@ Share a code only with your own devices.
 **Private sync:**
 
 - The code is the key. It never leaves the device: the relay is asked for a row under an id worked out from the code, and holds only encrypted text there. A change made on the relay by anyone without the code is detected and never merged.
-- **A sync you already have is not changed by updating.** It stays a plain sync until you move it. Until "Make sync private" arrives, the way by hand is: **Disconnect** on every device, **Generate** on one, **Join** with the new code on the others. Nothing is lost: each device keeps its entries and a join merges them. The old copy stays on the relay until you delete its row there.
+- **A sync you already have is not changed by updating.** It stays a plain sync until you make it private (see **Make sync private** below). The way by hand still works too: **Disconnect** on every device, **Generate** on one, **Join** with the new code on the others. Nothing is lost: each device keeps its entries and a join merges them. The old copy stays on the relay until you delete its row there.
 - Update every device first. 0.20.0 and older say "That's a private sync code. Update SpendTrack on this device to use it."
 - What it doesn't hide: the relay still sees how big the copy is, when it changes and where a device connects from. Whatever a plain sync put on the relay earlier stays readable there.
 - What it doesn't prevent: whoever can write to the relay can replace the copy with garbage, or hand back an older one. A device notices a copy it can't read and repairs it from its own; an older copy changes nothing on a device that already holds newer entries.
@@ -141,6 +141,25 @@ Share a code only with your own devices.
 - There is no way to recover a lost code from the relay, and no way to lock one device out: copy the code from a linked device (Settings → Sync → **Show**), or start a new sync on the devices you keep.
 - **Replace the synced copy** appears only when a private sync is paused on a copy it can't read as current and no new version is waiting. Reload first. If sync stays paused, the copy may be damaged: Replace writes this device's copy over it, and your other devices add their entries back when they next sync.
 - "Sync was made private on your other device" means this device is still on the old plain code: enter the new sync code shown on the other device. No code? Use Disconnect at the bottom of the page, then start a new sync. Your entries stay on this device.
+
+**Make sync private:**
+
+Turns a plain sync you already have into a private one, from one device, without starting over.
+
+- **When the button appears.** Settings → **Sync** shows **Make sync private** under the code of a plain sync once all of these are true: the database lockdown (migration 005) is applied, every device on the sync runs SpendTrack 0.21.0 or later and has synced through the relay's sync functions (a device not seen for 60 days doesn't count), and no older SpendTrack has written the sync in 60 days. If it isn't there, update your other device, open it once so it syncs, and look again. Do it on the device you have in hand; you'll need the other one next.
+- **Before you press it**, download a backup: the question says when you last did, with **Export backup** beside it.
+- **On this device.** Tap **Make sync private**, read the question, tap **Make private**. It checks the lockdown first; if the database still allows direct reads it says "Make sync private after the database lockdown." and changes nothing. Otherwise it makes a new, encrypted synced copy, shows the new code (`ST5-…`) where the old one was, and closes the old copy. Your entries stay as they are.
+- **On your other device.** It stops syncing and says "Sync was made private on your other device. Enter the new sync code shown there." Copy the code from the first device (**Show** or **Copy**) and type it into the field there, then tap **Join**. The preview says what joining does, including how many entries deleted on that device will go from the others; nothing is saved until you tap **Join** again. Its entries are kept and merged.
+- **What the lines under the code mean:**
+  - "Closing the old sync…": this device is closing the old copy. It takes a moment.
+  - "The old sync is not closed yet. This device keeps trying.": the old copy was busy or the network dropped. Keep SpendTrack open; it tries again after each sync.
+  - "Next: enter this code on your other device. It stops syncing until you do.": your other device hasn't joined yet. It goes once the other device has synced with the new code.
+  - "Another device may also have made this sync private…" (**contested**): your other device may have pressed the button too, or someone wrote to the old sync. If your other device asks for a sync code, enter this device's code there. Only if it shows a private code of its own: **Disconnect** on one of them, then enter the other one's code there. Nothing is lost either way; entries on each device are merged when they join.
+  - "Something was written to the old sync after it was closed…": something wrote to the old copy after it was closed. This device closed it again and merged nothing from it. If a device of yours is still on the old code, update it and enter the new code there.
+  - "This device couldn't save its note of the move…": storage is full. The old copy stays closed only while SpendTrack is open here; free up space.
+- **Disconnect** (or **Remove from this device**) while the old copy is still open, or before your other device has the new code, says so in its question: copy the code first.
+- **What it doesn't do.** It protects what is sent from now on. Whatever the old sync put on the relay was readable there until the lockdown, and that isn't undone; the old row stays on the relay, closed, until it is pruned or you delete it. Without the optional migration 006, the old copy is kept closed only while the device that made the move is open: if someone who knows the old code writes to it while that device is closed, a device that hasn't entered the new code yet could sync there unencrypted until the first device is opened again.
+- **A device on 0.20.0 or older** that comes back later says "Sync moved to a newer version" and doesn't write anything. Update it, then enter the new code.
 
 **What Settings → Sync shows:**
 
