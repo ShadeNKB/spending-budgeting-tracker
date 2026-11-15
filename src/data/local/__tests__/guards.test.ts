@@ -406,6 +406,24 @@ describe('Remove from this device', () => {
     other.store.getState().setCurrency('EUR')
     expect([...b.data.keys()].filter(isSpendTrackKey)).toEqual([])
   })
+
+  // PRIVATE-SYNC 4.2, AC-M14: the move's record holds the plain code; the backup never carries
+  // it, and Remove from this device takes it with every other `st5:` key.
+  it("never puts the move's record or its plain code in the backup, and removes the record", async () => {
+    const plain = '11111111-1111-4111-8111-111111111111'
+    const record = `{"v":1,"for":"0abc123def4567","from":"${plain}","at":1,"phase":"retiring","absorbed":null,"retired":null,"checkedAt":null,"conflicts":0,"contested":false}`
+    const b = new FakeBacking()
+    seed(b, ownerV4({ rows: 5, noSync: true }).keys)
+    b.data.set('st5:synckey:move', record)
+    const t = await bootTab({ backing: b })
+    await settle()
+    const backup = JSON.stringify(t.store.getState().exportBackup())
+    expect(backup).not.toContain(plain)
+    expect(backup).not.toContain('synckey')
+    expect(backup).not.toContain('"phase"')
+    await t.store.getState().removeDataFromThisDevice()
+    expect(b.data.has('st5:synckey:move')).toBe(false)
+  })
 })
 
 describe('an add’s confirmation (§6.5)', () => {

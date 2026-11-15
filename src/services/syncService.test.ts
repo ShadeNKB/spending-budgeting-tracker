@@ -782,3 +782,87 @@ describe('announce', () => {
     expect(relay().broadcastLog).toHaveLength(1)
   })
 })
+
+// ---------------------------------------------------------------------------
+// The lockdown probe (PRIVATE-SYNC 4.1, AC-M12): "Make sync private" runs only where the relay
+// refuses the table (migration 005). It asks the table for the head of one fixed row id no
+// bucket can use, so no bucket's id reaches the API's logs, whatever the build's pin.
+// ---------------------------------------------------------------------------
+
+describe('probeLockdown (PRIVATE-SYNC 4.1)', () => {
+  const pins = [
+    ['the table pin', {}],
+    ['the table pin with compare-and-set', { VITE_SYNC_CAS: 'on' }],
+    ['the rpc pin', { VITE_SYNC_RELAY: 'rpc' }],
+    ['the auto pin', { VITE_SYNC_RELAY: 'auto' }],
+  ] as const
+
+  it('asks about a row id no bucket can use: the nil UUID (version 0; codes are 4, private rows 8)', async () => {
+    const svc = await loadService()
+    expect(svc.LOCKDOWN_PROBE_ROW).toBe('00000000-0000-0000-0000-000000000000')
+    expect(svc.LOCKDOWN_PROBE_ROW).not.toBe(ROW)
+  })
+
+  it.each(pins)('with %s: a locked table is "locked", asked by one table head', async (_l, env) => {
+    relay().rpc = 'present'
+    relay().lockdown = true
+    const svc = await loadService(env)
+    expect(await settle(svc.probeLockdown())).toBe('locked')
+    expect(relay().requests.map((r) => [r.kind, r.filters])).toEqual([
+      ['head', [`sync_id=eq.${svc.LOCKDOWN_PROBE_ROW}`]],
+    ])
+  })
+
+  it.each(pins)('with %s: a table that answers is "open", a row there or not', async (_l, env) => {
+    relay().rpc = 'present'
+    const svc = await loadService(env)
+    expect(await settle(svc.probeLockdown())).toBe('open')
+    seedRow(svc.LOCKDOWN_PROBE_ROW, doc())
+    expect(await settle(svc.probeLockdown())).toBe('open')
+    expect(requestsOf('rpc')).toHaveLength(0)
+    expect(relay().requests.every((r) => r.kind === 'head')).toBe(true)
+  })
+
+  it.each([
+    ['401', { status: 401, message: 'Unauthorized' }],
+    ['403', { status: 403, message: 'Forbidden' }],
+    ['42501', { status: 400, code: '42501', message: 'permission denied for table' }],
+  ] as const)('a permission refusal (%s) is "locked"', async (_l, failure) => {
+    const svc = await loadService()
+    failNext('head', failure)
+    expect(await settle(svc.probeLockdown())).toBe('locked')
+  })
+
+  it.each([
+    ['offline', { status: 0 }],
+    ['a 503', { status: 503, message: 'Service Unavailable' }],
+    ['a 500', { status: 500, message: 'Internal' }],
+    ['a missing function', { status: 404, code: 'PGRST202', message: 'no such function' }],
+  ] as const)('%s is "unknown"', async (_l, failure) => {
+    relay().lockdown = true
+    const svc = await loadService()
+    failNext('head', failure)
+    expect(await settle(svc.probeLockdown())).toBe('unknown')
+  })
+
+  it('a head that never answers is "unknown" at the 15 s deadline', async () => {
+    const svc = await loadService()
+    failNext('head', { hang: true })
+    const probe = svc.probeLockdown()
+    let result: string | null = null
+    void probe.then((r) => (result = r))
+    await advance(14_999)
+    expect(result).toBeNull()
+    await advance(1)
+    expect(await probe).toBe('unknown')
+  })
+
+  it('an SDK that does not load, or a build without a relay, is "unknown"', async () => {
+    const svc = await loadService()
+    relay().importFailures = 1
+    expect(await settle(svc.probeLockdown())).toBe('unknown')
+    vi.stubEnv('VITE_SUPABASE_URL', '')
+    const off = await loadService()
+    expect(await settle(off.probeLockdown())).toBe('unknown')
+  })
+})

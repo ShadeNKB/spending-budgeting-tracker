@@ -507,6 +507,30 @@ export async function openTransport(
   }
 }
 
+/**
+ * The row the lockdown probe asks about: the nil UUID. A plain code is a version 4 UUID and a
+ * private row id version 8, so no bucket can be this row, and asking about it puts no bucket's
+ * id in the API's logs.
+ */
+export const LOCKDOWN_PROBE_ROW = '00000000-0000-0000-0000-000000000000'
+
+/**
+ * Does the relay refuse the table (migration 005)? "Make sync private" runs only where it does
+ * (PRIVATE-SYNC 4.1). Asks the table for the head of `LOCKDOWN_PROBE_ROW`, whatever this build's
+ * pin: `locked` is the relay's permission refusal (the test the engine's re-probe makes);
+ * `open` is any answer, "no such row" included; `unknown` is anything else (offline, the
+ * deadline, a server error, no relay in this build). A refused read does not prove that writes
+ * are refused: that could only be checked by writing, so it is not.
+ */
+export async function probeLockdown(): Promise<'locked' | 'open' | 'unknown'> {
+  try {
+    await table.head(LOCKDOWN_PROBE_ROW)
+    return 'open'
+  } catch (err) {
+    return err instanceof SyncTransportError && err.kind === 'permission' ? 'locked' : 'unknown'
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Realtime (P3-12)
 // ---------------------------------------------------------------------------
