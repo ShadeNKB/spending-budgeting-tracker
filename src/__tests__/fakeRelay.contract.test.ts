@@ -9,6 +9,7 @@ import {
   jsonbTextBytes,
   micros,
   migrate,
+  pruneStale,
   relay,
   requestsOf,
   resetRelay,
@@ -626,5 +627,194 @@ describe('table C: the migration states', () => {
     }
     expect(requestsOf('rpc')).toHaveLength(0)
     expect(relay().pushes).toHaveLength(0)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Migration 006, a moved marker stays moved (PRIVATE-SYNC 4.6, AC-M15): off by default, so
+// every suite above meets 004 and 005 as they are. The SQL itself is proved on real Postgres
+// in sql/sticky.test.ts; this holds the fake to the same rules.
+// ---------------------------------------------------------------------------
+
+describe('006: the sticky marker (an option, off by default)', () => {
+  const DAY = 86_400_000
+  const marker = (why = 'private'): Record<string, unknown> => ({
+    version: '4.0',
+    exportDate: '2026-11-03T04:00:00.000Z',
+    expenses: 'moved',
+    deletedIds: [],
+    x5: { moved: { why, at: 1, by: 'dev001' } },
+  })
+  const envelope = (): Record<string, unknown> => ({
+    st: 5,
+    k: 1,
+    z: 0,
+    r: 'r1',
+    iv: 'aa',
+    ct: 'bb',
+  })
+  const conflict = () => ({ ok: false, reason: 'conflict', updated_at: rowStamp(ROW) })
+
+  beforeEach(() => {
+    migrate('004')
+  })
+
+  it('is off unless 006 is applied: a forced or CAS plain write replaces a marker (004)', async () => {
+    expect(relay().sticky).toEqual({ push: false, prune: false })
+    seedRow(ROW, marker())
+    expect(dataOf(await push({ p_row: ROW, p_payload: v5('a'), p_force: true }))).toMatchObject({
+      ok: true,
+    })
+    expect(rowPayload(ROW)).toEqual(v5('a'))
+    seedRow(ROW, marker())
+    const base = rowStamp(ROW)
+    expect(dataOf(await push({ p_row: ROW, p_payload: envelope(), p_base: base }))).toMatchObject({
+      ok: true,
+    })
+  })
+
+  it.each([
+    ['a plain payload, by compare-and-set', () => v5('a'), false],
+    ['a plain payload, forced', () => v5('a'), true],
+    ['an envelope, by compare-and-set', envelope, false],
+    ['an envelope, forced', envelope, true],
+  ] as const)(
+    'with 006, %s over a marker is a conflict with its token, writing nothing',
+    async (_l, next, force) => {
+      migrate('006')
+      seedRow(ROW, marker())
+      const before = rowStamp(ROW)
+      const res = dataOf(
+        await push({
+          p_row: ROW,
+          p_payload: next(),
+          p_base: force ? null : before,
+          p_force: force,
+        }),
+      )
+      expect(res).toEqual({ ok: false, reason: 'conflict', updated_at: before })
+      expect(rowPayload(ROW)).toEqual(marker())
+      expect(rowStamp(ROW)).toBe(before)
+      expect(relay().pushes).toHaveLength(0)
+    },
+  )
+
+  it('with 006, a stale token over a marker is still the plain conflict (the token check comes first)', async () => {
+    migrate('006')
+    seedRow(ROW, marker())
+    expect(
+      dataOf(await push({ p_row: ROW, p_payload: v5('a'), p_base: '2026-01-01T00:00:00+00:00' })),
+    ).toEqual(conflict())
+  })
+
+  it.each([
+    ['by compare-and-set', false],
+    ['forced', true],
+  ] as const)('with 006, a marker replaces a marker and a plain payload, %s', async (_l, force) => {
+    migrate('006')
+    for (const old of [marker('moved'), v5('a'), envelope()]) {
+      seedRow(ROW, old)
+      const base = rowStamp(ROW)
+      const res = dataOf(
+        await push({
+          p_row: ROW,
+          p_payload: marker(),
+          p_base: force ? null : base,
+          p_force: force,
+        }),
+      )
+      expect(res).toMatchObject({ ok: true })
+      expect(rowPayload(ROW)).toEqual(marker())
+    }
+  })
+
+  it('with 006, plain over plain and creating a marker row are as in 004', async () => {
+    migrate('006')
+    seedRow(ROW, v5('a'))
+    expect(dataOf(await push({ p_row: ROW, p_payload: v5('b'), p_force: true }))).toMatchObject({
+      ok: true,
+    })
+    expect(dataOf(await push({ p_row: OTHER, p_payload: marker() }))).toMatchObject({ ok: true })
+    expect(dataOf(await push({ p_row: OTHER, p_payload: marker() }))).toMatchObject({
+      ok: false,
+      reason: 'conflict',
+    })
+  })
+
+  it('guards only the sync functions: a table write before 005 still replaces a marker', async () => {
+    migrate('006')
+    seedRow(ROW, marker())
+    const res = await client()
+      .from(TABLE)
+      .update({ payload: v5('a'), updated_at: zulu(stamp(rowStamp(ROW)) + 5) })
+      .eq('sync_id', ROW)
+      .select('updated_at')
+    expect(res.error).toBeNull()
+    expect(rowPayload(ROW)).toEqual(v5('a'))
+  })
+
+  it('prune: a plain row goes after 90 days; a marker after 90 without 006, after 360 with it', () => {
+    const at = (days: number) => {
+      vi.setSystemTime(Date.UTC(2026, 10, 3, 4) - days * DAY)
+    }
+    const plainRow = '33333333-3333-4333-8333-333333333333'
+    at(91)
+    seedRow(plainRow, v5())
+    seedRow(ROW, marker())
+    at(361)
+    seedRow(OTHER, marker())
+    at(0)
+    const rows = () => [...relay().rows.keys()].sort()
+
+    expect(pruneStale()).toBe(3)
+    expect(rows()).toEqual([])
+
+    at(91)
+    seedRow(plainRow, v5())
+    seedRow(ROW, marker())
+    at(361)
+    seedRow(OTHER, marker())
+    at(0)
+    migrate('006')
+    expect(pruneStale()).toBe(2)
+    expect(rows()).toEqual([ROW])
+    // a shorter interval scales the same way
+    expect(pruneStale(30 * DAY)).toBe(0)
+    expect(pruneStale(20 * DAY)).toBe(1)
+  })
+
+  it('the states: refused without 004, idempotent, 004 again puts its push back, the rollback undoes both', () => {
+    migrate('rollback 004')
+    expect(() => {
+      migrate('006')
+    }).toThrow(/55000.*Apply 004/)
+    expect(() => {
+      migrate('rollback 006')
+    }).toThrow(/55000.*006 rollback/)
+    expect(relay().sticky).toEqual({ push: false, prune: false })
+    migrate('004')
+    migrate('006')
+    migrate('006')
+    expect(relay().sticky).toEqual({ push: true, prune: true })
+    migrate('005')
+    expect(relay().sticky).toEqual({ push: true, prune: true })
+    migrate('rollback 005')
+    migrate('004') // "Running 004_sync_rpc.sql again puts 004's st_sync_push back"
+    expect(relay().sticky).toEqual({ push: false, prune: true })
+    migrate('006')
+    migrate('rollback 006')
+    migrate('rollback 006')
+    expect(relay().sticky).toEqual({ push: false, prune: false })
+  })
+
+  it('no step touches a row', () => {
+    seedRow(ROW, marker())
+    seedRow(OTHER, v5())
+    const snapshot = () => JSON.stringify([...relay().rows.entries()])
+    const before = snapshot()
+    for (const step of ['006', '005', 'rollback 005', 'rollback 006'] as const) {
+      migrate(step)
+      expect(snapshot(), step).toBe(before)
+    }
   })
 })

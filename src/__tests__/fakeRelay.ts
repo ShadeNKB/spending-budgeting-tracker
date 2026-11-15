@@ -19,8 +19,8 @@
 // The database follows supabase/migrations (PR-5 track spec §4, held to it by
 // fakeRelay.contract.test.ts): `rpc: 'present'` is 004 applied (the three sync functions with
 // their validation, and the NOT VALID checks on new table writes, 23514), `lockdown` is 005
-// (every table call 401 42501). `migrate()` moves between the states as the SQL files do, and
-// refuses where they refuse (55000).
+// (every table call 401 42501), `sticky` is 006 (a moved marker stays moved; off by default).
+// `migrate()` moves between the states as the SQL files do, and refuses where they refuse (55000).
 // State lives on globalThis, so device module graphs loaded with vi.resetModules() share
 // one relay; every device boots on its own storage (MemoryStorage). Works against the v0.8.4
 // code too (it ignores the event argument).
@@ -162,6 +162,13 @@ interface RelayState {
   rpc: 'absent' | 'present'
   /** Migration 005: every table call answers 401 42501 (the functions keep working). */
   lockdown: boolean
+  /**
+   * Migration 006, in its two functions. `push`: st_sync_push answers a non-marker write over a
+   * row holding a moved marker (compare-and-set or forced) with `conflict` and the row's token,
+   * writing nothing; a marker still replaces anything. `prune`: `pruneStale` keeps a marker row
+   * four times as long. Table writes are not guarded (only 005 stops them).
+   */
+  sticky: { push: boolean; prune: boolean }
   /** The project refuses public Broadcast: a channel with a Broadcast binding fails to join. */
   broadcast: 'on' | 'rejected'
   /** `postgres_changes` refused (realtime publication dropped): such a channel fails to join. */
@@ -219,6 +226,7 @@ function freshRelay(): RelayState {
     ghostsLanded: 0,
     rpc: 'absent',
     lockdown: false,
+    sticky: { push: false, prune: false },
     broadcast: 'on',
     rowEvents: 'on',
     rpcMaxBytes: 1_258_291,
@@ -419,7 +427,7 @@ export function dropRow(syncId: string): void {
   relay().rows.delete(syncId)
 }
 
-export type Migration = '004' | '005' | 'rollback 005' | 'rollback 004'
+export type Migration = '004' | '005' | '006' | 'rollback 006' | 'rollback 005' | 'rollback 004'
 
 /** A migration step the SQL refuses (`55000`, nothing changed): track spec §4 table C. */
 export class MigrationRefused extends Error {
@@ -433,14 +441,27 @@ export class MigrationRefused extends Error {
 
 /**
  * Applies a migration step as the SQL file does (idempotent; no row is touched): 004 adds the
- * functions and the checks; 005 locks the table and drops it from the realtime publication, and
- * is refused without 004; the 005 rollback reopens the table; the 004 rollback removes the
- * functions and checks, and is refused while 005 is applied.
+ * functions and the checks, and run again puts 004's push back over 006's; 005 locks the table
+ * and drops it from the realtime publication, and is refused without 004; 006 makes the marker
+ * sticky in push and prune, and it and its rollback are refused without 004; the 005 rollback
+ * reopens the table; the 004 rollback removes the functions and checks (not 006's prune, which
+ * is 003's function), and is refused while 005 is applied.
  */
 export function migrate(step: Migration): void {
   const r = relay()
   if (step === '004') {
     r.rpc = 'present'
+    r.sticky = { ...r.sticky, push: false }
+  } else if (step === '006' || step === 'rollback 006') {
+    if (r.rpc !== 'present') {
+      throw new MigrationRefused(
+        step === '006'
+          ? 'SpendTrack 006: the sync functions from 004 are missing or not as 004 made them. Apply 004 and run 004_verify.sql first. Nothing was changed.'
+          : 'SpendTrack 006 rollback: the sync functions from 004 are missing or not as 004 made them. Tell the lead. Nothing was changed.',
+      )
+    }
+    const on = step === '006'
+    r.sticky = { push: on, prune: on }
   } else if (step === '005') {
     if (r.rpc !== 'present') {
       throw new MigrationRefused(
@@ -460,6 +481,31 @@ export function migrate(step: Migration): void {
     }
     r.rpc = 'absent'
   }
+}
+
+/** A moved marker, by 004's third shape: `expenses` is the string "moved" and `x5` an object. */
+const isMarker = (p: unknown): boolean => isObject(p) && p.expenses === 'moved' && isObject(p.x5)
+
+const DAY_MS = 86_400_000
+
+/**
+ * `prune_stale_sync_buckets(stale_after)` (003; 006 when `sticky.prune`): removes every row
+ * untouched for `staleAfterMs` (90 days by default), a marker row only after four times that
+ * with 006. Returns how many rows went. No event: a delete is not broadcast.
+ */
+export function pruneStale(staleAfterMs = 90 * DAY_MS): number {
+  const r = relay()
+  const now = Date.now() * 1000
+  let removed = 0
+  for (const [id, row] of [...r.rows]) {
+    const at = micros(row.updated_at) ?? now
+    const keep = r.sticky.prune && isMarker(row.payload) ? 4 * staleAfterMs : staleAfterMs
+    if (at < now - keep * 1000) {
+      r.rows.delete(id)
+      removed++
+    }
+  }
+  return removed
 }
 
 /** Queues failures for the next head/pull/push requests, in order. */
@@ -1034,6 +1080,11 @@ class Query implements PromiseLike<RelayResponse> {
     } else if (current === undefined) {
       return { data: missing, error: null, status: 200 }
     } else if (micros(current.updated_at) !== micros(base)) {
+      return { data: conflict, error: null, status: 200 }
+    }
+    // 006: a moved marker stays; only another marker replaces it (after the token check)
+    const sticky = relay().sticky.push && current !== undefined && isMarker(current.payload)
+    if (sticky && !isMarker(this.args.p_payload)) {
       return { data: conflict, error: null, status: 200 }
     }
     const row: RelayRow = {

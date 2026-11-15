@@ -605,3 +605,133 @@ describe('the durable fence (PR-6, 3.7)', () => {
     expect(storage.getSyncConfig()).toEqual({ kind: 'plain', code: UUID, established: true })
   })
 })
+
+// PRIVATE-SYNC 4.2, AC-M2: the move's record lives in a key no shipped writer touches. Each
+// writer of this module runs over a device that holds one, in every state it can be in, and the
+// record must come out byte for byte as it went in. (Disconnect included: removing the record
+// on Disconnect is the move's own work, added where the byte budgets allow, never here.)
+describe("the move's record (PR-6 release 2, 4.2)", () => {
+  const UUID = '11111111-1111-4111-8111-111111111111'
+  const OTHER = '22222222-2222-4222-8222-222222222222'
+  const CODE = 'ST5-0004106-1050R3G-G28A1C6-0T3GFS3'
+  const OTHER_CODE = 'ST5-7ZZZZZZ-ZZZZZZZ-ZZZZZZZ-ZZZZZ00'
+  const MOVE = 'st5:synckey:move'
+  // the stored text exactly (any value: these writers must not even read it)
+  const RECORD = `{"v":1,"for":"0abc123def4567","from":"${UUID}","at":1,"phase":"retiring","absorbed":null,"retired":null,"checkedAt":null,"conflicts":0,"contested":false}`
+
+  type Storage5 = Awaited<ReturnType<typeof fresh>>['storage']
+  const writers: readonly (readonly [string, (s: Storage5) => unknown])[] = [
+    [
+      'savePrivateSync, the same code (every start-up, 0.21.0 included)',
+      (s) => s.savePrivateSync(CODE),
+    ],
+    ['savePrivateSync, established', (s) => s.savePrivateSync(CODE, true)],
+    ['savePrivateSync, another code (a join)', (s) => s.savePrivateSync(OTHER_CODE, false)],
+    ['saveSyncId, a plain code', (s) => s.saveSyncId(UUID)],
+    ['saveSyncId, a joined plain code', (s) => s.saveSyncId(OTHER, false)],
+    ['saveSyncId(null), Disconnect', (s) => s.saveSyncId(null)],
+    ['markEstablished, plain', (s) => s.markEstablished(UUID)],
+    ['markEstablished, private', (s) => s.markEstablished(CODE)],
+    ['setFenced', (s) => s.setFenced(UUID, 'private', 9)],
+    ['getSyncConfig', (s) => s.getSyncConfig()],
+    ['getSyncId', (s) => s.getSyncId()],
+    ['isLinked', (s) => s.isLinked()],
+    ['getDeviceId', (s) => s.getDeviceId()],
+  ]
+
+  /** Device states the record can meet: switched, crashed before the switch, half-written. */
+  const setups: readonly (readonly [string, () => void])[] = [
+    [
+      'private (after the switch)',
+      () => {
+        localStorage.setItem(
+          'st5:synckey',
+          JSON.stringify({ code: CODE, at: 1, established: false }),
+        )
+        localStorage.setItem(
+          'st5:sync',
+          JSON.stringify({ kind: 'e2e', joinedAt: 1, established: false }),
+        )
+      },
+    ],
+    [
+      'private, st5:sync missing and a stray syncId (the repair path)',
+      () => {
+        localStorage.setItem(
+          'st5:synckey',
+          JSON.stringify({ code: CODE, at: 1, established: true }),
+        )
+        localStorage.setItem('syncId', OTHER)
+      },
+    ],
+    [
+      'plain (a crash after the record, before the key)',
+      () => {
+        localStorage.setItem('syncId', UUID)
+        localStorage.setItem(
+          'st5:sync',
+          JSON.stringify({
+            kind: 'plain',
+            code: UUID,
+            rowId: UUID,
+            joinedAt: 1,
+            established: false,
+          }),
+        )
+      },
+    ],
+    [
+      'plain, the mirror changed by an older build (the adopt path)',
+      () => {
+        localStorage.setItem('syncId', OTHER)
+        localStorage.setItem(
+          'st5:sync',
+          JSON.stringify({
+            kind: 'plain',
+            code: UUID,
+            rowId: UUID,
+            joinedAt: 1,
+            established: true,
+          }),
+        )
+      },
+    ],
+    ['nothing set up', () => undefined],
+  ]
+
+  for (const [state, arrange] of setups) {
+    it.each(writers)(`${state}: %s leaves it byte-identical`, async (_name, write) => {
+      arrange()
+      localStorage.setItem(MOVE, RECORD)
+      const { storage } = await fresh()
+      try {
+        write(storage)
+      } catch {
+        // a writer that refuses in this state (the plain writer on a private device) still
+        // must not have touched the record
+      }
+      expect(localStorage.getItem(MOVE)).toBe(RECORD)
+    })
+  }
+
+  it('a quarantined copy of a damaged config never holds it', async () => {
+    localStorage.setItem('st5:sync', '{"kind":"pla')
+    localStorage.setItem('syncId', UUID)
+    localStorage.setItem(MOVE, RECORD)
+    const { storage } = await fresh()
+    storage.getSyncConfig()
+    const copies = Object.keys(localStorage).filter((k) => k.startsWith('st5:q:'))
+    expect(copies.length).toBeGreaterThan(0)
+    for (const k of copies) expect(localStorage.getItem(k)).not.toContain('"phase"')
+    expect(localStorage.getItem(MOVE)).toBe(RECORD)
+  })
+
+  it('the rescue export holds neither the record nor the plain code it names', async () => {
+    localStorage.setItem(MOVE, RECORD)
+    localStorage.setItem('expenses', '[]')
+    const { collectRawStorage } = await import('../lib/rescue')
+    const dump = JSON.stringify(collectRawStorage(localStorage))
+    expect(dump).not.toContain('synckey')
+    expect(dump).not.toContain(UUID)
+  })
+})
