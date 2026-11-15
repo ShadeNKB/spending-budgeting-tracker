@@ -37,6 +37,12 @@ export interface MoveRecord {
   readonly conflicts: number
   /** Step 5 found another device's marker; cleared when another private device joins. */
   readonly contested: boolean
+  /**
+   * Another device has joined the private row: this device opened an envelope that device wrote
+   * there, which only a holder of the code can seal (4.4). Never taken from the registry, which a
+   * plain payload merged at step 2 or at the absorb can forge. Absent until then.
+   */
+  readonly joined?: true
 }
 
 const FIELDS: readonly string[] = [
@@ -80,8 +86,10 @@ const isToken = (v: unknown): v is string | null =>
 function moveOf(v: unknown): MoveRecord | null {
   if (!isRecordLike(v)) return null
   const keys = Object.keys(v)
-  if (keys.length !== FIELDS.length || !keys.every((k) => FIELDS.includes(k))) return null
+  const known = keys.filter((k) => k !== 'joined')
+  if (known.length !== FIELDS.length || !known.every((k) => FIELDS.includes(k))) return null
   const { for: fp, from, at, phase, absorbed, retired, checkedAt, conflicts, contested } = v
+  if (keys.length !== known.length && v.joined !== true) return null
   if (
     v.v !== 1 ||
     typeof fp !== 'string' ||
@@ -100,7 +108,18 @@ function moveOf(v: unknown): MoveRecord | null {
   ) {
     return null
   }
-  return { v: 1, for: fp, from, at, phase, absorbed, retired, checkedAt, conflicts, contested }
+  const record = {
+    v: 1,
+    for: fp,
+    from,
+    at,
+    phase,
+    absorbed,
+    retired,
+    checkedAt,
+    conflicts,
+  } as const
+  return v.joined === true ? { ...record, contested, joined: true } : { ...record, contested }
 }
 
 /** The storage this module works on: the page's own, bound the first time it is needed. */
@@ -166,17 +185,39 @@ const isNewer = (v: unknown): boolean =>
   isRecordLike(v) && typeof v.v === 'number' && Number.isInteger(v.v) && v.v > 1
 
 /**
+ * A record younger than this, on a device that holds no private key yet, may be another tab's
+ * switch between its two writes (the record, then the key): a sweep that read "no key" just
+ * before that key was written must not remove it.
+ */
+export const SWITCH_GRACE_MS = 2 * 60_000
+
+/**
+ * What a sweep does with a young record and no key held: `spare` it (a sweep that may run while
+ * another tab switches), or `remove` it (a sweep under the sync lock, or Disconnect's).
+ */
+export type Young = 'spare' | 'remove'
+
+/**
  * The record for the bucket with this private row id (null: the device holds no private key),
  * or null. A void record is removed, and so is a damaged one (it may hold the plain code and can
- * never be acted on); a newer build's is left alone.
+ * never be acted on); a newer build's is left alone, and so, unless `young` is `remove`, is one
+ * made in the last two minutes on a device with no key (another tab may be switching).
  */
-export function dropVoidMove(rowId: string | null): MoveRecord | null {
+export function dropVoidMove(rowId: string | null, young: Young = 'spare'): MoveRecord | null {
   const raw = readRaw()
   if (raw === null) return null
   const value = parsed(raw)
   const record = moveOf(value)
   if (record !== null && !isVoidMove(record, rowId)) return record
   if (record === null && isNewer(value)) return null
+  if (
+    record !== null &&
+    rowId === null &&
+    young === 'spare' &&
+    Math.abs(Date.now() - record.at) < SWITCH_GRACE_MS
+  ) {
+    return null
+  }
   removeMove()
   return null
 }
@@ -192,7 +233,9 @@ function heldCode(): string | null {
  * the row id is derived from the code in `st5:synckey`. Decides nothing (null, the record left
  * as it is) when the row id cannot be derived, or when the setup changed while it was.
  */
-export async function sweepVoidMove(): Promise<MoveRecord | null> {
+export async function sweepVoidMove(young: Young = 'spare'): Promise<MoveRecord | null> {
+  // No record, nothing to decide: no key is derived (and this page's storage is bound now).
+  if (readRaw() === null) return null
   const code = heldCode()
   let rowId: string | null = null
   if (code !== null) {
@@ -208,5 +251,5 @@ export async function sweepVoidMove(): Promise<MoveRecord | null> {
   }
   // another tab may have joined, disconnected or moved meanwhile: its next sweep decides
   if (heldCode() !== code) return null
-  return dropVoidMove(rowId)
+  return dropVoidMove(rowId, young)
 }

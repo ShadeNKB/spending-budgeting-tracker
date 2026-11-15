@@ -27,7 +27,17 @@
 // merged, P3 what does not open passed to the merge, P4 one IV for every seal, P5 a cycle writing
 // over a copy marked newer, P6 a private sync on the upsert transport, P7 a fence that is not
 // saved, P8 a setup changed in another tab not followed, P9 a newer copy pulled again by every
-// poll, P10 a write sent after the setup changed mid-cycle; and PR-2's
+// poll, P10 a write sent after the setup changed mid-cycle; release 2's move (PRIVATE-SYNC 7b):
+// R1 the record kept in st5:sync, R2 the move without the lock, R3 the key written without the
+// re-read, R4 the lockdown check skipped, R5 a second absorb, R6 the marker after the private
+// cycle, R7 the marker never forced, R8 forced before three conflicts, R9 the post-absorb cycle
+// answered by a HEAD, R10 a record of another bucket acted on, R11 a merge in the keeping check,
+// R12 the keeping check counting every registry entry, R13 the keeping check stopping for good
+// once a second device appears, R14 the foreign-marker branch dropping the key; after its
+// second review, R15 a forged registry entry taken for a joined device, R16 the old row touched
+// without the lock, R17 the absorb merged before it is recorded, R18 a refused move answering
+// every request of its turn, R19 a sweep without the switch's grace, R20 a lost record shown as
+// "keeps trying"; and PR-2's
 // two survivors by name, M23 (absorb's raw copy of a damaged envelope ignored) and M34 (outbox
 // written with sync off).
 // A mutation may need more than one edit (`edits`); each anchor must occur exactly once.
@@ -423,6 +433,196 @@ const SYNC_MUTATIONS = [
     find: '    if (changedElsewhere(b.code)) {\n      forgetSent(step.sent)\n      return followSaved()\n    }\n',
     replace: '',
     expect: 'AC-P3: a setup changed elsewhere while a copy is being sealed gets no write',
+  },
+  {
+    id: 'R1',
+    name: 'The move keeps its record in st5:sync, which every setup rewrites',
+    file: 'src/data/sync/move.ts',
+    find: "export const MOVE_KEY = 'st5:synckey:move'\n",
+    replace: "export const MOVE_KEY = 'st5:sync'\n",
+    expect: 'AC-M2: the record survives a 0.21.0 writer, a reload and a setup of the same code',
+  },
+  {
+    id: 'R2',
+    name: 'The move runs without the sync lock',
+    file: 'src/stores/syncEngine.ts',
+    find: '    return moveUnderLock(moveAsk, code, gen)\n',
+    replace: '    return moveSteps(moveAsk, code, gen)\n',
+    expect: 'AC-M8: a tab not granted the lock is refused and writes nothing',
+  },
+  {
+    id: 'R3',
+    name: 'The key is written without the re-read of step 4',
+    file: 'src/stores/syncEngine.ts',
+    find:
+      '  if (\n' +
+      "    saved?.kind !== 'plain' ||\n" +
+      '    saved.code !== code ||\n' +
+      '    saved.fenced !== undefined ||\n' +
+      '    readMove() !== null ||\n' +
+      '    changedElsewhere(code)\n' +
+      '  ) {\n' +
+      '    return stop(MOVE_CHANGED_MESSAGE, plain)\n' +
+      '  }\n',
+    replace: '  void saved\n',
+    expect: 'AC-M8: a tab whose re-read at step 4 finds a changed setup stops, and follows it',
+  },
+  {
+    id: 'R4',
+    name: 'The lockdown check is skipped',
+    file: 'src/stores/syncEngine.ts',
+    find: "  if ((await probeLockdown()) !== 'locked') return stop(MOVE_LOCKDOWN_MESSAGE)\n",
+    replace: '',
+    expect: 'AC-M12: a relay that still answers the table stops the move before any write',
+  },
+  {
+    id: 'R5',
+    name: 'A second plain payload is absorbed',
+    file: 'src/stores/syncEngine.ts',
+    find: '  if (!keeping && rec.absorbed === null && mergeable(dec.writer)) {\n',
+    replace: '  if (!keeping && mergeable(dec.writer)) {\n',
+    expect: 'AC-M9 / AC-M4: one plain payload is merged, a second is not',
+  },
+  {
+    id: 'R6',
+    name: 'The marker is written after the private cycle that carries the absorb, not before it',
+    file: 'src/stores/syncEngine.ts',
+    find: '    await closeOldRow(absorbed, pulled.etag, b, gen, t, port)\n',
+    replace: '',
+    expect: 'AC-M4: the marker went on at once, before the private row was sent what was absorbed',
+  },
+  {
+    id: 'R7',
+    name: 'The marker is never forced',
+    file: 'src/stores/syncEngine.ts',
+    find: '  const force = base !== null && rec.conflicts >= MARKER_FORCE_AFTER\n',
+    replace: '  const force = false\n',
+    expect: 'AC-M9: the marker lands by force after three conflicts',
+  },
+  {
+    id: 'R8',
+    name: 'The marker is forced before three conflicts',
+    file: 'src/stores/syncEngine.ts',
+    find: '  const force = base !== null && rec.conflicts >= MARKER_FORCE_AFTER\n',
+    replace: '  const force = base !== null && rec.conflicts >= MARKER_FORCE_AFTER - 1\n',
+    expect: 'AC-M9: three compare-and-sets, then one forced write',
+  },
+  {
+    id: 'R9',
+    name: 'The cycle after an absorb may be answered by a HEAD',
+    file: 'src/stores/syncEngine.ts',
+    edits: [
+      {
+        find: '    held = null // the cycle that carries it to the private row is a full one\n',
+        replace: '',
+      },
+      {
+        find: "      nextReason = strongest(nextReason, 'again')\n",
+        replace: "      nextReason = strongest(nextReason, 'poll')\n",
+      },
+    ],
+    expect: 'AC-M5: what was absorbed by a resumed move reaches the private row',
+  },
+  {
+    id: 'R10',
+    name: 'A record whose `for` is not this bucket is acted on',
+    file: 'src/stores/syncEngine.ts',
+    find: '  const stored = dropVoidMove(b.rowId)\n',
+    replace: '  const stored = readMove()\n',
+    expect: 'AC-M2: a record for another bucket is never acted on',
+  },
+  {
+    id: 'R11',
+    name: 'The keeping check merges what it finds on the old row',
+    file: 'src/stores/syncEngine.ts',
+    find: '  if (keeping) straggler = true\n',
+    replace:
+      '  if (keeping) {\n' +
+      '    straggler = true\n' +
+      '    if (mergeable(dec.writer)) absorb(dec, port)\n' +
+      '  }\n',
+    expect: 'AC-M4 / AC-M13: plaintext over the marker is neither merged nor kept',
+  },
+  {
+    id: 'R12',
+    name: 'The keeping check counts every writer as a joined device, this one included',
+    file: 'src/stores/syncEngine.ts',
+    find: "  if (b.kind !== 'e2e' || writer === null || writer === port.deviceId()) return\n",
+    replace: "  if (b.kind !== 'e2e' || writer === null) return\n",
+    expect: 'AC-M13: a HEAD after every cycle while no other private device has joined',
+  },
+  {
+    id: 'R13',
+    name: 'The keeping check stops for good once a second private device appears',
+    file: 'src/stores/syncEngine.ts',
+    find: '  const close = alone && now - kept.at < CLOSE_WATCH_MS\n',
+    replace: '  if (!alone) return\n  const close = alone && now - kept.at < CLOSE_WATCH_MS\n',
+    expect: 'AC-M13: once another private device joined, daily pulls, never stopping',
+  },
+  {
+    id: 'R14',
+    name: "Another device's marker makes the mover drop its private key",
+    file: 'src/stores/syncEngine.ts',
+    find: '    const contested = rec.contested || (by !== null && by !== port.deviceId())\n',
+    replace:
+      '    const contested = rec.contested || (by !== null && by !== port.deviceId())\n' +
+      '    if (by !== port.deviceId()) storage.saveSyncId(null)\n',
+    expect: 'AC-M7 / AC-M6: the private key is kept whoever the marker names',
+  },
+  {
+    id: 'R15',
+    name: 'A device listed as private in the registry counts as joined (a forged `e: 1`)',
+    file: 'src/stores/syncEngine.ts',
+    find: '  if (rec !== null) return rec.joined === true\n',
+    replace: '  if (rec !== null && rec.joined === true) return true\n',
+    expect: 'AC-M13b: a forged entry leaves the device alone, watching, and contested',
+  },
+  {
+    id: 'R16',
+    name: 'A cycle that ran without the lock touches the old row',
+    file: 'src/stores/syncEngine.ts',
+    find: "  if (!locked || !result.ok || b.kind !== 'e2e' || reason === 'hide' || gen !== setupGen) {\n",
+    replace: "  if (!result.ok || b.kind !== 'e2e' || reason === 'hide' || gen !== setupGen) {\n",
+    expect: 'C-F1: a cycle run without the lock neither absorbs nor writes a marker',
+  },
+  {
+    id: 'R17',
+    name: 'The absorb is merged before it is recorded (a failed record write merges it again)',
+    file: 'src/stores/syncEngine.ts',
+    edits: [
+      { find: '    const absorbed = saveMove({ ...rec, absorbed: pulled.etag })\n', replace: '' },
+      {
+        find: '    absorb(dec, port)\n',
+        replace:
+          '    absorb(dec, port)\n' +
+          '    const absorbed = saveMove({ ...rec, absorbed: pulled.etag })\n',
+      },
+    ],
+    expect: 'S-F2: a record that cannot be written at that moment merges nothing',
+  },
+  {
+    id: 'R18',
+    name: "A refused move's answer goes to every request that came in with it",
+    file: 'src/stores/syncEngine.ts',
+    find: '      if (moved) {\n',
+    replace: '      if (moved && current.length < 0) {\n',
+    expect: 'C-F2: an edit and Sync now in the same turn get a real cycle',
+  },
+  {
+    id: 'R19',
+    name: 'A sweep removes a young record another tab is switching with (no grace)',
+    file: 'src/data/sync/move.ts',
+    find: "    young === 'spare' &&\n",
+    replace: '    false &&\n',
+    expect: 'C-F3: B does not remove the record A is switching with',
+  },
+  {
+    id: 'R20',
+    name: 'A record lost after the switch is shown as "keeps trying"',
+    file: 'src/stores/syncEngine.ts',
+    find: '  moveUnsaved = unsaved\n',
+    replace: '  void unsaved\n',
+    expect: 'S-F4: a record that cannot be kept after the switch is said plainly',
   },
   {
     id: 'M23',
