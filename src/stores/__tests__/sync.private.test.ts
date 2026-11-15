@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeSt5 } from '../../data/core/codes'
 import { deriveKeys, open, seal } from '../../data/core/e2e'
 import { isRecord } from '../../lib/backup'
+import type { CloudStatus } from '../useSyncStore'
 import {
   SYNC_CODE,
   bootDevice,
@@ -122,6 +123,17 @@ afterEach(() => {
 const start = (d: Device, join = false) =>
   run(d.sync.useSyncStore.getState().setupSync(CODE, join ? { join: true } : undefined))
 const sync = (d: Device) => run(d.sync.useSyncStore.getState().triggerSync())
+/**
+ * What `d` shows once it is between cycles. A setup's or a Sync now's result is the cycle's that
+ * took the request; a cycle another trigger asked for meanwhile (the live channel joining asks
+ * for one 30 ms after a setup) may still be running when that result comes back, sealing with
+ * real crypto that takes what it takes, so the status is read when that cycle has published its
+ * outcome, not at whatever moment this machine's speed left it in.
+ */
+async function statusBetweenCycles(d: Device): Promise<CloudStatus> {
+  await until(() => d.sync.useSyncStore.getState().cloudStatus !== 'syncing')
+  return d.sync.useSyncStore.getState().cloudStatus
+}
 const add = (d: Device, itemName: string, amount = 1.5) =>
   d.expense.useExpenseStore.getState().addExpense({ itemName, amount })
 const names = (d: Device) =>
@@ -750,7 +762,7 @@ describe('size at the plaintext limit (AC-P15)', () => {
     vi.stubGlobal('CompressionStream', undefined)
     const laptop = await bootDevice({ expenses: big() })
     expect(await start(laptop)).toMatchObject({ ok: false, error: 'too-large' })
-    expect(laptop.sync.useSyncStore.getState().cloudStatus).toBe('paused')
+    expect(await statusBetweenCycles(laptop)).toBe('paused')
     expect([...relay().rows.keys()]).toEqual([])
     expect(liveIds(laptop)).toHaveLength(COUNT)
     // paused, not failing: no retry writes later either
