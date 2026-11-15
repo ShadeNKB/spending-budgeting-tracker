@@ -309,16 +309,6 @@ BEGIN
       v_res := v_res || jsonb_build_object('check', 'private_envelope_accepted', 'expected', 'ok', 'actual', v_a,
                                            'pass', coalesce(v_ok, false));
 
-      BEGIN
-        v_r := public.st_sync_push(c_row, '{"version":"4.0","expenses":"moved","categories":[],"x5":{"schema":5,"min":99}}',
-                                   NULL, true);
-        v_ok := (v_r ->> 'ok') = 'true';
-        v_a := CASE WHEN v_ok THEN 'ok' ELSE coalesce(v_r::text, 'null') END;
-      EXCEPTION WHEN OTHERS THEN v_ok := false; v_a := SQLSTATE || ': ' || SQLERRM;
-      END;
-      v_res := v_res || jsonb_build_object('check', 'moved_marker_accepted', 'expected', 'ok', 'actual', v_a,
-                                           'pass', coalesce(v_ok, false));
-
       v_a := '';
       FOREACH v_id IN ARRAY ARRAY['not-a-uuid', upper(c_row), NULL] LOOP
         BEGIN
@@ -361,6 +351,17 @@ BEGIN
       END;
       v_res := v_res || jsonb_build_object('check', 'size_limit_exact', 'expected', '1258291 B ok; 1258292 B 22023',
                                            'actual', v_a, 'pass', coalesce(v_ok, false));
+
+      -- after the plain writes above: with 006 applied, nothing but a marker replaces a marker
+      BEGIN
+        v_r := public.st_sync_push(c_row, '{"version":"4.0","expenses":"moved","categories":[],"x5":{"schema":5,"min":99}}',
+                                   NULL, true);
+        v_ok := (v_r ->> 'ok') = 'true';
+        v_a := CASE WHEN v_ok THEN 'ok' ELSE coalesce(v_r::text, 'null') END;
+      EXCEPTION WHEN OTHERS THEN v_ok := false; v_a := SQLSTATE || ': ' || SQLERRM;
+      END;
+      v_res := v_res || jsonb_build_object('check', 'moved_marker_accepted', 'expected', 'ok', 'actual', v_a,
+                                           'pass', coalesce(v_ok, false));
 
       BEGIN
         -- the editor fills the last hour up to 20 creates (throwaway rows, undone with the rest)

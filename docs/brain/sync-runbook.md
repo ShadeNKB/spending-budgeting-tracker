@@ -2,7 +2,7 @@
 
 For Shade, on the Windows laptop, one sitting per gate. You apply the two database steps that finish the sync overhaul yourself: **004** at gate C, then **005** at gate E, at least 7 days later. Nobody else touches the database.
 
-**Jump to:** [Before you start](#before-you-start) · [How to run a SQL file](#how-to-run-a-sql-file) · [Gate C](#gate-c-apply-004-and-switch-the-app-over) · [Gate E](#gate-e-lock-the-table) · [After the lockdown](#what-youll-see-after-the-lockdown) · [If something goes wrong](#if-something-goes-wrong) · [Rollback](#rollback) · [Later, optional](#later-optional) · [Log](#log)
+**Jump to:** [Before you start](#before-you-start) · [How to run a SQL file](#how-to-run-a-sql-file) · [Gate C](#gate-c-apply-004-and-switch-the-app-over) · [Gate E](#gate-e-lock-the-table) · [006, optional](#optional-006-keep-a-moved-sync-moved) · [After the lockdown](#what-youll-see-after-the-lockdown) · [If something goes wrong](#if-something-goes-wrong) · [Rollback](#rollback) · [Later, optional](#later-optional) · [Log](#log)
 
 ## What this does
 
@@ -377,6 +377,77 @@ Fill in the [gate E log](#gate-e-log). Gate E is done: the relay can no longer b
 
 ---
 
+## Optional: 006, keep a moved sync moved
+
+About 10 minutes. **Optional.** It needs 004 (gate C done), and applies with or without 005, before or after it. Do it with gate E (right after E4, before E5), or on its own any time before you use "Make sync private" in the app. Either way, 005 must be applied before "Make sync private" is used (the app refuses the move until then).
+
+**What it does.** When SpendTrack makes an existing sync private (a later release), it leaves a "moved" note in the old relay row, so your other devices know to ask for the new code instead of carrying on. Two things could wipe that note today: an older SpendTrack that forces its copy over the row, and the prune function, which removes rows nobody touched for 90 days. With 006 the sync functions write nothing but another "moved" note over a "moved" note (any other writer is told "conflict", reads the row again, finds the note and stops). 006 only guards writes that go through the sync functions: until 005 is applied, a device that writes straight to the table can still replace a "moved" note. The prune removes a "moved" note only once nobody has touched it for four times as long as other rows (360 days instead of 90), so the note outlives the devices that still need it, yet junk notes can't fill the relay's 500 rows for good. Nothing else changes: no row is touched, no permission changes, and every other write works exactly as before.
+
+### 6a · Preflight (2 min)
+
+Run [`000_preflight_readonly.sql`](../../supabase/checks/000_preflight_readonly.sql). **Expect** `verdict` **`GO`**, and `stage` `004 applied` (or `005 applied` after gate E). STOP if not.
+
+Expect `moved 0` in the writer classes (row 9, `writer_classes`); if it is not 0, stop and tell the lead. (A "moved" note already in the relay would become impossible to write over through the app the moment 006 is in.)
+
+### 6b · Apply 006 (2 min)
+
+Run [`supabase/migrations/006_sync_sticky_marker.sql`](../../supabase/migrations/006_sync_sticky_marker.sql).
+
+**Expect:** `Success. No rows returned`
+
+Its refusals come before anything starts, and each ends "Nothing was changed.":
+
+- `SpendTrack 006: the sync functions from 004 are missing or not as 004 made them. …` → STOP: 004 isn't in, or something changed the functions.
+- `SpendTrack 006: run this as the table owner (…); you are …. Nothing was changed.` → set the role selector to **postgres** and run again. If it still says so, STOP.
+- `SpendTrack 006: public.prune_stale_sync_buckets(interval) is missing or not owned by the table owner (…). Tell the lead. …` → STOP.
+- Any other ERROR → `ROLLBACK;` once, then STOP. Nothing was applied.
+
+Your devices notice nothing.
+
+### 6c · Check 006 (3 min)
+
+Run [`supabase/checks/006_verify.sql`](../../supabase/checks/006_verify.sql). It has the same shape as the other checks, works on throwaway rows only, and undoes everything it wrote.
+
+**Expect** row 0: `check` = `RESULT`, `actual` = `PASS 12/12`, and `pass` = true on every row. The last row is `nothing_left_behind`. `acting_as_anon` may say `SKIPPED: …`; that's fine, and row 0 still says PASS.
+
+Then run your gate's check again: [`004_verify.sql`](../../supabase/checks/004_verify.sql) (`PASS 34/34`) if 005 isn't applied, or [`005_verify.sql`](../../supabase/checks/005_verify.sql) (`PASS 20/20`) if it is. 006_verify doesn't replace them.
+
+**STOP if a row 0 says `FAIL`.** Paste the whole table to the lead. There is nothing to undo, and 006 can stay as it is. (On a database without 006, 006_verify always FAILs on `marker_kept_on_cas`, `marker_kept_on_force`, `marker_kept_on_forced_envelope` and `prune_keeps_moved`: run it only after 006.)
+
+<details>
+<summary>What each check name means</summary>
+
+- `functions_intact`: the three sync functions are still as 004 made them (they run with the table owner's rights, can't be misled by other schemas, belong to the table owner; the app's key may call them, no other role may).
+- `prune_intact`: the prune function is still locked: only you may run it.
+- `throwaway_ids_free`, `acting_as_anon`: as in C4.
+- `marker_kept_on_cas`, `marker_kept_on_force`, `marker_kept_on_forced_envelope`: a "moved" note isn't written over, whether the writer holds the current token, forces, or sends an encrypted copy.
+- `marker_replaces_marker`: a newer "moved" note can still replace an older one.
+- `plain_still_written`, `marker_replaces_plain`: ordinary copies are written as before, and a "moved" note can still replace one.
+- `prune_keeps_moved`: a "moved" note older than the prune's limit but younger than four times it survives the prune; one older than four times it, and an old ordinary copy, don't. The check runs the prune inside its own undo, so nothing of yours is removed.
+- `nothing_left_behind`: no test row is left.
+
+</details>
+
+**Later:** if you ever run `004_sync_rpc.sql` again (only when the lead asks), run 006 again straight after it: 004 puts its own `st_sync_push` back. 006_verify tells you which one is in.
+
+**If a "moved" note was written by mistake** (only when the lead says so): in the SQL editor, as **postgres**, put your sync code (Settings › Sync › Show) in place of `YOUR-SYNC-CODE` and look at that one row first:
+
+```sql
+SELECT sync_id, updated_at, payload -> 'x5' -> 'moved' AS moved FROM public.sync_buckets WHERE sync_id = 'YOUR-SYNC-CODE' AND payload -> 'expenses' = '"moved"';
+```
+
+It must list exactly one row, your code. Then delete that one row:
+
+```sql
+DELETE FROM public.sync_buckets WHERE sync_id = 'YOUR-SYNC-CODE' AND payload -> 'expenses' = '"moved"' RETURNING sync_id;
+```
+
+It must list the same one code. Your entries are safe on your devices, but they must sync again: a device that already says "Sync was made private on your other device" stays stopped on its own; on it, use Disconnect, then join again with the same code.
+
+Log it in the [006 log](#006-log).
+
+---
+
 ## What you'll see after the lockdown
 
 - **Sync works as before**, through the functions.
@@ -406,7 +477,13 @@ What you see, what it means, what to do.
 
 ## Rollback
 
-Every undo is safe to run twice. Order matters: switch the app back only while 005 is not applied, and undo 005 before 004.
+Every undo is safe to run twice. Order matters: switch the app back only while 005 is not applied, and undo 005 and 006 before 004.
+
+### R0 · Undo 006 (optional)
+
+Only when the lead asks. Run [`supabase/migrations/006_sync_sticky_marker.rollback.sql`](../../supabase/migrations/006_sync_sticky_marker.rollback.sql). **Expect:** `Success. No rows returned`. It puts back 004's `st_sync_push` and 003's prune function, exactly, and changes nothing else; on a database where 006 never ran it changes nothing. Your devices notice nothing. Afterwards your gate's check (`004_verify.sql` or `005_verify.sql`) still PASSes, and `006_verify.sql` FAILs on the four rows named in [6c](#6c--check-006-3-min): expected.
+
+Undo it before 004 (R3), not after: once 004 is undone it refuses with `SpendTrack 006 rollback: the sync functions from 004 are missing or not as 004 made them. Tell the lead. Nothing was changed.` Undoing 005 doesn't need it.
 
 ### R1 · Switch the app back (only while 005 is not applied)
 
@@ -446,7 +523,7 @@ None of this is needed for sync. Ask the lead first.
   It lists only the throwaway ids it removed, each starting `00000000-0000-4000-8000-`. Both conditions must hold, so it can't touch a real sync code.
 
 - **Old rows** that no current SpendTrack wrote (the preflight's `writer_classes` counts them as `other`): the lead reviews them with you before anything is removed.
-- **Automatic pruning** of rows untouched for a year, scheduled with `pg_cron` and run as `postgres`, never through the public key. The lead gives you the exact SQL.
+- **Automatic pruning** of rows untouched for a year, scheduled with `pg_cron` and run as `postgres`, never through the public key. The lead gives you the exact SQL. Apply 006 first: it makes the prune keep "moved" notes four times as long.
 
 ## Log
 
@@ -477,5 +554,14 @@ These outputs hold no sync code and none of your data, so they're safe to paste 
 | E4 005_verify (RESULT)                         |               |              |       |
 | E5 verify-cas --lockdown (RESULT)              |               |              |       |
 | E6 phone and laptop, test entry                |               |              |       |
+
+### 006 log
+
+| Step                                       | Date and time | What it said | Notes |
+| ------------------------------------------ | ------------- | ------------ | ----- |
+| 6a preflight (verdict, stage)              |               |              |       |
+| 6b apply 006                               |               |              |       |
+| 6c 006_verify (RESULT)                     |               |              |       |
+| 6c 004_verify or 005_verify again (RESULT) |               |              |       |
 
 Paste full outputs below each table if you like, each in its own block.
