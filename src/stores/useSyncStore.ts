@@ -175,7 +175,7 @@ export function needsReload(kind: SyncFailure['kind']): boolean {
 export const SYNC_PILL_MEDIA = '(min-width: 1280px)'
 
 /** The sync pill is on screen, so it shows (and announces) what sync is doing. */
-export function syncPillShown(): boolean {
+function syncPillShown(): boolean {
   return (
     typeof window !== 'undefined' &&
     typeof window.matchMedia === 'function' &&

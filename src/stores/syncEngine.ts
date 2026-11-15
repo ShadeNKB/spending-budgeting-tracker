@@ -171,7 +171,7 @@ export function syncMessage(
 
 /** A 53400 from the relay: it will not take another row. */
 export const FULL_RELAY_MESSAGE = 'The sync relay is full. Your changes are saved on this device.'
-export const REPAIRED_MESSAGE = 'The synced copy was damaged. Restored it from this device.'
+const REPAIRED_MESSAGE = 'The synced copy was damaged. Restored it from this device.'
 const INVALID_CODE_MESSAGE = "That code isn't valid."
 /** What is wrong with a typed private code, by the reason its check gives (PRIVATE-SYNC 3.5). */
 const PRIVATE_CODE_MESSAGE: Record<St5Failure, string> = {
@@ -196,14 +196,14 @@ const ECHO_MEMORY = 8
 /** Foreign payloads kept from realtime events until the next cycle merges them (P2-10). */
 const NEWS_MEMORY = 4
 /** A relay copy this device cannot read is pushed over at most this often (P2-8). */
-export const REPAIR_EVERY_MS = MEMO_WINDOW
+const REPAIR_EVERY_MS = MEMO_WINDOW
 /** How long a cycle waits for another tab's cycle before it runs anyway (a frozen tab, P2-18). */
 const LOCK_WAIT_MS = 35_000
 const LOCK_NAME = 'st5:sync'
 /** An old writer's sighting is persisted at most this often (it costs an envelope write). */
 const LEGACY_SEEN_EVERY_MS = 60_000
 /** The mass-removal toast stays this long, like every Undo for a bulk change (P2-12, P2-20). */
-export const MASS_UNDO_MS = 30_000
+const MASS_UNDO_MS = 30_000
 /** The conflict toast stays as long as the other toasts with a Review. */
 export const CONFLICT_TOAST_MS = 8000
 /** st_sync_push refuses a payload whose jsonb text is over 1.2 MB (migration 004). */

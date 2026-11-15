@@ -58,8 +58,6 @@ export const SAMPLE_ID_PREFIX = 'demo-'
 export const isOwnRow = (e: { readonly id: string }): boolean =>
   !IS_DEMO || !e.id.startsWith(SAMPLE_ID_PREFIX)
 
-export type SyncStatus = ExpenseFields['syncStatus']
-
 export interface ExpenseState extends ExpenseFields, ExpenseActions {
   /** P2-14: re-runnable; flushes pending writes, then boots from the current storage. */
   hydrate(): Promise<void>
