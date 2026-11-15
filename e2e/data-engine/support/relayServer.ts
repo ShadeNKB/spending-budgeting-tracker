@@ -42,7 +42,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { extname, join, normalize, sep } from 'node:path'
 import type { Duplex } from 'node:stream'
 
-export type WriterClass = 'v5' | 'v085' | 'legacy' | 'other'
+export type WriterClass = 'v5' | 'v085' | 'legacy' | 'e2e' | 'other'
 
 export type RequestKind =
   | 'head'
@@ -79,7 +79,10 @@ export interface RelayRequest {
   /** The page origin that made it (one device per origin in this suite). */
   readonly origin: string | null
   readonly syncId: string | null
-  /** For a write: who wrote it, read from the payload (`x5` → v5, `wr` → 0.8.5, else legacy). */
+  /**
+   * For a write: who wrote it, read from the payload (`x5` → v5, `wr` → 0.8.5, a private
+   * sync's envelope → e2e, else legacy).
+   */
   readonly writer: WriterClass | null
   readonly outcome: Outcome
   readonly fn?: RpcName
@@ -255,6 +258,8 @@ export function writerOf(payload: unknown): WriterClass {
   if (!isRecord(payload)) return 'other'
   if (isRecord(payload.x5)) return 'v5'
   if (isRecord(payload.wr)) return 'v085'
+  // a private sync's envelope (PRIVATE-SYNC): ciphertext, nothing of the entries
+  if (payload.st === 5 && typeof payload.ct === 'string') return 'e2e'
   return Array.isArray(payload.expenses) ? 'legacy' : 'other'
 }
 

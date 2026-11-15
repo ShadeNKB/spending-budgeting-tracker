@@ -17,21 +17,34 @@ import {
   type SyncResult,
   type SyncView,
 } from '../../stores/useSyncStore'
-import { previewJoin, type JoinPreview } from '../../stores/syncEngine'
+import {
+  newPrivateCode,
+  previewJoin,
+  replaceRelayCopy,
+  type JoinPreview,
+} from '../../stores/syncEngine'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useUIStore } from '../../stores/useUIStore'
 
 // A build with sync configured; the store's actions are replaced per test, so no request is made.
 // A test of a build without relay settings turns `relayBuild.on` off (reset after each test).
-const relayBuild = vi.hoisted(() => ({ on: true }))
+// `private`: the relay can keep a private sync safe (`privateSyncReady`), off unless a test says.
+const relayBuild = vi.hoisted(() => ({ on: true, private: false }))
 vi.mock('../../services/syncConfig', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../services/syncConfig')>()),
   get syncEnabled() {
     return relayBuild.on
   },
+  get privateSyncReady() {
+    return relayBuild.private
+  },
 }))
 // The engine is stubbed: the panel reaches it only through loadSyncEngine() (Join's preview).
-vi.mock('../../stores/syncEngine', () => ({ previewJoin: vi.fn() }))
+vi.mock('../../stores/syncEngine', () => ({
+  previewJoin: vi.fn(),
+  newPrivateCode: vi.fn(),
+  replaceRelayCopy: vi.fn(),
+}))
 vi.mock('../../stores/useSyncStore', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../stores/useSyncStore')>()),
   loadSyncEngine: vi.fn(() => import('../../stores/syncEngine')),
@@ -55,6 +68,10 @@ const MSG: Record<SyncFailure['kind'], string> = {
   'too-large':
     "Sync paused: your data (1365 KB) is too large for the sync server. It's still saved here — export a backup.",
   moved: 'Sync moved to a newer version. Reload SpendTrack to update.',
+  'moved-private':
+    'Sync was made private on your other device. Enter the new sync code shown there.',
+  'no-cas':
+    'Sync paused: this sync server cannot keep a private sync safe yet. Your data is safe on this device.',
   'update-required': 'Sync moved to a newer version. Reload SpendTrack to update.',
   reload: SYNC_RELOAD_MESSAGE,
   'not-found': 'No synced data found for this code. Check it on your other device.',
@@ -79,6 +96,7 @@ const failure = (kind: SyncFailure['kind'], extra: Partial<SyncFailure> = {}): S
 })
 const FOUND: JoinPreview = {
   kind: 'found',
+  code: CODE,
   here: 2,
   synced: 5,
   after: 7,
@@ -156,12 +174,14 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   relayBuild.on = true
+  relayBuild.private = false
   useSyncStore.setState(initialSync, true)
   useUIStore.setState(initialUI, true)
   useExpenseStore.setState(initialExpenses, true)
   vi.useRealTimers()
   vi.restoreAllMocks()
   vi.mocked(previewJoin).mockReset()
+  vi.mocked(replaceRelayCopy).mockReset()
   vi.unstubAllGlobals()
 })
 
@@ -1499,5 +1519,198 @@ describe("the demo's sample data (P2-22, F-027)", () => {
     expect(setupSync).not.toHaveBeenCalled()
     expect(toasts()).toEqual([['error', 'SpendTrack is still loading your data.']])
     expect(generate()).toHaveFocus()
+  })
+})
+
+// PRIVATE-SYNC 3.2, 3.7, 3.8 (release 1): what the panel shows of a private sync, and of a
+// device fenced out of a sync that was made private elsewhere.
+describe('a private sync, and a device fenced out of one', () => {
+  const PRIVATE = 'ST5-0004106-1050R3G-G28A1C6-0T3GFS3'
+
+  it('a private sync says what the code protects, and never shows the code whole', () => {
+    connectedPanel({ syncId: PRIVATE })
+    expect(
+      screen.getByText(
+        'Private sync: what this device sends is encrypted here first. Only a device with this code can read the synced copy from now on.',
+      ),
+    ).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('0004106')
+  })
+
+  it('a build that can keep a private sync says so before Generate, and Generate makes a private code', async () => {
+    relayBuild.private = true
+    vi.mocked(newPrivateCode).mockReturnValue(PRIVATE)
+    const setupSync = vi.fn(() => Promise.resolve(OK))
+    useSyncStore.setState({ setupSync })
+    render(<SyncPanel />)
+    expect(
+      screen.getByText(
+        "Generate a sync code here, then enter it on your other device. There's no account: the code links them. A sync started here is private: each device encrypts what it sends, so only a device with the code can read the synced copy.",
+      ),
+    ).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain("isn't encrypted yet")
+    fireEvent.click(generate())
+    await settle()
+    expect(setupSync).toHaveBeenCalledTimes(1)
+    expect(setupSync).toHaveBeenCalledWith(PRIVATE)
+  })
+
+  it('a plain sync says none of it', () => {
+    connectedPanel()
+    expect(screen.queryByText(/^Private sync:/)).toBeNull()
+  })
+
+  it('Disconnect on a private sync says the code is forgotten', () => {
+    connectedPanel({ syncId: PRIVATE })
+    fireEvent.click(screen.getByRole('button', { name: /Disconnect sync/ }))
+    expect(
+      screen.getByText(
+        'This device stops syncing and forgets the sync code. Copy it first if you may link this device again. Your data stays here and on your other devices.',
+      ),
+    ).toBeInTheDocument()
+  })
+
+  it('a fenced device has the code field in place, and joining hands the private code on as a join', async () => {
+    const setupSync = vi.fn(() =>
+      Promise.resolve({ ok: true as const, pushed: false, changedLocal: true }),
+    )
+    useSyncStore.setState({ setupSync })
+    vi.mocked(previewJoin).mockImplementation(() => Promise.resolve({ ...FOUND, code: PRIVATE }))
+    connectedPanel({ cloudStatus: 'paused', lastError: failure('moved-private') })
+    expect(
+      screen.getByText(
+        'No code? Use Disconnect at the bottom of this page, then start a new sync. Your entries stay on this device.',
+      ),
+    ).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Sync code'), {
+      target: { value: PRIVATE.toLowerCase() },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Join' }))
+    await settle()
+    fireEvent.click(
+      within(screen.getByRole('group', { name: 'Join this sync?' })).getByRole('button', {
+        name: 'Join',
+      }),
+    )
+    await settle()
+    expect(setupSync).toHaveBeenCalledWith(PRIVATE, { join: true })
+  })
+
+  it('a fenced device shows one code field and not its old code', () => {
+    connectedPanel({ cloudStatus: 'paused', lastError: failure('moved-private') })
+    expect(screen.getByLabelText('Sync code')).toBeInTheDocument()
+    expect(screen.queryByText('Your sync code')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Show code' })).toBeNull()
+  })
+
+  it('a device that is not fenced has no code field in the linked view', () => {
+    connectedPanel({ cloudStatus: 'paused', lastError: failure('moved') })
+    expect(screen.queryByLabelText('Sync code')).toBeNull()
+  })
+
+  // PRIVATE-SYNC 3.9: a private copy this device cannot read as current, and no newer build to
+  // reload into.
+  describe('replacing a synced copy this device cannot read', () => {
+    const QUESTION = "Replace the synced copy with this device's?"
+    const paused = () => ({
+      syncId: PRIVATE,
+      cloudStatus: 'paused' as const,
+      lastError: failure('update-required'),
+    })
+    const replaceButton = () => screen.queryByRole('button', { name: 'Replace the synced copy' })
+    const ask = () => {
+      const button = replaceButton()
+      if (button === null) throw new Error('no Replace button')
+      fireEvent.click(button)
+      return screen.getByRole('group', { name: QUESTION })
+    }
+
+    it('asks first, says what is lost, and replaces only on the answer', async () => {
+      vi.mocked(replaceRelayCopy).mockImplementation(() => Promise.resolve(OK))
+      connectedPanel(paused())
+      expect(
+        screen.getByText(
+          'Reloaded and still paused? The synced copy may be damaged. This device can replace it with its own copy.',
+        ),
+      ).toBeInTheDocument()
+      const question = ask()
+      expect(replaceRelayCopy).not.toHaveBeenCalled()
+      expect(within(question).getByRole('button', { name: 'Cancel' })).toHaveFocus()
+      expect(question).toHaveAccessibleDescription(
+        "Do this only if reloading didn't help. Your other devices keep their entries and add them back when they next sync. Anything that is no longer on any of your devices is lost.",
+      )
+      fireEvent.click(within(question).getByRole('button', { name: 'Replace' }))
+      await settle()
+      expect(replaceRelayCopy).toHaveBeenCalledTimes(1)
+      expect(toasts()).toEqual([['success', 'Synced copy replaced']])
+      expect(screen.getByRole('button', { name: 'Sync now' })).toHaveFocus()
+    })
+
+    it('Cancel replaces nothing and hands focus back to the button', () => {
+      vi.mocked(replaceRelayCopy).mockImplementation(() => Promise.resolve(OK))
+      connectedPanel(paused())
+      fireEvent.click(within(ask()).getByRole('button', { name: 'Cancel' }))
+      expect(replaceRelayCopy).not.toHaveBeenCalled()
+      expect(replaceButton()).toHaveFocus()
+    })
+
+    it('is busy while it runs, keeps focus, and cannot be asked twice', async () => {
+      let finish: (result: SyncResult) => void = () => {}
+      vi.mocked(replaceRelayCopy).mockImplementation(
+        () =>
+          new Promise<SyncResult>((resolve) => {
+            finish = resolve
+          }),
+      )
+      connectedPanel(paused())
+      fireEvent.click(within(ask()).getByRole('button', { name: 'Replace' }))
+      await settle()
+      const busy = screen.getByRole('button', { name: 'Replacing…' })
+      expect(busy).toHaveFocus()
+      expect(busy).toHaveAttribute('aria-disabled', 'true')
+      fireEvent.click(busy)
+      expect(screen.queryByRole('group', { name: QUESTION })).toBeNull()
+      await act(async () => {
+        finish(failed('network'))
+        await Promise.resolve()
+      })
+      expect(replaceRelayCopy).toHaveBeenCalledTimes(1)
+      expect(toasts()).toEqual([['warning', MSG.network]])
+      expect(replaceButton()).not.toBeNull()
+    })
+
+    it('when the pause ends by itself under the question, the question goes and Sync now has focus', () => {
+      vi.mocked(replaceRelayCopy).mockImplementation(() => Promise.resolve(OK))
+      connectedPanel(paused())
+      ask()
+      // the other device repaired the copy: a cycle of this one cleared the pause
+      act(() => {
+        useSyncStore.setState({ cloudStatus: 'synced', lastError: null })
+      })
+      expect(screen.queryByRole('group', { name: QUESTION })).toBeNull()
+      expect(replaceButton()).toBeNull()
+      expect(screen.getByRole('button', { name: 'Sync now' })).toHaveFocus()
+      // and the question is not waiting there the next time the pause comes
+      act(() => {
+        useSyncStore.setState({ cloudStatus: 'paused', lastError: failure('update-required') })
+      })
+      expect(screen.queryByRole('group', { name: QUESTION })).toBeNull()
+      expect(replaceButton()).not.toBeNull()
+      expect(replaceRelayCopy).not.toHaveBeenCalled()
+    })
+
+    it('is not offered on a plain sync, on any other pause, or while a new build waits', () => {
+      const { unmount } = connectedPanel({ ...paused(), syncId: CODE })
+      expect(replaceButton()).toBeNull()
+      unmount()
+      const other = connectedPanel({ ...paused(), lastError: failure('too-large') })
+      expect(replaceButton()).toBeNull()
+      other.unmount()
+      // Reload is the answer while a new build is waiting
+      vi.spyOn(getUpdateController(), 'getSnapshot').mockReturnValue('ready')
+      connectedPanel(paused())
+      expect(replaceButton()).toBeNull()
+      expect(screen.getByRole('button', { name: 'Reload' })).toBeInTheDocument()
+    })
   })
 })

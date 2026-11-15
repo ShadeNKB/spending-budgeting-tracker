@@ -6,6 +6,14 @@
 
 const SYNC_KEY = 'st5:sync'
 const SYNC_ID_KEY = 'syncId'
+/**
+ * A private bucket's code, `{ code, at, established }` (PRIVATE-SYNC 3.2). Its own key: no
+ * build before 0.21.0 reads or writes this name, so none can overwrite the code, and the raw
+ * export leaves out every key named `synckey` (lib/rescue.ts), in older builds too.
+ */
+const PRIVATE_KEY = 'st5:synckey'
+/** The display form of a private code. Shape only: the data core checks its sum. */
+const PRIVATE_CODE = /^ST5(-[0-9A-HJKMNP-TV-Z]{7}){4}$/
 const DEV_KEY = 'st5:dev'
 const LEGACY_DEV_KEY = 'spendtrack:dev'
 const QUARANTINE_SYNC_PREFIX = 'st5:q:st5:sync:'
@@ -39,14 +47,18 @@ const isQuota = (err: unknown): boolean =>
 let quotaWarned = false
 
 /**
- * Writes one key. `area` is the Storage to write (the engine passes the one it booted on, so two
- * engines in one test each write their own tab's view); it defaults to `localStorage`.
+ * The storage this module works on: the page's own, bound the first time it is needed. A page
+ * has one `localStorage` for its whole life, so nothing changes there; two devices in one test
+ * each keep their own sync setup, where the last one booted used to hold both.
  */
-export function safeSet(
-  key: string,
-  value: string,
-  area: Pick<Storage, 'setItem'> = localStorage,
-): void {
+let bound: Storage | null = null
+const page = (): Storage => (bound ??= localStorage)
+
+/**
+ * Writes one key. `area` is the Storage to write (the engine passes the one it booted on, so two
+ * engines in one test each write their own tab's view); it defaults to this page's.
+ */
+export function safeSet(key: string, value: string, area: Pick<Storage, 'setItem'> = page()): void {
   try {
     area.setItem(key, value)
   } catch (err) {
@@ -71,7 +83,7 @@ function read(key: string): string | null {
 /** The stored value; null when the key is absent; undefined when storage refused the read. */
 function readKey(key: string): string | null | undefined {
   try {
-    return localStorage.getItem(key)
+    return page().getItem(key)
   } catch {
     return undefined
   }
@@ -80,7 +92,7 @@ function readKey(key: string): string | null | undefined {
 /** Best effort: a key that cannot be removed is read the same way next time. */
 function forget(key: string): void {
   try {
-    localStorage.removeItem(key)
+    page().removeItem(key)
   } catch {
     // storage refused: the next read decides again from the same keys
   }
@@ -119,11 +131,66 @@ const plainOf = (cfg: unknown): Readonly<Record<string, unknown>> | null =>
 const isNewer = (cfg: unknown): boolean =>
   isRecordLike(cfg) && typeof cfg.kind === 'string' && cfg.kind !== 'plain'
 
-const configOf = (code: string, joinedAt: unknown, established: boolean): string =>
-  JSON.stringify({ kind: 'plain', code, rowId: code, joinedAt, established })
+/**
+ * A plain bucket this device was fenced out of: its row held a moved marker (3.7). While set,
+ * the device never pulls, pushes or re-creates that row, whatever the row holds later.
+ */
+export interface Fence {
+  /** The marker's reason: `private` asks for the private code; anything else is a move. */
+  readonly why: string
+  readonly at: number
+}
+
+const fenceOf = (v: unknown): Fence | null =>
+  isRecordLike(v) && typeof v.why === 'string' && typeof v.at === 'number'
+    ? { why: v.why.slice(0, 40), at: v.at }
+    : null
+
+const configOf = (
+  code: string,
+  joinedAt: unknown,
+  established: boolean,
+  fenced: Fence | null = null,
+): string =>
+  JSON.stringify({
+    kind: 'plain',
+    code,
+    rowId: code,
+    joinedAt,
+    established,
+    ...(fenced === null ? {} : { fenced }),
+  })
+
+/** What `st5:sync` says on a private device: the kind, and nothing secret. */
+const privateConfigOf = (joinedAt: number, established: boolean): string =>
+  JSON.stringify({ kind: 'e2e', joinedAt, established })
+
+interface PrivateKey {
+  readonly code: string
+  readonly at: number
+  readonly established: boolean
+}
+
+/** The private code this device holds, or null. A value of another shape is no code. */
+function privateKey(): PrivateKey | null {
+  const raw = read(PRIVATE_KEY)
+  const v = raw === null ? null : parseJson(raw)
+  if (!isRecordLike(v) || typeof v.code !== 'string' || !PRIVATE_CODE.test(v.code)) return null
+  return {
+    code: v.code,
+    at: typeof v.at === 'number' ? v.at : 0,
+    established: v.established !== false,
+  }
+}
 
 export type SyncConfig =
-  | { readonly kind: 'plain'; readonly code: string; readonly established: boolean }
+  | {
+      readonly kind: 'plain'
+      readonly code: string
+      readonly established: boolean
+      readonly fenced?: Fence
+    }
+  | { readonly kind: 'e2e'; readonly code: string; readonly established: boolean }
   | { readonly kind: 'newer' }
 
 // One raw copy per distinct corrupt value per session: getSyncId runs on every sync cycle.
@@ -171,6 +238,10 @@ export const storage = {
    * back to `syncId`.
    */
   getSyncId(): string | null {
+    // A private device has no plain code, and none of the rules below may run on it: a stray
+    // `syncId` must not be adopted over it, and `st5:sync` must not be forgotten for the lack
+    // of a mirror it never had.
+    if (privateKey() !== null) return null
     const raw = read(SYNC_KEY)
     const cfg = raw === null ? null : parseJson(raw)
     if (isNewer(cfg)) return null
@@ -192,16 +263,41 @@ export const storage = {
 
   /**
    * The saved setup: a plain code and whether this device is established on it (it may create
-   * the relay copy), a newer build's setup this one must keep, or null.
+   * the relay copy), a private code, a newer build's setup this one must keep, or null.
+   *
+   * A private code wins over everything else here (3.2): over a stray `syncId`, over a
+   * `st5:sync` an older build wrote in its place, over a missing one. `st5:sync` is then put
+   * back as the private marker, which is what tells an older build not to sync.
    */
   getSyncConfig(): SyncConfig | null {
+    const priv = privateKey()
     const raw = read(SYNC_KEY)
     const cfg = raw === null ? null : parseJson(raw)
+    if (priv !== null) {
+      if (!(isRecordLike(cfg) && cfg.kind === 'e2e')) {
+        tryWrite(SYNC_KEY, privateConfigOf(priv.at, priv.established))
+      }
+      if (readKey(SYNC_ID_KEY) !== null) forget(SYNC_ID_KEY)
+      return { kind: 'e2e', code: priv.code, established: priv.established }
+    }
     if (isNewer(cfg)) return { kind: 'newer' }
     const code = this.getSyncId()
     if (code === null) return null
-    const plain = plainOf(cfg)
-    return { kind: 'plain', code, established: plain?.code !== code || plain.established !== false }
+    // read again: getSyncId may have adopted another code and rewritten the config
+    const now = read(SYNC_KEY)
+    const plain = plainOf(now === null ? null : parseJson(now))
+    const fenced = plain?.code === code ? fenceOf(plain.fenced) : null
+    return {
+      kind: 'plain',
+      code,
+      established: plain?.code !== code || plain.established !== false,
+      ...(fenced === null ? {} : { fenced }),
+    }
+  },
+
+  /** Sync is set up on this device, plain or private: the local engine records its outbox. */
+  isLinked(): boolean {
+    return privateKey() !== null || this.getSyncId() !== null
   },
 
   /**
@@ -215,9 +311,17 @@ export const storage = {
    */
   saveSyncId(id: string | null, established?: boolean): void {
     if (id === null) {
-      localStorage.removeItem(SYNC_KEY)
-      localStorage.removeItem(SYNC_ID_KEY)
+      // the private code first: were the rest to fail, the device must not stay private
+      // with nothing on screen saying so
+      page().removeItem(PRIVATE_KEY)
+      page().removeItem(SYNC_KEY)
+      page().removeItem(SYNC_ID_KEY)
       return
+    }
+    // The plain writer never writes over a private setup (3.2): start-up and another tab
+    // call it with whatever code they hold in memory.
+    if (privateKey() !== null) {
+      throw new Error('A private sync is set up on this device: disconnect it first.')
     }
     const raw = read(SYNC_KEY)
     const same = plainOf(raw === null ? null : parseJson(raw))
@@ -226,7 +330,11 @@ export const storage = {
     const before = readKey(SYNC_ID_KEY)
     safeSet(SYNC_ID_KEY, id)
     try {
-      safeSet(SYNC_KEY, configOf(id, kept?.joinedAt ?? Date.now(), flag))
+      // the same code keeps its fence: a restart must not un-fence the device
+      safeSet(
+        SYNC_KEY,
+        configOf(id, kept?.joinedAt ?? Date.now(), flag, kept ? fenceOf(kept.fenced) : null),
+      )
     } catch (err) {
       if (!flag && before !== id) {
         if (typeof before === 'string') tryWrite(SYNC_ID_KEY, before)
@@ -238,11 +346,57 @@ export const storage = {
 
   /** A joined code's first cycle found its relay copy: from now on this device may re-create it. */
   markEstablished(code: string): void {
+    const priv = privateKey()
+    if (priv !== null) {
+      if (priv.code === code && !priv.established) {
+        tryWrite(PRIVATE_KEY, JSON.stringify({ code, at: priv.at, established: true }))
+        tryWrite(SYNC_KEY, privateConfigOf(priv.at, true))
+      }
+      return
+    }
     const raw = read(SYNC_KEY)
     const cfg = plainOf(raw === null ? null : parseJson(raw))
     if (cfg?.code === code && cfg.established === false) {
-      tryWrite(SYNC_KEY, configOf(code, cfg.joinedAt, true))
+      tryWrite(SYNC_KEY, configOf(code, cfg.joinedAt, true, fenceOf(cfg.fenced)))
     }
+  },
+
+  /**
+   * Saves a private code (3.2, 3.5): the key first, read back before anything else changes,
+   * then `st5:sync` as the private marker, then the plain mirror goes. A plain setup (and its
+   * fence) is replaced. `established` left out keeps the flag the same code already has
+   * (start-up re-saves the saved code); a code new to this device is established. Throws
+   * when the code has not the shape of one, or storage did not keep it: nothing else was
+   * changed then.
+   */
+  savePrivateSync(code: string, flag?: boolean): void {
+    if (!PRIVATE_CODE.test(code)) throw new RangeError('Not a private sync code.')
+    const held = privateKey()
+    const same = held?.code === code ? held : null
+    const at = same === null ? Date.now() : same.at
+    const established = flag ?? same?.established ?? true
+    const value = JSON.stringify({ code, at, established })
+    safeSet(PRIVATE_KEY, value)
+    if (read(PRIVATE_KEY) !== value) throw new Error('This browser did not keep the code.')
+    tryWrite(SYNC_KEY, privateConfigOf(at, established))
+    forget(SYNC_ID_KEY)
+  },
+
+  /**
+   * Fences this device out of its plain bucket (3.7): persisted before the pause, so a row
+   * that is rewritten or removed afterwards never un-fences it. False when there is no plain
+   * setup for that code, or storage refused: the caller then pauses for this session only.
+   */
+  setFenced(code: string, why: string, at: number): boolean {
+    if (privateKey() !== null) return false
+    const raw = read(SYNC_KEY)
+    const cfg = plainOf(raw === null ? null : parseJson(raw))
+    if (cfg?.code !== code) return false
+    if (fenceOf(cfg.fenced) !== null) return true
+    return tryWrite(
+      SYNC_KEY,
+      configOf(code, cfg.joinedAt, cfg.established !== false, { why: why.slice(0, 40), at }),
+    )
   },
 
   /**

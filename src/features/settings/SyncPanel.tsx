@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useId, useRef, useState, useSyncExternalStore, type ReactNode } from 'react'
 import { formatDate } from '../../lib/formatDate'
 import {
   Cloud,
@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   Info,
   Download,
+  Upload,
   type LucideIcon,
 } from 'lucide-react'
 import { Button } from '../../ui/Button'
@@ -19,13 +20,18 @@ import { shieldGesture } from '../../ui/pressShield'
 import {
   FAILING_AFTER_MS,
   OLD_DEVICE_WAITING,
+  SYNC_RELOAD_MESSAGE,
   failingSinceMessage,
   failureSeverity,
   isFailing,
   isPaused,
+  isPrivateCode,
+  loadSyncEngine,
   needsReload,
+  newBuildWaiting,
   pausedDetail,
   reloadSpendTrack,
+  subscribeNewBuild,
   syncsWhenOnline,
   useSyncStore,
   type CloudStatus,
@@ -34,7 +40,7 @@ import {
 } from '../../stores/useSyncStore'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useUIStore } from '../../stores/useUIStore'
-import { syncEnabled } from '../../services/syncConfig'
+import { privateSyncReady, syncEnabled } from '../../services/syncConfig'
 import { useTick } from '../../hooks/useTick'
 import { useToast } from '../../hooks/useToast'
 import { ARIA_DISABLED, DemoQuestion, JoinSync } from './JoinSync'
@@ -66,6 +72,8 @@ const ERROR_LABEL: Record<SyncFailure['kind'], string> = {
   offline: "Offline — will sync when you're back",
   'too-large': 'Sync paused',
   moved: 'Sync paused',
+  'moved-private': 'Sync paused',
+  'no-cas': 'Sync paused',
   'update-required': 'Sync paused',
   reload: 'Sync paused',
   'not-found': 'Sync paused',
@@ -241,7 +249,7 @@ function setupFailure(
 }
 
 /** Controls that take focus after a view swap (see `focusNext`). */
-type FocusTarget = 'sync-now' | 'generate' | 'reconnect' | 'disconnect'
+type FocusTarget = 'sync-now' | 'generate' | 'reconnect' | 'disconnect' | 'replace'
 
 const BANNER_TONE: Record<BannerTone, string> = {
   error: 'border-negative/20 bg-negative/10 text-negative',
@@ -469,12 +477,17 @@ function SyncContent() {
   const setupSync = useSyncStore((s) => s.setupSync)
   const disconnectSync = useSyncStore((s) => s.disconnectSync)
   const triggerSync = useSyncStore((s) => s.triggerSync)
+  const buildWaiting = useSyncExternalStore(subscribeNewBuild, newBuildWaiting)
   const toast = useToast()
 
   // The setup this panel is running, if any: every setup control waits for it.
   const [connecting, setConnecting] = useState<SetupRequest['kind'] | null>(null)
   const [manualSyncing, setManualSyncing] = useState(false)
   const [confirmDisconnect, setConfirmDisconnect] = useState(false)
+  // The owner's way out of a private copy this device cannot read (PRIVATE-SYNC 3.9).
+  const [confirmReplace, setConfirmReplace] = useState(false)
+  const [replacing, setReplacing] = useState(false)
+  const syncNow = useRef<HTMLButtonElement | null>(null)
   // Generate while this device remembers a code it left (F-050): one sync or two?
   const [askSeparate, setAskSeparate] = useState(false)
   // Generate or Reconnect asked while the demo's sample rows are here (P2-22): they never
@@ -493,6 +506,23 @@ function SyncContent() {
   const statusId = useId()
   const reconnectHintId = useId()
   useFailingTurn(lastError)
+  // Replace answers a private copy this device cannot read as current, with no newer build to
+  // reload into (PRIVATE-SYNC 3.9). That pause can end by itself, when the other device
+  // repairs the copy: the block then leaves with focus inside it, its question included, so
+  // the question is taken back and Sync now takes the focus.
+  const canReplace =
+    syncId !== null &&
+    isPrivateCode(syncId) &&
+    lastError?.kind === 'update-required' &&
+    !buildWaiting
+  if (!canReplace && confirmReplace) setConfirmReplace(false)
+  const replaceShown = useRef(false)
+  useEffect(() => {
+    if (replaceShown.current && !canReplace && document.activeElement === document.body) {
+      syncNow.current?.focus()
+    }
+    replaceShown.current = canReplace
+  }, [canReplace])
   // "Synced · 2m ago" ages while the panel stays open, as on the pill; a retry counts down.
   useTick(lastError?.retryAt === undefined ? 15_000 : 5_000)
 
@@ -575,11 +605,25 @@ function SyncContent() {
   const run = (request: SetupRequest) => {
     switch (request.kind) {
       case 'generate': {
-        const code = crypto.randomUUID()
+        // A build whose relay writes by compare-and-set starts a private sync (PRIVATE-SYNC
+        // 3.6). Its code is made by the engine, which the screens load on demand; a build on the
+        // upsert transport makes a plain code, as before.
         void link(
           'generate',
-          () => setupSync(code),
-          'Sync code created. Join it on your other device.',
+          async (): Promise<SyncResult> => {
+            let code: string
+            try {
+              code = privateSyncReady
+                ? (await loadSyncEngine()).newPrivateCode()
+                : crypto.randomUUID()
+            } catch {
+              return { ok: false, error: 'reload', message: SYNC_RELOAD_MESSAGE }
+            }
+            return setupSync(code)
+          },
+          privateSyncReady
+            ? 'Private sync code created. Enter it on your other device.'
+            : 'Sync code created. Join it on your other device.',
         )
         return
       }
@@ -663,6 +707,27 @@ function SyncContent() {
     )
   }
 
+  const handleReplace = () => {
+    setConfirmReplace(false)
+    // The question leaves: its button comes back, busy, and takes focus.
+    focusNext.current = 'replace'
+    // The engine's own action, reached as Generate reaches it: the chunk is loaded on demand.
+    const replace = async (): Promise<SyncResult> => {
+      try {
+        return await (await loadSyncEngine()).replaceRelayCopy()
+      } catch {
+        return { ok: false, error: 'reload', message: SYNC_RELOAD_MESSAGE }
+      }
+    }
+    void runRequest(setReplacing, replace, (result) => {
+      if (result.ok) {
+        // The pause is over and this block leaves with it: focus goes to Sync now.
+        syncNow.current?.focus()
+        toast.success('Synced copy replaced')
+      } else reportFailure(result)
+    })
+  }
+
   /** Stops syncing here. A plain code is remembered for 30 days for a one-tap Reconnect. */
   const handleDisconnect = (code: string | null) => {
     if (code !== null) keepPrevious(code, Date.now())
@@ -670,6 +735,8 @@ function SyncContent() {
     requestGen.current++
     setConnecting(null)
     setManualSyncing(false)
+    setReplacing(false)
+    setConfirmReplace(false)
     disconnectSync()
     setConfirmDisconnect(false)
     toast.info('Sync disconnected')
@@ -764,11 +831,21 @@ function SyncContent() {
             <Cloud size={14} className="text-accent" aria-hidden />
             Link your devices
           </h3>
-          <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
-            Generate a sync code here, then join it on your other device. There&apos;s no account:
-            the code links them. The synced copy isn&apos;t encrypted yet: until the database
-            lockdown (update 005), anyone with this app&apos;s public key could read it.
-          </p>
+          {/* A new sync is private where the relay can keep one safe (PRIVATE-SYNC 3.6, 3.8). The
+              sentence claims only what holds from then on: a device encrypts what it sends. */}
+          {privateSyncReady ? (
+            <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
+              Generate a sync code here, then enter it on your other device. There&apos;s no
+              account: the code links them. A sync started here is private: each device encrypts
+              what it sends, so only a device with the code can read the synced copy.
+            </p>
+          ) : (
+            <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
+              Generate a sync code here, then join it on your other device. There&apos;s no account:
+              the code links them. The synced copy isn&apos;t encrypted yet: until the database
+              lockdown (update 005), anyone with this app&apos;s public key could read it.
+            </p>
+          )}
         </div>
 
         {prev !== null &&
@@ -881,6 +958,7 @@ function SyncContent() {
             </div>
             <button
               ref={(element) => {
+                syncNow.current = element
                 focusWhenShown('sync-now')(element)
                 // The pill that opened Settings asked for it.
                 if (element && useUIStore.getState().takeSettingsFocus('sync-now')) element.focus()
@@ -898,7 +976,79 @@ function SyncContent() {
           </div>
           <SyncBanners />
         </div>
-        <SyncCode code={syncId} />
+        {/* Fenced out of this sync because it was made private on another device (PRIVATE-SYNC
+            3.7): the field for the new code is here, in place. Joining keeps this device's
+            entries and merges them. */}
+        {lastError?.kind === 'moved-private' && (
+          <div className="flex flex-col gap-2">
+            <JoinSync
+              busy={connecting !== null}
+              joining={connecting === 'join'}
+              onJoin={(code) => {
+                run({ kind: 'join', code })
+              }}
+              onActiveChange={setJoinActive}
+            />
+            <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
+              No code? Use Disconnect at the bottom of this page, then start a new sync. Your
+              entries stay on this device.
+            </p>
+          </div>
+        )}
+        {/* A private copy this device cannot read as current, with no newer build to reload
+            into (PRIVATE-SYNC 3.9): the "newer" mark is read before the copy is opened, so a
+            damaged one would pause sync for good. The owner may replace the copy. */}
+        {canReplace && (
+          <div className="flex flex-col gap-2">
+            <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
+              Reloaded and still paused? The synced copy may be damaged. This device can replace it
+              with its own copy.
+            </p>
+            {confirmReplace ? (
+              <InlineConfirm
+                tone="warning"
+                question="Replace the synced copy with this device's?"
+                detail="Do this only if reloading didn't help. Your other devices keep their entries and add them back when they next sync. Anything that is no longer on any of your devices is lost."
+                confirmLabel="Replace"
+                onConfirm={handleReplace}
+                onCancel={() => {
+                  focusNext.current = 'replace'
+                  setConfirmReplace(false)
+                }}
+              />
+            ) : (
+              <Button
+                ref={focusWhenShown('replace')}
+                onClick={() => {
+                  if (replacing) return
+                  // The question takes this button's place: a double tap's second tap must
+                  // not answer it.
+                  shieldGesture()
+                  setConfirmReplace(true)
+                }}
+                variant="ghost"
+                aria-disabled={replacing}
+                className={clsx('w-full [@media(pointer:coarse)]:h-11', ARIA_DISABLED)}
+              >
+                {replacing ? (
+                  <Loader2 size={14} className="animate-spin" aria-hidden />
+                ) : (
+                  <Upload size={14} aria-hidden />
+                )}
+                {replacing ? 'Replacing…' : 'Replace the synced copy'}
+              </Button>
+            )}
+          </div>
+        )}
+        {/* A fenced device's code is the old one, which no device syncs with any more: the
+            field above is where the new one goes, and one code on screen is enough. */}
+        {lastError?.kind !== 'moved-private' && <SyncCode code={syncId} />}
+        {isPrivateCode(syncId) && (
+          <p className="text-[12px] leading-relaxed text-[var(--text-secondary)]">
+            Private sync: what this device sends is encrypted here first. Only a device with this
+            code can read the synced copy from now on.
+          </p>
+        )}
         <CodeSafety />
       </div>
 
@@ -907,7 +1057,10 @@ function SyncContent() {
       <div className="border-t border-white/[0.06] pt-3">
         {disconnect(
           syncId,
-          'This device stops syncing. Your data stays on this device, on your other devices and in the relay.',
+          // Disconnect forgets a private code for good (PRIVATE-SYNC 3.2): there is no Reconnect.
+          isPrivateCode(syncId)
+            ? 'This device stops syncing and forgets the sync code. Copy it first if you may link this device again. Your data stays here and on your other devices.'
+            : 'This device stops syncing. Your data stays on this device, on your other devices and in the relay.',
         )}
       </div>
       <AppVersion />

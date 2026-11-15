@@ -22,7 +22,12 @@
 // breaker that never trips, S8 the registry comparing `seen`, S9 a HEAD trusting an etag from
 // before the setup, S10 a tab's name pushing, S11 a carried entry taken for a registration, S12
 // a forced write for a missing row, S13 a registration judged by the clocks alone (a slow peer
-// read as 0.10.0), S14 a copy judged again by the time passed (a stamp pushed ahead); and PR-2's
+// read as 0.10.0), S14 a copy judged again by the time passed (a stamp pushed ahead); the private
+// sync's (PR-6): P1 a private row force-written, P2 an inner revision that is not the envelope's
+// merged, P3 what does not open passed to the merge, P4 one IV for every seal, P5 a cycle writing
+// over a copy marked newer, P6 a private sync on the upsert transport, P7 a fence that is not
+// saved, P8 a setup changed in another tab not followed, P9 a newer copy pulled again by every
+// poll, P10 a write sent after the setup changed mid-cycle; and PR-2's
 // two survivors by name, M23 (absorb's raw copy of a damaged envelope ignored) and M34 (outbox
 // written with sync off).
 // A mutation may need more than one edit (`edits`); each anchor must occur exactly once.
@@ -214,8 +219,9 @@ const SYNC_MUTATIONS = [
     file: 'src/stores/syncEngine.ts',
     edits: [
       {
-        find: '    const pulled = await t.pull(code)\n',
-        replace: '    globalThis.__st5Stale = port.doc()\n    const pulled = await t.pull(code)\n',
+        find: '    const pulled = await t.pull(b.rowId)\n',
+        replace:
+          '    globalThis.__st5Stale = port.doc()\n    const pulled = await t.pull(b.rowId)\n',
       },
       {
         find: '    wire: encodeWire(port.doc(), opts),\n',
@@ -238,10 +244,10 @@ const SYNC_MUTATIONS = [
     id: 'S3',
     name: 'Memo committed before the push lands',
     file: 'src/stores/syncEngine.ts',
-    find: '      res = await t.push(code, step.wire, {\n',
+    find: '      res = await t.push(b.rowId, payload, {\n',
     replace:
       '      port.setMeta({ memo: commitPush(port.meta().memo, step.decision, Date.now()) })\n' +
-      '      res = await t.push(code, step.wire, {\n',
+      '      res = await t.push(b.rowId, payload, {\n',
     expect: 'T-002-3: a lost push is retried (memo only after landing)',
   },
   {
@@ -317,8 +323,8 @@ const SYNC_MUTATIONS = [
     id: 'S12',
     name: 'A forced write is sent for a row that is missing (it never creates: busy)',
     file: 'src/stores/syncEngine.ts',
-    find: '        force: conflicts >= CAS_FORCE_AFTER && step.base !== null,\n',
-    replace: '        force: conflicts >= CAS_FORCE_AFTER,\n',
+    find: "        force: b.kind === 'plain' && conflicts >= CAS_FORCE_AFTER && step.base !== null,\n",
+    replace: "        force: b.kind === 'plain' && conflicts >= CAS_FORCE_AFTER,\n",
     expect: 'AC-T2: a row gone under a forced write is inserted in the same cycle',
   },
   {
@@ -336,6 +342,87 @@ const SYNC_MUTATIONS = [
     find: '  const registered = judged ?? wroteItself(dec.doc.devices.get(writer), known, wroteAt)\n',
     replace: '  const registered = wroteItself(dec.doc.devices.get(writer), known, wroteAt)\n',
     expect: 'P3-8: a write stamped days ahead never makes a current 0.11.0 peer a 0.10.0 writer',
+  },
+  {
+    id: 'P1',
+    name: 'A private row is force-written after three conflicts',
+    file: 'src/stores/syncEngine.ts',
+    find: "        force: b.kind === 'plain' && conflicts >= CAS_FORCE_AFTER && step.base !== null,\n",
+    replace: '        force: conflicts >= CAS_FORCE_AFTER && step.base !== null,\n',
+    expect: 'AC-P7: a private row is never force-written',
+  },
+  {
+    id: 'P2',
+    name: 'An envelope whose inner revision is not its own is merged',
+    file: 'src/stores/syncEngine.ts',
+    find: "  if (!isRecord(x5) || typeof x5.rev !== 'string' || x5.rev !== r) return unreadable\n",
+    replace: '',
+    expect: 'AC-P4: an authentic envelope with another inner revision is not merged',
+  },
+  {
+    id: 'P3',
+    name: 'What does not open in a private row is passed to the merge as it is',
+    file: 'src/stores/syncEngine.ts',
+    find: "  if (!res.ok) return res.kind === 'newer' ? { kind: 'newer' } : unreadable\n",
+    replace:
+      "  if (!res.ok) return res.kind === 'newer' ? { kind: 'newer' } : { kind: 'ok', pulled }\n",
+    expect: 'AC-P4 / AC-P5: a plaintext payload or marker in a private row is never merged',
+  },
+  {
+    id: 'P4',
+    name: 'Every seal uses the same IV',
+    file: 'src/stores/syncEngine.ts',
+    find: '  const iv = crypto.getRandomValues(new Uint8Array(12))\n',
+    replace: '  const iv = new Uint8Array(12)\n',
+    expect: 'AC-P8: every seal draws a fresh IV',
+  },
+  {
+    id: 'P5',
+    name: 'A cycle writes over a copy marked newer',
+    file: 'src/stores/syncEngine.ts',
+    find: '      if (!ownerReplace() || pulled === null) {\n',
+    replace: '      if (pulled === null) {\n',
+    expect: 'AC-P6: a newer envelope pauses and is never written over (only the owner may, 3.9)',
+  },
+  {
+    id: 'P6',
+    name: 'A private sync writes through the upsert transport',
+    file: 'src/stores/syncEngine.ts',
+    find: "  if (b.kind === 'e2e' && t.mode === 'table' && !CAS_ON) {\n",
+    replace: '  if (false) {\n',
+    expect: 'AC-P16: on the upsert transport a private bucket pauses and writes nothing',
+  },
+  {
+    id: 'P7',
+    name: 'The fence is not saved: a marker that goes un-fences the device',
+    file: 'src/stores/syncEngine.ts',
+    find: '    storage.setFenced(b.code, why, now)\n',
+    replace: '',
+    expect: 'AC-P14: a fenced device never touches the row again once the marker is replaced',
+  },
+  {
+    id: 'P8',
+    name: 'A cycle does not follow a setup changed in another tab',
+    file: 'src/stores/syncEngine.ts',
+    find: '  if (changedElsewhere(code)) return followSaved()\n',
+    replace: '',
+    expect: '3.2 / AC-P3: a tab on the old code asks its row nothing once the setup changed',
+  },
+  {
+    id: 'P9',
+    name: 'A copy marked newer is not remembered: every poll pulls and opens it again',
+    file: 'src/stores/syncEngine.ts',
+    find: '        if (pulled !== null) setEtag(port, b.rowId, pulled.etag, null)\n',
+    replace: '',
+    expect: 'AC-P6: after the pause the polls are HEADs',
+  },
+  {
+    id: 'P10',
+    name: 'A setup changed while the copy was sealed still gets the write',
+    file: 'src/stores/syncEngine.ts',
+    find: '    if (changedElsewhere(b.code)) {\n      forgetSent(step.sent)\n      return followSaved()\n    }\n',
+    replace: '',
+    expect: 'AC-P3: a setup changed elsewhere while a copy is being sealed gets no write',
   },
   {
     id: 'M23',

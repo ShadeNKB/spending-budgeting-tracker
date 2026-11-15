@@ -66,10 +66,22 @@ const NOT_JOINED: Record<'not-found' | 'newer' | 'unreadable', Notice> = {
   },
 }
 
-const previewNotice = (p: Exclude<JoinPreview, Found>): Notice =>
-  p.kind === 'failed'
-    ? { tone: 'warning', text: p.result.error === 'offline' ? OFFLINE : p.result.message }
-    : NOT_JOINED[p.kind]
+/** A private code that names no row (PRIVATE-SYNC 3.5): a typo that passed the check, or a pruned row. */
+const NO_PRIVATE_SYNC: Notice = {
+  tone: 'error',
+  text: 'No private sync was found for that code. Check it on your other device.',
+}
+
+const previewNotice = (p: Exclude<JoinPreview, Found>): Notice => {
+  if (p.kind === 'failed') {
+    // A private code that fails its own check: the engine says which way, and the field is marked.
+    if (p.result.error === 'invalid')
+      return { tone: 'error', invalid: true, text: p.result.message }
+    return { tone: 'warning', text: p.result.error === 'offline' ? OFFLINE : p.result.message }
+  }
+  if (p.kind === 'not-found' && p.private === true) return NO_PRIVATE_SYNC
+  return NOT_JOINED[p.kind]
+}
 
 /**
  * "Or join an existing one" (§3.7 Join). The code is checked before anything goes on the wire,
@@ -152,7 +164,9 @@ export function JoinSync({
     if (result.kind === 'found') {
       // The question takes the button's place: a second tap of the press must not answer it.
       shieldGesture()
-      setStep({ kind: 'preview', code, found: result })
+      // The code as the engine read it: a private code typed in lower case or with spaces is
+      // saved, and shown, in its one written form.
+      setStep({ kind: 'preview', code: result.code, found: result })
       return
     }
     refuse(previewNotice(result))
@@ -160,17 +174,13 @@ export function JoinSync({
 
   const submit = () => {
     if (checking || busy || inFlight.current) return
-    const typed = input.trim().toLowerCase()
-    if (!typed) return
-    if (typed.startsWith('st5')) {
-      setNotice({
-        tone: 'error',
-        invalid: true,
-        text: "That's a private sync code. Update SpendTrack on this device to use it.",
-      })
-      return
-    }
-    if (!UUID.test(typed)) {
+    const entered = input.trim()
+    if (!entered) return
+    // A private code (PRIVATE-SYNC 3.5) goes to the engine as typed: it reads any case, spaces and
+    // dashes, checks the code's own sum, and says what is wrong with one that fails.
+    const isPrivate = entered.toLowerCase().startsWith('st5')
+    const typed = isPrivate ? entered : entered.toLowerCase()
+    if (!isPrivate && !UUID.test(typed)) {
       setNotice({
         tone: 'error',
         invalid: true,
@@ -244,6 +254,9 @@ export function JoinSync({
             placeholder="Paste your sync code"
             value={input}
             autoComplete="off"
+            // a private code is typed by hand: no capitals, corrections or squiggles made for it
+            autoCapitalize="off"
+            autoCorrect="off"
             spellCheck={false}
             onChange={(e) => {
               setInput(e.target.value)

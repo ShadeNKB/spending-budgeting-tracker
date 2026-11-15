@@ -17,6 +17,7 @@ export const PORTS = {
   candidateB: 4221,
   v092: 4222,
   rollback: 4223,
+  v020: 4224,
 } as const
 /** One invented sync code for the suite. */
 export const SYNC_CODE = '5e5e5e5e-0e2e-4e2e-8e2e-000000000092'
@@ -27,7 +28,7 @@ export function plainTopic(code: string): string {
   return `st:${hex.slice(0, 32)}`
 }
 
-export type BuildName = 'candidate' | 'candidate-flags' | 'v010' | 'v092'
+export type BuildName = 'candidate' | 'candidate-flags' | 'v020' | 'v010' | 'v092'
 
 /** A build made by scripts/build-mixed.mjs. */
 export function build(name: BuildName): BuildToServe {

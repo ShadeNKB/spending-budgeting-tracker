@@ -47,8 +47,15 @@ export function readPrevious(now: number): PreviousCode | null {
  * Remembers `code` for 30 days, with whether this device is established on it (read from its
  * saved setup, so call it before the Disconnect). Best effort: storage that refuses it keeps
  * nothing, and a setup that cannot be read counts as not established (it never creates).
+ *
+ * A private code is never kept (PRIVATE-SYNC 3.2): Disconnect forgets it, and with it an older
+ * plain code in the slot, which a private device has left behind.
  */
 export function keepPrevious(code: string, now: number): void {
+  if (!UUID.test(code)) {
+    forgetPrevious()
+    return
+  }
   try {
     const saved = storage.getSyncConfig()
     const established = saved?.kind === 'plain' && saved.code === code && saved.established

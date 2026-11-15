@@ -102,7 +102,12 @@ Update SpendTrack on every device before entering a refund: a device on 0.19 lis
 >
 > If you do want phone ↔ laptop sync, **plan for ~5 minutes of one-time Supabase setup.** After that, every additional device is a join-the-code step.
 
-A sync code links your devices: there's no account. The synced copy on the relay isn't encrypted yet, so until the database lockdown (migration 005) is applied anyone with this app's public key could read it; the code itself is what lets a device change it. After the lockdown, reading or changing the copy takes the code. Share it only with your own devices.
+A sync code links your devices: there's no account. There are two kinds of sync, and Settings → **Sync** says which one a device is on:
+
+- **A private sync** (a code that starts with `ST5-`; any sync started on 0.21.0 or later where the relay's sync functions are in use). What a device sends is encrypted on that device first, and only a device with the code can read the synced copy. See **Private sync** below.
+- **A plain sync** (a code of 36 characters with dashes; every sync started before 0.21.0). Its copy on the relay isn't encrypted: until the database lockdown (migration 005) is applied anyone with this app's public key could read it, and the code itself is what lets a device change it. After the lockdown, reading or changing the copy takes the code.
+
+Share a code only with your own devices.
 
 **One-time setup (per Supabase project):**
 
@@ -113,10 +118,10 @@ A sync code links your devices: there's no account. The synced copy on the relay
 
 **Linking a device:**
 
-- **Generate** makes a new code here. Use it once, on the first device.
-- **Join** checks the code before anything goes on the network (a typo or a private code says so at once), then reads the synced copy and shows what joining does: "This device: 12 entries · Synced: 641 entries · After joining: about 653 entries." Nothing is saved until you tap **Join** again; **Cancel** changes nothing. A code with no synced copy says "No synced data found for this code" and creates nothing, so a mistyped code can never start a second, empty sync.
+- **Generate** makes a new code here. Use it once, on the first device. With the relay's sync functions in use (`VITE_SYNC_RELAY=auto`) the code is a private one.
+- **Join** takes either kind of code and checks it before anything goes on the network (a typo says so at once; a private code can be typed in lower case, with spaces or dashes), then reads the synced copy and shows what joining does: "This device: 12 entries · Synced: 641 entries · After joining: about 653 entries." Nothing is saved until you tap **Join** again; **Cancel** changes nothing. A code with no synced copy says "No synced data found for this code" and creates nothing, so a mistyped code can never start a second, empty sync.
 - In the demo, both first ask whether to remove the sample data; sample entries never sync either way.
-- **Disconnect** stops syncing on this device only. Your data stays here, on your other devices and in the relay. For 30 days the device remembers the code and offers **Reconnect**; **Generate** then asks "Start a separate sync?" first, because your other devices would stay on the old code.
+- **Disconnect** stops syncing on this device only. Your data stays here, on your other devices and in the relay. A private code is forgotten at once (copy it first if your other device isn't at hand). For 30 days the device remembers a plain code and offers **Reconnect**; **Generate** then asks "Start a separate sync?" first, because your other devices would stay on the old code.
 
 **The sync code:**
 
@@ -124,6 +129,18 @@ A sync code links your devices: there's no account. The synced copy on the relay
 - Pair as many devices as you like with the same code (phone + laptop + tablet + work browser, etc.). Changes from every device are merged; nothing is overwritten wholesale.
 - If you ever lose the code, copy it from another linked device (Settings → Sync). Generating a new one starts a separate sync; the old bucket stays in Supabase until `prune_stale_sync_buckets()` removes it (90 days, if you scheduled it).
 - This no-account relay is designed for a personal Supabase project. Until the database lockdown (migration 005) it uses broad anon table access, so it is not a hardened multi-user SaaS security model.
+
+**Private sync:**
+
+- The code is the key. It never leaves the device: the relay is asked for a row under an id worked out from the code, and holds only encrypted text there. A change made on the relay by anyone without the code is detected and never merged.
+- **A sync you already have is not changed by updating.** It stays a plain sync until you move it. Until "Make sync private" arrives, the way by hand is: **Disconnect** on every device, **Generate** on one, **Join** with the new code on the others. Nothing is lost: each device keeps its entries and a join merges them. The old copy stays on the relay until you delete its row there.
+- Update every device first. 0.20.0 and older say "That's a private sync code. Update SpendTrack on this device to use it."
+- What it doesn't hide: the relay still sees how big the copy is, when it changes and where a device connects from. Whatever a plain sync put on the relay earlier stays readable there.
+- What it doesn't prevent: whoever can write to the relay can replace the copy with garbage, or hand back an older one. A device notices a copy it can't read and repairs it from its own; an older copy changes nothing on a device that already holds newer entries.
+- With SpendTrack open in two tabs, a change of sync made in one (Disconnect, a new code) is followed by the other at its next sync.
+- There is no way to recover a lost code from the relay, and no way to lock one device out: copy the code from a linked device (Settings → Sync → **Show**), or start a new sync on the devices you keep.
+- **Replace the synced copy** appears only when a private sync is paused on a copy it can't read as current and no new version is waiting. Reload first. If sync stays paused, the copy may be damaged: Replace writes this device's copy over it, and your other devices add their entries back when they next sync.
+- "Sync was made private on your other device" means this device is still on the old plain code: enter the new sync code shown on the other device. No code? Use Disconnect at the bottom of the page, then start a new sync. Your entries stay on this device.
 
 **What Settings → Sync shows:**
 
@@ -191,7 +208,9 @@ That means:
 
 - no third-party analytics, no telemetry
 - no recovery from the relay unless you set up sync (or download your own backups)
-- the synced copy isn't encrypted yet: until the database lockdown (migration 005) anyone with this app's public key could read it, and anyone with your sync code can change it. Share the code only with your own devices
+- a private sync (0.21.0 and later) encrypts what a device sends before it leaves, so the relay holds text only a device with your code can read; it still sees sizes, times and where a device connects from
+- a plain sync's copy isn't encrypted: until the database lockdown (migration 005) anyone with this app's public key could read it, and anyone with your sync code can change it
+- share a sync code only with your own devices
 
 ## Operational limits
 

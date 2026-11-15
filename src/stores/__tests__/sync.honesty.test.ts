@@ -153,7 +153,7 @@ describe('a damaged relay copy is quarantined and repaired, at most once per 10 
     expect(store.getState().expenses).toBe(before) // nothing merged from it
     expect(store.getState().attention.quarantined).toBeGreaterThan(attention)
     expect(toastsOf(phone).map((t) => t.message)).toEqual([
-      'The sync copy was damaged. Restored it from this device.',
+      'The synced copy was damaged. Restored it from this device.',
     ])
   })
 
@@ -201,7 +201,7 @@ describe('a damaged relay copy is quarantined and repaired, at most once per 10 
     expect(relayRows()).toHaveLength(1)
     // Said once per session, however often it is repaired.
     expect(
-      toastsOf(phone).filter((t) => t.message.startsWith('The sync copy was damaged')),
+      toastsOf(phone).filter((t) => t.message.startsWith('The synced copy was damaged')),
     ).toHaveLength(1)
   })
 
@@ -676,11 +676,6 @@ describe('a phone hears what needs the owner (no pill below 1280 px)', () => {
 describe('fences fail closed and resume (AC-20)', () => {
   it.each([
     [
-      'the moved marker',
-      { version: '4.0', expenses: 'moved', categories: [], x5: { min: 99 } },
-      'moved',
-    ],
-    [
       'x5.min above 5 (a newer SpendTrack)',
       { ...payloadOf([expense('e1')]), x5: { schema: 5, min: 6 } },
       'update-required',
@@ -710,17 +705,76 @@ describe('fences fail closed and resume (AC-20)', () => {
     },
   )
 
+  // PRIVATE-SYNC 3.7 (AC-P14). A moved marker used to be a pause like the two above: the device
+  // synced again as soon as the row held something else. A forced write, the upsert transport or
+  // a prune could put plaintext back over a marker, and that device would have gone on syncing a
+  // bucket its owner had moved, with nobody told. The fence is persisted now.
+  it.each([
+    ['with no reason (an older marker)', { min: 99 }, 'moved', ''],
+    [
+      'made private',
+      { min: 99, moved: { at: '2026-10-19T04:00:00.000Z', why: 'private' } },
+      'moved-private',
+      'private',
+    ],
+    [
+      'rotated',
+      { min: 99, moved: { at: '2026-10-19T04:00:00.000Z', why: 'rotated' } },
+      'moved',
+      'rotated',
+    ],
+  ])(
+    'the moved marker, %s: fenced for good, whatever the row holds later',
+    async (_label, x5, kind, why) => {
+      const phone = await connected()
+      phone.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
+      const local = phone.expense.useExpenseStore.getState().expenses
+      const marker = { version: '4.0', expenses: 'moved', categories: [], x5 }
+      expect(relay().channels.size).toBe(1)
+      seedRow(SYNC_CODE, marker)
+      const upserts = relay().upserts
+
+      expect(await trigger(phone)).toMatchObject({ ok: false, error: kind })
+      expect(phone.sync.useSyncStore.getState().cloudStatus).toBe('paused')
+      expect(relay().upserts).toBe(upserts)
+      expect(rowPayload(SYNC_CODE)).toEqual(marker)
+      // it asks that row nothing from here on, live updates included: its channel is closed
+      expect(relay().channels.size).toBe(0)
+      expect(phone.expense.useExpenseStore.getState().expenses).toBe(local)
+      expect(JSON.parse(localStorage.getItem('st5:sync') ?? '{}')).toMatchObject({
+        kind: 'plain',
+        code: SYNC_CODE,
+        fenced: { why },
+      })
+
+      // The marker is replaced by plaintext (a straggler's write): this device asks nothing.
+      const plain = payloadOf([expense('e1')])
+      seedRow(SYNC_CODE, plain)
+      const pulls = relay().pulls
+      expect(await trigger(phone)).toMatchObject({ ok: false, error: kind })
+      await advance(5 * MINUTE)
+      expect(relay().pulls).toBe(pulls)
+      expect(relay().upserts).toBe(upserts)
+      expect(rowPayload(SYNC_CODE)).toEqual(plain)
+      // its own entry is still here, and still waiting to be sent
+      expect(phone.expense.useExpenseStore.getState().expenses).toBe(local)
+      expect(phone.expense.useExpenseStore.getState().unsyncedChanges()).toBeGreaterThan(0)
+      // going offline and back does not replace the state
+      expect(phone.sync.useSyncStore.getState().lastError?.kind).toBe(kind)
+    },
+  )
+
   it('a trigger that arrives while a paused cycle is on the wire gets a cycle of its own', async () => {
     // A pause schedules no retry, so resolving the later trigger with the paused result would
     // leave nothing to sync until yet another trigger.
     const phone = await connected()
-    seedRow(SYNC_CODE, { version: '4.0', expenses: 'moved', categories: [] })
+    seedRow(SYNC_CODE, { ...payloadOf([expense('e1')]), x5: { schema: 5, min: 6 } })
     relay().latency = { pull: 1000, push: 50, realtime: 20 }
     const first = phone.sync.useSyncStore.getState().triggerSync()
     await advance(400) // the pull is on the wire and will read the fence
     const second = phone.sync.useSyncStore.getState().triggerSync()
 
-    expect(await settle(first, 700)).toMatchObject({ ok: false, error: 'moved' })
+    expect(await settle(first, 700)).toMatchObject({ ok: false, error: 'update-required' })
     seedRow(SYNC_CODE, payloadOf([expense('e1')])) // the fence is gone
     expect(await settle(second, 2000)).toMatchObject({ ok: true })
     expect(phone.sync.useSyncStore.getState()).toMatchObject({
