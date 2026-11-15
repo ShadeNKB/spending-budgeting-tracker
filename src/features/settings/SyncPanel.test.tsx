@@ -1732,14 +1732,14 @@ describe('making a plain sync private', () => {
   const NEW_CODE = 'ST5-0004106-1050R3G-G28A1C6-0T3GFS3'
   const QUESTION = 'Make sync private?'
   const DETAIL =
-    "This device makes a new, encrypted synced copy and closes the old one. Your other device stops syncing until you enter the new sync code there; one that hasn't synced lately needs updating first. What the old sync held could be read on the server until now, and that isn't undone."
-  const NEXT = 'Next: enter this code on your other device. It stops syncing until you do.'
+    "This device makes a new, encrypted synced copy and closes the old one. Your other devices stop syncing until you enter the new sync code on each; one that hasn't synced lately needs the app updated first. What the old sync already held isn't made private."
+  const NEXT = 'Next: enter this code on your other devices. They stop syncing until you do.'
   const CLOSING = 'Closing the old sync…'
   const NOT_CLOSED = 'The old sync is not closed yet. This device keeps trying.'
   const UNSAVED =
     "This device couldn't save its note of the move, so it stops closing the old sync when SpendTrack closes. Free up space on this device."
   const CONTESTED =
-    "Another device may also have made this sync private. If your other device asks for a sync code, enter this one there. Only if it shows a code of its own: Disconnect one of them, then enter the other's code there. Your entries stay on each device and are merged."
+    "Another device may also have made this sync private. If your other device asks for a sync code, enter this one there. If it shows a different sync code instead: Disconnect on one device, then enter the other device's code on it. Your entries stay on each device and are merged."
   const STRAGGLER =
     'Something was written to the old sync after it was closed. If a device of yours is still on it, update it and enter this sync code there.'
   const LOCKDOWN =
@@ -1811,7 +1811,7 @@ describe('making a plain sync private', () => {
     const question = ask()
     expect(moveButton()).toBeNull()
     expect(within(question).getByRole('button', { name: 'Cancel' })).toHaveFocus()
-    expect(question).toHaveAccessibleDescription(`${DETAIL} No backup downloaded yet.`)
+    expect(question).toHaveAccessibleDescription(`${DETAIL} No backup downloaded yet Export backup`)
     expect(makePrivate).not.toHaveBeenCalled()
   })
 
@@ -1834,20 +1834,38 @@ describe('making a plain sync private', () => {
     const clicked = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
     try {
       connectedPanel(offered())
-      expect(ask()).toHaveAccessibleDescription(`${DETAIL} Last backup: 3 days ago.`)
+      expect(ask()).toHaveAccessibleDescription(`${DETAIL} Last backup: 3 days ago Export backup`)
       fireEvent.click(screen.getByRole('button', { name: 'Export backup' }))
       expect(exportBackup).toHaveBeenCalledTimes(1)
       expect(markBackedUp).toHaveBeenCalledTimes(1)
       expect(clicked).toHaveBeenCalledTimes(1)
       expect(toasts()).toEqual([['success', 'Backup downloaded']])
       expect(screen.getByRole('group', { name: QUESTION })).toHaveAccessibleDescription(
-        `${DETAIL} Last backup: today.`,
+        `${DETAIL} Last backup: today Export backup`,
       )
       expect(makePrivate).not.toHaveBeenCalled()
     } finally {
       Reflect.deleteProperty(URL, 'createObjectURL')
       Reflect.deleteProperty(URL, 'revokeObjectURL')
     }
+  })
+
+  it('Export backup is inside the question, under the backup age and before Make private and Cancel; Escape there takes the question back', () => {
+    connectedPanel(offered())
+    const question = ask()
+    const exportButton = within(question).getByRole('button', { name: 'Export backup' })
+    const buttons = within(question).getAllByRole('button')
+    expect(buttons.map((b) => b.textContent.trim())).toEqual([
+      'Export backup',
+      'Make private',
+      'Cancel',
+    ])
+    expect(within(question).getByText('No backup downloaded yet').tagName).toBe('SPAN')
+    exportButton.focus()
+    fireEvent.keyDown(exportButton, { key: 'Escape' })
+    expect(screen.queryByRole('group', { name: QUESTION })).toBeNull()
+    expect(moveButton()).toHaveFocus()
+    expect(makePrivate).not.toHaveBeenCalled()
   })
 
   it('Cancel makes nothing private and hands focus back to the button', () => {
@@ -1881,7 +1899,7 @@ describe('making a plain sync private', () => {
     await settle()
     expect(makePrivate).toHaveBeenCalledTimes(1)
     expect(toasts()).toEqual([
-      ['success', 'Sync made private. Enter the new sync code on your other device.'],
+      ['success', 'Sync made private. Enter the new sync code on your other devices.'],
     ])
     expect(screen.getByRole('button', { name: 'Sync now' })).toHaveFocus()
     expect(moveButton()).toBeNull()
@@ -1916,7 +1934,7 @@ describe('making a plain sync private', () => {
       await Promise.resolve()
     })
     expect(toasts()).toEqual([
-      ['success', 'Sync made private. Enter the new sync code on your other device.'],
+      ['success', 'Sync made private. Enter the new sync code on your other devices.'],
     ])
   })
 
@@ -2003,7 +2021,7 @@ describe('making a plain sync private', () => {
   it('Disconnect’s question adds what the engine says while the old sync is open or nobody has the code', () => {
     const extra = [
       'The old sync is not closed yet. A device still on it keeps syncing there, unencrypted.',
-      'No other device has this sync code yet. Copy it first: a device waiting for it cannot join without it.',
+      "No other device has this sync code yet. A device waiting for it can't join without it.",
     ]
     connectedPanel({
       syncId: NEW_CODE,
@@ -2056,7 +2074,7 @@ describe('making a plain sync private', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Join' }))
     await settle()
     expect(screen.getByRole('group', { name: 'Join this sync?' })).toHaveAccessibleDescription(
-      'This device: 2 entries · Synced: 5 entries · After joining: about 7 entries. Nothing here is removed. 3 entries deleted on this device go from your other devices when you join.',
+      'This device: 2 entries · Synced: 5 entries · After joining: about 7 entries. Nothing here is removed. 3 entries deleted on this device are removed from your other devices when you join.',
     )
   })
 })

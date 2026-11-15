@@ -14,6 +14,7 @@ import {
   build,
   closeAll,
   closeSettings,
+  deleteEntry,
   itemNames,
   openDevice,
   openSettingsTab,
@@ -57,9 +58,11 @@ const PLAIN_CODE = '5e5e5e5e-0e2e-4e2e-8e2e-0000000b0002'
 
 // The engine's words (stores/syncEngine.ts) and the panel's (features/settings/SyncMove.tsx).
 const QUESTION = 'Make sync private?'
-const MOVED = 'Sync made private. Enter the new sync code on your other device.'
-const NEXT = 'Next: enter this code on your other device. It stops syncing until you do.'
+const MOVED = 'Sync made private. Enter the new sync code on your other devices.'
+const NEXT = 'Next: enter this code on your other devices. They stop syncing until you do.'
 const CLOSING = 'Closing the old sync…'
+const NOT_CLOSED = 'The old sync is not closed yet. This device keeps trying.'
+const UNSAVED = /^This device couldn't save its note of the move/
 const CONTESTED = /^Another device may also have made this sync private\./
 const STRAGGLER =
   'Something was written to the old sync after it was closed. If a device of yours is still on it, update it and enter this sync code there.'
@@ -293,6 +296,14 @@ async function shoot(page: Page, testInfo: TestInfo, name: string): Promise<void
   await page.screenshot({ path: join(dir, `${name}-${testInfo.project.name}.png`) })
 }
 
+/** Screenshots only, in both themes (a state too short-lived for the whole gate). */
+async function shots(page: Page, testInfo: TestInfo, name: string) {
+  await shoot(page, testInfo, `${name}-dark`)
+  await switchTheme(page, 'light')
+  await shoot(page, testInfo, `${name}-light`)
+  await switchTheme(page, 'dark')
+}
+
 /** axe in both themes, and on the phone the target audit and 320 px. */
 async function gate(page: Page, testInfo: TestInfo, name: string) {
   await settle(page)
@@ -402,12 +413,21 @@ test('AC-M18: the question, the next step, and a write to the old sync after it 
   await button.click()
   const ask = sheet.getByRole('group', { name: QUESTION })
   await expect(ask.getByRole('button', { name: 'Cancel', exact: true })).toBeFocused()
-  await expect(ask).toContainText('No backup downloaded yet.')
+  await expect(ask).toContainText('No backup downloaded yet')
   await expect(sheet.getByRole('button', { name: 'Export backup' })).toBeVisible()
   await gate(page, testInfo, 'm18-question')
+  await ask.getByRole('button', { name: 'Export backup' }).scrollIntoViewIfNeeded()
+  await shots(page, testInfo, 'm18-question-export')
 
-  // made private: the code, and the next step while no other device has it
+  // made private: busy while it runs (its first sync of the old row held a moment), then the
+  // code, and the next step while no other device has it
+  const release = relay.holdReads(PLAIN_CODE)
   await ask.getByRole('button', { name: 'Make private', exact: true }).click()
+  const busy = sheet.getByRole('button', { name: 'Making sync private…' })
+  await expect(busy).toBeFocused({ timeout: 10_000 })
+  await expect.poll(() => relay.heldReads(), { timeout: 10_000 }).toBeGreaterThan(0)
+  await shots(page, testInfo, 'm18-busy')
+  release()
   await expect(toasts(page).getByText(MOVED)).toBeVisible({ timeout: 60_000 })
   await expect(sheet.getByRole('button', { name: 'Sync now' })).toBeFocused()
   await expect(shown(sheet, NEXT)).toBeVisible()
@@ -448,12 +468,101 @@ test('AC-M18: closing the old sync (a move resumed after a reload, its old row s
   await expect(shown(sheet, CLOSING)).toBeVisible({ timeout: 10_000 })
   await expect(shown(sheet, NEXT)).toBeVisible()
   await gate(page, testInfo, 'm18-closing')
+  // the held read runs out: not closed yet, and the device keeps trying
+  await expect(shown(sheet, NOT_CLOSED)).toBeVisible({ timeout: 60_000 })
+  await expect(shown(sheet, CLOSING)).toHaveCount(0)
+  await gate(page, testInfo, 'm18-not-closed')
   release()
+  await sheet.getByRole('button', { name: 'Sync now' }).click()
   await expect
     .poll(() => markerOf(relay.row(PLAIN_CODE)?.payload), { timeout: 60_000 })
     .toMatchObject({ why: 'private' })
-  await expect(shown(sheet, CLOSING)).toHaveCount(0, { timeout: 30_000 })
+  await expect(shown(sheet, NOT_CLOSED)).toHaveCount(0, { timeout: 30_000 })
   await expect(shown(sheet, NEXT)).toBeVisible()
+})
+
+test('AC-M18: a note of the move this device could not save', async ({ page }, testInfo) => {
+  test.setTimeout(240_000)
+  relay.lockTable()
+  // storage that takes the move's first note, then refuses it and has lost it after the switch
+  await page.addInitScript(() => {
+    const get = Storage.prototype.getItem
+    const set = Storage.prototype.setItem
+    let notes = 0
+    Storage.prototype.setItem = function (key: string, value: string) {
+      if (key === 'st5:synckey:move' && ++notes > 1) {
+        throw new DOMException('The quota has been exceeded.', 'QuotaExceededError')
+      }
+      set.call(this, key, value)
+    }
+    Storage.prototype.getItem = function (key: string) {
+      if (key === 'st5:synckey:move' && get.call(this, 'st5:synckey') !== null) return null
+      return get.call(this, key)
+    }
+  })
+  const sheet = await openSync(page, testInfo, {
+    syncId: PLAIN_CODE,
+    expenses: JSON.stringify(RICH),
+  })
+  await sheet.getByRole('button', { name: 'Make sync private' }).click({ timeout: 60_000 })
+  await sheet
+    .getByRole('group', { name: QUESTION })
+    .getByRole('button', { name: 'Make private', exact: true })
+    .click()
+  await expect(toasts(page).getByText(MOVED)).toBeVisible({ timeout: 60_000 })
+  await expect(shown(sheet, UNSAVED)).toBeVisible()
+  await expect(toasts(page).getByText(MOVED)).toHaveCount(0, { timeout: 20_000 })
+  await gate(page, testInfo, 'm18-unsaved')
+})
+
+test('AC-M18: a fenced device joins, and the preview counts what it deleted for the others', async ({
+  browser,
+}, testInfo) => {
+  test.setTimeout(240_000)
+  relay.lockTable()
+  const both = [entry('j-1', 'shared kopi', '2026-11-10'), entry('j-2', 'shared bun', '2026-11-11')]
+  // the private sync, holding both entries
+  const mover = await openDevice(browser, hostA.origin, {
+    syncCode: null,
+    seed: {
+      'st5:synckey': JSON.stringify({ code: KAT, at: 1, established: true }),
+      expenses: JSON.stringify(both),
+    },
+  })
+  devices.push(mover)
+  await expect
+    .poll(() => keysOf(relay.row(KAT_ROW)?.payload), { timeout: 30_000 })
+    .toEqual(ENVELOPE_KEYS)
+  // a device still on the plain code, fenced by the marker, deletes one of them meanwhile
+  relay.put(PLAIN_CODE, {
+    version: '4.0',
+    expenses: 'moved',
+    categories: [],
+    x5: { min: 99, moved: { at: '2026-11-14T08:00:00.000Z', why: 'private' } },
+  })
+  const fenced = await openDevice(browser, hostA.origin, {
+    syncCode: PLAIN_CODE,
+    seed: { expenses: JSON.stringify(both) },
+  })
+  devices.push(fenced)
+  const page = fenced.page
+  await page.setViewportSize(
+    isPhone(testInfo) ? { width: 375, height: 812 } : { width: 1280, height: 800 },
+  )
+  await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' })
+  await expect
+    .poll(async () => JSON.stringify((await syncState(page)).config), { timeout: 30_000 })
+    .toContain('"fenced"')
+  await deleteEntry(page, 'shared bun')
+  await expect.poll(() => itemNames(page)).toEqual(['shared kopi'])
+  const sheet = await openSettingsTab(page, 'Sync')
+  await sheet.getByRole('textbox', { name: 'Sync code' }).fill(KAT)
+  await sheet.getByRole('button', { name: 'Join', exact: true }).click()
+  const ask = sheet.getByRole('group', { name: 'Join this sync?' })
+  await expect(ask).toContainText(
+    '1 entry deleted on this device is removed from your other devices when you join.',
+  )
+  await gate(page, testInfo, 'm18-join-preview')
 })
 
 test('AC-M18: contested: another device may also have made this sync private', async ({
@@ -475,7 +584,7 @@ test('AC-M18: contested: another device may also have made this sync private', a
   await sheet.getByRole('button', { name: /Disconnect sync/ }).click()
   const ask = sheet.getByRole('group', { name: 'Disconnect sync on this device?' })
   await expect(ask).toContainText(
-    'No other device has this sync code yet. Copy it first: a device waiting for it cannot join without it.',
+    "No other device has this sync code yet. A device waiting for it can't join without it.",
   )
   await gate(page, testInfo, 'm18-disconnect')
 })

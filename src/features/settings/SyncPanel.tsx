@@ -254,7 +254,7 @@ function setupFailure(
 type FocusTarget = 'sync-now' | 'generate' | 'reconnect' | 'disconnect' | 'replace' | 'make-private'
 
 /** Said once a plain sync was made private here: the new code is on screen now. */
-const MOVED_MESSAGE = 'Sync made private. Enter the new sync code on your other device.'
+const MOVED_MESSAGE = 'Sync made private. Enter the new sync code on your other devices.'
 
 const BANNER_TONE: Record<BannerTone, string> = {
   error: 'border-negative/20 bg-negative/10 text-negative',

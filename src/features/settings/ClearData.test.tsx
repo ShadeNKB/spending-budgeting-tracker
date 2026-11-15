@@ -268,7 +268,7 @@ describe('ClearData with sync on', () => {
   it('after a move, the remove question adds what the engine says while the old sync is open (PRIVATE-SYNC 4.5)', async () => {
     const extra = [
       'The old sync is not closed yet. A device still on it keeps syncing there, unencrypted.',
-      'No other device has this sync code yet. Copy it first: a device waiting for it cannot join without it.',
+      "No other device has this sync code yet. A device waiting for it can't join without it.",
     ]
     const user = userEvent.setup()
     seed(4, { sync: true, unsynced: 3 })

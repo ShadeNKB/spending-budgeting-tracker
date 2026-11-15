@@ -14,7 +14,7 @@ import { lastBackupLine, useBackupDownload } from './backupDownload'
 
 /** What the question says happens, in the owner's terms (4.5). */
 const MOVE_DETAIL =
-  "This device makes a new, encrypted synced copy and closes the old one. Your other device stops syncing until you enter the new sync code there; one that hasn't synced lately needs updating first. What the old sync held could be read on the server until now, and that isn't undone."
+  "This device makes a new, encrypted synced copy and closes the old one. Your other devices stop syncing until you enter the new sync code on each; one that hasn't synced lately needs the app updated first. What the old sync already held isn't made private."
 
 // 44 px tall under a finger (not just its hit area); a mouse keeps the 40 px button.
 const ACTION = 'w-full [@media(pointer:coarse)]:h-11'
@@ -49,19 +49,34 @@ export function MoveOffer({
         on.
       </p>
       {asking ? (
-        <>
-          <InlineConfirm
-            tone="warning"
-            question="Make sync private?"
-            detail={`${MOVE_DETAIL} ${lastBackupLine(lastBackupAt)}.`}
-            confirmLabel="Make private"
-            onConfirm={onConfirm}
-            onCancel={onCancel}
-          />
-          <Button onClick={downloadBackup} variant="ghost" className={ACTION}>
-            <Download size={14} aria-hidden /> Export backup
-          </Button>
-        </>
+        <InlineConfirm
+          tone="warning"
+          question="Make sync private?"
+          detail={
+            <>
+              {MOVE_DETAIL}{' '}
+              {/* The backup's age on a line of its own, and the way to take one before the
+                  answer: above Make private and Cancel, and first in the tab order. */}
+              <span className="mt-2 block">{lastBackupLine(lastBackupAt)}</span>
+              <Button
+                onClick={downloadBackup}
+                onKeyDown={(e) => {
+                  // Escape takes back the question from here too, as from its own buttons.
+                  if (e.key !== 'Escape' || e.repeat || e.nativeEvent.isComposing) return
+                  e.preventDefault()
+                  onCancel()
+                }}
+                variant="ghost"
+                className={clsx('mt-2', ACTION)}
+              >
+                <Download size={14} aria-hidden /> Export backup
+              </Button>
+            </>
+          }
+          confirmLabel="Make private"
+          onConfirm={onConfirm}
+          onCancel={onCancel}
+        />
       ) : (
         <Button
           ref={buttonRef}

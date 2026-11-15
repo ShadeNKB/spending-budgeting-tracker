@@ -2033,15 +2033,15 @@ const CLOSING_LINE = 'Closing the old sync…'
 const NOT_CLOSED_LINE = 'The old sync is not closed yet. This device keeps trying.'
 const UNSAVED_LINE =
   "This device couldn't save its note of the move, so it stops closing the old sync when SpendTrack closes. Free up space on this device."
-const NEXT_LINE = 'Next: enter this code on your other device. It stops syncing until you do.'
+const NEXT_LINE = 'Next: enter this code on your other devices. They stop syncing until you do.'
 const CONTESTED_LINE =
-  "Another device may also have made this sync private. If your other device asks for a sync code, enter this one there. Only if it shows a code of its own: Disconnect one of them, then enter the other's code there. Your entries stay on each device and are merged."
+  "Another device may also have made this sync private. If your other device asks for a sync code, enter this one there. If it shows a different sync code instead: Disconnect on one device, then enter the other device's code on it. Your entries stay on each device and are merged."
 const STRAGGLER_LINE =
   'Something was written to the old sync after it was closed. If a device of yours is still on it, update it and enter this sync code there.'
 const DISCONNECT_RETIRING_LINE =
   'The old sync is not closed yet. A device still on it keeps syncing there, unencrypted.'
 const DISCONNECT_ALONE_LINE =
-  'No other device has this sync code yet. Copy it first: a device waiting for it cannot join without it.'
+  "No other device has this sync code yet. A device waiting for it can't join without it."
 
 const DAY_MS = 86_400_000
 /** While no other private device has joined, the old row is watched this long after the switch. */

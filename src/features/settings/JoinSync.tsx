@@ -48,7 +48,7 @@ function previewText(p: Found): string {
   const deletesThere =
     there === 0
       ? ''
-      : ` ${entries(there)} deleted on this device ${there === 1 ? 'goes' : 'go'} from your other devices when you join.`
+      : ` ${entries(there)} deleted on this device ${there === 1 ? 'is' : 'are'} removed from your other devices when you join.`
   const unreadable =
     p.unreadable === 0
       ? ''
