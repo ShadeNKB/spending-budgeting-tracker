@@ -778,27 +778,20 @@ test.describe('Toasts', () => {
     )
     await keep(testInfo, 'entering', frames)
     const toast = toastFrames(frames, 'Storage is full')
-    const first = firstOf(toast, 'frame with the toast').toast
     const end = lastOf(toast, 'frame with the toast').toast
-    // Its first frame is just under way, or, when frames are far apart, no further in than the
-    // spring gets in the time since the frame before it (a CSS transition runs on the clock).
-    const ran = springAt(
-      TOAST_SPRING.k,
-      TOAST_SPRING.c,
-      firstShownGap(
-        frames,
-        (f) => f.toasts?.some((t) => t.text.includes('Storage is full')) ?? false,
-      ),
-    )
-    expect(shiftY(first.box, first.place), 'starts 16 px lower').toBeGreaterThanOrEqual(
-      Math.min(11, 16 * (1 - ran)),
-    )
+    // Where it starts: read the moment its entrance took effect (ToastEntrance), on the clock
+    // and not on painted frames. A busy WebKit painted its first frame of the toast only once
+    // the 350 ms entrance was over (CI: 0 px lower on that frame), and a frame's timestamp is
+    // not when it was read, so no gap between frames says how far the spring had got by then.
+    const first = firstOf(
+      (frames.at(-1)?.entered ?? []).filter((e) => e.look.text.includes('Storage is full')),
+      'entrance of the toast',
+    ).look
+    expect(shiftY(first.box, first.place), 'starts 16 px lower').toBeGreaterThanOrEqual(11)
     expect(shiftY(first.box, first.place), 'starts 16 px lower').toBeLessThanOrEqual(17)
     expect(scaleX(first.box, first.place), 'starts at 96 %').toBeGreaterThanOrEqual(0.955)
-    expect(scaleX(first.box, first.place), 'starts at 96 %').toBeLessThanOrEqual(
-      Math.max(0.975, 0.96 + 0.04 * ran),
-    )
-    expect(first.opacity, 'starts see-through').toBeLessThanOrEqual(Math.max(0.35, ran))
+    expect(scaleX(first.box, first.place), 'starts at 96 %').toBeLessThanOrEqual(0.975)
+    expect(first.opacity, 'starts see-through').toBeLessThanOrEqual(0.35)
     const shifts = toast.map((f) => shiftY(f.toast.box, f.toast.place))
     expect(wrongWay(shifts, 'down', 0.6), 'rises one way').toEqual([])
     expect(
