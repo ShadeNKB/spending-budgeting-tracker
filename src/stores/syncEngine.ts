@@ -53,8 +53,18 @@ import type {
   Stamp,
   WriterClass,
 } from '../data/core/types'
-import { decodeWire, encodeWire, wireString } from '../data/core/wire'
+import { decodeWire, encodeWire, movedMarker, wireString } from '../data/core/wire'
 import { SafetyCopyError } from '../data/local/refusal'
+import {
+  dropVoidMove,
+  moveFingerprint,
+  readMove,
+  removeMove,
+  sweepVoidMove,
+  writeMove,
+  type MoveRecord,
+} from '../data/sync/move'
+import { moveOffered } from '../data/sync/offer'
 import {
   deviceRows,
   placeV5pre,
@@ -75,6 +85,7 @@ import {
   announce,
   etagTime,
   openTransport,
+  probeLockdown,
   sameEtag,
   subscribeSync,
   topicOf,
@@ -100,6 +111,7 @@ import {
   SYNC_RELOAD_MESSAGE,
   failingSinceMessage,
   failureSeverity,
+  isPaused,
   isPrivateCode,
   keepCode,
   keptOffline,
@@ -107,6 +119,7 @@ import {
   noSyncSurface,
   syncToast,
   useSyncStore,
+  type MoveView,
   type SyncErrorKind,
   type SyncPauseReason,
   type SyncResult,
@@ -999,6 +1012,7 @@ function publishView(): void {
     sizePct,
     allCurrent: ready.allCurrent,
     lockdown: ready.lockdown,
+    move: moveViewOf(port, code),
   }
   if (lastView !== null && JSON.stringify(lastView) === JSON.stringify(next)) return
   lastView = next
@@ -1518,8 +1532,9 @@ async function cycle(code: string, gen: number, reason: CycleReason): Promise<Sy
       return gen === setupGen ? fail(err, reason) : offResult()
     }
     mode = t.mode
+    let result: SyncResult
     try {
-      return await attempts(b, gen, reason, t)
+      result = await attempts(b, gen, reason, t)
     } catch (err) {
       if (gen !== setupGen) return offResult()
       if (RELAY_PIN === 'auto' && reprobeFor(err, t.mode)) {
@@ -1536,6 +1551,7 @@ async function cycle(code: string, gen: number, reason: CycleReason): Promise<Sy
       }
       return fail(err, reason)
     }
+    return keepOldRowClosed(b, gen, reason, t, result)
   }
 }
 
@@ -1590,6 +1606,8 @@ async function runCycle(reason: CycleReason): Promise<SyncResult> {
   if (isOffline()) return goOffline()
   // A hide push must start before the page is frozen: a lock grant may wait for a later task.
   if (reason === 'hide') return cycle(code, gen, reason)
+  // The owner pressed "Make sync private" in this setup: this cycle is the move (4.3).
+  if (moveAsk?.gen === gen && moveAsk.result === null) return moveUnderLock(moveAsk, code, gen)
   return withLock(() => cycle(code, gen, reason))
 }
 
@@ -1904,7 +1922,11 @@ export async function setupSync(syncId: string, user: boolean, join = false): Pr
   if (!sameCode) {
     news.length = 0 // another code's relay copy is no news for this one
     merged.length = 0
+    forgetMove()
   }
+  // A join of another code ends any move this device made (4.2): its record names a bucket
+  // this device leaves now.
+  if (join && savedHere === null) removeMove()
   const port = livePort()
   useSyncStore.setState({
     syncId,
@@ -1959,6 +1981,569 @@ export function newPrivateCode(): string {
   return encodeSt5(crypto.getRandomValues(new Uint8Array(16)))
 }
 
+// ---------------------------------------------------------------------------
+// Making a plain sync private (PRIVATE-SYNC 4)
+// ---------------------------------------------------------------------------
+
+/** What "Make sync private" ended with: the new code, shown only once it is this device's. */
+export type MoveResult =
+  | { readonly ok: true; readonly code: string }
+  | { readonly ok: false; readonly message: string }
+
+const MOVE_BUSY_MESSAGE = 'Sync is busy in another tab. Try again in a moment.'
+const MOVE_LOCKDOWN_MESSAGE =
+  "This sync's server still allows direct reads. Make sync private after the database lockdown."
+const MOVE_UNAVAILABLE_MESSAGE =
+  "Sync can't be made private on this device right now. Nothing was changed."
+const MOVE_FAILED_MESSAGE =
+  "The private sync couldn't be made just now. Nothing was changed. Try again in a moment."
+const MOVE_CHANGED_MESSAGE = 'Sync was changed in another tab. Nothing was made private here.'
+const CLOSING_LINE = 'Closing the old sync…'
+const NOT_CLOSED_LINE = 'The old sync is not closed yet. This device keeps trying.'
+const NEXT_LINE = 'Next: enter this code on your other device. It stops syncing until you do.'
+const CONTESTED_LINE =
+  "Another device may also have made this sync private. If your other device asks for a sync code, enter this one there. Only if it shows a code of its own: Disconnect one of them, then enter the other's code there. Your entries stay on each device and are merged."
+const STRAGGLER_LINE =
+  'Something was written to the old sync after it was closed. If a device of yours is still on it, update it and enter this sync code there.'
+const DISCONNECT_RETIRING_LINE =
+  'The old sync is not closed yet. A device still on it keeps syncing there, unencrypted.'
+const DISCONNECT_ALONE_LINE =
+  'No other device has this sync code yet. Copy it first: a device waiting for it cannot join without it.'
+
+const DAY_MS = 86_400_000
+/** While no other private device has joined, the old row is watched this long after the switch. */
+const CLOSE_WATCH_MS = 7 * DAY_MS
+/** The marker is forced once this many compare-and-sets of it conflicted in a row (4.3). */
+const MARKER_FORCE_AFTER = 3
+
+/** The owner pressed "Make sync private" in setup `gen`; `result` is the move's, once it ran. */
+let moveAsk: { readonly gen: number; result: MoveResult | null } | null = null
+/** The move's record for the private bucket this tab syncs, as last read or written (the view). */
+let moveRec: MoveRecord | null = null
+/** Step 5 has not closed the old row yet, and its last try ended without the marker. */
+let retireStalled = false
+/** Something was written to the old row after it was closed (4.4; said for this session). */
+let straggler = false
+/** The keeping check of 4.4 has run in this session (the one at start-up). */
+let keptThisSession = false
+
+function forgetMove(): void {
+  moveRec = null
+  retireStalled = false
+  straggler = false
+}
+
+/** Removes a record that belongs to nothing (4.2). Never fails; decides nothing it cannot. */
+function sweepMove(): void {
+  void sweepVoidMove().catch(() => undefined)
+}
+
+/** The record for this private bucket, or null; one for another bucket is void and removed. */
+function loadMove(b: Bucket): MoveRecord | null {
+  moveRec = dropVoidMove(b.rowId)
+  return moveRec
+}
+
+function saveMove(rec: MoveRecord): MoveRecord {
+  writeMove(rec)
+  moveRec = rec
+  return rec
+}
+
+/**
+ * Another device has written this bucket as a private one: its entry says `e2e` (4.4). The
+ * private row starts with the plain row's registry, so the other device is listed from the
+ * first write: listed as a plain one, it has not joined.
+ */
+function joinedPrivately(port: SyncPort): boolean {
+  const me = port.deviceId()
+  for (const [id, d] of port.doc().devices) if (id !== me && d.e2e) return true
+  return false
+}
+
+/** The device a moved marker names (`x5.moved.by`), or null. */
+function markedBy(raw: unknown): string | null {
+  const x5 = isRecord(raw) ? raw.x5 : undefined
+  const moved = isRecord(x5) ? x5.moved : undefined
+  return isRecord(moved) && typeof moved.by === 'string' ? moved.by : null
+}
+
+/** The marker this device writes on the old row: `private`, naming this device (4.3). */
+function ownMarker(dev: string, now: number) {
+  const m = movedMarker('private', new Date(now).toISOString())
+  return { ...m, x5: { ...m.x5, moved: { ...m.x5.moved, by: dev } } }
+}
+
+/**
+ * Writes this device's marker on the old row by compare-and-set on `base` (null: the row is
+ * missing, so it is created). Forced once three compare-and-sets of it conflicted in a row: the
+ * old row is a plain one whose content every writer of it still holds, and a writer that keeps
+ * it busy must not keep it open. Announced on the old topic with a fresh revision, so a device
+ * still on it learns at once. True when the marker landed.
+ */
+async function closeOldRow(
+  rec: MoveRecord,
+  base: string | null,
+  b: Bucket,
+  gen: number,
+  t: Transport,
+  port: SyncPort,
+): Promise<boolean> {
+  if (gen !== setupGen || changedElsewhere(b.code)) return false
+  const dev = port.deviceId()
+  const force = base !== null && rec.conflicts >= MARKER_FORCE_AFTER
+  const res = await t.push(rec.from, ownMarker(dev, Date.now()), {
+    base,
+    force,
+    keepalive: false,
+  })
+  if (gen !== setupGen) return false
+  if (!res.ok) {
+    if (res.reason === 'conflict') saveMove({ ...rec, conflicts: rec.conflicts + 1 })
+    return false
+  }
+  saveMove({ ...rec, phase: 'retired', retired: res.etag, checkedAt: Date.now(), conflicts: 0 })
+  const rev = newRev(() => port.rng())
+  void topicOf(rec.from).then(
+    (topic) => {
+      announce(topic, { rev, dev })
+    },
+    () => undefined,
+  )
+  return true
+}
+
+/** The one merge of the old row's payload (4.3 step 5): nothing pushed there, nothing acked. */
+function absorb(dec: SanitizeResult, port: SyncPort): void {
+  const applied = port.applyRemote(dec)
+  if (applied.mass !== null) toastMassRemoval(applied.mass)
+  else if (applied.conflicts > 0) toastConflicts(applied.conflicts)
+}
+
+type Examined = 'closed' | 'absorbed' | 'open'
+
+/**
+ * What the old row holds, and this device's answer (4.3 step 5; 4.4 when `keeping`). Its own
+ * marker: the row is closed. Another device's marker: closed by that device, or by a forger, and
+ * this device keeps its private bucket and its code; one that is not `private` is replaced, so a
+ * device still on the row asks for a code and is not just told to reload. Missing: the marker
+ * goes back, so the row cannot be re-created in plaintext. A plain payload is merged once, at
+ * step 5 and never by the keeping check, and the marker is written at once on that same pull;
+ * anything else is closed over, never merged and never kept.
+ */
+async function examineOldRow(
+  rec: MoveRecord,
+  pulled: Pulled | null,
+  keeping: boolean,
+  b: Bucket,
+  gen: number,
+  t: Transport,
+  port: SyncPort,
+): Promise<Examined> {
+  const raw = pulled?.payload
+  if (pulled === null || raw === null || raw === undefined) {
+    return (await closeOldRow(rec, null, b, gen, t, port)) ? 'closed' : 'open'
+  }
+  const now = Date.now()
+  const dec = decodeWire(raw, 'remote', { reuse: port.doc(), at: now })
+  if (dec.writer === 'moved') {
+    const by = markedBy(raw)
+    const contested = rec.contested || (by !== null && by !== port.deviceId())
+    if (movedWhy(raw) === 'private') {
+      saveMove({
+        ...rec,
+        phase: 'retired',
+        retired: pulled.etag,
+        checkedAt: now,
+        conflicts: 0,
+        contested,
+      })
+      return 'closed'
+    }
+    return (await closeOldRow({ ...rec, contested }, pulled.etag, b, gen, t, port))
+      ? 'closed'
+      : 'open'
+  }
+  if (!keeping && rec.absorbed === null && mergeable(dec.writer)) {
+    // A merge that cannot be saved (no room for its safety copy) throws: nothing is recorded,
+    // and the step is tried again.
+    absorb(dec, port)
+    held = null // the cycle that carries it to the private row is a full one
+    const absorbed = saveMove({ ...rec, absorbed: pulled.etag })
+    await closeOldRow(absorbed, pulled.etag, b, gen, t, port)
+    return 'absorbed'
+  }
+  if (keeping) straggler = true
+  return (await closeOldRow(rec, pulled.etag, b, gen, t, port)) ? 'closed' : 'open'
+}
+
+/** Step 5 (4.3): ask the old row, and close it. */
+async function retireOldRow(
+  rec: MoveRecord,
+  b: Bucket,
+  gen: number,
+  t: Transport,
+  port: SyncPort,
+): Promise<Examined> {
+  if (changedElsewhere(b.code)) return 'open'
+  const pulled = await t.pull(rec.from)
+  if (gen !== setupGen) return 'open'
+  const found = await examineOldRow(rec, pulled, false, b, gen, t, port)
+  if (gen === setupGen) retireStalled = moveRec?.phase !== 'retired'
+  return found
+}
+
+/**
+ * Keeping the old row closed (4.4). While no other private device has joined, and for seven
+ * days at most, after every private cycle: a HEAD, and a token equal to the marker's ends it.
+ * Otherwise at start-up and at the first cycle a day after the last check: a pull, whatever the
+ * token says (a lockdown rolled back later must not blind it).
+ */
+async function keepingCheck(
+  rec: MoveRecord,
+  b: Bucket,
+  gen: number,
+  t: Transport,
+  port: SyncPort,
+): Promise<void> {
+  const now = Date.now()
+  const alone = !joinedPrivately(port)
+  // The contested notice goes once another private device has joined (4.5).
+  const kept = alone || !rec.contested ? rec : saveMove({ ...rec, contested: false })
+  const close = alone && now - kept.at < CLOSE_WATCH_MS
+  const daily = !keptThisSession || kept.checkedAt === null || now - kept.checkedAt >= DAY_MS
+  if ((!close && !daily) || changedElsewhere(b.code)) return
+  if (!daily) {
+    const head = await t.head(kept.from)
+    if (gen !== setupGen) return
+    if (kept.retired !== null && sameEtag(head, kept.retired)) {
+      saveMove({ ...kept, checkedAt: now })
+      keptThisSession = true
+      return
+    }
+  }
+  const pulled = await t.pull(kept.from)
+  if (gen !== setupGen) return
+  if ((await examineOldRow(kept, pulled, true, b, gen, t, port)) === 'closed') {
+    keptThisSession = true
+  }
+}
+
+/**
+ * After a private cycle that reached the relay, never a hide cycle: step 5 again while the old
+ * row is not closed, else the keeping check. Neither is a sync failure (4.3 step 6): the cycle's
+ * own result stands, whatever happens to the old row.
+ */
+async function keepOldRowClosed(
+  b: Bucket,
+  gen: number,
+  reason: CycleReason,
+  t: Transport,
+  result: SyncResult,
+): Promise<SyncResult> {
+  if (!result.ok || b.kind !== 'e2e' || reason === 'hide' || gen !== setupGen) return result
+  const port = livePort()
+  if (port === null) return result
+  try {
+    const rec = loadMove(b)
+    if (rec?.phase === 'retired') await keepingCheck(rec, b, gen, t, port)
+    else if (rec !== null && (await retireOldRow(rec, b, gen, t, port)) === 'absorbed') {
+      // What was absorbed reaches the private row by the next cycle: a full one, never a HEAD.
+      again = true
+      nextReason = strongest(nextReason, 'again')
+    }
+  } catch {
+    // the old row is asked again after the next private cycle
+    if (gen === setupGen && moveRec?.phase === 'retiring') retireStalled = true
+  }
+  if (gen === setupGen) publishView()
+  return result
+}
+
+/** "Make sync private" is offered now (4.1): every condition that costs no request holds. */
+function offeredNow(): boolean {
+  const port = getSyncPort()
+  const s = useSyncStore.getState()
+  if (port === null || s.syncId === null || isPrivateCode(s.syncId)) return false
+  const cfg = readConfig()
+  const plain = cfg?.kind === 'plain' && cfg.code === s.syncId ? cfg : null
+  return moveOffered({
+    kind: 'plain',
+    established: established && plain?.established === true,
+    paused: s.lastError !== null && isPaused(s.lastError.kind),
+    fenced: plain?.fenced !== undefined,
+    locks: lockManager() !== null,
+    cas: mode === 'rpc' || CAS_ON,
+    devices: port.doc().devices,
+    legacySeen: port.meta().legacySeen,
+    now: Date.now(),
+  })
+}
+
+/** What Settings › Sync shows of the move (4.5), in the spec's words. */
+function moveViewOf(port: SyncPort, code: string): MoveView {
+  if (!isPrivateCode(code)) {
+    return {
+      offered: offeredNow(),
+      phase: null,
+      contested: false,
+      alone: false,
+      straggler: false,
+      lines: [],
+      disconnect: [],
+    }
+  }
+  const phase = moveRec?.phase ?? null
+  const contested = moveRec?.contested === true
+  const alone = !joinedPrivately(port)
+  const lines: string[] = []
+  if (phase === 'retiring') lines.push(retireStalled ? NOT_CLOSED_LINE : CLOSING_LINE)
+  if (alone) lines.push(NEXT_LINE)
+  if (contested) lines.push(CONTESTED_LINE)
+  if (straggler) lines.push(STRAGGLER_LINE)
+  const disconnect: string[] = []
+  if (phase === 'retiring') disconnect.push(DISCONNECT_RETIRING_LINE)
+  if (alone) disconnect.push(DISCONNECT_ALONE_LINE)
+  return { offered: false, phase, contested, alone, straggler, lines, disconnect }
+}
+
+/** Settings › Sync was opened: a record that belongs to nothing is removed (4.2). */
+export async function sweepMoveRecord(): Promise<void> {
+  await sweepVoidMove()
+  publishView()
+}
+
+/**
+ * "Make sync private" (PRIVATE-SYNC 4.3): one cycle of the loop, under the sync lock or not at
+ * all. Resolves with the new code once this device is private, or with why nothing changed.
+ */
+export function makePrivate(): Promise<MoveResult> {
+  const code = useSyncStore.getState().syncId
+  if (code === null || isPrivateCode(code) || !offeredNow()) {
+    return Promise.resolve({ ok: false, message: MOVE_UNAVAILABLE_MESSAGE })
+  }
+  const ask: { readonly gen: number; result: MoveResult | null } = { gen: setupGen, result: null }
+  moveAsk = ask
+  return requestCycle('manual', true)
+    .then(
+      (r): MoveResult =>
+        ask.result ?? { ok: false, message: r.ok ? MOVE_UNAVAILABLE_MESSAGE : r.message },
+    )
+    .finally(() => {
+      if (moveAsk === ask) moveAsk = null
+    })
+}
+
+/** The move holds the sync lock for all of its steps. Not granted in 35 s, it does nothing. */
+async function moveUnderLock(
+  ask: NonNullable<typeof moveAsk>,
+  code: string,
+  gen: number,
+): Promise<SyncResult> {
+  const refused = (): SyncResult => {
+    ask.result = { ok: false, message: MOVE_BUSY_MESSAGE }
+    return { ok: false, error: 'busy', message: MOVE_BUSY_MESSAGE }
+  }
+  const locks = lockManager()
+  if (locks === null) return refused()
+  const giveUp = new AbortController()
+  const timer = setTimeout(() => {
+    giveUp.abort()
+  }, LOCK_WAIT_MS)
+  const lock = { granted: false }
+  try {
+    return await locks.request(LOCK_NAME, { signal: giveUp.signal }, () => {
+      lock.granted = true
+      clearTimeout(timer)
+      return moveSteps(ask, code, gen)
+    })
+  } catch (err) {
+    if (lock.granted) throw err
+    clearTimeout(timer)
+    return refused()
+  }
+}
+
+/** Why step 3 stopped, in the owner's words. */
+function createFailed(err: unknown): string {
+  if (err instanceof PayloadTooLargeError) {
+    return syncMessage('too-large', Math.round(err.bytes / 1024))
+  }
+  if (err instanceof SyncTransportError && err.kind === 'full') return FULL_RELAY_MESSAGE
+  if (kindOf(err) === 'network' && isOffline()) return syncMessage('offline')
+  return MOVE_FAILED_MESSAGE
+}
+
+/**
+ * Step 3: the private row, made from this device's copy while the device is still plain, then
+ * read back and compared with what was sealed (not with the local copy, which an edit may have
+ * changed since). Nothing is acknowledged and none of the cycle's bookkeeping is touched. Null
+ * when the row is there and reads back as sealed; else why not. A crash here leaves one orphan
+ * row and nothing else.
+ */
+async function createPrivateRow(
+  next: Bucket,
+  keys: SyncKeys,
+  gen: number,
+  t: Transport,
+  port: SyncPort,
+): Promise<string | null> {
+  const rev = newRev(() => port.rng())
+  const opts = { dev: port.deviceId(), rev, min: SCHEMA, omitIds: port.omitIds() }
+  const json = JSON.stringify(encodeWire(port.doc(), opts))
+  if (json.length > WIRE_PUSH_MAX) {
+    return syncMessage('too-large', Math.round(json.length / 1024))
+  }
+  const sealed = await sealForRelay(json, keys, rev)
+  if (gen !== setupGen) return MOVE_CHANGED_MESSAGE
+  if (sealed === null || JSON.stringify(sealed).length > PAYLOAD_MAX_CHARS) {
+    return syncMessage('too-large', Math.round(json.length / 1024))
+  }
+  const res = await t.push(next.rowId, sealed, { base: null, force: false, keepalive: false })
+  if (gen !== setupGen) return MOVE_CHANGED_MESSAGE
+  if (!res.ok) return MOVE_FAILED_MESSAGE
+  const read = await openPulled(next, await t.pull(next.rowId))
+  if (gen !== setupGen) return MOVE_CHANGED_MESSAGE
+  const back = read.kind === 'ok' ? read.pulled?.payload : undefined
+  return back !== undefined && JSON.stringify(back) === json ? null : MOVE_FAILED_MESSAGE
+}
+
+/**
+ * Step 4's second half: the running tab takes the private bucket itself, as a setup would, but
+ * without `setupSync`, which would queue behind the loop this move runs in. A new setup
+ * generation (the rest of the move runs on it), the plain channel closed, the token slot,
+ * `held` and the remote news cleared. The code reaches the store only now.
+ */
+function takeBucket(code: string, b: Bucket, rec: MoveRecord, port: SyncPort): number {
+  const gen = ++setupGen
+  stopRealtime()
+  clearRetry()
+  stopPolling()
+  bucket = { code, value: Promise.resolve(b) }
+  established = true
+  setupSaved = true
+  held = null
+  news.length = 0
+  merged.length = 0
+  port.setMeta({ lastEtag: null, etagFor: null })
+  lastView = null
+  moveRec = rec
+  retireStalled = false
+  straggler = false
+  useSyncStore.setState({
+    syncId: code,
+    cloudStatus: 'syncing',
+    lastError: null,
+    pendingLocal: true,
+  })
+  connecting = !isOffline() && !hidden()
+  liveState = computeLive()
+  return gen
+}
+
+/** The move's steps, in order (4.3), under the lock. */
+async function moveSteps(
+  ask: NonNullable<typeof moveAsk>,
+  code: string,
+  gen: number,
+): Promise<SyncResult> {
+  const stop = (message: string, result?: SyncResult): SyncResult => {
+    ask.result = { ok: false, message }
+    return result ?? { ok: false, error: 'busy', message }
+  }
+  // 1. The relay must refuse the table (005): only its permission refusal lets the move go on.
+  if ((await probeLockdown()) !== 'locked') return stop(MOVE_LOCKDOWN_MESSAGE)
+  if (gen !== setupGen) return stop(MOVE_CHANGED_MESSAGE, offResult())
+  await sweepVoidMove()
+  if (!offeredNow()) return stop(MOVE_UNAVAILABLE_MESSAGE)
+  const secret = crypto.getRandomValues(new Uint8Array(16))
+  const nextCode = encodeSt5(secret)
+  secret.fill(0)
+  let next: Bucket
+  try {
+    next = await deriveBucket(nextCode)
+  } catch {
+    return stop(MOVE_FAILED_MESSAGE)
+  }
+  if (next.keys === null || gen !== setupGen) return stop(MOVE_CHANGED_MESSAGE, offResult())
+  // 2. An ordinary cycle on the plain row: what the old row holds now is merged here first.
+  const plain = await cycle(code, gen, 'manual')
+  if (!plain.ok) return stop(plain.message, plain)
+  if (gen !== setupGen) return stop(MOVE_CHANGED_MESSAGE, offResult())
+  const port = livePort()
+  if (port === null) return stop(syncMessage('reload'))
+  // 3. The private row, made while the device is still plain.
+  let t: Transport | null = null
+  let failed: string | null
+  try {
+    t = (await openTransport(next.rowId, hintOf(port), Date.now(), false)).transport
+    if (t.mode === 'table' && !CAS_ON) return stop(MOVE_UNAVAILABLE_MESSAGE)
+    failed = await createPrivateRow(next, next.keys, gen, t, port)
+  } catch (err) {
+    failed = createFailed(err)
+  }
+  if (failed !== null || t === null) {
+    return stop(failed ?? MOVE_FAILED_MESSAGE, gen === setupGen ? plain : offResult())
+  }
+  // 4. The switch. Storage first: another tab may have changed the sync (this tab follows it at
+  // its next cycle, and the row made at step 3 is an orphan), or be making it private itself.
+  const saved = readConfig()
+  if (
+    saved?.kind !== 'plain' ||
+    saved.code !== code ||
+    saved.fenced !== undefined ||
+    readMove() !== null ||
+    changedElsewhere(code)
+  ) {
+    return stop(MOVE_CHANGED_MESSAGE, plain)
+  }
+  const rec: MoveRecord = {
+    v: 1,
+    for: moveFingerprint(next.rowId),
+    from: code,
+    at: Date.now(),
+    phase: 'retiring',
+    absorbed: null,
+    retired: null,
+    checkedAt: null,
+    conflicts: 0,
+    contested: false,
+  }
+  try {
+    writeMove(rec)
+    // This write is the switch: by the reader rule the device is private from here (3.2).
+    storage.savePrivateSync(nextCode, true)
+  } catch {
+    // Not switched: the record (written or not) belongs to nothing.
+    if (readConfig()?.kind !== 'e2e') removeMove()
+    return stop(MOVE_FAILED_MESSAGE, plain)
+  }
+  // Another tab's sweep may have read the record as void between the two writes.
+  try {
+    if (readMove() === null) writeMove(rec)
+  } catch {
+    // the record is lost: the old row stays open until the owner moves again
+  }
+  const gen2 = takeBucket(nextCode, next, rec, port)
+  ask.result = { ok: true, code: nextCode }
+  publishView()
+  // 5. Retire the old row, in the same lock grant; then a private cycle carries to the new row
+  // what was absorbed and every edit made since step 3.
+  try {
+    await retireOldRow(rec, next, gen2, t, port)
+  } catch {
+    if (gen2 === setupGen) retireStalled = true
+  }
+  const result = gen2 === setupGen ? await cycle(nextCode, gen2, 'manual') : offResult()
+  if (gen2 === setupGen) {
+    publishPending()
+    publishView()
+    schedulePoll()
+    if (!isOffline()) void ensureSubscribed(gen2)
+  }
+  return result
+}
+
 /** Stops everything this engine runs; useSyncStore clears the code and the state. */
 export function stop(): void {
   setupGen++ // discards a running cycle and any pending subscription
@@ -1970,6 +2555,11 @@ export function stop(): void {
   merged.length = 0
   lastView = null
   liveState = 'off'
+  forgetMove()
+  // A Disconnect removes the setup right after this returns: its move's record, void from then
+  // on, goes with it (4.2). Another tab's change followed here keeps a record that is still its
+  // bucket's: the sweep removes only what is void.
+  queueMicrotask(sweepMove)
 }
 
 export function triggerSync(opts?: { resetBackoff?: boolean }): Promise<SyncResult> {
@@ -1999,6 +2589,12 @@ export type JoinPreview =
       after: number
       removed: number
       unreadable: number
+      /**
+       * The entries the relay copy holds that this device's deletions remove on the others
+       * (PRIVATE-SYNC 4.5: a "Delete everywhere" made while fenced is carried out at the join).
+       * Present only when there are some.
+       */
+      deletesThere?: number
     }
   /** No relay copy for the code. `private`: it was a private code (the words differ). */
   | { kind: 'not-found'; private?: boolean }
@@ -2070,6 +2666,10 @@ export async function previewJoin(input: string): Promise<JoinPreview> {
   }
   const omit = port.omitIds()
   const m = mergeDoc(local, dec.doc)
+  let deletesThere = 0
+  for (const id of dec.doc.expenses.keys()) {
+    if (!m.doc.expenses.has(id) && (omit === undefined || !omit(id))) deletesThere++
+  }
   return {
     kind: 'found',
     code,
@@ -2078,6 +2678,7 @@ export async function previewJoin(input: string): Promise<JoinPreview> {
     after: liveCount(m.doc, omit),
     removed: m.removed.filter((rec) => omit === undefined || !omit(rec.id)).length,
     unreadable: dec.report.quarantined.length,
+    ...(deletesThere > 0 ? { deletesThere } : {}),
   }
 }
 
@@ -2186,6 +2787,8 @@ function onOffline() {
 export function start(): void {
   if (started) return
   started = true
+  // A move that failed half-way left a record that belongs to nothing (4.2).
+  sweepMove()
   void whenHydrated().then(() => {
     livePort()
     publishView()

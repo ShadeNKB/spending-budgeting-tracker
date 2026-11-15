@@ -82,6 +82,26 @@ export interface SyncView {
   readonly allCurrent: boolean
   /** Null unless this device uses the relay's sync functions. */
   readonly lockdown: { readonly ready: boolean; readonly reason: string | null } | null
+  /** "Make sync private" and what follows it (PRIVATE-SYNC 4); absent before release 2's engine. */
+  readonly move?: MoveView
+}
+
+/** What Settings › Sync shows of making a sync private (PRIVATE-SYNC 4.1, 4.3 to 4.5). */
+export interface MoveView {
+  /** A plain sync: "Make sync private" is offered. Why not, when it is not, is not said. */
+  readonly offered: boolean
+  /** A private sync this device made from a plain one: closing the old row, or closed. */
+  readonly phase: 'retiring' | 'retired' | null
+  /** Another device's marker was found on the old row (both moved, or a forged one). */
+  readonly contested: boolean
+  /** A private sync no other private device has joined yet. */
+  readonly alone: boolean
+  /** Something was written to the old row after it was closed (this session). */
+  readonly straggler: boolean
+  /** The lines under the code, in the spec's words, in order. */
+  readonly lines: readonly string[]
+  /** What the Disconnect (and "Remove from this device") question adds. */
+  readonly disconnect: readonly string[]
 }
 
 interface SyncState {

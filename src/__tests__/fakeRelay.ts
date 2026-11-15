@@ -183,7 +183,15 @@ interface RelayState {
    * Runs at the moment a write lands, before it is applied: a test scripts what another device
    * does in between (a crossing write, a row removed) to drive conflicts and missing rows.
    */
-  beforeWrite: ((write: { client: number; via: PushRecord['via']; force: boolean }) => void) | null
+  beforeWrite:
+    | ((write: {
+        client: number
+        via: PushRecord['via']
+        force: boolean
+        /** The row the write is for. */
+        row: string
+      }) => void)
+    | null
 }
 
 declare global {
@@ -1034,7 +1042,7 @@ class Query implements PromiseLike<RelayResponse> {
       this.op === 'rpc' ? 'rpc' : this.op === 'insert' || this.op === 'update' ? this.op : 'upsert'
     const force =
       this.op === 'rpc' ? this.args.p_force === true : this.op === 'update' && this.base === null
-    r.beforeWrite?.({ client: this.client.id, via, force })
+    r.beforeWrite?.({ client: this.client.id, via, force, row: syncId })
     const current = r.rows.get(syncId)
     if (this.op === 'rpc') return this.rpcWrite(requestedAt, current)
     // An UPDATE that matches no row checks nothing; any other write checks the row it would leave

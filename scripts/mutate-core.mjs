@@ -27,7 +27,13 @@
 // merged, P3 what does not open passed to the merge, P4 one IV for every seal, P5 a cycle writing
 // over a copy marked newer, P6 a private sync on the upsert transport, P7 a fence that is not
 // saved, P8 a setup changed in another tab not followed, P9 a newer copy pulled again by every
-// poll, P10 a write sent after the setup changed mid-cycle; and PR-2's
+// poll, P10 a write sent after the setup changed mid-cycle; release 2's move (PRIVATE-SYNC 7b):
+// R1 the record kept in st5:sync, R2 the move without the lock, R3 the key written without the
+// re-read, R4 the lockdown check skipped, R5 a second absorb, R6 the marker after the private
+// cycle, R7 the marker never forced, R8 forced before three conflicts, R9 the post-absorb cycle
+// answered by a HEAD, R10 a record of another bucket acted on, R11 a merge in the keeping check,
+// R12 the keeping check counting every registry entry, R13 the keeping check stopping for good
+// once a second device appears, R14 the foreign-marker branch dropping the key; and PR-2's
 // two survivors by name, M23 (absorb's raw copy of a damaged envelope ignored) and M34 (outbox
 // written with sync off).
 // A mutation may need more than one edit (`edits`); each anchor must occur exactly once.
@@ -423,6 +429,142 @@ const SYNC_MUTATIONS = [
     find: '    if (changedElsewhere(b.code)) {\n      forgetSent(step.sent)\n      return followSaved()\n    }\n',
     replace: '',
     expect: 'AC-P3: a setup changed elsewhere while a copy is being sealed gets no write',
+  },
+  {
+    id: 'R1',
+    name: 'The move keeps its record in st5:sync, which every setup rewrites',
+    file: 'src/data/sync/move.ts',
+    find: "export const MOVE_KEY = 'st5:synckey:move'\n",
+    replace: "export const MOVE_KEY = 'st5:sync'\n",
+    expect: 'AC-M2: the record survives a 0.21.0 writer, a reload and a setup of the same code',
+  },
+  {
+    id: 'R2',
+    name: 'The move runs without the sync lock',
+    file: 'src/stores/syncEngine.ts',
+    find: '  if (moveAsk?.gen === gen && moveAsk.result === null) return moveUnderLock(moveAsk, code, gen)\n',
+    replace:
+      '  if (moveAsk?.gen === gen && moveAsk.result === null) return moveSteps(moveAsk, code, gen)\n',
+    expect: 'AC-M8: a tab not granted the lock is refused and writes nothing',
+  },
+  {
+    id: 'R3',
+    name: 'The key is written without the re-read of step 4',
+    file: 'src/stores/syncEngine.ts',
+    find:
+      '  if (\n' +
+      "    saved?.kind !== 'plain' ||\n" +
+      '    saved.code !== code ||\n' +
+      '    saved.fenced !== undefined ||\n' +
+      '    readMove() !== null ||\n' +
+      '    changedElsewhere(code)\n' +
+      '  ) {\n' +
+      '    return stop(MOVE_CHANGED_MESSAGE, plain)\n' +
+      '  }\n',
+    replace: '  void saved\n',
+    expect: 'AC-M8: a tab whose re-read at step 4 finds a changed setup stops, and follows it',
+  },
+  {
+    id: 'R4',
+    name: 'The lockdown check is skipped',
+    file: 'src/stores/syncEngine.ts',
+    find: "  if ((await probeLockdown()) !== 'locked') return stop(MOVE_LOCKDOWN_MESSAGE)\n",
+    replace: '',
+    expect: 'AC-M12: a relay that still answers the table stops the move before any write',
+  },
+  {
+    id: 'R5',
+    name: 'A second plain payload is absorbed',
+    file: 'src/stores/syncEngine.ts',
+    find: '  if (!keeping && rec.absorbed === null && mergeable(dec.writer)) {\n',
+    replace: '  if (!keeping && mergeable(dec.writer)) {\n',
+    expect: 'AC-M9 / AC-M4: one plain payload is merged, a second is not',
+  },
+  {
+    id: 'R6',
+    name: 'The marker is written after the private cycle that carries the absorb, not before it',
+    file: 'src/stores/syncEngine.ts',
+    find: '    await closeOldRow(absorbed, pulled.etag, b, gen, t, port)\n',
+    replace: '',
+    expect: 'AC-M4: the marker went on at once, before the private row was sent what was absorbed',
+  },
+  {
+    id: 'R7',
+    name: 'The marker is never forced',
+    file: 'src/stores/syncEngine.ts',
+    find: '  const force = base !== null && rec.conflicts >= MARKER_FORCE_AFTER\n',
+    replace: '  const force = false\n',
+    expect: 'AC-M9: the marker lands by force after three conflicts',
+  },
+  {
+    id: 'R8',
+    name: 'The marker is forced before three conflicts',
+    file: 'src/stores/syncEngine.ts',
+    find: '  const force = base !== null && rec.conflicts >= MARKER_FORCE_AFTER\n',
+    replace: '  const force = base !== null && rec.conflicts >= MARKER_FORCE_AFTER - 1\n',
+    expect: 'AC-M9: three compare-and-sets, then one forced write',
+  },
+  {
+    id: 'R9',
+    name: 'The cycle after an absorb may be answered by a HEAD',
+    file: 'src/stores/syncEngine.ts',
+    edits: [
+      {
+        find: '    held = null // the cycle that carries it to the private row is a full one\n',
+        replace: '',
+      },
+      {
+        find: "      nextReason = strongest(nextReason, 'again')\n",
+        replace: "      nextReason = strongest(nextReason, 'poll')\n",
+      },
+    ],
+    expect: 'AC-M5: what was absorbed by a resumed move reaches the private row',
+  },
+  {
+    id: 'R10',
+    name: 'A record whose `for` is not this bucket is acted on',
+    file: 'src/stores/syncEngine.ts',
+    find: '  moveRec = dropVoidMove(b.rowId)\n',
+    replace: '  moveRec = readMove()\n',
+    expect: 'AC-M2: a record for another bucket is never acted on',
+  },
+  {
+    id: 'R11',
+    name: 'The keeping check merges what it finds on the old row',
+    file: 'src/stores/syncEngine.ts',
+    find: '  if (keeping) straggler = true\n',
+    replace:
+      '  if (keeping) {\n' +
+      '    straggler = true\n' +
+      '    if (mergeable(dec.writer)) absorb(dec, port)\n' +
+      '  }\n',
+    expect: 'AC-M4 / AC-M13: plaintext over the marker is neither merged nor kept',
+  },
+  {
+    id: 'R12',
+    name: 'The keeping check counts every registry entry, not the private ones',
+    file: 'src/stores/syncEngine.ts',
+    find: '  for (const [id, d] of port.doc().devices) if (id !== me && d.e2e) return true\n',
+    replace: '  for (const [id] of port.doc().devices) if (id !== me) return true\n',
+    expect: 'AC-M13: a HEAD after every cycle while no other private device has joined',
+  },
+  {
+    id: 'R13',
+    name: 'The keeping check stops for good once a second private device appears',
+    file: 'src/stores/syncEngine.ts',
+    find: '  const close = alone && now - kept.at < CLOSE_WATCH_MS\n',
+    replace: '  if (!alone) return\n  const close = alone && now - kept.at < CLOSE_WATCH_MS\n',
+    expect: 'AC-M13: once another private device joined, daily pulls, never stopping',
+  },
+  {
+    id: 'R14',
+    name: "Another device's marker makes the mover drop its private key",
+    file: 'src/stores/syncEngine.ts',
+    find: '    const contested = rec.contested || (by !== null && by !== port.deviceId())\n',
+    replace:
+      '    const contested = rec.contested || (by !== null && by !== port.deviceId())\n' +
+      '    if (by !== port.deviceId()) storage.saveSyncId(null)\n',
+    expect: 'AC-M7 / AC-M6: the private key is kept whoever the marker names',
   },
   {
     id: 'M23',

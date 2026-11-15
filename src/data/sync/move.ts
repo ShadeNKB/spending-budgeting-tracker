@@ -193,6 +193,8 @@ function heldCode(): string | null {
  * as it is) when the row id cannot be derived, or when the setup changed while it was.
  */
 export async function sweepVoidMove(): Promise<MoveRecord | null> {
+  // No record, nothing to decide: no key is derived (and this page's storage is bound now).
+  if (readRaw() === null) return null
   const code = heldCode()
   let rowId: string | null = null
   if (code !== null) {
