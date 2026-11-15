@@ -1,6 +1,6 @@
 # Private sync (PR-6): spec
 
-Status: version 2, 15 Nov 2026; release 1 built as written except where section 10 ("As built") says otherwise. Version 1 was failed by two independent reviews (security; sync correctness) before any code was written: section 10 records what they found. This version splits the track into two releases and replaces the move's protocol.
+Status: version 3, 15 Nov 2026. Release 1 is built and shipped (0.21.0) as written except where section 10 ("As built") says otherwise. Release 2 (section 4) is not built: its text was failed by its second review and is rewritten here (section 10, "Second review of release 2"). Version 1 was failed by two independent reviews (security; sync correctness) before any code was written: section 10 records what they found. This version splits the track into two releases and replaces the move's protocol.
 
 Track T2's last piece ("end-to-end encryption with hashed row ids"). Written from the code as it stands at v0.20.0: the data-engine spec the source cites (`DATA-ENGINE-SPEC §10, §11, §13`) is not in this repository, so this document restates what the code froze and specifies what is still to build.
 
@@ -8,14 +8,14 @@ Track T2's last piece ("end-to-end encryption with hashed row ids"). Written fro
 
 Today a synced bucket is one row of `public.sync_buckets`, in plaintext, under a row id that is the sync code itself. Whoever can read the table can read every entry, and whoever can read a row id holds the code that writes it. Migration 005 (gate E) closes the table to the public key; it does not change what the database, its operator, its backups or a leaked service key can read.
 
-A private bucket's row holds only ciphertext, under a row id that is not the code. **From the moment a bucket is private, what a device sends is encrypted on that device first**, and a change made on the relay by anyone without the code is detected and never merged.
+A private bucket's row holds only ciphertext, under a row id that is not the code. **From the moment a bucket is private, what a device sends is encrypted on that device first**, and a change made on the relay by anyone without the code is detected and never merged. One exception, once: when an existing plain bucket is made private (section 4), the device merges what its old plain row holds one last time. That content was writable by anyone who could write the plain row, exactly as it was at every sync before the move.
 
 What it does not do, said here so no screen overclaims:
 
 - **It does not un-publish the past.** Everything a plain bucket held before it was made private sat readable on the relay. Private sync protects what is written afterwards.
 - **Remnants of old plaintext outlive the switch**: dead rows and write-ahead log in the database (before 005 the table's replica identity is FULL, so the update that retires a row logs the whole old row), the provider's own backups, API logs that hold `sync_id=eq.<code>` for table-transport requests, the 7 Nov backup copy (in a private schema with no API grants; dropped after gate E), and unreadable-copy quarantine keys (`st5:q:relay:*`) on a device.
 - **A compromised device is out of scope**: the code and the data are in its storage. So is whoever serves the JavaScript (the hosting account, the build, a dependency), and the clipboard a code is copied through.
-- **Metadata is visible to the relay**: row sizes and their change per write, write times, IP addresses and user agents, the device ids in Broadcast messages, the revision and the compression flag of each envelope, and the link between a plain row and the private row that replaced it (creation time, same devices).
+- **Metadata is visible to the relay**: row sizes and their change per write, write times, IP addresses and user agents, the device ids in Broadcast messages, the revision and the compression flag of each envelope, the device id in a moved marker (`by`), and the link between a plain row and the private row that replaced it (creation time, same devices, and the mover's later checks of the old row, 4.4).
 - **Availability is not protected.** Anyone who can write a row can replace it with garbage. A device detects that and repairs the row from its own copy; where it cannot tell damage from a newer format, the owner is offered the repair (3.9).
 - **No freshness guarantee from the relay.** The relay can serve an older valid copy. Merging an older copy changes nothing on a device that already holds a newer one (tombstones are never pruned and the merge is a join); a device joining for the first time can be handed stale state, which the next write from the other device corrects.
 
@@ -125,62 +125,109 @@ Nothing in release 1 writes a marker. The fence ships first so that every device
 
 ## 4. Release 2: making an existing bucket private (gate D)
 
-Specified here as corrected by the reviews; **it is reviewed again before it is built**, after release 1 has shipped and run.
+Version 3 of this section. Version 2 was failed by its second review (two independent read-only reviewers, 15 Nov, against the code of 0.21.0): section 10 records what they found. Not built yet. `U` is the bucket's plain code, `P` its plain row, `R` the private row.
 
 ### 4.1 When it is offered
 
-On a device whose plain bucket is established, when:
+Settings › Sync offers "Make sync private" on a device whose plain bucket is established, not paused and not fenced, when all of these hold:
 
-- this device's transport is compare-and-set (RPC, or CAS on), and every device in the registry that pushed in the last 60 days (`STALE_AFTER_MS`) reports the RPC mode and a version that has release 1;
-- no older writer has been seen recently (`legacySeen`).
+- the browser has Web Locks, and this device's transport is compare-and-set (RPC, or CAS on);
+- every device in the registry reports the RPC mode and a version that has release 1, unless it last pushed more than 60 days ago (`STALE_AFTER_MS`). A row that was never seen (`seen: 0`) counts as a device that has not updated;
+- no older writer has been seen in the last 60 days (`legacySeen`).
+
+One more condition is checked when the button is pressed, because it costs a request: **the relay must refuse the table** (migration 005 is applied). The move asks the table transport for the head of a fixed row id that no bucket uses (not of `P`, so `U` stays out of the API's logs). Only the relay's permission refusal lets it go on (the test `reprobeFor` already makes). An answer, a timeout or any other error stops it, with nothing changed: "This sync's server still allows direct reads. Make sync private after the database lockdown." A refused read does not prove that writes are refused: a lockdown made by hand that still let the public key update the table would pass. That could only be checked by writing, so it is not checked, and is recorded here. Before the lockdown a table writer chooses its own tokens, is not held to the creation caps, sees every row event of the table, and may be an old client that can only upsert: the move's compare-and-sets prove nothing there.
 
 The registry is read from the plain row and can be forged by anyone who can write it; the gate is a guard against the owner's own mistake, not a security boundary. A device that only reads looks stale to it; the question says a device that has not synced lately will have to update and enter the code.
 
-### 4.2 The move
+### 4.2 The move's own record
 
-It runs as one cycle kind inside the engine's single-flight loop, under the sync Web Lock, with the bucket's plain code `U` and row `P`. The button re-reads the persisted config under the lock (a second tab cannot start a second move).
+The move keeps its state in a key of its own, `st5:synckey:move`, and never in `st5:sync`. Every setup of release 1 writes `st5:sync` and `st5:synckey` from scratch (`keepCode` → `savePrivateSync`): at each start-up, in each tab that follows a changed setup, and in a tab still running 0.21.0. State kept in either would be erased by the first of them, the old row would never be retired, and both devices would go on showing "Synced" on two different rows.
 
-1. Generate the secret; derive the keys.
-2. Run a cycle on `P`. Offline or failing: stop, nothing changed.
-3. **Create the private row while the device is still plain**: seal this device's copy, `push(rowId, envelope, { base: null })`, then pull it back, open it and compare its digest with the local one. `full` (the relay's creation caps: 20 rows an hour, 500 in all, RPC only), `too-large`, offline, or a failed read-back: stop. A crash here leaves one orphan ciphertext row and nothing else.
-4. **Switch**: write `st5:synckey`, read it back; write the private config with `moving: { from: U, at }`; remove the `syncId` mirror. Bump the engine's generation, stop the plain subscription. From here the device is private, and `moving` means: after each successful private cycle, run step 5.
-5. **Retire `P`**: pull `P`.
-   - It holds this device's own marker (`by` = this device id: a lost answer, or a resumed move) → done.
-   - It holds another device's marker → that device moved first: this device drops its unfinished private bucket (key and config), returns to the plain config for `U` in the fenced state, and shows the ordinary `moved-private` prompt. One winner; the loser joins it like any other device.
-   - It is missing → create the marker (`base: null`), so the row cannot be re-created in plaintext.
-   - It holds a plain payload → **absorb only** (merge it into this device; no push to `P`, no etag, no outbox ack against `P`), at most once per move: a second plain payload is not merged. Run a private cycle so the private row carries what was absorbed. Then write the marker by compare-and-set on that pull's etag. A conflict ends the step; the next cycle resumes at 5.
-   - Anything else (garbage, an envelope, a newer copy) → write the marker by compare-and-set without absorbing.
-     The marker is `movedMarker('private', now)` plus `by: <device id>` (extra fields are ignored by every reader and by the relay). It is announced on the plain topic, so the other device learns at once.
-6. Clear `moving`; keep `retired: { row: U, at }`.
+`{ v: 1, for, from, at, phase, absorbed, retired, checkedAt, conflicts, contested }`:
 
-### 4.3 Keeping the old row retired
+- `for`: a fingerprint of `R`'s row id (never the code or the secret). A record whose `for` is not the bucket in `st5:synckey` belongs to nothing: it is void, and removed when the engine next starts, when Settings › Sync is next opened, or at the next press of the button (a switch that failed half-way must not block the next try).
+- `from`: `U`, which the device needs to ask about `P`.
+- `phase`: `retiring` until step 5 has seen `P` hold a marker, then `retired`.
+- `absorbed`: the token of the one plain payload merged at step 5. `retired`: `P`'s token when it was last seen holding a marker. `checkedAt`: when `P` was last asked. `conflicts`: how many compare-and-sets of the marker have conflicted in a row (kept here so a reload does not reset it). `contested`: step 5 found another device's marker; cleared when another private device joins `R`.
 
-For 60 days the mover HEADs `P` on start-up and once a day. If `P` is not its marker it re-writes the marker by compare-and-set **without merging what it finds**, and Settings › Sync says "Another device is still using the old sync. Update it and enter the private code." If `P` is missing it re-creates the marker. Anything a straggler wrote to `P` is still on that device and is merged when it joins.
+Its name matches the rule that already keeps `st5:synckey` out of the rescue export and the backup (it holds `U`). It is written only by the move, and removed by Disconnect, by "Remove from this device" and by a join. No release before this one reads or writes it. None of it is start-up code: the record is read by the lazy engine, and where its removal lives is the builder's choice within the byte budgets (the eager sync layer has 27 B left).
 
-### 4.4 What the other device sees
+### 4.3 The move
 
-It pulls the marker, persists the fence (3.7) and asks for the code. Joining is 3.5 with its own entries kept and merged. A "Delete everywhere" pressed while fenced is carried out everywhere at the join; the join preview says how many entries this device will delete on the others.
+One cycle kind inside the engine's single-flight loop. **It runs only under the sync Web Lock.** An ordinary cycle that is not granted the lock within 35 s runs without it (`withLock`), and a hide cycle never takes it; the move does neither: not granted, it stops with "Sync is busy in another tab. Try again in a moment."
 
-### 4.5 The relay
+1. The lockdown check of 4.1; a void record is removed. Then generate the secret and derive the keys. Nothing is stored and no code is shown yet.
+2. Run an ordinary cycle on `P`. Offline, paused or failing: stop, nothing changed.
+3. **Create `R` while the device is still plain.** Encode this device's copy as a private cycle does, seal it, `push(rowId, envelope, { base: null })`, then pull it back, open it and compare its digest with the digest of **what was sealed** (not of the local copy: an edit made in between would fail the comparison, and every retry leaves an orphan row and counts against the relay's creation caps, 20 rows an hour and 500 in all). This step acknowledges nothing and leaves the engine's token, revision, memo and repair bookkeeping alone: `mergeStep` and `landed` are not used for it. `full`, `too-large`, a conflict, offline or a failed read-back: stop. A crash here leaves one orphan ciphertext row and nothing else.
+4. **Switch.** Re-read storage first: the config must still be plain `U` and not fenced, with no `st5:synckey` and no move record. Otherwise stop: another tab changed the sync, and this tab follows it at its next cycle (the row from step 3 is an orphan). Then, in this order:
+   1. write the move record (`phase: retiring`);
+   2. write `st5:synckey` and read it back. **This write is the switch**: by 3.2's reader rule the device is private from here;
+   3. write the private config, and remove the `syncId` mirror.
 
-The prune function (rows untouched for 90 days) would remove a marker, after which only a device still on `U` and not fenced could re-create `P` in plaintext. Release 1's durable fence and 4.3 cover the owner's devices; the runbook's optional scheduled prune is to leave a `moved` row alone. No migration is needed for release 2.
+   The running tab then takes the private bucket itself: the store's code, a new setup generation, the plain subscription stopped, the token slot, `held` and the remote-news flags (`news`, `merged`) cleared, and a subscription to the private topic opened. It does not call `setupSync`, which would queue behind the loop it is running in; the rest of the move's cycle runs on the new generation, where the cycle's own `gen !== setupGen` checks would otherwise end it. The code is shown only now, after the read-back. A crash after the first write leaves a void record on a plain device; after the second, a private device whose record resumes step 5.
+
+5. **Retire `P`**, in the same lock grant, and again after every successful private cycle while `phase` is `retiring`. Never in a hide cycle. Pull `P`:
+   - **This device's own marker** (`why: private`, `by` = this device: a lost answer, or a resumed move) → `phase: retired`.
+   - **Any other marker** → `P` is retired already, by another device or by someone who forged a marker. One that is not a `private` marker is replaced with this device's by compare-and-set, so the other device is asked for a code and not just told to reload. `contested` is set when the marker names another device. **This device keeps its private bucket and its code**, and `phase` is `retired`. (Version 2 had it drop its bucket and wait for the other device's code. One forged marker then left every device asking for a code that no device held.)
+   - **Missing** → create the marker (`base: null`), so the row cannot be re-created in plaintext.
+   - **A plain payload, and nothing absorbed yet** → absorb it: merge it into this device and nothing more (no push to `P`, no token kept, no outbox entry acknowledged against `P`). Record `absorbed`, clear `held`, and **write the marker at once**, by compare-and-set on that same pull's token. Only then run a private cycle, so `R` carries what was absorbed; that cycle is a full one, never answered by a HEAD. If the merge itself cannot be saved (the safety copy fails), the step ends with nothing recorded and is tried again.
+   - **A plain payload after one was absorbed** → write the marker by compare-and-set on this pull's token, without merging. What a device wrote there is still on that device, and arrives when it joins.
+   - **Anything else** (garbage, an envelope, a newer copy) → write the marker by compare-and-set, without merging and without keeping a quarantine copy.
+
+   A conflict ends the step, and the next private cycle resumes it. **After three conflicts in a row (counted in the record) the marker is written with force**: `P` is a plain row whose content every writer of it still holds, and a writer that keeps the row busy must not be able to keep it open.
+
+   The marker is `movedMarker('private', now)` with `x5.moved.by` set to this device's id (extra fields are ignored by every reader and by the relay). It is announced on the plain topic with a fresh revision (a listener drops a revision it has already merged), so the other device learns at once.
+
+6. While `phase` is `retiring`, Settings › Sync says "Closing the old sync…". A step 5 that could not finish is not a sync failure: the private cycle's result stands, and the line becomes "The old sync is not closed yet. This device keeps trying."
+
+### 4.4 Keeping the old row retired
+
+The record stays for as long as the device is on `R`, and the mover goes on asking about `P`:
+
+- after every private cycle (never a hide cycle) while **no other private device has joined**: no entry of `R`'s registry with another id and `e2e: true`. `R` starts with the plain bucket's registry, so the other device is listed there from the first write, as a plain one: its being listed means nothing. Until it has joined it is the device that could be led back to plaintext, so the row is watched closely. After seven days of this the check is daily: an owner with one device must not ask about `P` at every poll for good;
+- otherwise at start-up, and at the first cycle 24 hours after `checkedAt`.
+
+The close check is a HEAD of `P`: a token equal to `retired` ends it. The daily check always pulls, whatever the token says. What a pull finds: its own marker (store the token), another marker (as in step 5), missing (re-create the marker), or anything else: write the marker by compare-and-set on that pull, with force after three conflicts, **without merging what was found and without keeping a copy of it**, and say in Settings › Sync "Something was written to the old sync after it was closed. If a device of yours is still on it, update it and enter this sync code there." (Anyone who knows `U` can cause that line with one write, so it does not say a device of the owner's did it.) What a straggler wrote to `P` is still on that device and is merged when it joins.
+
+A token is trusted only for the close check, and only because the lockdown is a condition of the move (4.1): the relay's functions issue the tokens. Should the lockdown be rolled back later, the daily pull still reads the content. There is no end date: a marker that disappears lets a device that never saw it re-create `P` in plaintext whenever that happens. **The check runs only while the mover is open.** A marker written over while it is closed stays written over until it is opened again, unless the relay refuses the write (4.6).
+
+### 4.5 What the owner sees
+
+- **The question.** "Make sync private?" says what happens in the owner's terms: this device makes a new, encrypted synced copy and closes the old one; the other device stops syncing until the new sync code is entered there; what the old sync held was readable on the server until now, and that is not undone. It shows how old the last backup export is, with Export beside it.
+- **After the switch**, the code, and for as long as no other private device has joined (4.4): "Next: enter this code on your other device. It stops syncing until you do." (The same line serves a private sync that Generate just started.)
+- **The other device** pulls the marker, persists the fence (3.7) and asks for the code. Joining is 3.5 with its own entries kept and merged. A "Delete everywhere" pressed while fenced is carried out everywhere at the join; the join preview says how many entries this device will delete on the others (a new count: today's preview counts only what the relay's copy deletes here).
+- **Contested** (both devices moved, or a marker was forged): "Another device may also have made this sync private. If your other device asks for a sync code, enter this one there. Only if it shows a code of its own: Disconnect one of them, then enter the other's code there. Your entries stay on each device and are merged." The order matters: a forged marker leaves the other device asking for a code and holding none, and an instruction that began with Disconnect would have the owner throw away the only code. Nothing is lost either way. The notice goes when another private device joins this bucket.
+- **Disconnect or "Remove from this device" while `retiring`**: the question adds "The old sync is not closed yet. A device still on it keeps syncing there, unencrypted." While no other private device has joined, at any phase, it adds "No other device has this sync code yet. Copy it first: a device waiting for it cannot join without it."
+
+### 4.6 The relay
+
+Release 2 is correct against the relay as it is after 005. Two things are left to the client there, and both are covered by 4.4:
+
+- **A forced write replaces a marker.** `st_sync_push` with `p_force` overwrites a row whatever it holds, a plain cycle of release 1 forces on its fourth attempt, and anyone who knows `U` can call it (`U` could be listed by anyone until 005, so it is treated as known). A device that has not yet pulled the marker would then sync on `P` in plaintext until the mover's next check, and that check runs only while the mover is open.
+- **The prune function** (rows untouched for 90 days) removes a marker like any other row.
+
+**Recommended, and the owner's decision (section 9): migration 006, a sticky marker.** `st_sync_push` refuses to replace a moved marker with anything but a moved marker (a marker still replaces a plain payload or another marker, forced or not, so step 5's force lands), answering `conflict` (a device then pulls, finds the marker and fences, as every release since 0.10.0 does on a conflict), and the prune function leaves moved rows alone. With it the retirement is the relay's own rule and 4.4 is a second line. The client cannot detect it and does not depend on it; the tests run against a relay with and without it. It is written and proved as 004 and 005 were (real Postgres with the Supabase roles, the released transports run against it) and applied by the owner with 005 or before gate D.
 
 ## 5. Failure matrix
 
-| Event                                                                                                                 | Result                                                                                                                                 |
-| --------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| A private row is replaced with garbage, a tampered envelope, plaintext, or a plaintext marker                         | `invalid`: one copy quarantined, never merged, repaired from a device's own copy.                                                      |
-| An envelope with a forged "newer" header                                                                              | Pause `update-required`; the owner can replace the copy (3.9).                                                                         |
-| An older valid envelope is put back                                                                                   | It opens; merging it changes nothing; the device then writes its current state.                                                        |
-| A private device loses `st5:sync` (an older build wrote over it, a quota error)                                       | Restored from `st5:synckey` at the next start.                                                                                         |
-| Two tabs, one changes the bucket                                                                                      | The other re-reads the config at its next cycle and follows.                                                                           |
-| The code is lost on every device                                                                                      | The relay copy cannot be read by anyone. Each device still holds its data; a new sync starts from it. Said in the Disconnect question. |
-| (R2) Crash before step 4                                                                                              | Still a plain bucket. At most an orphan ciphertext row.                                                                                |
-| (R2) Crash after step 4                                                                                               | Private, with `moving`: the next private cycle resumes step 5. `P` is live until then.                                                 |
-| (R2) The other device writes `P` before the marker                                                                    | Absorbed once at step 5 and carried into the private row.                                                                              |
-| (R2) A device writes `P` over the marker (an in-flight forced write, the upsert transport, a straggler after a prune) | The mover re-retires `P` within a day (4.3). That device keeps its entries and merges them when it joins.                              |
-| (R2) Both devices move at once                                                                                        | One marker lands first; the other device drops its unfinished bucket and is fenced.                                                    |
-| (R2) The relay refuses a new row                                                                                      | The move stops at step 3 with nothing changed.                                                                                         |
+| Event                                                                                                                  | Result                                                                                                                                                                                               |
+| ---------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A private row is replaced with garbage, a tampered envelope, plaintext, or a plaintext marker                          | `invalid`: one copy quarantined, never merged, repaired from a device's own copy.                                                                                                                    |
+| An envelope with a forged "newer" header                                                                               | Pause `update-required`; the owner can replace the copy (3.9).                                                                                                                                       |
+| An older valid envelope is put back                                                                                    | It opens; merging it changes nothing; the device then writes its current state.                                                                                                                      |
+| A private device loses `st5:sync` (an older build wrote over it, a quota error)                                        | Restored from `st5:synckey` at the next start.                                                                                                                                                       |
+| Two tabs, one changes the bucket                                                                                       | The other re-reads the config at its next cycle and follows.                                                                                                                                         |
+| The code is lost on every device                                                                                       | The relay copy cannot be read by anyone. Each device still holds its data; a new sync starts from it. Said in the Disconnect question.                                                               |
+| (R2) Crash before the switch (step 4, second write)                                                                    | Still a plain bucket. At most an orphan ciphertext row and a void move record, removed at the next start.                                                                                            |
+| (R2) Crash after the switch                                                                                            | Private, with a record in `retiring`: the next private cycle resumes step 5. `P` is live until then.                                                                                                 |
+| (R2) A start-up, another tab, or a tab still on 0.21.0 rewrites the sync config                                        | The move's record is in its own key and is not touched (4.2).                                                                                                                                        |
+| (R2) The other device writes `P` before the marker                                                                     | Absorbed once at step 5 and carried into `R`; a later write is not merged and arrives when that device joins.                                                                                        |
+| (R2) A device writes `P` over the marker (an in-flight forced write, a straggler after a prune, someone who knows `U`) | The mover retires `P` again without merging: at its next cycle until the other device has joined, within a day after (4.4), while the mover is open. With migration 006 the relay refuses the write. |
+| (R2) A writer keeps `P` busy                                                                                           | The marker is forced after three conflicts.                                                                                                                                                          |
+| (R2) Both devices move at once, or a marker is forged                                                                  | Each device keeps its private bucket and its code; the owner uses one code on both (4.5). Nothing is lost.                                                                                           |
+| (R2) The move is pressed in two tabs                                                                                   | One runs under the lock; the other is refused, or stops at the re-read of step 4. One code.                                                                                                          |
+| (R2) The relay refuses a new row                                                                                       | The move stops at step 3 with nothing changed.                                                                                                                                                       |
+| (R2) The relay still answers the table (005 not applied)                                                               | The move stops at step 1 with nothing changed.                                                                                                                                                       |
 
 ## 6. Compatibility
 
@@ -193,6 +240,7 @@ The prune function (rows untouched for 90 days) would remove a marker, after whi
 | any version before release 1 | a typed `ST5` code                        | Join refuses it.                                                                                                                        |
 | 0.11.0 to 0.20.0             | storage of a private device (a downgrade) | "Set up by a newer SpendTrack": does not sync. `st5:synckey` is untouched.                                                              |
 | 0.10.0                       | storage of a private device               | Quarantines the config (which holds no code), reads as unlinked, and may be linked again there; back on release 1 the private key wins. |
+| 0.21.0 (a tab left open)     | storage of a device that moved            | Follows the saved private setup at its next cycle. Does not know the move's record and does not touch it.                               |
 | 0.8.x, 0.9.x                 | a marker                                  | 0.8.4 and older stop on it before any push; 0.8.5 and 0.9.x pause.                                                                      |
 
 ## 7. Acceptance criteria, release 1
@@ -221,17 +269,43 @@ Each is a test at the level named. Unit tests run the real engine against the fa
 
 Not extended: the seeded simulator. It models the merge, which a private bucket does not change; its clock cannot drive WebCrypto. Private behaviour is tested on the real engine.
 
-Release 2's criteria are written with its second review: the move with a crash after every write, a lost answer at steps 3 and 5, the other device writing before and over the marker, a pruned row, a stale second tab, both devices moving, and the move on each transport.
+Release 2's criteria are in 7b.
+
+## 7b. Acceptance criteria, release 2
+
+Unit tests run the real engine against the fake relay (`ghost`, `hang`, `beforeWrite`, `seedRow`, `dropRow`, `writeAsOther`, offline clients; another tab is a write to the device's storage, as in `sync.private.test.ts`). The fake relay already models the lockdown (every table call refused) and the tests already fake the Web Lock (`freeze`, `refuse`); the relay gains an option for migration 006. The table transport's head needs an export from `syncService.ts`, a lazy module.
+
+- **AC-M1.** A crash (a reload of the device) after every write of steps 3 to 5 ends with exactly one live private row, `P` holding this device's marker, and both devices converged after the join.
+- **AC-M2.** The move's record survives a reload, a setup of the same code, another tab following, and a writer that behaves as 0.21.0 does (`savePrivateSync`). It is void and removed when `st5:synckey` is missing or names another bucket.
+- **AC-M3.** A lost answer at step 3 leaves the device plain with one orphan row; at step 5 it resolves through the device's own marker.
+- **AC-M4.** The other device writes `P` before the absorb (absorbed, and carried into `R`), between the absorb and the marker (not merged; arrives at its join), and over the marker (retired again without merging; arrives at its join).
+- **AC-M5.** An edit made during each of steps 2 to 5 reaches `R`. Nothing is acknowledged against the wrong row. The cycle after an absorb is never answered by a HEAD.
+- **AC-M6.** Both devices move: each keeps its private bucket and shows the contested notice, `P` holds a marker, and after Disconnect and a join on one of them both hold every entry.
+- **AC-M7.** A forged marker met at step 5 (another `by`; another `why`; no `by`): the private key is kept, a marker that is not `private` is replaced, and no device is left asking for a code that none holds. The contested notice tells the owner to enter this device's code where one is asked for before it mentions Disconnect, and goes when another private device joins.
+- **AC-M8.** The move in two tabs: one not granted the lock is refused and writes nothing; one whose re-read at step 4 finds a changed setup stops; `st5:synckey` is written once; no code is shown before the read-back. A void record left by a switch that failed does not block the next press.
+- **AC-M9.** A writer that keeps `P` busy: the marker lands by force within three conflicts. One plain payload is merged, a second is not, and an invalid one leaves no quarantine copy.
+- **AC-M10.** `P` pruned during or after the move gets its marker back. A fenced device of release 1 never re-creates `P`.
+- **AC-M11.** A "Delete everywhere" and a single delete, on either device, before, during and after the move: the deletions hold after the join, and the join preview's count of what this device will delete on the others is right.
+- **AC-M12.** The offer: refused for a recent registry row below release 1, in table mode or never seen, for an older writer seen within 60 days, without Web Locks, on a transport without compare-and-set, and on a bucket that is paused, fenced or not established. A table that answers the head of `P` stops the move before any write.
+- **AC-M13.** The check of 4.4, with `R`'s registry as a real move leaves it (the other device's plain-era entry in it): it runs after every private cycle until another device with `e2e: true` appears or seven days pass, and daily after; never in a hide cycle. At the close check an equal token costs no pull; the daily check pulls whatever the token says. Plaintext found over the marker is neither merged nor kept, the marker is written again, and Settings says so.
+- **AC-M14.** Storage after the move: the private code only in `st5:synckey`, `U` only in the move's record, no `syncId` mirror; neither is in the rescue export or the backup; Disconnect, "Remove from this device" and a join remove the record, and a void one is removed when the engine starts, when Settings › Sync opens and at the next press.
+- **AC-M15.** With migration 006: a forced plain write over the marker is answered `conflict` and a device of 0.21.0 fences; a marker may replace a marker, and a plain payload, forced or not; prune leaves a moved row. The SQL is proved on real Postgres with the released transports, as 004 and 005 were.
+- **AC-M16 (two real browsers, `e2e:data`, Chromium and iPhone WebKit).** One device moves; the other, on the real 0.21.0 build, fences and joins with the typed code; edits flow both ways; the relay's log shows a marker on `P` and only envelopes after it, on a derived row id.
+- **AC-M17 (`e2e:data`, mixed versions).** The real 0.20.0 build meets the marker, pauses, and never writes `P`.
+- **AC-M18 (browser).** The new states (the question, closing the old sync, the next-step line, contested, the straggler notice) pass axe in both themes and both sizes, and fit at 320 px.
+- **AC-M19.** After the switch the tab is subscribed to the private topic, and a Broadcast from the other device starts a cycle. The next-step line shows until another private device joins, and not after.
+- **Mutations.** Each of these known-bad changes must fail a test: the record kept in `st5:sync`; the move run without the lock; the key written without the re-read; the lockdown check skipped; a second absorb; the marker written after the private cycle and not before; the marker never forced, or forced before three conflicts; the post-absorb cycle answered by a HEAD; a record whose `for` does not match acted on; a merge in 4.4; the check of 4.4 counting every registry entry and not the private ones, or stopping for good once a second device appears; the foreign-marker branch dropping the key.
 
 ## 8. Rollout
 
 1. **Release 1 (0.21.0).** Both devices update. Nothing changes for the owner's bucket.
-2. **Gate E (005)**, when Settings › Sync says ready, as planned. It should come before gate D: after it the public key can no longer list or write the table, and the retiring update is no longer broadcast to row-event listeners.
+2. **Gate E (005)**, when Settings › Sync says ready, as planned. **It must come before gate D**: the move refuses to run while the relay still answers the table (4.1). After it the public key can no longer list or write the table, and the retiring update is no longer broadcast to row-event listeners. Migration 006 (4.6), if the owner takes it, is applied with it or at any time before gate D.
 3. **Release 2**, then **gate D, the owner's**: after a backup export, "Make sync private" on one device and the code on the other. The lead verifies from the owner's reading of Settings › Sync (the relay's registry is ciphertext from then on).
 4. The manual way that needs no release 2: Disconnect on both devices, Generate on one, Join on the other. Nothing is lost (each device keeps its entries and a join merges). The old plain row stays on the relay until it is deleted by hand.
 
 ## 9. Decisions for the owner (none blocks the build)
 
+- **Migration 006, a sticky marker (4.6): recommended.** One more SQL file to apply, beside 005. It replaces the function every write goes through, so it is proved before it is offered, as 004 and 005 were. Without it release 2 still works, with one gap said plainly: the device that moved keeps the old row closed only while it is open. If someone who knows the old code writes over the marker while that device is closed, a device that has not yet entered the new code syncs unencrypted on the old row until the mover is opened again.
 - A QR code or pairing link for the second device needs a QR encoder (a new runtime dependency) or a link with the code in a URL fragment. The typed code works without either. Not built unless asked for.
 - The content security policy allows `https://*.supabase.co`. Pinning it to the one project would stop a script flaw sending data to another project, and would hard-code the project in a public repository. Left as it is.
 
@@ -281,3 +355,31 @@ Three independent read-only reviews before the PR: security (verdict fail, on on
   - A cycle that starts as the page is hidden awaits `open` and `seal` before its request, so it may not get out before the page freezes. The change stays in the outbox.
   - An older build's Disconnect on a private device's storage (0.11.0 to 0.20.0 offer one on the "newer SpendTrack" view) removes what that build knows of, not `st5:synckey`: release 1 is private again at its next load. Nothing is lost or exposed; the owner's Disconnect there is undone.
   - A damaged `st5:synckey` beside an intact `st5:sync` marker reads as "set up by a newer SpendTrack", with Disconnect as the way out.
+
+### Second review of release 2 (15 Nov, after 0.21.0 shipped)
+
+Section 4 (version 2) was reviewed again before any of it was built, by two independent read-only reviewers, against the released code. Both verdicts: **fail as written, on the same blocker; the outline (create first, then switch, then retire; absorb once; one marker) is sound.** Section 4 is version 3 because of them.
+
+- **The move's state was kept where the shipped code erases it** (both, blocker). `moving` and `retired` were to live in `st5:sync`. Every setup of release 1 rewrites that key and `st5:synckey` with no other fields, at each start-up and in each tab that follows a changed setup. The old row would never have been retired: the mover on its private row, the other device on the plain one, both saying "Synced", the other device's new entries still going up in plaintext. Taken: 4.2, a key of its own that no shipped writer touches.
+- **The lock did not make the move single** (both; major and minor). A cycle not granted the lock in 35 s runs without it, and a hide cycle never takes it: two tabs could each make a secret, and the owner could type the one storage no longer held. Taken: 4.3 (lock or nothing; the re-read before the switch; no code shown before the read-back).
+- **A forged marker made the mover destroy its own bucket** (security, major). Any marker naming another device made it drop its key and wait for a code; with a forged one, no device had a code. Taken: 4.3 step 5, a device never gives up its private bucket; both-moved and forged are one case the owner settles with one code (4.5). The loser's way back to plain, with its three writes that could crash apart, is gone with it.
+- **Nothing bounded how long the old row could be kept open, or stopped a marker being written over** (security, major). Taken: force after three conflicts; the close watch of 4.4 until the other device joins; migration 006 offered as the relay's own rule (4.6). "No migration is needed" stays true and is no longer the whole of it.
+- **Gate E before gate D was a "should"** (security, major). Before the lockdown, tokens are the writer's own choice, the caps do not hold, and the table's row events time the move for an observer. Taken: 4.1, the move asks the table and refuses to run where it answers; 4.4 trusts a token only because of it.
+- **Overclaims** (security, major). The line under the code said "from now on" while the other device had not joined, and section 1 said nothing unauthenticated is ever merged, which the absorb is the one exception to. Taken: 4.5's next-step line and section 1.
+- **The absorb window was a whole private cycle wide** (correctness, minor). Taken: absorb, then the marker at once, then the private cycle.
+- **A HEAD could answer the cycle after an absorb** (correctness, minor): a merge from the relay changes neither the local revision nor the outbox. Taken: the absorb clears `held`.
+- **The read-back compared with the local copy** (correctness, minor), so an edit made in between failed the move and left an orphan each time. Taken: compared with what was sealed; step 3 uses none of the cycle's bookkeeping.
+- **The daily check had no token to compare and no timer** (correctness, minor). Taken: the record holds `retired` and `checkedAt`; "daily" is the first cycle 24 hours on. The 60-day end is dropped.
+- **Disconnect during the move said nothing** (correctness, minor). Taken: 4.5.
+- **The join preview's second count does not exist yet** (correctness, minor). Recorded in 4.5 as new work.
+- **Smaller points taken**: where `by` sits (`x5.moved.by`), a fresh revision for the marker's announcement, no quarantine copy at step 5, rows never seen count against the offer, the offer hidden on a paused, fenced or unestablished bucket, the metadata list in section 1.
+- **For the builder** (correctness): the move, its record and the check of 4.4 belong in the lazy engine or a module only it imports, reached as Generate and Replace are (`loadSyncEngine()`); nothing goes in `useSyncStore.ts`. Reusable as they are: the transport, `bucketFor`, the seal and open wrappers, `encodeWire`, `decodeWire` with `applyRemote`, `movedMarker`, `announce`, `setFenced`, `changedElsewhere` and `followSaved`, the registry's rows and version compare. Not for the move: `mergeStep` and `landed`.
+- **Not verified by the reviewers, to settle while building**: whether a backup restore rewrites the engine's sync metadata; whether the fake relay can run two engines on one storage; the real headroom under the eager budget; how the fake relay models a forced write.
+
+**Confirmation of version 3** (the same two reviewers, the same day): both pass with notes, all taken above.
+
+- **The contested notice led with Disconnect** (security, major). A forged marker leaves the other device asking for a code and holding none; told to "Disconnect one of them", the owner could throw away the only code. Taken: 4.5's order, and its warning on Disconnect while no other private device has joined.
+- **"The only device in the registry" was false from the first write** (correctness, major). The private row starts with the plain bucket's registry, which lists the other device already. The close watch would never have run. Taken: 4.4 counts only another device that has written as a private one (`e2e: true`).
+- **Without migration 006 the old row is guarded only while the mover is open** (security). Said plainly in 4.4, 4.6 and section 9.
+- **The lockdown check** (both): only the permission refusal counts, it asks about a row id no bucket uses so `U` stays out of the logs, and a refused read does not prove refused writes (recorded, not checked). The daily check pulls whatever the token says, so a lockdown rolled back later does not blind it.
+- **Smaller points taken**: the close watch ends after seven days alone; the straggler line no longer says a device of the owner's wrote; a void record is removed at the next press; the conflict count is in the record; `contested` clears when another private device joins; what taking the private bucket without `setupSync` must also do; no hide cycle and no kept copy in 4.4; 006 lets a marker replace a plain payload, forced or not; the fake relay already models the lockdown and the lock.
