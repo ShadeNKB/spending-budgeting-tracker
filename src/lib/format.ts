@@ -7,17 +7,20 @@
  * The symbol comes from the table below rather than from `Intl` (en-US renders SGD as
  * `SGD 14.60`), and the number from a cached `Intl.NumberFormat` per fraction-digit count:
  * building a formatter costs ~70x more than reusing one, and Pulse renders ~240 amounts.
+ * The table also holds each offered currency's decimals (ISO 4217 minor units, as Intl
+ * reports them): asking Intl builds a currency formatter, about 60 ms at first use with
+ * the CPU slowed 4x. A code outside the table still asks Intl.
  */
 
 export const CURRENCIES = [
-  { code: 'USD', symbol: '$', label: 'USD — $' },
-  { code: 'SGD', symbol: 'S$', label: 'SGD — S$' },
-  { code: 'EUR', symbol: '€', label: 'EUR — €' },
-  { code: 'GBP', symbol: '£', label: 'GBP — £' },
-  { code: 'JPY', symbol: '¥', label: 'JPY — ¥' },
-  { code: 'MYR', symbol: 'RM', label: 'MYR — RM' },
-  { code: 'AUD', symbol: 'A$', label: 'AUD — A$' },
-  { code: 'CAD', symbol: 'C$', label: 'CAD — C$' },
+  { code: 'USD', symbol: '$', label: 'USD — $', fractionDigits: 2 },
+  { code: 'SGD', symbol: 'S$', label: 'SGD — S$', fractionDigits: 2 },
+  { code: 'EUR', symbol: '€', label: 'EUR — €', fractionDigits: 2 },
+  { code: 'GBP', symbol: '£', label: 'GBP — £', fractionDigits: 2 },
+  { code: 'JPY', symbol: '¥', label: 'JPY — ¥', fractionDigits: 0 },
+  { code: 'MYR', symbol: 'RM', label: 'MYR — RM', fractionDigits: 2 },
+  { code: 'AUD', symbol: 'A$', label: 'AUD — A$', fractionDigits: 2 },
+  { code: 'CAD', symbol: 'C$', label: 'CAD — C$', fractionDigits: 2 },
 ] as const
 
 export type SupportedCurrency = (typeof CURRENCIES)[number]['code']
@@ -38,22 +41,25 @@ interface CurrencyStyle {
 const styleCache = new Map<string, CurrencyStyle>()
 const numberCache = new Map<number, Intl.NumberFormat>()
 
+function intlFractionDigits(code: string): number {
+  try {
+    return (
+      new Intl.NumberFormat('en-US', { style: 'currency', currency: code }).resolvedOptions()
+        .maximumFractionDigits ?? 2
+    )
+  } catch {
+    // Not an ISO 4217 code: keep two decimals and show the code itself as the symbol.
+    return 2
+  }
+}
+
 function currencyStyle(code: string): CurrencyStyle {
   const cached = styleCache.get(code)
   if (cached) return cached
   const known = CURRENCIES.find((c) => c.code === code)
-  let fractionDigits = 2
-  try {
-    fractionDigits =
-      new Intl.NumberFormat('en-US', { style: 'currency', currency: code }).resolvedOptions()
-        .maximumFractionDigits ?? 2
-  } catch {
-    // Not an ISO 4217 code: keep two decimals and show the code itself as the symbol.
-  }
-  const style: CurrencyStyle = {
-    symbol: known ? known.symbol : `${code.toUpperCase()}\u00a0`,
-    fractionDigits,
-  }
+  const style: CurrencyStyle = known
+    ? { symbol: known.symbol, fractionDigits: known.fractionDigits }
+    : { symbol: `${code.toUpperCase()}\u00a0`, fractionDigits: intlFractionDigits(code) }
   styleCache.set(code, style)
   return style
 }
