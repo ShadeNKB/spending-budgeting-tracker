@@ -10,15 +10,19 @@ import {
   bootDevice,
   connect,
   expense,
+  loadDevice,
   micros,
+  migrate,
   payloadOf,
   pgTime,
   relay,
+  requestsOf,
   resetRelay,
   retireDevices,
   rowPayload,
   rowStamp,
   setVisibility,
+  setClientOffline,
   settle,
   steadyRandom,
   stubRelayEnv,
@@ -26,6 +30,7 @@ import {
   writeAsOther,
   type Device,
 } from '../../__tests__/fakeRelay'
+import { LOCKDOWN_PROBE_ROW } from '../../services/syncService'
 
 vi.mock(
   '@supabase/supabase-js',
@@ -477,5 +482,152 @@ describe('the view (§3.9)', () => {
     phone.sync.useSyncStore.getState().disconnectSync()
     await advance(MINUTE)
     expect(phone.sync.useSyncStore.getState().view).toBeNull()
+  })
+})
+
+describe('the lockdown, once this device has seen it (0.22.2)', () => {
+  /** HEADs of the row no bucket can be: the lockdown probe's. */
+  const probes = () =>
+    requestsOf('head').filter((q) => JSON.stringify(q).includes(LOCKDOWN_PROBE_ROW)).length
+
+  /** The page hidden and shown again: the channel is closed, then joined again. */
+  async function resubscribe(): Promise<void> {
+    setVisibility('hidden')
+    await advance(MINUTE)
+    setVisibility('visible')
+    await advance(MINUTE)
+  }
+
+  it('remembers the refusal for this relay, says so after a reload without asking again, and forgets it once the table answers', async () => {
+    vi.stubEnv('VITE_SYNC_RELAY', 'auto')
+    migrate('004')
+    const phone = await connected()
+    await advance(MINUTE)
+    expect(phone.sync.useSyncStore.getState().view).toMatchObject({
+      transport: 'rpc',
+      lockedDown: false,
+    })
+    expect(probes()).toBe(0) // nothing is asked while the change feed answers
+
+    migrate('005')
+    await resubscribe()
+    // the change feed refused twice: one probe tells a lockdown from a project without the feed
+    expect(probes()).toBe(1)
+    expect(portOf(phone).meta().lockdownSeen?.relay).toEqual(expect.any(String))
+    expect(phone.sync.useSyncStore.getState().view?.lockedDown).toBe(true)
+
+    // the app opened again: it knows at once, and asks nothing
+    const reloaded = await loadDevice(phone.storage)
+    await reloaded.expense.useExpenseStore.getState().hydrate()
+    reloaded.sync.installSync()
+    await advance(MINUTE)
+    expect(reloaded.sync.useSyncStore.getState().view?.lockedDown).toBe(true)
+    await resubscribe()
+    expect(probes()).toBe(1)
+
+    // 005 rolled back: the change feed lets this device in again, and the line goes
+    migrate('rollback 005')
+    await resubscribe()
+    expect(reloaded.sync.useSyncStore.getState().view?.lockedDown).toBe(false)
+    expect(portOf(reloaded).meta().lockdownSeen).toMatchObject({ relay: null })
+  })
+
+  it('never says the lockdown is applied when the project only lacks the change feed', async () => {
+    vi.stubEnv('VITE_SYNC_RELAY', 'auto')
+    migrate('004')
+    const phone = await connected()
+    await advance(MINUTE)
+    relay().rowEvents = 'rejected' // no publication: the table itself still answers
+    await resubscribe()
+    expect(probes()).toBe(1)
+    expect(phone.sync.useSyncStore.getState().view?.lockedDown).toBe(false)
+  })
+})
+
+describe('an older writer is recorded once per copy (0.22.2)', () => {
+  /** The device reopened on its own storage, as the app opens after being closed. */
+  async function reopen(d: Device): Promise<Device> {
+    const next = await loadDevice(d.storage)
+    await next.expense.useExpenseStore.getState().hydrate()
+    next.sync.installSync()
+    await advance(10_000)
+    return next
+  }
+
+  it('a current peer misread as a 0.10.0 at its first sighting is not seen again at each start: the 14 days run from that sighting', async () => {
+    vi.stubEnv('VITE_SYNC_RELAY', 'rpc')
+    migrate('004')
+    const phone = await bootDevice({ expenses: [expense('p1')], dev: 'pho001' })
+    await connect(phone)
+    // the phone is closed (its network gone: it hears nothing)
+    setClientOffline(1, true)
+    // An older build with a fast clock once stamped the row 2 days ahead: every later token is
+    // after it (the functions' GREATEST(clock, base + 1 µs)).
+    const row = relay().rows.get(SYNC_CODE)
+    if (row === undefined) throw new Error('no row')
+    row.updated_at = pgTime((Date.now() + 2 * DAY) * 1000)
+    // A laptop on this release joins (its first write, its entry stamped as it wrote), then closes.
+    const laptop = await bootDevice({ expenses: [expense('l1')], dev: 'lap001' })
+    await connect(laptop)
+    setClientOffline(2, true)
+
+    // 7 hours later the phone opens: its first sighting of the laptop, judged by the window, is
+    // read as a 0.10.0 (how a writer is judged is unchanged)
+    vi.setSystemTime(Date.now() + 7 * 60 * MINUTE)
+    const opened = await reopen(phone)
+    const first = portOf(opened).meta().legacySeen.v5pre ?? 0
+    expect(first).toBeGreaterThan(0)
+    expect(portOf(opened).meta().v5preDev).toBe('lap001')
+    const reason = opened.sync.useSyncStore.getState().view?.lockdown?.reason
+    // (the line names the device listed as Older SpendTrack (0.10.0) first; it stays the same)
+    expect(reason).toContain('Older SpendTrack (0.10.0)')
+
+    // The next days the phone opens again; nothing new on either device, so the copy is still the
+    // laptop's: judged as before, but not seen again, so the day it was last seen stays.
+    for (let day = 1; day <= 2; day++) {
+      vi.setSystemTime(Date.now() + DAY)
+      const next = await reopen(opened)
+      await settle(next.sync.useSyncStore.getState().triggerSync(), 3000)
+      expect(portOf(next).meta().legacySeen.v5pre).toBe(first)
+      const view = next.sync.useSyncStore.getState().view
+      expect(view?.legacy.v5preAt).toBe(first)
+      expect(view?.lockdown?.reason).toBe(reason)
+    }
+  })
+
+  it('a real 0.10.0 copy keeps its verdict when judged again, even with this device’s clock set back', async () => {
+    const phone = await connected()
+    await advance(5000)
+    const written = () => {
+      const payload = rowPayload(SYNC_CODE)
+      if (!isObject(payload)) throw new Error('no row')
+      return payload
+    }
+    // its 0.11.0 wrote (this device merged that entry) …
+    const block = x5()
+    const devs = isObject(block.devs) ? block.devs : {}
+    const own = { n: '', app: '0.11.0', m: 'table', e: 0, at: Date.now() }
+    writeAsOther(SYNC_CODE, {
+      ...written(),
+      x5: { ...block, dev: 'old010', rev: 'r11e', devs: { ...devs, old010: own } },
+    })
+    await advance(5000)
+    // … then, rolled back to 0.10.0 seven hours later, it writes carrying that entry unchanged
+    const wrote = Date.now()
+    vi.setSystemTime(wrote + 7 * 60 * MINUTE)
+    const after = x5()
+    writeAsOther(SYNC_CODE, {
+      ...written(),
+      x5: { ...after, dev: 'old010', rev: 'rev0100000000010' },
+    })
+    await advance(5000)
+    const first = portOf(phone).meta().legacySeen.v5pre
+    expect(portOf(phone).meta().v5preDev).toBe('old010')
+    // The owner sets this device's clock back to just after the 0.11.0 write, and opens the app:
+    // the same copy, judged again by the clocks alone, would now pass for a registration.
+    vi.setSystemTime(wrote + MINUTE)
+    const next = await reopen(phone)
+    expect(portOf(next).meta()).toMatchObject({ v5preDev: 'old010', legacySeen: { v5pre: first } })
+    expect(next.sync.useSyncStore.getState().view?.legacy.v5preAt).toBe(first)
   })
 })

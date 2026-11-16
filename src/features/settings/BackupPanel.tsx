@@ -57,6 +57,8 @@ export function BackupPanel() {
   const synced = useSyncStore((s) => s.syncId !== null)
   // A private sync (PRIVATE-SYNC 3.8): the sentence about the relay copy follows its kind.
   const privateSync = useSyncStore((s) => s.syncId !== null && isPrivateCode(s.syncId))
+  // This device has seen the relay refuse the table: the public key alone reads nothing now.
+  const lockedDown = useSyncStore((s) => s.view?.lockedDown === true)
   const reviewing = useUIStore((s) => forRecovery(s.settingsFocus))
   const [view, setView] = useState<'main' | 'recovery'>(reviewing ? 'recovery' : 'main')
   // A "Review" while Backup is already open: Recovery opens (set while rendering, not after).
@@ -146,7 +148,9 @@ export function BackupPanel() {
             ? `Synced through your relay: every linked device has a full copy${demo === 'sample' ? ' (the sample data stays on this device)' : ''}. ${
                 privateSync
                   ? 'What a device sends is encrypted on that device first: only a device with your sync code can read the synced copy from now on.'
-                  : "The relay copy isn't encrypted yet: until the database lockdown (update 005), anyone with this app's public key could read it."
+                  : lockedDown
+                    ? "The relay copy isn't encrypted yet, but the database lockdown is applied: this app's public key alone can no longer list or read it. Make sync private to encrypt it."
+                    : "The relay copy isn't encrypted yet: until the database lockdown (update 005), anyone with this app's public key could read it."
               }`
             : 'Your data is stored only on this device. Download a backup regularly.'}
         </p>

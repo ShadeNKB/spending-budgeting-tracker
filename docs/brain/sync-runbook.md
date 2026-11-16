@@ -278,7 +278,7 @@ A device that says "Live updates on." without "using the relay's sync functions"
 
 Fill in the [gate C log](#gate-c-log). Gate C is done.
 
-From now on Settings › Sync also has a line about gate E. For the next 7 days it says "Not ready for the database lockdown: This device has used the sync functions for less than 7 days." (or names Other device). That is expected.
+From now on Settings › Sync also has a line about gate E. For the next 7 days it says "Not ready for the database lockdown: This device has used the sync functions since 12 Nov. Ready on 19 Nov." (with your dates, or naming Other device). That is expected.
 
 ---
 
@@ -286,12 +286,13 @@ From now on Settings › Sync also has a line about gate E. For the next 7 days 
 
 About 20 minutes, **at least 7 days after gate C**, and only when Settings › Sync says **"Ready for the database lockdown."** on both devices.
 
-If it says "Not ready for the database lockdown: …", the rest of the line names what's missing:
+If it says "Not ready for the database lockdown: …", the rest of the line names what's missing. When only time is missing, it ends with the day it's ready ("Ready on 21 Nov."); if more than one wait is running, it names the one that ends last, so that day is the day to come back:
 
 - "… doesn't use the relay's sync functions yet.": open SpendTrack on that device and reload it (C8, steps 1 to 3).
 - "… hasn't synced for 14 days.": open SpendTrack on that device so it syncs. A device you no longer use stops counting once it has been unseen for 60 days (the list then greys it out).
-- "… has used the sync functions for less than 7 days.": wait. It's ready 7 days after that device first used them.
-- "An older SpendTrack wrote the synced copy in the last 14 days.": a device or an old tab still runs an older build. Find it (the Devices list says "update it" or "Older SpendTrack (…)"), open and reload it, then wait 14 days.
+- "… has used the sync functions since 12 Nov. Ready on 19 Nov.": wait until that day.
+- "… has used the sync functions for less than 7 days." (no dates): that device hasn't said yet when it started; open it once so it syncs, and the dates appear.
+- "An older SpendTrack (0.10.0) was last seen in the synced copy on 7 Nov. Ready on 21 Nov." (or 0.9.2, or "0.8.4 or earlier"): a device or an old tab still runs that build. Find it (the Devices list says "update it" or "Older SpendTrack (…)"), open and reload it, then wait until the day it gives. Each new write by that build moves the "last seen" day; the same copy seen again does not (since 0.22.2). For 0.9.2 or 0.8.4, a day that moves to today each time you look means that build's copy is still the one on the relay: add or edit any entry on an up-to-date device, then check again the next day. If one of your own up-to-date devices is listed as "Older SpendTrack (0.10.0)", it was misread: its next write ends that, and otherwise the line is ready on the day it gives. If a 0.10.0 day keeps moving with no 0.10.0 device anywhere, tell the lead.
 
 ### E0 · Ready? (1 min)
 
@@ -459,8 +460,8 @@ Log it in the [006 log](#006-log).
 - **Supabase's Security Advisor may list `sync_buckets` under "RLS Enabled No Policy".** That's intended: the table has no policies on purpose, so only the three functions reach it. Its earlier warning that row level security was off on this table goes away.
 - **New sync codes are limited** to 20 an hour and 500 rows in all (since gate C). See "The sync relay is full" below.
 - **What the lockdown doesn't stop: someone filling the free database.** Supabase's free plan holds 500 MB; a project over it turns read-only, and sync stops until space is freed. Anyone with the app's public key could still fill it on purpose: before gate E with any number of junk rows written straight to the table, and after gate E through the functions, with up to 500 rows of up to 1.2 MB each (about 600 MB, reachable in about a day at 20 new rows an hour). Your entries are safe either way: both devices keep everything, and you have the backups. If Supabase emails you about database size, or the preflight's `rows_total` climbs towards 500 when you added no devices, tell the lead. The lead knows about this limit; a firmer one is a later change.
-- **Settings › Sync keeps its gate E line** ("Ready for the database lockdown." or, after a device has been quiet for 14 days, "Not ready for the database lockdown: …"). The app can't tell that the lockdown is done, so ignore that line once E7 is logged: there is nothing to lock again. A later release takes the line away.
-- **Settings › Backup still says "The relay copy isn't encrypted yet, so anyone with this app's public key could read it."** (and the Sync tab says the same before you link). After gate E that's no longer true: the public key alone can't list or read the table. A later release fixes the wording.
+- **Settings › Sync's gate E line becomes "Database lockdown applied."** From 0.22.2, once a device has seen the database refuse the table, it says so and remembers it (each device learns it for itself, the first time it opens after gate E: its change feed is refused, and it asks the database once to be sure). Until a device has seen it, that device keeps the old line ("Ready for the database lockdown." or "Not ready …"): open it once, wait a minute, and look again. If 005 is ever undone ([R2](#r2--undo-005)), the line goes back to the readiness line by itself.
+- **Settings › Backup says what's true after the lockdown**, once the device has seen it: "The relay copy isn't encrypted yet, but the database lockdown is applied: this app's public key alone can no longer list or read it. Make sync private to encrypt it." Before that (and on a device that hasn't seen it yet) it still says "… until the database lockdown (update 005), anyone with this app's public key could read it." The Sync tab's sentence before you link doesn't change: a build that shows it can't sync with a locked database anyway.
 
 ## If something goes wrong
 

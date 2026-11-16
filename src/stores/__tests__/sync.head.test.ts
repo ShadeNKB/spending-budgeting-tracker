@@ -14,6 +14,7 @@ import {
   failNext,
   relay,
   relayRows,
+  requestsOf,
   resetRelay,
   retireDevices,
   rowPayload,
@@ -26,6 +27,7 @@ import {
   writeAsOther,
   type Device,
 } from '../../__tests__/fakeRelay'
+import { LOCKDOWN_PROBE_ROW } from '../../services/syncService'
 
 vi.mock(
   '@supabase/supabase-js',
@@ -152,9 +154,13 @@ describe('T-018-1: a HEAD answers when nothing changed', () => {
     expect(relay().heads).toBe(before + 1)
     dropRealtime(true) // the socket is gone: poll every minute
     await advance(100)
-    before = relay().heads
+    // The refused row events also ask once whether the table is locked (0.22.2): not a poll.
+    const polls = () =>
+      relay().heads -
+      requestsOf('head').filter((q) => JSON.stringify(q).includes(LOCKDOWN_PROBE_ROW)).length
+    before = polls()
     await advance(3 * MINUTE + 100)
-    expect(relay().heads - before).toBe(3)
+    expect(polls() - before).toBe(3)
     expect(relay().pulls).toBe(relay().pulls) // and still no pull
   })
 })

@@ -3,6 +3,7 @@
 // knows about every device, with the readiness signals the owner reads before a migration.
 // Lazy: only the sync engine imports it, so it ships in the `syncEngine` chunk.
 import type { DeviceInfo, Stamp } from '../core/types'
+import { formatDate } from '../../lib/formatDate'
 import type { DeviceRow, SyncView } from '../../stores/useSyncStore'
 
 const DAY = 86_400_000
@@ -196,12 +197,28 @@ export function readiness(
     live.every((r) => !r.legacy && !r.older) &&
     now - last >= LEGACY_RECENT_MS
   if (meMode !== 'rpc') return { allCurrent, lockdown: null }
-  return { allCurrent, lockdown: lockdownOf(live, last, now) }
+  return { allCurrent, lockdown: lockdownOf(live, legacy, now) }
 }
 
+/** Each older writer the relay copy can name, by the release the owner knows (as the banner). */
+const LEGACY_RELEASES = [
+  ['v084At', '0.8.4 or earlier'],
+  ['v085At', '0.9.2'],
+  ['v5preAt', '0.10.0'],
+] as const
+
+/** "7 Nov" in this device's time zone, as Settings writes its other days; the year once it differs. */
+const dayOf = (t: number, now: number): string =>
+  formatDate(t, new Date(t).getFullYear() === new Date(now).getFullYear() ? 'd MMM' : 'd MMM yyyy')
+
+/**
+ * The first unmet condition in words. A condition only time ends says the day it ends; of those,
+ * the one that ends last is named, so its day is the day the lockdown is ready (unless something
+ * changes meanwhile, such as an older SpendTrack writing again).
+ */
 function lockdownOf(
   live: readonly DeviceRow[],
-  lastLegacyAt: number,
+  legacy: Legacy,
   now: number,
 ): NonNullable<SyncView['lockdown']> {
   const unmet = (reason: string) => ({ ready: false, reason })
@@ -209,10 +226,23 @@ function lockdownOf(
   if (table) return unmet(`${table.name} doesn't use the relay's sync functions yet.`)
   const quiet = live.find((r) => now - r.seen > LOCKDOWN_SEEN_MS)
   if (quiet) return unmet(`${quiet.name} hasn't synced for 14 days.`)
-  const fresh = live.find((r) => r.rpcSince === 0 || now - r.rpcSince < LOCKDOWN_RPC_MS)
-  if (fresh) return unmet(`${fresh.name} has used the sync functions for less than 7 days.`)
-  if (now - lastLegacyAt < LOCKDOWN_LEGACY_MS) {
-    return unmet('An older SpendTrack wrote the synced copy in the last 14 days.')
+  // An entry with no start (0) gets one with that device's next push: there is no day to give yet.
+  const unknown = live.find((r) => r.rpcSince === 0)
+  if (unknown) return unmet(`${unknown.name} has used the sync functions for less than 7 days.`)
+  const waits: { readonly until: number; readonly why: string }[] = live.map((r) => ({
+    until: r.rpcSince + LOCKDOWN_RPC_MS,
+    why: `${r.name} has used the sync functions since ${dayOf(r.rpcSince, now)}.`,
+  }))
+  for (const [key, release] of LEGACY_RELEASES) {
+    const at = legacy[key]
+    if (at === null) continue
+    waits.push({
+      until: at + LOCKDOWN_LEGACY_MS,
+      why: `An older SpendTrack (${release}) was last seen in the synced copy on ${dayOf(at, now)}.`,
+    })
   }
-  return { ready: true, reason: null }
+  let last: (typeof waits)[number] | null = null
+  for (const w of waits) if (w.until > now && (last === null || w.until > last.until)) last = w
+  if (last === null) return { ready: true, reason: null }
+  return unmet(`${last.why} Ready on ${dayOf(last.until, now)}.`)
 }

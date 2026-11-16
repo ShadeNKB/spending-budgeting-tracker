@@ -22,8 +22,9 @@
 // breaker that never trips, S8 the registry comparing `seen`, S9 a HEAD trusting an etag from
 // before the setup, S10 a tab's name pushing, S11 a carried entry taken for a registration, S12
 // a forced write for a missing row, S13 a registration judged by the clocks alone (a slow peer
-// read as 0.10.0), S14 a copy judged again by the time passed (a stamp pushed ahead); the private
-// sync's (PR-6): P1 a private row force-written, P2 an inner revision that is not the envelope's
+// read as 0.10.0), S14 a copy judged again by the time passed (a stamp pushed ahead), S15 an
+// older writer stamped at every judgment of the same copy (a misread renewed at every start); the
+// private sync's (PR-6): P1 a private row force-written, P2 an inner revision that is not the envelope's
 // merged, P3 what does not open passed to the merge, P4 one IV for every seal, P5 a cycle writing
 // over a copy marked newer, P6 a private sync on the upsert transport, P7 a fence that is not
 // saved, P8 a setup changed in another tab not followed, P9 a newer copy pulled again by every
@@ -352,6 +353,14 @@ const SYNC_MUTATIONS = [
     find: '  const registered = judged ?? wroteItself(dec.doc.devices.get(writer), known, wroteAt)\n',
     replace: '  const registered = wroteItself(dec.doc.devices.get(writer), known, wroteAt)\n',
     expect: 'P3-8: a write stamped days ahead never makes a current 0.11.0 peer a 0.10.0 writer',
+  },
+  {
+    id: 'S15',
+    name: 'An older writer is stamped at every judgment of the same copy, not once per copy',
+    file: 'src/stores/syncEngine.ts',
+    find: '    judged === null,\n',
+    replace: '    true,\n',
+    expect: 'P3-8 / 0.22.2: a peer misread as 0.10.0 is not seen again at each start',
   },
   {
     id: 'P1',

@@ -165,7 +165,7 @@ Turns a plain sync you already have into a private one, from one device, without
 
 - the status (**Synced · 2m ago**, **Saved here · 3 to sync**, **Can't reach the sync server · retry in 30 s**, **Sync paused**) with **Sync now**;
 - **Devices**: every device on this sync, **This device** first, then each **Other device**, with its SpendTrack version and when it last synced. A device on an older SpendTrack says "update it" (0.10.0 and 0.9.2 don't report themselves, so they show as "Older SpendTrack (0.10.0)"); one not seen for 60 days is greyed. When every other device runs this version it says so ("All your devices run SpendTrack 0.11.0."), which is the sign it's safe to rely on the newest sync features;
-- in one line, whether live updates are on, or unavailable (then it syncs when you open the app and every minute). When the app uses the relay's sync functions (after migration 004, with `VITE_SYNC_RELAY=auto`), the line adds "using the relay's sync functions", and another line says whether the database is ready for the lockdown (migration 005) or what is still missing;
+- in one line, whether live updates are on, or unavailable (then it syncs when you open the app and every minute). When the app uses the relay's sync functions (after migration 004, with `VITE_SYNC_RELAY=auto`), the line adds "using the relay's sync functions", and another line says whether the database is ready for the lockdown (migration 005) or what is still missing; when only time is missing, the line says why with a date and the day it will be ready ("An older SpendTrack (0.10.0) was last seen in the synced copy on 7 Nov. Ready on 21 Nov."). Once this device has seen the database refuse direct access to the table, the line says "Database lockdown applied." instead;
 - a banner when a device on SpendTrack 0.10.0, 0.9.2 or 0.8.4 wrote the synced copy in the last day, and how full the relay row is from 70 % ("Sync uses 82 % of the relay limit"). At 100 % sync pauses; your data stays on this device and merges keep coming in.
 
 On a laptop (1280 px and wider) the pill in the top bar says the same in short: **Synced · 2m ago**, **3 to sync**, **Offline · 3 to sync**, **Sync retrying · 30 s**, **Sync paused · code not found**. When it reports a problem, it is a button that opens Settings → Sync.
@@ -190,7 +190,7 @@ SpendTrack keeps your data in this browser's storage, in one safety-checked copy
 
 Settings → **Backup** shows:
 
-- where your data lives: only on this device, or synced through your relay (every linked device has a full copy; the relay copy isn't encrypted yet: until the database lockdown (update 005), anyone with this app's public key could read it);
+- where your data lives: only on this device, or synced through your relay (every linked device has a full copy; the relay copy isn't encrypted yet: until the database lockdown (update 005), anyone with this app's public key could read it; once this device has seen the lockdown applied, it says instead that the public key alone can no longer list or read the copy, and that making sync private encrypts it);
 - whether the browser protects the storage from automatic cleanup, and when you last downloaded a backup. While it isn't protected, **Ask the browser to keep it** asks again; if the browser says no, keep sync on or download backups;
 - **Download JSON backup** and **Export to CSV** (for Excel, Google Sheets or another finance tool).
 

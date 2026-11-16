@@ -257,6 +257,11 @@ export interface SyncMeta {
   /** Detected relay mode (pin 'auto' only); null = not probed yet. */
   readonly transport: 'table' | 'rpc' | null
   readonly probedAt: number
+  /**
+   * What the table last said to this device, and when: `relay` is the fnv36 of the relay that
+   * refused it (migration 005, the lockdown), null when it answered (open); null: never asked.
+   */
+  readonly lockdownSeen: { readonly relay: string | null; readonly at: number } | null
 }
 
 export interface RemoteApplied {
