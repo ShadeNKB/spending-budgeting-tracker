@@ -282,6 +282,7 @@ describe('ClearData with sync on', () => {
         sizePct: null,
         allCurrent: true,
         lockdown: null,
+        lockedDown: false,
         move: {
           offered: false,
           phase: 'retiring',

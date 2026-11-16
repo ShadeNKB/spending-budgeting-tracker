@@ -36,6 +36,7 @@ const freshSyncMeta = (): SyncMeta => ({
   etagFor: null,
   transport: null,
   probedAt: 0,
+  lockdownSeen: null,
 })
 
 export const freshMeta = (): EnvelopeMeta => ({
@@ -116,6 +117,7 @@ function readSync(v: unknown): SyncMeta {
     etagFor: strOrNull(own(v, 'etagFor')),
     transport: transport === 'table' || transport === 'rpc' ? transport : null,
     probedAt: num(own(v, 'probedAt'), 0),
+    lockdownSeen: strOrNull(own(v, 'lockdownSeen')),
   }
 }
 
@@ -172,6 +174,8 @@ export function joinMeta(ours: EnvelopeMeta, theirs: EnvelopeMeta): EnvelopeMeta
     etagFor: etag.etagFor,
     transport: probe.transport,
     probedAt: probe.probedAt,
+    // What the other tab saw of the table last, as the run that stored it later.
+    lockdownSeen: theirs.sync.lockdownSeen,
   }
   const day = (a: string | null, b: string | null): string | null =>
     a === null ? b : b === null ? a : a > b ? a : b

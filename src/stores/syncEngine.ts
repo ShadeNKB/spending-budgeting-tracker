@@ -71,6 +71,7 @@ import {
 import { isRecord } from '../lib/backup'
 import { whenIdle } from '../lib/whenIdle'
 import { storage } from '../services/storage'
+import { SUPABASE_URL } from '../services/syncConfig'
 import {
   CAS_ON,
   PAYLOAD_MAX_CHARS,
@@ -80,7 +81,7 @@ import {
   announce,
   etagTime,
   openTransport,
-  probeLockdown,
+  probeLockdown as askLockdown,
   sameEtag,
   subscribeSync,
   topicOf,
@@ -237,6 +238,13 @@ let held: { readonly gen: number; readonly port: SyncPort; readonly rev: number 
   null
 /** A table call was refused this session (migration 005): row events are not armed again. */
 let tableDenied = false
+/**
+ * The relay `meta.lockdownSeen` names: the lockdown is a property of the relay, not of a code, so
+ * a sync made private on it (or joined anew) still knows; a build on another relay does not.
+ */
+const RELAY_KEY = fnv36(SUPABASE_URL ?? '')
+/** This page load has asked the relay whether the table is locked (`confirmLockdown`). */
+let lockdownAsked = false
 
 // Realtime: whether the channel is joined, and whether it carries row events.
 let joinedNow = false
@@ -977,6 +985,7 @@ function publishView(): void {
     sizePct,
     allCurrent: ready.allCurrent,
     lockdown: ready.lockdown,
+    lockedDown: meta.lockdownSeen === RELAY_KEY,
     move: moveViewOf(port, code),
   }
   if (lastView !== null && JSON.stringify(lastView) === JSON.stringify(next)) return
@@ -1764,8 +1773,41 @@ function scheduleRemote() {
   }, wait)
 }
 
+/**
+ * What this device saw of the table, kept in its meta: refused (the lockdown is applied, so
+ * Settings stops asking for it) or answered (open, a rollback included). Only the relay's own
+ * answers count, never a guess from a failure that could have another cause.
+ */
+function noteLockdown(locked: boolean): void {
+  const port = getSyncPort()
+  const next = locked ? RELAY_KEY : null
+  if (port === null || port.meta().lockdownSeen === next) return
+  port.setMeta({ lockdownSeen: next })
+  publishView()
+}
+
+/**
+ * Row events refused twice: migration 005 drops the table from the change feed, but a project
+ * without the feed, or a dropped socket, reads the same. One HEAD of a row no bucket can be tells
+ * them apart, once per page load and only until this device knows the lockdown is applied.
+ */
+async function confirmLockdown(): Promise<void> {
+  // A socket that drops reads as refused row events too: at most one question per page load.
+  if (lockdownAsked || getSyncPort()?.meta().lockdownSeen === RELAY_KEY) return
+  lockdownAsked = true
+  await probeLockdown()
+}
+
+/** Does the relay refuse the table (the move asks it too)? What it answers is remembered. */
+async function probeLockdown(): Promise<'locked' | 'open' | 'unknown'> {
+  const seen = await askLockdown()
+  if (seen !== 'unknown') noteLockdown(seen === 'locked')
+  return seen
+}
+
 /** A table refusal with detection on (migration 005): row events are not armed again this session. */
 function refuseRowEvents(): void {
+  noteLockdown(true)
   if (tableDenied) return
   tableDenied = true
   if (realtimeUnsub !== null && liveRowEvents) {
@@ -1779,6 +1821,8 @@ function onRealtimeStatus(status: 'joined' | 'dropped' | 'failed', gen: number):
   connecting = false
   if (status === 'joined') {
     joinedNow = true
+    // The change feed of the table let this device in: the table is not locked (005 rolled back).
+    if (liveRowEvents) noteLockdown(false)
     publishLive()
     // Events are not replayed after a drop, so every join catches up (a HEAD when nothing
     // changed); a failing streak catches up with its own backoff retry instead.
@@ -1791,6 +1835,7 @@ function onRealtimeStatus(status: 'joined' | 'dropped' | 'failed', gen: number):
     rowEventsFailed = true
     realtimeUnsub = null
     void ensureSubscribed(gen)
+    void confirmLockdown()
   }
   publishLive()
 }

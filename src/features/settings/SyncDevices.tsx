@@ -32,7 +32,9 @@ function footnotes(v: SyncView, quiet: boolean): string[] {
   const rpc = v.transport === 'rpc' ? "the relay's sync functions" : null
   if (live !== undefined) notes.push(rpc === null ? `${live}.` : `${live} · using ${rpc}.`)
   else if (rpc !== null) notes.push(`Using ${rpc}.`)
-  if (v.lockdown) {
+  // Once this device has seen the relay refuse the table, there is nothing left to get ready for.
+  if (v.lockedDown) notes.push('Database lockdown applied.')
+  else if (v.lockdown) {
     notes.push(
       v.lockdown.ready || v.lockdown.reason === null
         ? 'Ready for the database lockdown.'

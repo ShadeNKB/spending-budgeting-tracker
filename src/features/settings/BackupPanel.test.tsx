@@ -150,6 +150,31 @@ describe('Backup copy per state', () => {
     expect(document.body.textContent).not.toContain('0004106')
   })
 
+  it('after this device saw the lockdown applied: what the public key can no longer do', () => {
+    seed({ sync: true, count: 12 })
+    act(() => {
+      useSyncStore.setState({
+        view: {
+          codeMasked: null,
+          transport: 'rpc',
+          live: 'on',
+          devices: [],
+          legacy: { v084At: null, v085At: null, v5preAt: null },
+          sizePct: null,
+          allCurrent: true,
+          lockdown: { ready: true, reason: null },
+          lockedDown: true,
+        },
+      })
+    })
+    expect(
+      screen.getByText(
+        "Synced through your relay: every linked device has a full copy. The relay copy isn't encrypted yet, but the database lockdown is applied: this app's public key alone can no longer list or read it. Make sync private to encrypt it.",
+      ),
+    ).toBeInTheDocument()
+    expect(document.body.textContent).not.toContain('anyone with')
+  })
+
   it('with sync on: synced through the relay, honest about encryption, two delete actions', () => {
     seed({ sync: true, count: 12 })
     expect(

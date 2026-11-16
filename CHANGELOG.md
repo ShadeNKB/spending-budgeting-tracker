@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.22.2 — 2026-11-16
+
+The database lockdown's line says when. Before, a device that wasn't ready said why but not until when, so there was no telling whether the wait was running out or starting again.
+
+### Changed
+
+- **Settings › Sync: "Not ready for the database lockdown" gives the day it will be ready.** "An older SpendTrack (0.10.0) was last seen in the synced copy on 7 Nov. Ready on 21 Nov." names which older build (0.10.0, 0.9.2, or 0.8.4 or earlier) and the last day this device saw its copy; "Other device has used the sync functions since 12 Nov. Ready on 19 Nov." the same for the 7-day wait. When more than one wait is running, the line names the one that ends last, so its day is the day to come back. If the "last seen" day keeps moving to today, the older build's copy is still the one on the relay. "… hasn't synced for 14 days." has no day: it waits for that device to be opened.
+- **After the lockdown, the app says it's done.** Once a device has seen the database refuse direct access to the table, Settings › Sync says "Database lockdown applied." in place of the readiness line, and Settings › Backup says the public key alone can no longer list or read the relay copy (it isn't encrypted until you make sync private). The device remembers it; it learns it the first time it opens after the lockdown, and goes back to the readiness line if the lockdown is ever undone.
+
 ## 0.22.1 — 2026-11-16
 
 The architecture finish (track T9). One thing you can see, in light mode; everything else is the same app with its insides tidied and more of it under test.

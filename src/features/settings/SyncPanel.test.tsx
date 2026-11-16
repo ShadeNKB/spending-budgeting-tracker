@@ -139,6 +139,7 @@ const view = (over: Partial<SyncView> = {}): SyncView => ({
   sizePct: 12,
   allCurrent: true,
   lockdown: null,
+  lockedDown: false,
   ...over,
 })
 

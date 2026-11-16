@@ -301,13 +301,109 @@ describe('readiness', () => {
         ['lap001', rpc({ rpcSince: NOW - DAY })],
       ]),
     )
-    expect(readiness(fresh, noLegacy, 'rpc', NOW).lockdown?.reason).toBe(
+    expect(readiness(fresh, noLegacy, 'rpc', NOW).lockdown?.reason).toMatch(
+      /^Other device has used the sync functions since \d+ (Oct|Nov)\. Ready on \d+ Nov\.$/,
+    )
+    // an entry with no start of its own: no day to give until that device pushes again
+    const unknown = rowsOf(
+      new Map([
+        ['me0001', rpc()],
+        ['lap001', rpc({ rpcSince: 0 })],
+      ]),
+    )
+    expect(readiness(unknown, noLegacy, 'rpc', NOW).lockdown?.reason).toBe(
       'Other device has used the sync functions for less than 7 days.',
     )
 
     expect(readiness(ready, { ...noLegacy, v084At: NOW - 13 * DAY }, 'rpc', NOW).lockdown).toEqual({
       ready: false,
-      reason: 'An older SpendTrack wrote the synced copy in the last 14 days.',
+      reason: expect.stringMatching(
+        /^An older SpendTrack \(0\.8\.4 or earlier\) was last seen in the synced copy on \d+ Oct\. Ready on \d+ Nov\.$/,
+      ) as unknown,
+    })
+    // the 14 days are up to the millisecond, as before
+    expect(readiness(ready, { ...noLegacy, v5preAt: NOW - 14 * DAY }, 'rpc', NOW).lockdown).toEqual(
+      {
+        ready: true,
+        reason: null,
+      },
+    )
+  })
+
+  describe('says the day the lockdown is ready, in this device’s time zone', () => {
+    // Local noon: the same calendar day in every zone the suite runs in (a DST shift is an hour).
+    const noon = (month: number, day: number, year = 2026) =>
+      new Date(year, month, day, 12).getTime()
+    const TODAY = noon(10, 16) // 16 Nov 2026
+    const at = (since: number) =>
+      deviceRows(
+        new Map([
+          ['me0001', entry({ mode: 'rpc', rpcSince: noon(9, 1), seen: TODAY })],
+          ['lap001', entry({ mode: 'rpc', rpcSince: since, seen: TODAY })],
+        ]),
+        'me0001',
+        '0.11.0',
+        TODAY,
+      )
+    const settled = at(noon(9, 1))
+
+    it('names the kind of older SpendTrack and the day it was last seen, then the day it is ready', () => {
+      const cases = [
+        ['v084At', '0.8.4 or earlier'],
+        ['v085At', '0.9.2'],
+        ['v5preAt', '0.10.0'],
+      ] as const
+      for (const [key, release] of cases) {
+        expect(
+          readiness(settled, { ...noLegacy, [key]: noon(10, 7) }, 'rpc', TODAY).lockdown,
+        ).toEqual({
+          ready: false,
+          reason: `An older SpendTrack (${release}) was last seen in the synced copy on 7 Nov. Ready on 21 Nov.`,
+        })
+      }
+    })
+
+    it('names the older kind that keeps it not ready longest', () => {
+      const legacy = { v084At: noon(10, 9), v085At: null, v5preAt: noon(10, 7) }
+      expect(readiness(settled, legacy, 'rpc', TODAY).lockdown?.reason).toBe(
+        'An older SpendTrack (0.8.4 or earlier) was last seen in the synced copy on 9 Nov. Ready on 23 Nov.',
+      )
+    })
+
+    it('says since when a device has used the sync functions, and the day it has for 7', () => {
+      expect(readiness(at(noon(10, 12)), noLegacy, 'rpc', TODAY).lockdown?.reason).toBe(
+        'Other device has used the sync functions since 12 Nov. Ready on 19 Nov.',
+      )
+    })
+
+    it('of the conditions only time ends, names the one that ends last', () => {
+      // the device's 7 days end on 19 Nov, the older writer's 14 on 21 Nov: ready on 21 Nov
+      const legacy = { ...noLegacy, v5preAt: noon(10, 7) }
+      expect(readiness(at(noon(10, 12)), legacy, 'rpc', TODAY).lockdown?.reason).toBe(
+        'An older SpendTrack (0.10.0) was last seen in the synced copy on 7 Nov. Ready on 21 Nov.',
+      )
+      // the other way round: the device's 7 days end after the older writer's 14
+      const early = { ...noLegacy, v5preAt: noon(10, 3) }
+      expect(readiness(at(noon(10, 15)), early, 'rpc', TODAY).lockdown?.reason).toBe(
+        'Other device has used the sync functions since 15 Nov. Ready on 22 Nov.',
+      )
+    })
+
+    it('gives the year when the day is in another one', () => {
+      const newYear = noon(0, 2, 2027)
+      const legacy = { ...noLegacy, v085At: noon(11, 26) }
+      const rows = deviceRows(
+        new Map([
+          ['me0001', entry({ mode: 'rpc', rpcSince: noon(9, 1), seen: newYear })],
+          ['lap001', entry({ mode: 'rpc', rpcSince: noon(9, 1), seen: newYear })],
+        ]),
+        'me0001',
+        '0.11.0',
+        newYear,
+      )
+      expect(readiness(rows, legacy, 'rpc', newYear).lockdown?.reason).toBe(
+        'An older SpendTrack (0.9.2) was last seen in the synced copy on 26 Dec 2026. Ready on 9 Jan.',
+      )
     })
   })
 })

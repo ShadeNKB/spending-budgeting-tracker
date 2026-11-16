@@ -82,6 +82,8 @@ export interface SyncView {
   readonly allCurrent: boolean
   /** Null unless this device uses the relay's sync functions. */
   readonly lockdown: { readonly ready: boolean; readonly reason: string | null } | null
+  /** This device has seen the relay refuse the table (the lockdown applied), and not open since. */
+  readonly lockedDown: boolean
   /** "Make sync private" and what follows it (PRIVATE-SYNC 4); absent before release 2's engine. */
   readonly move?: MoveView
 }

@@ -33,6 +33,7 @@ const view = (over: Partial<SyncView> = {}): SyncView => ({
   sizePct: 10,
   allCurrent: true,
   lockdown: null,
+  lockedDown: false,
   ...over,
 })
 
@@ -188,6 +189,18 @@ describe('SyncDevices (AC-U4)', () => {
         "Not ready for the database lockdown: Other device hasn't synced for 14 days.",
       ),
     ).toBeInTheDocument()
+  })
+
+  it('once this device has seen the lockdown applied, says so in place of the readiness line', () => {
+    show(
+      view({
+        transport: 'rpc',
+        lockedDown: true,
+        lockdown: { ready: false, reason: "Other device hasn't synced for 14 days." },
+      }),
+    )
+    expect(screen.getByText('Database lockdown applied.')).toBeInTheDocument()
+    expect(screen.queryByText(/ready for the database lockdown/i)).toBeNull()
   })
 
   it('shows nothing until the engine has published what it knows', () => {
