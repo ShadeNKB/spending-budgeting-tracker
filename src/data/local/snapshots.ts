@@ -44,7 +44,7 @@ const KEEP_YOUNG = 7 * DAY_MS
 /** Pre-destructive snapshots older than this may be shed under quota (§9.11 step 3). */
 const PRE_OLD = 30 * DAY_MS
 /** Compression waits past the 30 s undo window, so an undo always finds the plain copy. */
-export const COMPRESS_DELAY = 35_000
+const COMPRESS_DELAY = 35_000
 /**
  * A z0 copy left by an earlier session (one closed inside its compression delay, as a quick add
  * is) is compressed this long after the next boot, off the boot path.

@@ -39,28 +39,7 @@ export interface Filters {
   customEnd?: string
 }
 
-export interface Analytics {
-  total: number
-  count: number
-  dailyAverage: number
-  categoryTotals: Record<string, number>
-  sortedCategories: [string, number][]
-  highestCategory: string | null
-  todayTotal: number
-  todayCount: number
-  thisMonthTotal: number
-  lastMonthTotal: number
-  monthOverMonth: number
-}
-
-export interface Notification {
-  message: string
-  type: 'success' | 'error' | 'warning'
-  id: number
-}
-
 export type CategoryMappings = Record<string, string>
-export type CategoryColors = Record<string, string>
 export type CategoryBudgets = Record<string, number>
 export type CategoryBudgetTimestamps = Record<string, string>
 /** When each item mapping was last set (ISO). Keys without a stamp are older than any stamp. */
@@ -77,9 +56,4 @@ export interface BackupData {
   deletedIds?: string[]
   exportDate: string
   version: string
-}
-
-export interface DrillPeriod {
-  type: 'day' | 'month'
-  label: string
 }

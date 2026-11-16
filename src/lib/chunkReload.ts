@@ -8,7 +8,7 @@
 import { hasUnsavedWork } from './unsavedWork'
 
 export const CHUNK_RELOAD_KEY = 'spendtrack:chunk-reload-at'
-export const CHUNK_RELOAD_WINDOW_MS = 60_000
+const CHUNK_RELOAD_WINDOW_MS = 60_000
 
 // Chromium, Firefox, WebKit (incl. the HTML-instead-of-JS MIME error), Vite's CSS preload,
 // and webpack-style chunk errors from any future bundler change.

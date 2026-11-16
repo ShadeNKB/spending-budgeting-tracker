@@ -26,7 +26,7 @@ export interface EnvelopeMeta {
 
 const EMPTY_MEMO: MemoState = { memo: [], extRefreshAt: 0 }
 
-export const freshSyncMeta = (): SyncMeta => ({
+const freshSyncMeta = (): SyncMeta => ({
   lastRev: null,
   memo: EMPTY_MEMO,
   legacySeen: {},
@@ -53,7 +53,7 @@ export const freshMeta = (): EnvelopeMeta => ({
   attentionSeen: 0,
 })
 
-export const ENVELOPE_PREFIX = '5|'
+const ENVELOPE_PREFIX = '5|'
 
 /** The envelope string: the doc as its wire text (cached record strings), then the meta. */
 export function buildEnvelope(doc: Doc, meta: EnvelopeMeta): string {

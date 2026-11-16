@@ -65,7 +65,7 @@ const DAY_MS = 86_400_000
 const pad2 = (n: number): string => (n < 10 ? `0${String(n)}` : String(n))
 const pad4 = (n: number): string => String(n).padStart(4, '0')
 
-export const isLeapYear = (y: number): boolean => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0
+const isLeapYear = (y: number): boolean => (y % 4 === 0 && y % 100 !== 0) || y % 400 === 0
 
 /** Days in `month` (1-12) of `year`. */
 export function daysInMonth(year: number, month: number): number {

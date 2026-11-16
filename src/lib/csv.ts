@@ -51,7 +51,7 @@ export function csvDay(expense: Expense): string {
  * The Type cell: `expense`, `income`, `refund`, or the kind's own word when a newer SpendTrack wrote one
  * this version does not know (`other` when it is not text).
  */
-export function csvType(expense: Expense): string {
+function csvType(expense: Expense): string {
   const kind = kindOf(expense)
   if (kind !== 'unknown') return kind
   const raw = expense.ext?.[KIND_KEY]

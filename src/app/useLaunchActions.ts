@@ -19,7 +19,7 @@ declare global {
 }
 
 /** The manifest's "Add expense" shortcut is /pulse?add=1. */
-export const ADD_PARAM = 'add'
+const ADD_PARAM = 'add'
 
 // Evaluated with the app bundle, before the router can strip the param.
 const INITIAL_URL = document.URL
