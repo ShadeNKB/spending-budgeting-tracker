@@ -68,7 +68,13 @@ test('delete everywhere on A, then Undo on B: every entry is back on both', asyn
     timeout: 30_000,
   })
   await expect.poll(() => count(b)).toBe(0)
-  await b.page.getByRole('button', { name: 'Undo', exact: true }).last().click()
+  // Undo from the keyboard. A click made before the toast has been on screen for a moment
+  // belongs to whatever was there before it and is ignored (ToastHost, pressShield's
+  // GESTURE_MS); a fast runner clicked 7 ms after the toast showed and nothing happened. A
+  // keyboard press always counts, so the test waits on no clock.
+  const undo = toastsB.getByRole('button', { name: 'Undo', exact: true }).last()
+  await undo.focus()
+  await b.page.keyboard.press('Enter')
   await expect(toastsB.getByText('Restored 60 entries')).toBeVisible()
 
   await expect.poll(() => count(b)).toBe(60)
