@@ -258,10 +258,10 @@ export interface SyncMeta {
   readonly transport: 'table' | 'rpc' | null
   readonly probedAt: number
   /**
-   * fnv36 of the relay whose table this device has seen refuse it (migration 005, the lockdown);
-   * null: not seen, or seen open again since.
+   * What the table last said to this device, and when: `relay` is the fnv36 of the relay that
+   * refused it (migration 005, the lockdown), null when it answered (open); null: never asked.
    */
-  readonly lockdownSeen: string | null
+  readonly lockdownSeen: { readonly relay: string | null; readonly at: number } | null
 }
 
 export interface RemoteApplied {

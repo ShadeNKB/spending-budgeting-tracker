@@ -67,6 +67,13 @@ const num = (v: unknown, d: number): number => (typeof v === 'number' && Number.
 const numOrNull = (v: unknown): number | null =>
   typeof v === 'number' && Number.isFinite(v) ? v : null
 const strOrNull = (v: unknown): string | null => (typeof v === 'string' ? v : null)
+/** `{relay, at}`; any other shape (a bare string included) is "not seen". */
+function readLockdown(v: unknown): SyncMeta['lockdownSeen'] {
+  if (!isPlainObject(v)) return null
+  const relay = own(v, 'relay')
+  const at = numOrNull(own(v, 'at'))
+  return at !== null && (relay === null || typeof relay === 'string') ? { relay, at } : null
+}
 
 const OUTBOX_KINDS: ReadonlySet<string> = new Set(['ex', 'del', 'cat', 'ren', 'map', 'bud', 'pref'])
 
@@ -117,7 +124,7 @@ function readSync(v: unknown): SyncMeta {
     etagFor: strOrNull(own(v, 'etagFor')),
     transport: transport === 'table' || transport === 'rpc' ? transport : null,
     probedAt: num(own(v, 'probedAt'), 0),
-    lockdownSeen: strOrNull(own(v, 'lockdownSeen')),
+    lockdownSeen: readLockdown(own(v, 'lockdownSeen')),
   }
 }
 
@@ -174,8 +181,11 @@ export function joinMeta(ours: EnvelopeMeta, theirs: EnvelopeMeta): EnvelopeMeta
     etagFor: etag.etagFor,
     transport: probe.transport,
     probedAt: probe.probedAt,
-    // What the other tab saw of the table last, as the run that stored it later.
-    lockdownSeen: theirs.sync.lockdownSeen,
+    // What the table said last, whichever tab heard it (as the newer probe).
+    lockdownSeen:
+      (theirs.sync.lockdownSeen?.at ?? -1) >= (ours.sync.lockdownSeen?.at ?? -1)
+        ? theirs.sync.lockdownSeen
+        : ours.sync.lockdownSeen,
   }
   const day = (a: string | null, b: string | null): string | null =>
     a === null ? b : b === null ? a : a > b ? a : b

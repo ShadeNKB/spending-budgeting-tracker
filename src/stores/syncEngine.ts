@@ -903,11 +903,14 @@ function writerKind(
 /**
  * An old device wrote the relay: remember when, and which 0.10.0 it was (§11.10), and banner a
  * v0.8.4 overwriting us. The 0.10.0 last seen writing that now writes registering itself has
- * updated: its sighting ends there, whatever its clock says.
+ * updated: its sighting ends there, whatever its clock says. A sighting is a copy's first judgment
+ * (`first`: its etag not merged here before): the same copy judged again at a later cycle or start
+ * is no new write, so a misread copy that stays on the relay never renews its 14 days.
  */
 function noteWriter(
   code: string,
   writer: ReturnType<typeof writerKind>,
+  first: boolean,
   port: SyncPort,
   now: number,
 ): void {
@@ -924,7 +927,10 @@ function noteWriter(
     return
   }
   const another = dev !== null && dev !== meta.v5preDev
-  if (another || now - (seen[kind] ?? Number.NEGATIVE_INFINITY) >= LEGACY_SEEN_EVERY_MS) {
+  if (
+    first &&
+    (another || now - (seen[kind] ?? Number.NEGATIVE_INFINITY) >= LEGACY_SEEN_EVERY_MS)
+  ) {
     const next: { v084?: number; v085?: number; v5pre?: number } = { ...seen }
     next[kind] = now
     port.setMeta({ legacySeen: next, ...(dev === null ? {} : { v5preDev: dev }) })
@@ -985,7 +991,7 @@ function publishView(): void {
     sizePct,
     allCurrent: ready.allCurrent,
     lockdown: ready.lockdown,
-    lockedDown: meta.lockdownSeen === RELAY_KEY,
+    lockedDown: meta.lockdownSeen?.relay === RELAY_KEY,
     move: moveViewOf(port, code),
   }
   if (lastView !== null && JSON.stringify(lastView) === JSON.stringify(next)) return
@@ -1126,6 +1132,7 @@ function mergeStep(b: Bucket, pulled: Pulled | null, reason: CycleReason): Step 
       known,
       wroteAt === null ? null : Math.min(wroteAt, now),
     ),
+    judged === null,
     port,
     now,
   )
@@ -1781,8 +1788,11 @@ function scheduleRemote() {
 function noteLockdown(locked: boolean): void {
   const port = getSyncPort()
   const next = locked ? RELAY_KEY : null
-  if (port === null || port.meta().lockdownSeen === next) return
-  port.setMeta({ lockdownSeen: next })
+  // Unchanged, or open with nothing ever seen: nothing to write. A change carries its time, so
+  // the later reading wins when two tabs' meta are joined.
+  const was = port?.meta().lockdownSeen ?? null
+  if (port === null || (was?.relay ?? null) === next) return
+  port.setMeta({ lockdownSeen: { relay: next, at: Date.now() } })
   publishView()
 }
 
@@ -1793,7 +1803,7 @@ function noteLockdown(locked: boolean): void {
  */
 async function confirmLockdown(): Promise<void> {
   // A socket that drops reads as refused row events too: at most one question per page load.
-  if (lockdownAsked || getSyncPort()?.meta().lockdownSeen === RELAY_KEY) return
+  if (lockdownAsked || getSyncPort()?.meta().lockdownSeen?.relay === RELAY_KEY) return
   lockdownAsked = true
   await probeLockdown()
 }

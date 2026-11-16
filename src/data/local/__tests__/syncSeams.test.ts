@@ -118,6 +118,39 @@ describe('sync meta (P3-3)', () => {
     const older = { ...theirs, sync: { ...theirs.sync, probedAt: 10 } }
     expect(joinMeta(ours, older).sync).toMatchObject({ transport: 'table', probedAt: 100 })
   })
+
+  describe('lockdownSeen (0.22.2): what the table last said, with when', () => {
+    const withSeen = (seen: { relay: string | null; at: number } | null) => {
+      const base = freshMeta()
+      return { ...base, sync: { ...base.sync, lockdownSeen: seen } }
+    }
+
+    it('keeps the later reading in a join, whichever tab holds it', () => {
+      const locked = withSeen({ relay: 'r1', at: 200 })
+      const open = withSeen({ relay: null, at: 100 })
+      expect(joinMeta(locked, open).sync.lockdownSeen).toEqual({ relay: 'r1', at: 200 })
+      expect(joinMeta(open, locked).sync.lockdownSeen).toEqual({ relay: 'r1', at: 200 })
+      // a later "open" (a rollback) wins over an older "locked" the same way
+      const reopened = withSeen({ relay: null, at: 300 })
+      expect(joinMeta(locked, reopened).sync.lockdownSeen).toEqual({ relay: null, at: 300 })
+      expect(joinMeta(reopened, locked).sync.lockdownSeen).toEqual({ relay: null, at: 300 })
+      // a tab that never saw the table never erases what another saw
+      expect(joinMeta(withSeen(null), locked).sync.lockdownSeen).toEqual({ relay: 'r1', at: 200 })
+      expect(joinMeta(locked, withSeen(null)).sync.lockdownSeen).toEqual({ relay: 'r1', at: 200 })
+    })
+
+    it('persists, and reads any other shape (the first 0.22.2 draft wrote a bare string) as not seen', () => {
+      expect(
+        readMeta({ sync: { lockdownSeen: { relay: 'r1', at: 5 } } }).sync.lockdownSeen,
+      ).toEqual({ relay: 'r1', at: 5 })
+      expect(
+        readMeta({ sync: { lockdownSeen: { relay: null, at: 5 } } }).sync.lockdownSeen,
+      ).toEqual({ relay: null, at: 5 })
+      for (const old of ['r1', 7, { relay: 'r1' }, { relay: 3, at: 5 }, { relay: 'r1', at: 'x' }]) {
+        expect(readMeta({ sync: { lockdownSeen: old } }).sync.lockdownSeen).toBeNull()
+      }
+    })
+  })
 })
 
 describe('register (P3-7)', () => {

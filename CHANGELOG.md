@@ -6,8 +6,12 @@ The database lockdown's line says when. Before, a device that wasn't ready said 
 
 ### Changed
 
-- **Settings › Sync: "Not ready for the database lockdown" gives the day it will be ready.** "An older SpendTrack (0.10.0) was last seen in the synced copy on 7 Nov. Ready on 21 Nov." names which older build (0.10.0, 0.9.2, or 0.8.4 or earlier) and the last day this device saw its copy; "Other device has used the sync functions since 12 Nov. Ready on 19 Nov." the same for the 7-day wait. When more than one wait is running, the line names the one that ends last, so its day is the day to come back. If the "last seen" day keeps moving to today, the older build's copy is still the one on the relay. "… hasn't synced for 14 days." has no day: it waits for that device to be opened.
-- **After the lockdown, the app says it's done.** Once a device has seen the database refuse direct access to the table, Settings › Sync says "Database lockdown applied." in place of the readiness line, and Settings › Backup says the public key alone can no longer list or read the relay copy (it isn't encrypted until you make sync private). The device remembers it; it learns it the first time it opens after the lockdown, and goes back to the readiness line if the lockdown is ever undone.
+- **Settings › Sync: "Not ready for the database lockdown" gives the day it will be ready.** "An older SpendTrack (0.10.0) was last seen in the synced copy on 7 Nov. Ready on 21 Nov." names which older build (0.10.0, 0.9.2, or 0.8.4 or earlier) and the last day this device saw its copy; "Other device has used the sync functions since 12 Nov. Ready on 19 Nov." the same for the 7-day wait. When more than one wait is running, the line names the one that ends last, so its day is the day to come back. For 0.9.2 or 0.8.4, a "last seen" day that keeps moving to today means that build's copy is still the one on the relay. "… hasn't synced for 14 days." has no day: it waits for that device to be opened.
+- **After the lockdown, the app says it's done.** Once a device has seen the database refuse direct access to the table, Settings › Sync says "Database lockdown applied." in place of the readiness line, and Settings › Backup says the public key alone can no longer list or read the relay copy (it isn't encrypted until you make sync private). The device remembers it, also when two tabs are open; it learns it the first time it opens after the lockdown, and goes back to the readiness line if the lockdown is ever undone.
+
+### Fixed
+
+- **A 0.10.0 sighting is recorded once per synced copy.** A device on a current version could be misread as 0.10.0 (its first write stamped hours after its own clock), and while that copy stayed on the relay every start of the other device recorded it again, so the 14 days never ran out. Now the copy counts once, when it is first seen: a misread ends 14 days later, and a real 0.10.0 is still seen at each new write.
 
 ## 0.22.1 — 2026-11-16
 
