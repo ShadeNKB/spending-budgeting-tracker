@@ -48,15 +48,12 @@ export function DatePresets({
   today,
   onChange,
   labelledBy,
-  noShrink = false,
 }: {
   value: DayKey
   today: DayKey
   onChange: (day: DayKey) => void
   /** The id of the sheet's own visible label; without one the group is named "Date". */
   labelledBy?: string
-  /** The Add sheet's pills carry `shrink-0` and the Edit sheet's do not (drift, kept as it is). */
-  noShrink?: boolean
 }) {
   // Calendar days, not 24 h steps: the day after a DST change is 23 or 25 hours long.
   const presets = [
@@ -66,7 +63,6 @@ export function DatePresets({
     { id: '-3', label: '3d ago', val: addDays(today, -3) },
   ]
   const isPreset = presets.some((p) => p.val === value)
-  const shrink = noShrink ? ' shrink-0' : ''
   return (
     <div
       role="group"
@@ -80,7 +76,7 @@ export function DatePresets({
           key={p.id}
           aria-pressed={value === p.val}
           onClick={() => onChange(p.val)}
-          className={`tap-target inline-flex h-9${shrink} items-center gap-1.5 rounded-full border px-3 text-[12px] font-medium transition ${
+          className={`tap-target inline-flex h-9 items-center gap-1.5 rounded-full border px-3 text-[12px] font-medium transition ${
             value === p.val
               ? 'border-accent/40 bg-accent/10 text-accent'
               : 'border-white/[0.08] text-[var(--text-secondary)] hover:border-white/20 hover:text-white'
@@ -118,7 +114,6 @@ export function CategoryChips({
   suggestion = null,
   error,
   groupRef,
-  moreChevron = false,
 }: {
   categories: readonly string[]
   value: string
@@ -133,8 +128,6 @@ export function CategoryChips({
   error?: string
   /** The Add sheet focuses the first chip when a refund is sent with no category. */
   groupRef?: RefObject<HTMLDivElement | null>
-  /** The Add sheet's "More…" chip has a chevron and the Edit sheet's not (drift, kept as it is). */
-  moreChevron?: boolean
 }) {
   const labelId = useId()
   const errorId = useId()
@@ -215,12 +208,10 @@ export function CategoryChips({
                 </option>
               ))}
             </select>
-            {moreChevron && (
-              <ChevronDown
-                size={10}
-                className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
-              />
-            )}
+            <ChevronDown
+              size={10}
+              className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
+            />
           </div>
         )}
       </div>

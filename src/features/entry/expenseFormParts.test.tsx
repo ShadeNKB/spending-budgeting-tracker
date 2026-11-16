@@ -75,16 +75,6 @@ describe('DatePresets', () => {
     expect(onChange.mock.calls.map(([d]) => d)).toEqual(['2026-11-13', '2026-11-14', TODAY])
   })
 
-  it('keeps shrink-0 on the pills only where the sheet asks (the Add sheet)', () => {
-    const { unmount } = render(
-      <DatePresets value={TODAY} today={TODAY} onChange={() => {}} noShrink />,
-    )
-    expect(pill('Today').className).toMatch(/^tap-target inline-flex h-9 shrink-0 items-center /)
-    unmount()
-    render(<DatePresets value={TODAY} today={TODAY} onChange={() => {}} />)
-    expect(pill('Today').className).toMatch(/^tap-target inline-flex h-9 items-center /)
-  })
-
   it('shows the day on the calendar pill only when it is none of the presets', () => {
     const { unmount } = render(<DatePresets value={TODAY} today={TODAY} onChange={() => {}} />)
     expect(pill('Pick date')).toBeInTheDocument()
@@ -167,23 +157,20 @@ describe('CategoryChips', () => {
     expect(screen.getByText('Rent', { selector: 'span' })).toBeInTheDocument()
   })
 
-  it('draws the chevron on "More…" only where the sheet asks (the Add sheet)', () => {
-    const { container, unmount } = render(
-      <CategoryChips categories={TWELVE} value="" clearTo="" onChange={() => {}} refund={false} />,
-    )
-    expect(container.querySelector('.lucide-chevron-down')).toBeNull()
-    unmount()
-    const second = render(
-      <CategoryChips
-        categories={TWELVE}
-        value=""
-        clearTo=""
-        onChange={() => {}}
-        refund={false}
-        moreChevron
-      />,
-    )
-    expect(second.container.querySelector('.lucide-chevron-down')).not.toBeNull()
+  it('draws the chevron on "More…" in both sheets (the Edit sheet clears to Other)', () => {
+    for (const clearTo of ['', 'Other']) {
+      const { container, unmount } = render(
+        <CategoryChips
+          categories={TWELVE}
+          value=""
+          clearTo={clearTo}
+          onChange={() => {}}
+          refund={false}
+        />,
+      )
+      expect(container.querySelector('.lucide-chevron-down')).not.toBeNull()
+      unmount()
+    }
   })
 
   it('marks a suggestion in the label and on its chip, dashed in its colour', () => {
