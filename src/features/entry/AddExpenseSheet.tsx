@@ -262,7 +262,6 @@ export function AddExpenseSheet({
           onChange={(day) => {
             set('date', day)
           }}
-          noShrink
         />
 
         {isBackdated && (
@@ -315,7 +314,6 @@ export function AddExpenseSheet({
             suggestion={suggestion}
             error={needsCategory ? 'Pick the category this refund comes off.' : undefined}
             groupRef={categoryGroup}
-            moreChevron
           />
         )}
 
