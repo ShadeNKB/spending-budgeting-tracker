@@ -1,31 +1,29 @@
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from 'react'
+import { useId, useRef, useState, type KeyboardEvent } from 'react'
 import { flushSync } from 'react-dom'
 import { Trash2 } from 'lucide-react'
 import { Sheet } from '../../ui/Sheet'
 import { Input } from '../../ui/Input'
 import { Button } from '../../ui/Button'
-import { Segmented } from '../../ui/Segmented'
 import { InlineConfirm } from '../../ui/InlineConfirm'
 import { undoAction, useExpenseStore } from '../../stores/useExpenseStore'
 import { useToast } from '../../hooks/useToast'
 import { useInlineConfirm } from '../../hooks/useInlineConfirm'
 import { useCurrencySymbol, useFormatMoney } from '../../hooks/useFormatMoney'
 import { useToday } from '../../hooks/useToday'
-import { addDays, type DayKey } from '../../lib/dates'
+import { useMediaQuery } from '../../hooks/useMediaQuery'
+import type { DayKey } from '../../lib/dates'
 import { inSpending, kindOf, type Kind } from '../../lib/kind'
 import { entryDay } from '../../lib/ledgerIndex'
-import { DatePicker } from '../../ui/DatePicker'
 import { shieldKeyGesture } from '../../ui/pressShield'
 import {
   actionErrorMessage,
-  chosenChipFill,
   deleteUndoId,
   firstInvalidField,
   validateExpenseForm,
   type ExpenseFormErrors,
   type ExpenseFormField,
 } from '../entry/expenseForm'
-import type { EntryKind } from '../../data/core/types'
+import { CategoryChips, DatePresets, KindSwitch } from '../entry/expenseFormParts'
 import type { Expense } from '../../types'
 
 interface EditForm {
@@ -78,21 +76,18 @@ export function EditExpenseSheet({
   const fmt = useFormatMoney()
   const symbol = useCurrencySymbol()
   const today = useToday()
-  const categoryLabelId = useId()
   const dateLabelId = useId()
   const notesId = useId()
   const fields: Record<ExpenseFormField, React.RefObject<HTMLInputElement | null>> = {
     itemName: useRef<HTMLInputElement>(null),
     amount: useRef<HTMLInputElement>(null),
   }
-  const [isMobile, setIsMobile] = useState(typeof window !== 'undefined' && window.innerWidth < 768)
-
-  useEffect(() => {
-    const mq = window.matchMedia('(max-width: 767px)')
-    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches)
-    mq.addEventListener('change', handler)
-    return () => mq.removeEventListener('change', handler)
-  }, [])
+  // First from the window's width, then from the query's changes only (as it always has: the
+  // Settings drawer reads the query once mounted too).
+  const isMobile = useMediaQuery('(max-width: 767px)', {
+    initial: () => typeof window !== 'undefined' && window.innerWidth < 768,
+    readOnMount: false,
+  })
 
   const [form, setForm] = useState<EditForm>({
     kind: 'expense',
@@ -216,21 +211,12 @@ export function EditExpenseSheet({
             every total. Update SpendTrack on this device to see it in full.
           </p>
         ) : (
-          <div>
-            <Segmented<EntryKind>
-              label="Kind of entry"
-              value={form.kind}
-              onChange={(v) => {
-                setField('kind', v)
-              }}
-              size="sm"
-              options={[
-                { value: 'expense', label: 'Expense' },
-                { value: 'income', label: 'Income' },
-                { value: 'refund', label: 'Refund' },
-              ]}
-            />
-          </div>
+          <KindSwitch
+            value={form.kind}
+            onChange={(v) => {
+              setField('kind', v)
+            }}
+          />
         )}
         <Input
           ref={fields.itemName}
@@ -258,117 +244,35 @@ export function EditExpenseSheet({
         />
 
         {inSpending(form.kind) && (
-          <div className="flex flex-col gap-1.5">
-            <span
-              id={categoryLabelId}
-              className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]"
-            >
-              {form.kind === 'refund' ? 'Category it comes off' : 'Category'}
-            </span>
-            {/* 36 px chips 8 px apart: each gets a 44 px hit area on touch, none overlapping. */}
-            <div role="group" aria-labelledby={categoryLabelId} className="flex flex-wrap gap-2">
-              {categories.slice(0, 8).map((c) => {
-                const selected = form.category === c
-                return (
-                  <button
-                    key={c}
-                    type="button"
-                    aria-pressed={selected}
-                    onClick={() => setField('category', selected ? 'Other' : c)}
-                    className={`tap-target inline-flex h-9 items-center gap-1 rounded-full border px-3 text-[12px] font-medium transition ${
-                      selected
-                        ? 'border-transparent text-surface-0'
-                        : 'border-white/[0.08] text-[var(--text-secondary)] hover:text-white'
-                    }`}
-                    style={selected ? { background: chosenChipFill(c) } : undefined}
-                  >
-                    {c}
-                  </button>
-                )
-              })}
-              {categories.length > 8 && (
-                // A chip like its neighbours (as in AddExpenseSheet): the 12 px label is drawn
-                // here, and the native select sits invisibly on top to take the tap (8 px taller
-                // on touch: a 44 px target). Touch screens floor the select's own text at 16 px
-                // (index.css, against iOS focus zoom). The chip draws the select's focus ring.
-                <div className="field-focus relative inline-flex h-9 max-w-full items-center rounded-full border border-white/[0.08] bg-surface-2 pl-3 pr-6 text-[12px] text-[var(--text-secondary)]">
-                  <span aria-hidden className="min-w-0 truncate">
-                    {categories.slice(8).includes(form.category) ? form.category : 'More…'}
-                  </span>
-                  <select
-                    aria-label="More categories"
-                    value={categories.slice(8).includes(form.category) ? form.category : ''}
-                    onChange={(e) => {
-                      if (e.target.value) setField('category', e.target.value)
-                    }}
-                    className="field-control absolute inset-0 h-full w-full cursor-pointer appearance-none rounded-full opacity-0 [@media(pointer:coarse)]:-inset-y-1 [@media(pointer:coarse)]:h-auto"
-                  >
-                    <option value="">More…</option>
-                    {categories.slice(8).map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              )}
-            </div>
-          </div>
+          <CategoryChips
+            categories={categories}
+            value={form.category}
+            clearTo="Other"
+            onChange={(c) => {
+              // "More…" picked from the list changes nothing: an entry always has a category.
+              if (c) setField('category', c)
+            }}
+            refund={form.kind === 'refund'}
+          />
         )}
 
         {/* Date selector — presets + custom picker */}
-        {(() => {
-          // Calendar days, not 24 h steps: the day after a DST change is 23 or 25 hours long.
-          const editPresets = [
-            { label: 'Today', val: today },
-            { label: 'Yesterday', val: addDays(today, -1) },
-            { label: '2d ago', val: addDays(today, -2) },
-            { label: '3d ago', val: addDays(today, -3) },
-          ]
-          const editIsPreset = editPresets.some((p) => p.val === form.date)
-          return (
-            <div className="flex flex-col gap-2">
-              <span
-                id={dateLabelId}
-                className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]"
-              >
-                Date
-              </span>
-              <div
-                role="group"
-                aria-labelledby={dateLabelId}
-                className="flex flex-wrap items-center gap-2"
-              >
-                {editPresets.map((p) => (
-                  <button
-                    key={p.label}
-                    type="button"
-                    aria-pressed={form.date === p.val}
-                    onClick={() => setField('date', p.val)}
-                    className={`tap-target inline-flex h-9 items-center gap-1.5 rounded-full border px-3 text-[12px] font-medium transition ${
-                      form.date === p.val
-                        ? 'border-accent/40 bg-accent/10 text-accent'
-                        : 'border-white/[0.08] text-[var(--text-secondary)] hover:border-white/20 hover:text-white'
-                    }`}
-                  >
-                    {p.label}
-                  </button>
-                ))}
-                {/* The calendar opens on the entry's day, a preset's too ("Pick date" then). */}
-                <DatePicker
-                  variant="pill"
-                  value={form.date}
-                  onChange={(v) => {
-                    setField('date', v || today)
-                  }}
-                  max={today}
-                  placeholder="Pick date"
-                  active={!editIsPreset}
-                />
-              </div>
-            </div>
-          )
-        })()}
+        <div className="flex flex-col gap-2">
+          <span
+            id={dateLabelId}
+            className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]"
+          >
+            Date
+          </span>
+          <DatePresets
+            value={form.date}
+            today={today}
+            onChange={(day) => {
+              setField('date', day)
+            }}
+            labelledBy={dateLabelId}
+          />
+        </div>
 
         <div className="flex flex-col gap-1.5">
           <label

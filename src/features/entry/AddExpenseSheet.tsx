@@ -1,28 +1,26 @@
-import { useId, useRef, useState, type KeyboardEvent } from 'react'
+import { useRef, useState, type KeyboardEvent } from 'react'
 import { flushSync } from 'react-dom'
-import { CalendarDays, ChevronDown } from 'lucide-react'
+import { CalendarDays } from 'lucide-react'
 import { Sheet } from '../../ui/Sheet'
 import { Input } from '../../ui/Input'
 import { Button } from '../../ui/Button'
-import { Segmented } from '../../ui/Segmented'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useToast } from '../../hooks/useToast'
 import { useHaptic } from '../../hooks/useHaptic'
 import { useCurrencySymbol, useFormatMoney } from '../../hooks/useFormatMoney'
 import { useToday } from '../../hooks/useToday'
-import { addDays, formatKey, keyYear, shortDate, shortDateYear, type DayKey } from '../../lib/dates'
-import { DatePicker } from '../../ui/DatePicker'
+import { formatKey, keyYear, shortDate, shortDateYear, type DayKey } from '../../lib/dates'
 import { shieldKeyGesture } from '../../ui/pressShield'
 import { DataUnavailable } from '../../app/DataNotices'
 import {
   addAndConfirm,
-  chosenChipFill,
   useLearnedCategory,
   firstInvalidField,
   validateExpenseForm,
   type ExpenseFormErrors,
   type ExpenseFormField,
 } from './expenseForm'
+import { CategoryChips, DatePresets, KindSwitch } from './expenseFormParts'
 import type { EntryKind } from '../../data/core/types'
 import type { ExpenseView } from '../../types'
 
@@ -81,8 +79,6 @@ export function AddExpenseSheet({
   const vibrate = useHaptic()
   const fmt = useFormatMoney()
   const symbol = useCurrencySymbol()
-  const categoryLabelId = useId()
-  const categoryErrorId = useId()
   const categoryGroup = useRef<HTMLDivElement>(null)
   const fields: Record<ExpenseFormField, React.RefObject<HTMLInputElement | null>> = {
     itemName: useRef<HTMLInputElement>(null),
@@ -132,7 +128,6 @@ export function AddExpenseSheet({
   // add itself (and the quick bar's), shown before Add rather than found out after it.
   const learned = useLearnedCategory(form.itemName)
   const suggestion = form.category === '' ? learned : null
-  const shown = form.category || suggestion || ''
 
   const submit = () => {
     const errs = validateExpenseForm(form, fmt)
@@ -197,16 +192,6 @@ export function AddExpenseSheet({
 
   const isBackdated = form.date && form.date !== today
 
-  // Calendar days, not 24 h steps: the day after a DST change is 23 or 25 hours long.
-  const presets = [
-    { id: 'today', label: 'Today', val: today },
-    { id: 'yesterday', label: 'Yesterday', val: addDays(today, -1) },
-    { id: '-2', label: '2d ago', val: addDays(today, -2) },
-    { id: '-3', label: '3d ago', val: addDays(today, -3) },
-  ]
-  const isPreset = presets.some((p) => p.val === form.date)
-  const isCustomActive = !isPreset
-
   // Said as the sheet opens, before anything is typed, never only on Save (a Reload would
   // then throw away the whole form).
   if (cantSave) {
@@ -261,54 +246,24 @@ export function AddExpenseSheet({
             it takes no category and is in no spending total. Refund: money back for something
             paid for. It is spending undone, so it takes the category it comes off (the
             Category label says so, where the choice is made). */}
-        <div>
-          <Segmented<EntryKind>
-            label="Kind of entry"
-            value={kind}
-            onChange={(k) => {
-              setKind(k)
-              setNeedsCategory(false)
-            }}
-            size="sm"
-            options={[
-              { value: 'expense', label: 'Expense' },
-              { value: 'income', label: 'Income' },
-              { value: 'refund', label: 'Refund' },
-            ]}
-          />
-        </div>
+        <KindSwitch
+          value={kind}
+          onChange={(k) => {
+            setKind(k)
+            setNeedsCategory(false)
+          }}
+        />
 
-        {/* Date selector. The presets wrap rather than scroll, as in the Edit sheet: every one
-            stays in sight on a narrow phone ("Pick date" drops to a second row). 36 px pills
-            8 px apart, so their 44 px touch areas meet without overlapping, row to row too. */}
-        <div role="group" aria-label="Date" className="flex flex-wrap items-center gap-2">
-          {presets.map((p) => (
-            <button
-              type="button"
-              key={p.id}
-              aria-pressed={form.date === p.val}
-              onClick={() => set('date', p.val)}
-              className={`tap-target inline-flex h-9 shrink-0 items-center gap-1.5 rounded-full border px-3 text-[12px] font-medium transition ${
-                form.date === p.val
-                  ? 'border-accent/40 bg-accent/10 text-accent'
-                  : 'border-white/[0.08] text-[var(--text-secondary)] hover:border-white/20 hover:text-white'
-              }`}
-            >
-              {p.label}
-            </button>
-          ))}
-          {/* The calendar opens on the entry's day, a preset's too ("Pick date" then). */}
-          <DatePicker
-            variant="pill"
-            value={form.date}
-            onChange={(v) => {
-              set('date', v || today)
-            }}
-            max={today}
-            placeholder="Pick date"
-            active={isCustomActive}
-          />
-        </div>
+        {/* Date selector, named "Date" with no label of its own. The presets wrap rather than
+            scroll, as in the Edit sheet. */}
+        <DatePresets
+          value={form.date}
+          today={today}
+          onChange={(day) => {
+            set('date', day)
+          }}
+          noShrink
+        />
 
         {isBackdated && (
           <div className="flex items-center gap-1.5 rounded-lg border border-accent/20 bg-accent/5 px-3 py-2 text-[12px] text-accent">
@@ -349,90 +304,19 @@ export function AddExpenseSheet({
         />
 
         {!income && (
-          <div className="flex flex-col gap-1.5">
-            <span
-              id={categoryLabelId}
-              className="text-[11px] font-medium uppercase tracking-[0.08em] text-[var(--text-secondary)]"
-            >
-              {refund ? 'Category it comes off' : 'Category'}
-              {suggestion !== null && (
-                <span className="normal-case tracking-normal text-[var(--text-tertiary)]">
-                  {' '}
-                  · suggested from your entries
-                </span>
-              )}
-            </span>
-            {/* 36 px chips 8 px apart: each gets a 44 px hit area on touch, none overlapping. */}
-            <div
-              ref={categoryGroup}
-              role="group"
-              aria-labelledby={categoryLabelId}
-              aria-describedby={needsCategory ? categoryErrorId : undefined}
-              className="flex flex-wrap gap-2"
-            >
-              {categories.slice(0, 8).map((c) => (
-                <button
-                  type="button"
-                  key={c}
-                  aria-pressed={form.category === c}
-                  // Named as suggested, in one piece (a hidden span beside the text is read with
-                  // a stray space before its comma).
-                  aria-label={suggestion === c ? `${c}, suggested` : undefined}
-                  onClick={() => set('category', form.category === c ? '' : c)}
-                  className={`tap-target inline-flex h-9 items-center gap-1 rounded-full border px-3 text-[12px] font-medium transition ${
-                    form.category === c
-                      ? 'border-transparent text-surface-0'
-                      : suggestion === c
-                        ? 'border-dashed text-white'
-                        : 'border-white/[0.08] text-[var(--text-secondary)] hover:text-white'
-                  }`}
-                  style={
-                    form.category === c
-                      ? { background: chosenChipFill(c) }
-                      : suggestion === c
-                        ? { borderColor: chosenChipFill(c) }
-                        : undefined
-                  }
-                >
-                  {c}
-                </button>
-              ))}
-              {categories.length > 8 && (
-                // A chip like its neighbours: the 12 px label is drawn here, and the native select
-                // sits invisibly on top to take the tap (8 px taller on touch: a 44 px target).
-                // Touch screens floor the select's own text at 16 px (index.css, against iOS focus
-                // zoom), which would make this chip bigger than the rest. The chip draws the
-                // select's focus ring.
-                <div className="field-focus relative inline-flex h-9 max-w-full items-center rounded-full border border-white/[0.08] bg-surface-2 pl-3 pr-6 text-[12px] text-[var(--text-secondary)]">
-                  <span aria-hidden className="min-w-0 truncate">
-                    {categories.slice(8).includes(shown) ? shown : 'More…'}
-                  </span>
-                  <select
-                    aria-label="More categories"
-                    value={form.category}
-                    onChange={(e) => set('category', e.target.value)}
-                    className="field-control absolute inset-0 h-full w-full cursor-pointer appearance-none rounded-full opacity-0 [@media(pointer:coarse)]:-inset-y-1 [@media(pointer:coarse)]:h-auto"
-                  >
-                    <option value="">More…</option>
-                    {categories.slice(8).map((c) => (
-                      <option key={c} value={c}>
-                        {c}
-                      </option>
-                    ))}
-                  </select>
-                  <ChevronDown
-                    size={10}
-                    className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-[var(--text-tertiary)]"
-                  />
-                </div>
-              )}
-            </div>
-            {needsCategory && (
-              <p id={categoryErrorId} role="alert" className="text-[12px] text-negative">
-                Pick the category this refund comes off.
-              </p>
-            )}
-          </div>
+          <CategoryChips
+            categories={categories}
+            value={form.category}
+            clearTo=""
+            onChange={(c) => {
+              set('category', c)
+            }}
+            refund={refund}
+            suggestion={suggestion}
+            error={needsCategory ? 'Pick the category this refund comes off.' : undefined}
+            groupRef={categoryGroup}
+            moreChevron
+          />
         )}
 
         <Input
