@@ -1,20 +1,19 @@
 import { Navigate, type RouteObject } from 'react-router-dom'
-import { lazy, Suspense } from 'react'
+import { Suspense } from 'react'
 import { AppShell } from './AppShell'
 import { ScreenOutlet } from './RouteBoundary'
 import { PulseScreen } from '../features/pulse/PulseScreen'
 import { importWithReload } from '../lib/chunkReload'
+import { routeScreen, screenForPath, type RouteScreen } from './routeScreen'
 
 // A stale chunk after a deploy reloads the page once instead of failing (see chunkReload).
-const LedgerScreen = lazy(() =>
-  importWithReload(() => import('../features/ledger/LedgerScreen')).then((m) => ({
-    default: m.LedgerScreen,
-  })),
+const ledger = routeScreen(() =>
+  importWithReload(() => import('../features/ledger/LedgerScreen')).then((m) => m.LedgerScreen),
 )
-const InsightsScreen = lazy(() =>
-  importWithReload(() => import('../features/insights/InsightsScreen')).then((m) => ({
-    default: m.InsightsScreen,
-  })),
+const insights = routeScreen(() =>
+  importWithReload(() => import('../features/insights/InsightsScreen')).then(
+    (m) => m.InsightsScreen,
+  ),
 )
 
 // A plain element rather than a component: this module exports the route config,
@@ -30,6 +29,20 @@ const screenSkeleton = (
     <div className="h-56 animate-pulse rounded-2xl border border-white/[0.06] bg-surface-1" />
   </div>
 )
+
+function lazyScreenRoute(path: string, { Screen }: RouteScreen): RouteObject {
+  return {
+    path,
+    element: (
+      <Suspense fallback={screenSkeleton}>
+        <Screen />
+      </Suspense>
+    ),
+  }
+}
+
+const ledgerRoute = lazyScreenRoute('ledger', ledger)
+const insightsRoute = lazyScreenRoute('insights', insights)
 
 // Rendered by AppRoutes (RouteBoundary.tsx), whose boundary takes a failing shell: a full-page
 // card.
@@ -47,25 +60,21 @@ export const appRoutes: RouteObject[] = [
           // AnimatePresence mode="wait" to show a blank frame on first cold visit.
           { index: true, element: <PulseScreen /> },
           { path: 'pulse', element: <PulseScreen /> },
-          {
-            path: 'ledger',
-            element: (
-              <Suspense fallback={screenSkeleton}>
-                <LedgerScreen />
-              </Suspense>
-            ),
-          },
-          {
-            path: 'insights',
-            element: (
-              <Suspense fallback={screenSkeleton}>
-                <InsightsScreen />
-              </Suspense>
-            ),
-          },
+          ledgerRoute,
+          insightsRoute,
           { path: '*', element: <Navigate to="/pulse" replace /> },
         ],
       },
     ],
   },
 ]
+
+const lazyScreens = new Map<RouteObject, RouteScreen>([
+  [ledgerRoute, ledger],
+  [insightsRoute, insights],
+])
+
+/** The lazy screen the app renders first when it opens on `pathname`, if that is one. */
+export function bootScreenFor(pathname: string): RouteScreen | undefined {
+  return screenForPath(appRoutes, lazyScreens, pathname)
+}

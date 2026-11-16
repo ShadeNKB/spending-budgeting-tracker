@@ -29,6 +29,11 @@ const DYNAMIC_IMPORT = /\bimport\(\s*['"]/g
 const WRAPPED_IMPORT = /\bimportWithReload\(\s*\(\)\s*=>\s*import\(\s*['"]/g
 const LAZY = /\blazy\(\s*\(\)\s*=>/g
 const LAZY_WRAPPED = /\blazy\(\s*\(\)\s*=>\s*importWithReload\(/g
+// The routed screens are built by routeScreen, whose one React.lazy runs the load it is given:
+// that load is the one that must go through importWithReload.
+const ROUTE_SCREEN_MODULE = '/src/app/routeScreen.ts'
+const ROUTE_SCREEN = /\brouteScreen\(\s*\(\)\s*=>/g
+const ROUTE_SCREEN_WRAPPED = /\brouteScreen\(\s*\(\)\s*=>\s*importWithReload\(/g
 
 describe('lazy chunks', () => {
   const files = Object.entries(SOURCES)
@@ -48,14 +53,28 @@ describe('lazy chunks', () => {
 
   it('builds every React.lazy component on importWithReload', () => {
     const unwrapped = files
+      .filter(([path]) => path !== ROUTE_SCREEN_MODULE)
       .filter(([, text]) => count(text, LAZY) !== count(text, LAZY_WRAPPED))
       .map(([path]) => path)
     expect(unwrapped).toEqual([])
   })
 
+  it('builds every routed screen on importWithReload', () => {
+    const unwrapped = files
+      .filter(([, text]) => count(text, ROUTE_SCREEN) !== count(text, ROUTE_SCREEN_WRAPPED))
+      .map(([path]) => path)
+    expect(unwrapped).toEqual([])
+    // routeScreen's one React.lazy runs the load it was given, and nothing else.
+    const helper = SOURCES[ROUTE_SCREEN_MODULE] ?? ''
+    expect(count(helper, LAZY)).toBe(1)
+    expect(helper).toMatch(/\blazy\(\(\) => start\(\)/)
+  })
+
   it('still finds the lazy sites it guards (the patterns match real code)', () => {
-    const wrapped = files.reduce((sum, [, text]) => sum + count(text, LAZY_WRAPPED), 0)
+    const sum = (pattern: RegExp) =>
+      files.reduce((total, [, text]) => total + count(text, pattern), 0)
     // Two routed screens, five shell overlays and the quick-add full-entry sheet.
-    expect(wrapped).toBeGreaterThanOrEqual(8)
+    expect(sum(ROUTE_SCREEN_WRAPPED)).toBeGreaterThanOrEqual(2)
+    expect(sum(LAZY_WRAPPED) + sum(ROUTE_SCREEN_WRAPPED)).toBeGreaterThanOrEqual(8)
   })
 })
