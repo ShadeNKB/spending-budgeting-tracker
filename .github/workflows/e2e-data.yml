@@ -1,0 +1,122 @@
+name: Data engine e2e
+
+# The two-device suite (`npm run e2e:data`, playwright.data-engine.config.ts): this build, the
+# same build with the sync flags on, and the shipped 0.21.0, 0.20.0, 0.10.0 and 0.9.2 side by
+# side on a fake relay. It was a local release gate (PR-2) and ran attended, because an
+# unattended PC paused sync (LEDGER, 10-11 Nov); a runner has no screen to lock.
+#
+# Its own workflow, not a job in ci.yml: a path-filtered workflow simply does not run on a pull
+# request that touches none of its paths, so it never leaves a check waiting, and branch
+# protection does not name it, so it is never required. (A path-filtered job inside ci.yml would
+# need a skip job to report for it.) Pull requests that touch the data or sync path run it,
+# and so does every push to main and a manual run.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/data/**'
+      - 'src/stores/**'
+      - 'src/services/**'
+      - 'e2e/data-engine/**'
+      - 'scripts/build-mixed.mjs'
+      - 'supabase/**'
+      - 'playwright.data-engine.config.ts'
+      - '.github/workflows/e2e-data.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-data-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e-data:
+    name: Data engine e2e (two devices, mixed versions)
+    runs-on: ubuntu-24.04
+    # The e2e shards' image (ci.yml): it carries Chromium and WebKit and their system packages,
+    # and git, so checkout makes a real clone with history and tags. Its tag must match
+    # @playwright/test: `npm run check:playwright-image` checks this file too.
+    container:
+      image: mcr.microsoft.com/playwright:v1.60.0-noble
+      options: --user 1001 --ipc=host
+    timeout-minutes: 60
+
+    steps:
+      # Full history and every tag: build-mixed.mjs `git archive`s v0.21.0, v0.20.0, v0.10.0
+      # and v0.9.2.
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+
+      # Fails in a second, with the reason, if the checkout has no git history or tags.
+      - name: Release tags present
+        id: tags
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          commits="$(git rev-parse 'v0.21.0^{commit}' 'v0.20.0^{commit}' 'v0.10.0^{commit}' 'v0.9.2^{commit}')"
+          echo "$commits"
+          echo "key=$(echo "$commits" | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The older releases' builds only (v0*: v020, v020-flags, v021, v010, v092, their CSPs and
+      # stamps), keyed on the tags' commits and the script that builds them. Never the candidate
+      # builds: they are this commit's, rebuilt every run. Restored after npm ci, which empties
+      # node_modules.
+      - name: Restore older builds
+        id: older
+        uses: actions/cache/restore@v4
+        with:
+          path: node_modules/.cache/st5-e2e/v0*
+          key: st5-e2e-older-${{ steps.tags.outputs.key }}-${{ hashFiles('scripts/build-mixed.mjs') }}
+
+      # 0.9.2 builds against its own dependency set (build-mixed.mjs reads ST5_E2E_V092_MODULES).
+      # Only its package files are needed for that; scripts are skipped (an old devDependency
+      # downloads a chromedriver in its postinstall, and a build needs none of them).
+      - name: Dependencies of 0.9.2
+        if: steps.older.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p "$RUNNER_TEMP/v092"
+          git archive v0.9.2 package.json package-lock.json | tar -x -C "$RUNNER_TEMP/v092"
+          cd "$RUNNER_TEMP/v092"
+          npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Build the versions under test
+        run: node scripts/build-mixed.mjs
+        env:
+          ST5_E2E_V092_MODULES: ${{ runner.temp }}/v092/node_modules
+
+      - name: Save older builds
+        if: steps.older.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: node_modules/.cache/st5-e2e/v0*
+          key: ${{ steps.older.outputs.cache-primary-key }}
+
+      # One worker (the config's): the specs share the relay's and the builds' ports.
+      - name: Data engine e2e
+        run: npm run e2e:data -- --workers=1
+        env:
+          ST5_E2E_V092_MODULES: ${{ runner.temp }}/v092/node_modules
+
+      - name: Upload report and traces on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-data-report
+          path: |
+            playwright-report
+            test-results
+          retention-days: 7
