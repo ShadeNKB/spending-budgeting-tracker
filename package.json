@@ -44,6 +44,7 @@
     "format:check": "prettier --check \"src/**/*.{ts,tsx,css}\" \"e2e/**/*.ts\" \"scripts/**/*.mjs\" \"*.{js,ts,json,md}\"",
     "size": "node scripts/check-bundle-size.mjs",
     "size:relay": "node scripts/check-relay-weight.mjs",
+    "measure:boot": "npm run build && node scripts/measure-boot.mjs",
     "check:backups": "node scripts/check-no-backups.mjs",
     "check:playwright-image": "node scripts/check-playwright-image.mjs",
     "hooks:install": "node -e \"require('node:fs').chmodSync('.githooks/pre-commit', 0o755)\" && git config core.hooksPath .githooks",

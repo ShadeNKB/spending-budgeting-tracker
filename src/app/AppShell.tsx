@@ -12,16 +12,15 @@ import { ToastAnnouncer } from './ToastAnnouncer'
 import { useRouteFocus } from './useRouteFocus'
 import { useScreenTitle } from './useScreenTitle'
 import { SAFE_GUTTER_X } from './safeArea'
+import { bootstrap } from './bootstrap'
 import {
   IS_DEMO,
-  installPersistence,
   isOwnRow,
   UNDO_TOO_LATE,
   undoOutcomeMessage,
   useExpenseStore,
   whenHydrated,
 } from '../stores/useExpenseStore'
-import { installSync } from '../stores/useSyncStore'
 import { useUIStore } from '../stores/useUIStore'
 import { useHotkeys } from '../hooks/useHotkeys'
 import { useToast } from '../hooks/useToast'
@@ -70,20 +69,6 @@ function revealTextField(e: React.FocusEvent): void {
   const field = e.target
   if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement)
     field.scrollIntoView({ block: 'nearest' })
-}
-
-// Bootstrap runs once per page load — wired in a top-level useEffect rather than
-// at module scope so React is fully mounted before we touch localStorage.
-let bootstrapped = false
-function bootstrap() {
-  if (bootstrapped || typeof window === 'undefined') return
-  bootstrapped = true
-
-  // The engine chunk is already loading (main.tsx); the shell shows its status until it is in.
-  void useExpenseStore.getState().hydrate()
-  installPersistence()
-  // Local changes, lifecycle events (hide/resume/online) and realtime drive sync from here.
-  installSync()
 }
 
 export function AppShell() {
