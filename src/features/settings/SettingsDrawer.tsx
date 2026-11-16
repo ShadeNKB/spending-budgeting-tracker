@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { Wallet, Tags, Database, Cloud, Monitor, Moon, Sun, ChevronDown } from 'lucide-react'
 import { Sheet } from '../../ui/Sheet'
 import { Segmented } from '../../ui/Segmented'
@@ -6,6 +6,7 @@ import { useUIStore, type Theme } from '../../stores/useUIStore'
 import { CURRENCIES, isSupportedCurrency } from '../../lib/format'
 import { useExpenseStore } from '../../stores/useExpenseStore'
 import { useSyncStore } from '../../stores/useSyncStore'
+import { useMediaQuery } from '../../hooks/useMediaQuery'
 import { DataUnavailable } from '../../app/DataNotices'
 import { BackupPanel } from './BackupPanel'
 import { BudgetsPanel } from './BudgetsPanel'
@@ -49,7 +50,7 @@ export function SettingsDrawer() {
   const setTheme = useUIStore((s) => s.setTheme)
   // The currency is one setting for every synced device (P2-11).
   const synced = useSyncStore((s) => s.syncId !== null)
-  const [isMobile, setIsMobile] = useState(false)
+  const isMobile = useMediaQuery('(max-width: 767px)')
   // On a phone Theme and Currency, set once, fold into one row above the tabs: open on every
   // tab they pushed the section itself most of a screen down (F-109). Folded again on each
   // opening of the drawer.
@@ -63,14 +64,6 @@ export function SettingsDrawer() {
   // Stable: Sheet re-runs its opening focus when onClose changes, which sent focus to the close
   // button on every tab switch (and away from a control another panel asked to focus).
   const close = useCallback(() => setOpen(false), [setOpen])
-
-  useEffect(() => {
-    const query = window.matchMedia('(max-width: 767px)')
-    const update = () => setIsMobile(query.matches)
-    update()
-    query.addEventListener('change', update)
-    return () => query.removeEventListener('change', update)
-  }, [])
 
   // Tab from the tabs lands in the chosen section: on its first control, or on the panel itself
   // when the section is text only (Sync without a relay, Budgets without categories).
