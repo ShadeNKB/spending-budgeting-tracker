@@ -135,6 +135,9 @@ describe('formatMoney — symbols and fraction digits', () => {
 
   it('formats codes outside the table without throwing', () => {
     expect(formatMoney(12.5, {}, 'CHF')).toBe('CHF\u00a012.50')
+    // Decimals for a code the picker does not offer still come from Intl.
+    expect(formatMoney(12.5, {}, 'KWD')).toBe('KWD\u00a012.500')
+    expect(formatMoney(12.5, {}, 'KRW')).toBe('KRW\u00a013')
     expect(() => formatMoney(12.5, {}, 'not a code')).not.toThrow()
     expect(formatMoney(12.5, {}, 'not a code')).toContain('12.50')
   })
@@ -259,5 +262,101 @@ describe('initialOf', () => {
     expect(initialOf('\u{1F35C} laksa')).toBe('\u{1F35C}')
     expect(initialOf('\u{1F1F8}\u{1F1EC} trip')).toBe('\u{1F1F8}\u{1F1EC}')
     expect(initialOf('éclair')).toBe('É')
+  })
+})
+
+describe('fraction digits of the offered currencies', () => {
+  it('match what Intl says for each currency the picker offers', () => {
+    for (const c of CURRENCIES) {
+      const intl = new Intl.NumberFormat('en-US', {
+        style: 'currency',
+        currency: c.code,
+      }).resolvedOptions().maximumFractionDigits
+      expect({ code: c.code, digits: c.fractionDigits }).toEqual({ code: c.code, digits: intl })
+    }
+  })
+
+  it('formats every offered currency exactly as the Intl-derived digits did', () => {
+    const amounts = [0, 0.004, 1, 1.5, -42.005, 1234.567, 999_950, -0.4, NaN]
+    const lines = CURRENCIES.flatMap((c) =>
+      amounts.map(
+        (n) =>
+          `${c.code} ${String(n)}: ${formatMoney(n, {}, c.code)} | ${formatMoney(n, { sign: true }, c.code)} | ${formatMoney(n, { compact: true }, c.code)}`,
+      ),
+    )
+    expect(lines.join('\n')).toMatchInlineSnapshot(`
+      "USD 0: $0.00 | $0.00 | $0.00
+      USD 0.004: $0.00 | $0.00 | $0.00
+      USD 1: $1.00 | +$1.00 | $1.00
+      USD 1.5: $1.50 | +$1.50 | $1.50
+      USD -42.005: -$42.01 | -$42.01 | -$42.01
+      USD 1234.567: $1,234.57 | +$1,234.57 | $1.2k
+      USD 999950: $999,950.00 | +$999,950.00 | $1.0M
+      USD -0.4: -$0.40 | -$0.40 | -$0.40
+      USD NaN: $0.00 | $0.00 | $0.00
+      SGD 0: S$0.00 | S$0.00 | S$0.00
+      SGD 0.004: S$0.00 | S$0.00 | S$0.00
+      SGD 1: S$1.00 | +S$1.00 | S$1.00
+      SGD 1.5: S$1.50 | +S$1.50 | S$1.50
+      SGD -42.005: -S$42.01 | -S$42.01 | -S$42.01
+      SGD 1234.567: S$1,234.57 | +S$1,234.57 | S$1.2k
+      SGD 999950: S$999,950.00 | +S$999,950.00 | S$1.0M
+      SGD -0.4: -S$0.40 | -S$0.40 | -S$0.40
+      SGD NaN: S$0.00 | S$0.00 | S$0.00
+      EUR 0: €0.00 | €0.00 | €0.00
+      EUR 0.004: €0.00 | €0.00 | €0.00
+      EUR 1: €1.00 | +€1.00 | €1.00
+      EUR 1.5: €1.50 | +€1.50 | €1.50
+      EUR -42.005: -€42.01 | -€42.01 | -€42.01
+      EUR 1234.567: €1,234.57 | +€1,234.57 | €1.2k
+      EUR 999950: €999,950.00 | +€999,950.00 | €1.0M
+      EUR -0.4: -€0.40 | -€0.40 | -€0.40
+      EUR NaN: €0.00 | €0.00 | €0.00
+      GBP 0: £0.00 | £0.00 | £0.00
+      GBP 0.004: £0.00 | £0.00 | £0.00
+      GBP 1: £1.00 | +£1.00 | £1.00
+      GBP 1.5: £1.50 | +£1.50 | £1.50
+      GBP -42.005: -£42.01 | -£42.01 | -£42.01
+      GBP 1234.567: £1,234.57 | +£1,234.57 | £1.2k
+      GBP 999950: £999,950.00 | +£999,950.00 | £1.0M
+      GBP -0.4: -£0.40 | -£0.40 | -£0.40
+      GBP NaN: £0.00 | £0.00 | £0.00
+      JPY 0: ¥0 | ¥0 | ¥0
+      JPY 0.004: ¥0 | ¥0 | ¥0
+      JPY 1: ¥1 | +¥1 | ¥1
+      JPY 1.5: ¥2 | +¥2 | ¥2
+      JPY -42.005: -¥42 | -¥42 | -¥42
+      JPY 1234.567: ¥1,235 | +¥1,235 | ¥1.2k
+      JPY 999950: ¥999,950 | +¥999,950 | ¥1.0M
+      JPY -0.4: ¥0 | ¥0 | ¥0
+      JPY NaN: ¥0 | ¥0 | ¥0
+      MYR 0: RM0.00 | RM0.00 | RM0.00
+      MYR 0.004: RM0.00 | RM0.00 | RM0.00
+      MYR 1: RM1.00 | +RM1.00 | RM1.00
+      MYR 1.5: RM1.50 | +RM1.50 | RM1.50
+      MYR -42.005: -RM42.01 | -RM42.01 | -RM42.01
+      MYR 1234.567: RM1,234.57 | +RM1,234.57 | RM1.2k
+      MYR 999950: RM999,950.00 | +RM999,950.00 | RM1.0M
+      MYR -0.4: -RM0.40 | -RM0.40 | -RM0.40
+      MYR NaN: RM0.00 | RM0.00 | RM0.00
+      AUD 0: A$0.00 | A$0.00 | A$0.00
+      AUD 0.004: A$0.00 | A$0.00 | A$0.00
+      AUD 1: A$1.00 | +A$1.00 | A$1.00
+      AUD 1.5: A$1.50 | +A$1.50 | A$1.50
+      AUD -42.005: -A$42.01 | -A$42.01 | -A$42.01
+      AUD 1234.567: A$1,234.57 | +A$1,234.57 | A$1.2k
+      AUD 999950: A$999,950.00 | +A$999,950.00 | A$1.0M
+      AUD -0.4: -A$0.40 | -A$0.40 | -A$0.40
+      AUD NaN: A$0.00 | A$0.00 | A$0.00
+      CAD 0: C$0.00 | C$0.00 | C$0.00
+      CAD 0.004: C$0.00 | C$0.00 | C$0.00
+      CAD 1: C$1.00 | +C$1.00 | C$1.00
+      CAD 1.5: C$1.50 | +C$1.50 | C$1.50
+      CAD -42.005: -C$42.01 | -C$42.01 | -C$42.01
+      CAD 1234.567: C$1,234.57 | +C$1,234.57 | C$1.2k
+      CAD 999950: C$999,950.00 | +C$999,950.00 | C$1.0M
+      CAD -0.4: -C$0.40 | -C$0.40 | -C$0.40
+      CAD NaN: C$0.00 | C$0.00 | C$0.00"
+    `)
   })
 })
