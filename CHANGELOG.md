@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.22.1 — 2026-11-16
+
+The architecture finish (track T9). One thing you can see, in light mode; everything else is the same app with its insides tidied and more of it under test.
+
+### Fixed
+
+- **Light mode: the heatmap's empty days have an edge.** Their outline was a white ring that only showed in dark mode. It now uses the theme's own border colour: unchanged in dark, a faint edge in light.
+
+### Changed (engineering)
+
+- **Smaller files, same behaviour.** `SettingsDrawer.tsx` 776 to 262 lines (Categories and Budgets panels in their own files); `SyncPanel.tsx` 1,175 to 576 (its sections in sibling files); the Add and Edit sheets share their kind switch, date presets and category chips (`features/entry/expenseFormParts.tsx`); the command palette's search is a module with its own tests; the start-up routine is `app/bootstrap.ts`; the sync engine's messages are `stores/syncMessages.ts`. Code was moved, not rewritten: each move was checked against the built chunks and, for the sheets, by running old and new side by side.
+- **Guards.** A test fails when a white- or black-based style has no light-mode rule (`light-theme-css.test.ts`), and when a direct storage write appears outside a short allow-list (`storage-writes.test.ts`).
+- **Removed.** Eleven exports nothing imported, sixteen constants and types nothing used, and the unused coverage package.
+- **CI.** The browser shards run in Playwright's own container image (no package install to fail). The two-device suite, beside the real older versions, now runs in CI on pushes to main and on pull requests that touch the data or sync path. One journey test walks a fresh profile from the first run to a reload.
+- **A boot measurement** (`npm run measure:boot`): 2,000 rows at 4× CPU. Recorded, not gated.
+- **Docs.** The orientation docs describe the app as it is, with a map of where things live.
+
+### Not done, on purpose
+
+- The sync engine, the local engine and the wire format are not split: the mutation suites anchor on their exact text and reviews compare them release by release.
+- Converting every white-based style to tokens: with the guard test the current mechanism is safe, and the conversion would touch every screen for no visible gain.
+
 ## 0.22.0 — 2026-11-16
 
 Private sync, second release: a sync you already have can be made private from Settings › Sync. Only after the database lockdown (migration 005): before it the button refuses and changes nothing. It protects what is sent from now on; what the old sync put on the relay was readable there until then, and stays as it was.
