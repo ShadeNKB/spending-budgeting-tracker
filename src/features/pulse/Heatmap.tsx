@@ -36,9 +36,10 @@ const FADE = '16px'
 const SHOWN = 'rgb(0 0 0 / 1)'
 // Fill and edge per level. Forced colours keep them (forced-color-adjust: none) over the system
 // Canvas, so an empty day takes the Canvas itself: emptier always reads lighter on a light
-// Canvas and darker on a dark one, as the levels do.
+// Canvas and darker on a dark one, as the levels do. An empty day's edge is the subtle border
+// token (white in dark, black in light): a white ring vanished on the light theme's cards.
 const LEVEL_CLASSES = [
-  'bg-surface-2 ring-white/[0.04] forced-colors:bg-[color:Canvas] forced-colors:ring-[color:GrayText]',
+  'bg-surface-2 ring-[color:var(--border-subtle)] forced-colors:bg-[color:Canvas] forced-colors:ring-[color:GrayText]',
   'bg-accent/15 ring-accent/20',
   'bg-accent/30 ring-accent/30',
   'bg-accent/55 ring-accent/40',
