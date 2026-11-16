@@ -62,9 +62,7 @@ export function nullRecord<V>(): Record<string, V> {
 /** Relay row ≤ 1 MB; warn from 70 % (§10.1, F-016). */
 export const WIRE_PUSH_MAX = 900_000
 export const WIRE_WARN = 630_000
-export const PULL_MAX = 5_000_000
 export const IMPORT_MAX_BYTES = 8_000_000
-export const IMPORT_MAX_ROWS = 50_000
 /** Records accepted from one source; the excess is quarantined as `cap` (§8.2). */
 export const RECORDS_MAX = 50_000
 
