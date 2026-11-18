@@ -24,10 +24,13 @@ Before opening a pull request, run:
 ```bash
 npm run typecheck
 npm run lint
+npm run format:check
 npm run test:run
 npm run build
 npm run smoke
 ```
+
+`npm run verify` runs all of these and the rest of what CI checks (backup guard, size budgets). Open pull requests against `main`; CI runs on every one.
 
 ## Pull Requests
 
