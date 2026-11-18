@@ -1,5 +1,5 @@
 // Synthetic data in the owner's shape (invented): ~240 B per row on the wire, entries over 406 days,
-// the categories and kinds of names a full-time NSF in Singapore logs, a third of the rows legacy
+// the categories and kinds of names a Singapore-based user logs, a third of the rows legacy
 // (migrated from v4, unsealed), the rest written by v5 (sealed, with a day), some edited later.
 import { localNoonIso } from '../../core/dates'
 import { newId } from '../../core/ids'

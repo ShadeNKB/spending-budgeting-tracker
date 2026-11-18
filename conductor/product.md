@@ -4,7 +4,7 @@
 A local-first personal finance PWA for tracking daily spending against monthly budgets. Mobile-first, offline-capable, installable. The data lives on the device; cross-device sync through a Supabase relay is optional.
 
 ## Who it's for
-Shade — NSF on limited income. Sessions are short and unpredictable. The app must be fast to open, fast to add an entry, and instantly informative at a glance.
+The owner, logging daily on a phone. Sessions are short and unpredictable. The app must be fast to open, fast to add an entry, and instantly informative at a glance.
 
 ## Core value prop
 Frictionless expense capture → instant budget awareness → no spreadsheet required.

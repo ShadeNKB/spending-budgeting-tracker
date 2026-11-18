@@ -126,8 +126,8 @@ describe('isAllowedPath', () => {
     expect(isAllowedPath('src\\features\\ledger\\__tests__\\sample export.json')).toBe(true)
     expect(isAllowedPath('e2e\\fixtures\\iphone import.json')).toBe(true)
     expect(isAllowedPath('My Notes\\spendtrack backup.json')).toBe(false)
-    expect(isAllowedPath('NKB STUFF\\Finance\\Backups\\backup.json')).toBe(false)
-    expect(isAllowedPath('C:\\Users\\Shade\\NKB STUFF\\fixtures\\backup.json')).toBe(false)
+    expect(isAllowedPath('Personal\\Finance\\Backups\\backup.json')).toBe(false)
+    expect(isAllowedPath('C:\\Users\\me\\Documents\\fixtures\\backup.json')).toBe(false)
   })
 })
 
@@ -457,7 +457,7 @@ describe('CLI in a temp git repo', { timeout: 60_000 }, () => {
     const result = guard(repo, ['--staged'])
     expect(result.code).toBe(1)
     expect(result.stderr).toMatch(/^ {2}My Notes\/my backup\.json {2}\(expenses-array\)$/m)
-    expect(result.stderr).toMatch(/OneDrive\/NKB STUFF\/Finance\/Backups\//)
+    expect(result.stderr).toMatch(/a Backups folder outside the repo/)
     expectNoContents(result)
   })
 

@@ -224,7 +224,7 @@ function formatViolations(violations, mode) {
     ...violations.map(({ path, markers }) => `  ${displayPath(path)}  (${markers.join(', ')})`),
     '',
     'Personal backups must never reach the public repo. Move them outside it,',
-    'e.g. OneDrive/NKB STUFF/Finance/Backups/, then run:',
+    'e.g. a Backups folder outside the repo, then run:',
     mode === 'staged' ? '  git restore --staged -- <path>' : '  git rm --cached -- <path>',
   ]
   if (mode !== 'staged') lines.push('If one was ever pushed, treat that data as public.')
