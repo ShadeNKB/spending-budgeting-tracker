@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React 19" />
   <img src="https://img.shields.io/badge/TypeScript-Strict-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
   <img src="https://img.shields.io/badge/PWA-Installable-8B5CF6?style=flat-square" alt="PWA" />
-  <img src="https://img.shields.io/badge/audit-0%20vulns-22C55E?style=flat-square" alt="0 vulnerabilities" />
+  <img src="https://img.shields.io/badge/prod%20audit-0%20vulns-22C55E?style=flat-square" alt="0 vulnerabilities in production dependencies" />
   <img src="https://img.shields.io/badge/license-MIT-22D3EE?style=flat-square" alt="MIT" />
 </p>
 
@@ -436,7 +436,7 @@ docs/           user guide, screenshots, project brain (docs/brain)
 - ✅ Light / Dark / System theming + 8-currency support
 - ✅ Warmer/softer visual redesign across all four surfaces (AA-clean in both themes)
 - ✅ Ledger virtualization (`@tanstack/react-virtual`) — scales to thousands of rows
-- ✅ Performance pass — main bundle 81 KB gzip; Supabase + Settings lazy-loaded
+- ✅ Performance pass — size budgets checked in CI; Supabase + Settings lazy-loaded
 - ✅ Rapid-nav blank-render bug eliminated — 290 stress-test iterations, 0 blanks
 - ✅ Storage quota toast + JSON import schema validation
 - ✅ Production CI smoke test on every route + service worker + manifest
