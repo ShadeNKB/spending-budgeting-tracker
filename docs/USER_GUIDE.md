@@ -111,14 +111,16 @@ Share a code only with your own devices.
 
 **One-time setup (per Supabase project):**
 
+[`docs/SELF_HOST.md`](SELF_HOST.md) walks through it step by step, with what each step should show. In short:
+
 1. Create a free project at [supabase.com](https://supabase.com).
-2. In the Supabase SQL Editor, run the files in `supabase/migrations` by hand, one at a time and in order (never `supabase db push`): `001_sync.sql`, `002_sync_indexes.sql` (retention helper), `003_harden_prune_search_path.sql` and `004_sync_rpc.sql` (the relay's sync functions). `supabase/README.md` says what each one does. The helper only creates a manual pruning function; schedule it yourself if you want automatic 90-day cleanup. `005_sync_lockdown.sql` comes later, when Settings → **Sync** says "Ready for the database lockdown." on every device; `docs/brain/sync-runbook.md` walks through 004 and 005.
-3. Copy your project URL and anon public key into `.env.local` as `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. After 004, add `VITE_SYNC_RELAY=auto` (the sync functions) and, once `scripts/verify-cas.mjs` passes, `VITE_SYNC_CAS=on` (compare-and-set), then rebuild.
+2. In the Supabase SQL Editor, run the files in `supabase/migrations` by hand, one at a time and in order (never `supabase db push`): `001_sync.sql` to `006_sync_sticky_marker.sql`, each followed by the check the guide names. On a new project they all go in at one sitting. `supabase/README.md` says what each one does. The prune function they add only runs when you run it; the guide shows how to schedule it.
+3. Set `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (your project URL and its anon public or publishable key) and `VITE_SYNC_RELAY=rpc` in `.env.local` or on your host, then rebuild.
 4. Open Settings → **Sync** in the app and tap **Generate sync code for this device**. On every other device, paste the code under **or join an existing one** and tap **Join**.
 
 **Linking a device:**
 
-- **Generate** makes a new code here. Use it once, on the first device. With the relay's sync functions in use (`VITE_SYNC_RELAY=auto`) the code is a private one.
+- **Generate** makes a new code here. Use it once, on the first device. With the relay's sync functions in use (`VITE_SYNC_RELAY=rpc` or `auto`) the code is a private one.
 - **Join** takes either kind of code and checks it before anything goes on the network (a typo says so at once; a private code can be typed in lower case, with spaces or dashes), then reads the synced copy and shows what joining does: "This device: 12 entries · Synced: 641 entries · After joining: about 653 entries." Nothing is saved until you tap **Join** again; **Cancel** changes nothing. A code with no synced copy says "No synced data found for this code" and creates nothing, so a mistyped code can never start a second, empty sync.
 - In the demo, both first ask whether to remove the sample data; sample entries never sync either way.
 - **Disconnect** stops syncing on this device only. Your data stays here, on your other devices and in the relay. A private code is forgotten at once (copy it first if your other device isn't at hand). For 30 days the device remembers a plain code and offers **Reconnect**; **Generate** then asks "Start a separate sync?" first, because your other devices would stay on the old code.
@@ -165,7 +167,7 @@ Turns a plain sync you already have into a private one, from one device, without
 
 - the status (**Synced · 2m ago**, **Saved here · 3 to sync**, **Can't reach the sync server · retry in 30 s**, **Sync paused**) with **Sync now**;
 - **Devices**: every device on this sync, **This device** first, then each **Other device**, with its SpendTrack version and when it last synced. A device on an older SpendTrack says "update it" (0.10.0 and 0.9.2 don't report themselves, so they show as "Older SpendTrack (0.10.0)"); one not seen for 60 days is greyed. When every other device runs this version it says so ("All your devices run SpendTrack 0.11.0."), which is the sign it's safe to rely on the newest sync features;
-- in one line, whether live updates are on, or unavailable (then it syncs when you open the app and every minute). When the app uses the relay's sync functions (after migration 004, with `VITE_SYNC_RELAY=auto`), the line adds "using the relay's sync functions", and another line says whether the database is ready for the lockdown (migration 005) or what is still missing; when only time is missing, the line says why with a date and the day it will be ready ("An older SpendTrack (0.10.0) was last seen in the synced copy on 7 Nov. Ready on 21 Nov."). Once this device has seen the database refuse direct access to the table, the line says "Database lockdown applied." instead;
+- in one line, whether live updates are on, or unavailable (then it syncs when you open the app and every minute). When the app uses the relay's sync functions (after migration 004, with `VITE_SYNC_RELAY=rpc` or `auto`), the line adds "using the relay's sync functions", and another line says whether the database is ready for the lockdown (migration 005) or what is still missing; when only time is missing, the line says why with a date and the day it will be ready ("An older SpendTrack (0.10.0) was last seen in the synced copy on 7 Nov. Ready on 21 Nov."). Once this device has seen the database refuse direct access to the table, the line says "Database lockdown applied." instead;
 - a banner when a device on SpendTrack 0.10.0, 0.9.2 or 0.8.4 wrote the synced copy in the last day, and how full the relay row is from 70 % ("Sync uses 82 % of the relay limit"). At 100 % sync pauses; your data stays on this device and merges keep coming in.
 
 On a laptop (1280 px and wider) the pill in the top bar says the same in short: **Synced · 2m ago**, **3 to sync**, **Offline · 3 to sync**, **Sync retrying · 30 s**, **Sync paused · code not found**. When it reports a problem, it is a button that opens Settings → Sync.
@@ -233,13 +235,13 @@ That means:
 
 ## Operational limits
 
-|                          |                                                                                                                                             |
-| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| **localStorage cap**     | ~5–10 MB per browser (varies by device). When it is full SpendTrack says "Not saved: storage is full" and retries — never silent data loss. |
-| **Sync device count**    | Unbounded — pair any number of devices with the same code; expenses and budgets merge via last-write-wins metadata.                         |
+|                          |                                                                                                                                                                                                                                                                                         |
+| ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **localStorage cap**     | ~5–10 MB per browser (varies by device). When it is full SpendTrack says "Not saved: storage is full" and retries — never silent data loss.                                                                                                                                             |
+| **Sync device count**    | Unbounded — pair any number of devices with the same code; expenses and budgets merge via last-write-wins metadata.                                                                                                                                                                     |
 | **Sync payload size**    | Sync pauses before a push would pass the relay's row limit (about 1 MB) and says so; your data stays saved on the device. After migration 004 the relay also refuses a row over its stored-size limit: sync then pauses as too large, and changes from your other devices keep merging. |
-| **Tested expense count** | Up to ~5000 entries renders smoothly; the Ledger list is virtualised.                                                                       |
-| **Time zones**           | Each entry keeps the calendar day it was logged for; every screen, the CSV and backups use that day, in any time zone.                      |
+| **Tested expense count** | Up to ~5000 entries renders smoothly; the Ledger list is virtualised.                                                                                                                                                                                                                   |
+| **Time zones**           | Each entry keeps the calendar day it was logged for; every screen, the CSV and backups use that day, in any time zone.                                                                                                                                                                  |
 
 ## What SpendTrack doesn't do
 
