@@ -10,6 +10,7 @@ import {
   bootDevice,
   connect,
   expense,
+  failNext,
   loadDevice,
   micros,
   migrate,
@@ -485,19 +486,33 @@ describe('the view (§3.9)', () => {
   })
 })
 
+/** HEADs of the row no bucket can be (the lockdown probe's), by every client or one. */
+const probes = (client?: number) =>
+  requestsOf('head', client).filter((q) => JSON.stringify(q).includes(LOCKDOWN_PROBE_ROW)).length
+
+/** The page hidden and shown again: the channel is closed, then joined again. */
+async function resubscribe(): Promise<void> {
+  setVisibility('hidden')
+  await advance(MINUTE)
+  setVisibility('visible')
+  await advance(MINUTE)
+}
+
+/**
+ * The app closed (its client `client` hears and asks nothing more) and opened again on the same
+ * storage: the new page load and the relay client it asks with.
+ */
+async function reopenClosed(d: Device, client: number): Promise<[Device, number]> {
+  setClientOffline(client, true)
+  const next = relay().nextClient
+  const opened = await loadDevice(d.storage)
+  await opened.expense.useExpenseStore.getState().hydrate()
+  opened.sync.installSync()
+  await advance(MINUTE)
+  return [opened, next]
+}
+
 describe('the lockdown, once this device has seen it (0.22.2)', () => {
-  /** HEADs of the row no bucket can be: the lockdown probe's. */
-  const probes = () =>
-    requestsOf('head').filter((q) => JSON.stringify(q).includes(LOCKDOWN_PROBE_ROW)).length
-
-  /** The page hidden and shown again: the channel is closed, then joined again. */
-  async function resubscribe(): Promise<void> {
-    setVisibility('hidden')
-    await advance(MINUTE)
-    setVisibility('visible')
-    await advance(MINUTE)
-  }
-
   it('remembers the refusal for this relay, says so after a reload without asking again, and forgets it once the table answers', async () => {
     vi.stubEnv('VITE_SYNC_RELAY', 'auto')
     migrate('004')
@@ -507,27 +522,31 @@ describe('the lockdown, once this device has seen it (0.22.2)', () => {
       transport: 'rpc',
       lockedDown: false,
     })
-    expect(probes()).toBe(0) // nothing is asked while the change feed answers
-
-    migrate('005')
-    await resubscribe()
-    // the change feed refused twice: one probe tells a lockdown from a project without the feed
+    // asked once after the first cycle (0.22.3): the table answers, so nothing is noted
     expect(probes()).toBe(1)
+
+    // 005 applied while this page stays open: a day on, the relay is asked again
+    migrate('005')
+    vi.setSystemTime(Date.now() + DAY)
+    await resubscribe()
+    expect(probes()).toBe(2)
     expect(portOf(phone).meta().lockdownSeen?.relay).toEqual(expect.any(String))
     expect(phone.sync.useSyncStore.getState().view?.lockedDown).toBe(true)
 
     // the app opened again: it knows at once, and asks nothing
-    const reloaded = await loadDevice(phone.storage)
-    await reloaded.expense.useExpenseStore.getState().hydrate()
-    reloaded.sync.installSync()
-    await advance(MINUTE)
+    const [reloaded, client] = await reopenClosed(phone, 1)
     expect(reloaded.sync.useSyncStore.getState().view?.lockedDown).toBe(true)
     await resubscribe()
-    expect(probes()).toBe(1)
+    expect(probes(client)).toBe(0)
 
-    // 005 rolled back: the change feed lets this device in again, and the line goes
+    // 005 rolled back: a joined change feed proves nothing (0.22.3), so the line stays until
+    // the relay's own answer, a day on, clears it
     migrate('rollback 005')
     await resubscribe()
+    expect(reloaded.sync.useSyncStore.getState().view?.lockedDown).toBe(true)
+    vi.setSystemTime(Date.now() + DAY)
+    await resubscribe()
+    expect(probes(client)).toBe(1)
     expect(reloaded.sync.useSyncStore.getState().view?.lockedDown).toBe(false)
     expect(portOf(reloaded).meta().lockdownSeen).toMatchObject({ relay: null })
   })
@@ -539,8 +558,136 @@ describe('the lockdown, once this device has seen it (0.22.2)', () => {
     await advance(MINUTE)
     relay().rowEvents = 'rejected' // no publication: the table itself still answers
     await resubscribe()
-    expect(probes()).toBe(1)
+    expect(probes()).toBe(1) // the one after the first cycle: the refusals ask nothing more
     expect(phone.sync.useSyncStore.getState().view?.lockedDown).toBe(false)
+  })
+})
+
+describe('the lockdown, asked of the relay itself (0.22.3)', () => {
+  const live = (d: Device) => d.sync.useSyncStore.getState().view?.live
+  const lockedDown = (d: Device) => d.sync.useSyncStore.getState().view?.lockedDown
+  /** The last channel opened with a Broadcast binding (the engine's subscription). */
+  const lastChannel = () =>
+    relay()
+      .created.filter((c) => c.broadcastEvents)
+      .at(-1)
+
+  /** 004 and 005 applied, as on the owner's project; the build detects the functions. */
+  function lockedRelay(): void {
+    vi.stubEnv('VITE_SYNC_RELAY', 'auto')
+    migrate('004')
+    migrate('005')
+  }
+
+  it('says the lockdown is applied after the first cycle, though the change feed joins', async () => {
+    lockedRelay()
+    const phone = await connected()
+    await advance(MINUTE)
+    expect(relay().rowEvents).toBe('silent') // the server joins row events it cannot deliver
+    expect(probes()).toBe(1)
+    expect(lockedDown(phone)).toBe(true)
+    expect(portOf(phone).meta().lockdownSeen?.relay).toEqual(expect.any(String))
+    // live updates stay on, over Broadcast alone: no row events are asked for any more
+    expect(live(phone)).toBe('on')
+    expect(lastChannel()?.rowEvents).toBe(false)
+    expect(lastChannel()?.joined).toBe(true)
+    expect(relay().channels.size).toBe(1)
+  })
+
+  it('keeps it after a reload with no new question that day; a joined channel never clears it', async () => {
+    lockedRelay()
+    const phone = await connected()
+    await advance(MINUTE)
+    expect(probes()).toBe(1)
+    vi.setSystemTime(Date.now() + 6 * 60 * MINUTE)
+    const [reopened, client] = await reopenClosed(phone, 1)
+    expect(lockedDown(reopened)).toBe(true)
+    expect(lastChannel()?.rowEvents).toBe(false)
+    for (let i = 0; i < 3; i++) await resubscribe()
+    await advance(30 * MINUTE)
+    expect(probes(client)).toBe(0)
+    expect(lockedDown(reopened)).toBe(true)
+    expect(live(reopened)).toBe('on')
+  })
+
+  it('asks again once a day while it knows, and stays applied while the relay says so', async () => {
+    lockedRelay()
+    const phone = await connected()
+    await advance(MINUTE)
+    const first = portOf(phone).meta().lockdownSeen?.at ?? 0
+    vi.setSystemTime(first + DAY)
+    const [reopened, client] = await reopenClosed(phone, 1)
+    expect(probes(client)).toBe(1)
+    expect(lockedDown(reopened)).toBe(true)
+    // the answer moved the day on: within the next day nothing is asked, open or reloaded
+    expect(portOf(reopened).meta().lockdownSeen?.at ?? 0).toBeGreaterThanOrEqual(first + DAY)
+    for (let i = 0; i < 3; i++) await resubscribe()
+    expect(probes(client)).toBe(1)
+    vi.setSystemTime(Date.now() + 12 * 60 * MINUTE)
+    const [again, next] = await reopenClosed(reopened, client)
+    expect(probes(next)).toBe(0)
+    expect(lockedDown(again)).toBe(true)
+  })
+
+  it('clears it when the relay answers open (005 rolled back), and asks for row events again', async () => {
+    lockedRelay()
+    const phone = await connected()
+    await advance(MINUTE)
+    expect(lockedDown(phone)).toBe(true)
+    migrate('rollback 005')
+    await resubscribe()
+    expect(lockedDown(phone)).toBe(true) // within the day, nothing is asked
+    vi.setSystemTime(Date.now() + DAY)
+    await resubscribe()
+    expect(probes()).toBe(2)
+    expect(lockedDown(phone)).toBe(false)
+    expect(portOf(phone).meta().lockdownSeen).toMatchObject({ relay: null })
+    await resubscribe()
+    expect(lastChannel()?.rowEvents).toBe(true)
+  })
+
+  it('changes nothing on an answer the relay cannot give', async () => {
+    lockedRelay()
+    const phone = await connected()
+    await advance(MINUTE)
+    const at = portOf(phone).meta().lockdownSeen?.at
+    vi.setSystemTime(Date.now() + DAY)
+    const asked = probes()
+    // Sync now pulls in full (no HEAD): the question after it is the one that fails
+    failNext('head', { status: 503, message: 'Service Unavailable' })
+    await settle(phone.sync.useSyncStore.getState().triggerSync(), 3000)
+    await advance(MINUTE)
+    expect(phone.sync.useSyncStore.getState().cloudStatus).toBe('synced')
+    expect(probes()).toBe(asked + 1)
+    expect(lockedDown(phone)).toBe(true)
+    expect(portOf(phone).meta().lockdownSeen?.at).toBe(at)
+  })
+
+  it('a Broadcast from the other device still starts a cycle under the lockdown', async () => {
+    lockedRelay()
+    const phone = await connected('p1')
+    const laptop = await connected('l1')
+    await advance(MINUTE)
+    for (const d of [phone, laptop]) {
+      expect(lockedDown(d)).toBe(true)
+      expect(live(d)).toBe('on')
+    }
+    const open = relay().created.filter((c) => relay().channels.has(c))
+    expect(open.map((c) => c.rowEvents)).toEqual([false, false])
+    const broadcasts = relay().broadcasts
+    laptop.expense.useExpenseStore.getState().addExpense({ itemName: 'Kopi', amount: 1.5 })
+    await advance(10_000) // far sooner than the 5-minute poll
+    expect(relay().broadcasts).toBeGreaterThan(broadcasts)
+    expect(phone.expense.useExpenseStore.getState().expenses.map((e) => e.itemName)).toContain(
+      'Kopi',
+    )
+  })
+
+  it('asks nothing on a device that is not linked', async () => {
+    lockedRelay()
+    await bootDevice({ expenses: [expense('e1')] })
+    await advance(10 * MINUTE)
+    expect(probes()).toBe(0)
   })
 })
 

@@ -19,17 +19,18 @@ export function NotConfigured() {
             Create a free project at <code className={SETUP_NAME}>supabase.com</code>
           </SetupStep>
           <SetupStep n={2}>
-            Run migrations 001 to 004 from <code className={SETUP_NAME}>supabase/migrations</code>,
-            in order, by hand in the Supabase SQL editor (never{' '}
-            <code className={SETUP_NAME}>supabase db push</code>). See{' '}
-            <code className={SETUP_NAME}>docs/brain/sync-runbook.md</code>.
+            Run the SQL files in <code className={SETUP_NAME}>supabase/migrations</code> in order
+            (001 to 006, never the <code className={SETUP_NAME}>.rollback</code> files), by hand in
+            the Supabase SQL editor
           </SetupStep>
           <SetupStep n={3}>
-            Add <code className={SETUP_NAME}>VITE_SUPABASE_URL</code> and{' '}
-            <code className={SETUP_NAME}>VITE_SUPABASE_ANON_KEY</code> to Vercel and your local{' '}
-            <code className={SETUP_NAME}>.env.local</code>
+            Set <code className={SETUP_NAME}>VITE_SUPABASE_URL</code>,{' '}
+            <code className={SETUP_NAME}>VITE_SUPABASE_ANON_KEY</code> and{' '}
+            <code className={SETUP_NAME}>VITE_SYNC_RELAY=rpc</code>, then rebuild
           </SetupStep>
-          <SetupStep n={4}>Redeploy — sync activates automatically</SetupStep>
+          <SetupStep n={4}>
+            Every step in full: <code className={SETUP_NAME}>docs/SELF_HOST.md</code>
+          </SetupStep>
         </ol>
       </div>
     </div>

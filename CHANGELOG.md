@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.22.3 — 2026-11-18
+
+The lockdown line tells the truth. After the database lockdown, 0.22.2 could keep saying "Ready for the database lockdown.".
+
+### Fixed
+
+- **Settings › Sync says "Database lockdown applied." once the lockdown is applied.** 0.22.2 learnt it only when the database refused the change feed behind live updates, but Supabase accepts that request even for a locked table (it just never sends anything on it), so a device on the sync functions never found out, and the line said the lockdown was still to come. Now each device asks the database itself, once after it opens: the line changes within a sync of opening the app. A device that knows asks again once a day, so if the lockdown is ever undone the line goes back by itself. Live updates are unchanged: they run over Broadcast, and stop asking for the change feed once the lockdown is known.
+- **A private sync learns the lockdown too.** A device whose sync is private never uses the table or its change feed, so on 0.22.2 it said "Ready for the database lockdown." for good. It now asks the database the same way.
+
+### Changed
+
+- **The setup steps for a build without sync** (Settings › Sync) name all six database updates (001 to 006, never the rollback files), the three settings to build with (`VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` and `VITE_SYNC_RELAY=rpc`), and the self-hosting guide, `docs/SELF_HOST.md`.
+
 ## 0.22.2 — 2026-11-16
 
 The database lockdown's line says when. Before, a device that wasn't ready said why but not until when, so there was no telling whether the wait was running out or starting again.

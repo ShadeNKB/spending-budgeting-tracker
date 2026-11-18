@@ -23,7 +23,8 @@
 // before the setup, S10 a tab's name pushing, S11 a carried entry taken for a registration, S12
 // a forced write for a missing row, S13 a registration judged by the clocks alone (a slow peer
 // read as 0.10.0), S14 a copy judged again by the time passed (a stamp pushed ahead), S15 an
-// older writer stamped at every judgment of the same copy (a misread renewed at every start); the
+// older writer stamped at every judgment of the same copy (a misread renewed at every start), S16
+// a joined channel taken to clear the lockdown (the server joins what it cannot deliver); the
 // private sync's (PR-6): P1 a private row force-written, P2 an inner revision that is not the envelope's
 // merged, P3 what does not open passed to the merge, P4 one IV for every seal, P5 a cycle writing
 // over a copy marked newer, P6 a private sync on the upsert transport, P7 a fence that is not
@@ -361,6 +362,15 @@ const SYNC_MUTATIONS = [
     find: '    judged === null,\n',
     replace: '    true,\n',
     expect: 'P3-8 / 0.22.2: a peer misread as 0.10.0 is not seen again at each start',
+  },
+  {
+    id: 'S16',
+    name: 'A joined channel clears the lockdown again (the server joins row events it cannot deliver)',
+    file: 'src/stores/syncEngine.ts',
+    find: '    joinedNow = true\n    // A join says nothing of the lockdown',
+    replace:
+      '    joinedNow = true\n    noteLockdown(false)\n    // A join says nothing of the lockdown',
+    expect: '0.22.3: the lockdown is kept after a reload; a joined channel never clears it',
   },
   {
     id: 'P1',

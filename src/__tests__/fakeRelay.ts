@@ -171,8 +171,12 @@ interface RelayState {
   sticky: { push: boolean; prune: boolean }
   /** The project refuses public Broadcast: a channel with a Broadcast binding fails to join. */
   broadcast: 'on' | 'rejected'
-  /** `postgres_changes` refused (realtime publication dropped): such a channel fails to join. */
-  rowEvents: 'on' | 'rejected'
+  /**
+   * `postgres_changes`: `rejected`, such a channel fails to join (a project without the change
+   * feed); `silent`, it joins and never hears a row change, as the real Realtime server answers a
+   * table that left the supabase_realtime publication (migration 005).
+   */
+  rowEvents: 'on' | 'rejected' | 'silent'
   /** The RPC push refuses a payload whose jsonb text is longer than this in bytes (22023). */
   rpcMaxBytes: number
   /** The RPC create is over its caps: 53400 (HTTP 500, as PostgREST answers it). */
@@ -450,7 +454,8 @@ export class MigrationRefused extends Error {
 /**
  * Applies a migration step as the SQL file does (idempotent; no row is touched): 004 adds the
  * functions and the checks, and run again puts 004's push back over 006's; 005 locks the table
- * and drops it from the realtime publication, and is refused without 004; 006 makes the marker
+ * and drops it from the realtime publication (a row-event subscription still joins, and hears
+ * nothing), and is refused without 004; 006 makes the marker
  * sticky in push and prune, and it and its rollback are refused without 004; the 005 rollback
  * reopens the table; the 004 rollback removes the functions and checks (not 006's prune, which
  * is 003's function), and is refused while 005 is applied.
@@ -477,7 +482,7 @@ export function migrate(step: Migration): void {
       )
     }
     r.lockdown = true
-    r.rowEvents = 'rejected'
+    r.rowEvents = 'silent'
   } else if (step === 'rollback 005') {
     r.lockdown = false
     r.rowEvents = 'on'
@@ -535,7 +540,7 @@ export function requestsOf(kind: RequestKind, client?: number): RequestRecord[] 
 
 function fanOut(writer: FakeClient | null, syncId: string, row: RelayRow, insert: boolean): void {
   const r = relay()
-  if (r.realtimeDown) return
+  if (r.realtimeDown || r.rowEvents !== 'on') return
   for (const channel of r.channels) {
     if (!channel.hearsRow(syncId)) continue
     if (r.offlineClients.has(channel.client.id)) continue

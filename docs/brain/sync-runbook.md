@@ -452,7 +452,7 @@ Log it in the [006 log](#006-log).
 ## What you'll see after the lockdown
 
 - **Sync works as before**, through the functions.
-- **Each time the app opens, live updates can take a few seconds to say "on".** The app first asks for the database's change feed, which the lockdown refuses, then switches to Broadcast. Meanwhile Settings › Sync may say only "Using the relay's sync functions.", or briefly "Live updates unavailable · …".
+- **Live updates say "on" as before.** Supabase still accepts the app's request for the table's change feed after the lockdown (it just never sends anything on it), so the change feed is no sign either way. Live updates run over Broadcast: each device announces its changes there after every sync. Once a device knows the lockdown is applied it asks for Broadcast alone (the first time, Settings › Sync may say "connecting" for a moment while it switches).
 - **If it keeps saying "Live updates unavailable · syncing on open and every minute · using the relay's sync functions."**, sync still works: changes from your other device arrive when you open the app and every minute while it's open. Live updates need Broadcast on public channels. That's a Supabase setting, and your choice (nobody changes it for you): Supabase → **Realtime** → **Settings**, the switch that allows public access (called "Allow public access" when this was written; if yours says "Private channels only", that must be off).
   - **Allowed:** your other device hears a change within a second. Anyone holding the app's public key can join a public channel if they know its name, but SpendTrack names it from a one-way hash of your sync code, and it carries only a short "something changed" signal (a revision number and a device id), never your entries.
   - **Not allowed:** nothing is lost. The app checks every minute and whenever you open it.
@@ -460,7 +460,7 @@ Log it in the [006 log](#006-log).
 - **Supabase's Security Advisor may list `sync_buckets` under "RLS Enabled No Policy".** That's intended: the table has no policies on purpose, so only the three functions reach it. Its earlier warning that row level security was off on this table goes away.
 - **New sync codes are limited** to 20 an hour and 500 rows in all (since gate C). See "The sync relay is full" below.
 - **What the lockdown doesn't stop: someone filling the free database.** Supabase's free plan holds 500 MB; a project over it turns read-only, and sync stops until space is freed. Anyone with the app's public key could still fill it on purpose: before gate E with any number of junk rows written straight to the table, and after gate E through the functions, with up to 500 rows of up to 1.2 MB each (about 600 MB, reachable in about a day at 20 new rows an hour). Your entries are safe either way: both devices keep everything, and you have the backups. If Supabase emails you about database size, or the preflight's `rows_total` climbs towards 500 when you added no devices, tell the lead. The lead knows about this limit; a firmer one is a later change.
-- **Settings › Sync's gate E line becomes "Database lockdown applied."** From 0.22.2, once a device has seen the database refuse the table, it says so and remembers it (each device learns it for itself, the first time it opens after gate E: its change feed is refused, and it asks the database once to be sure). Until a device has seen it, that device keeps the old line ("Ready for the database lockdown." or "Not ready …"): open it once, wait a minute, and look again. If 005 is ever undone ([R2](#r2--undo-005)), the line goes back to the readiness line by itself.
+- **Settings › Sync's gate E line becomes "Database lockdown applied."** From 0.22.3, each device asks the database once after it opens (one request after its first sync) whether the table is locked, and remembers the answer. So "Database lockdown applied." appears within a sync of opening the app after gate E. 0.22.2 waited for the change feed to be refused, which Supabase never does, so on 0.22.2 the line could keep saying "Ready for the database lockdown." after the lockdown: reload to 0.22.3. A device that knows asks again once a day; if 005 is ever undone ([R2](#r2--undo-005)), the line goes back to the readiness line by itself within a day.
 - **Settings › Backup says what's true after the lockdown**, once the device has seen it: "The relay copy isn't encrypted yet, but the database lockdown is applied: this app's public key alone can no longer list or read it. Make sync private to encrypt it." Before that (and on a device that hasn't seen it yet) it still says "… until the database lockdown (update 005), anyone with this app's public key could read it." The Sync tab's sentence before you link doesn't change: a build that shows it can't sync with a locked database anyway.
 
 ## If something goes wrong
@@ -546,23 +546,25 @@ These outputs hold no sync code and none of your data, so they're safe to paste 
 
 ### Gate E log
 
-| Step                                           | Date and time | What it said | Notes |
-| ---------------------------------------------- | ------------- | ------------ | ----- |
-| E0 both say "Ready for the database lockdown." |               |              |       |
-| E1 backups, phone and laptop                   |               |              |       |
-| E2 preflight (verdict, stage)                  |               |              |       |
-| E3 apply 005                                   |               |              |       |
-| E4 005_verify (RESULT)                         |               |              |       |
-| E5 verify-cas --lockdown (RESULT)              |               |              |       |
-| E6 phone and laptop, test entry                |               |              |       |
+| Step                                           | Date and time | What it said       | Notes                                                                   |
+| ---------------------------------------------- | ------------- | ------------------ | ----------------------------------------------------------------------- |
+| E0 both say "Ready for the database lockdown." | 18 Nov 2026   | both ready         | the phone's older-build wait ended 17 Nov                               |
+| E1 backups, phone and laptop                   | 18 Nov 2026   | one backup, laptop | both devices Synced first, so one file held everything                  |
+| E2 preflight (verdict, stage)                  | 18 Nov 2026   | GO, 004 applied    | 1 row (v5), moved 0                                                     |
+| E3 apply 005                                   | 18 Nov 2026   | no error           | applied by the lead through the Supabase connection, as the table owner |
+| E4 005_verify (RESULT)                         | 18 Nov 2026   | PASS 20/20         | acting as anon: select, insert and update refused (42501)               |
+| E5 verify-cas --lockdown (RESULT)              | not run       |                    | needs the public key on the laptop; 005_verify's anon checks covered it |
+| E6 phone and laptop, test entry                | 18 Nov 2026   | round trip ok      | the readiness line still said "Ready": fixed in 0.22.3                  |
 
 ### 006 log
 
-| Step                                       | Date and time | What it said | Notes |
-| ------------------------------------------ | ------------- | ------------ | ----- |
-| 6a preflight (verdict, stage)              |               |              |       |
-| 6b apply 006                               |               |              |       |
-| 6c 006_verify (RESULT)                     |               |              |       |
-| 6c 004_verify or 005_verify again (RESULT) |               |              |       |
+| Step                                       | Date and time | What it said          | Notes                         |
+| ------------------------------------------ | ------------- | --------------------- | ----------------------------- |
+| 6a preflight (verdict, stage)              | 18 Nov 2026   | GO, 004 applied       | the gate E preflight; moved 0 |
+| 6b apply 006                               | 18 Nov 2026   | no error              | right after E4                |
+| 6c 006_verify (RESULT)                     | 18 Nov 2026   | PASS 12/12            |                               |
+| 6c 004_verify or 005_verify again (RESULT) | 18 Nov 2026   | 005_verify PASS 20/20 |                               |
 
 Paste full outputs below each table if you like, each in its own block.
+
+After gate E: "Make sync private" was used on 18 Nov 2026 (gate D); the relay then held one private envelope and one moved marker, and no plain copy. The backup copy made at gate C (`st_backup.sync_buckets_20261107`) and its schema were dropped the same day.
