@@ -1313,9 +1313,9 @@ describe('T-026-1: copy keyed to state (F-026)', () => {
 describe('a build with no relay settings: the setup steps (F-026, PR-4 §3.5)', () => {
   const STEPS = [
     'Create a free project at supabase.com',
-    'Run migrations 001 to 004 from supabase/migrations, in order, by hand in the Supabase SQL editor (never supabase db push). See docs/brain/sync-runbook.md.',
-    'Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to Vercel and your local .env.local',
-    'Redeploy — sync activates automatically',
+    'Run the SQL files in supabase/migrations in order (001 to 006, never the .rollback files), by hand in the Supabase SQL editor',
+    'Set VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY and VITE_SYNC_RELAY=rpc, then rebuild',
+    'Every step in full: docs/SELF_HOST.md',
   ]
   const steps = () => within(screen.getByRole('list')).getAllByRole('listitem')
 
@@ -1324,7 +1324,7 @@ describe('a build with no relay settings: the setup steps (F-026, PR-4 §3.5)', 
     render(<SyncPanel />)
   })
 
-  it('names migrations 001 to 004, run by hand and in order (never db push), and the runbook', () => {
+  it('names migrations 001 to 006 in order, the three build variables, and the self-hosting guide', () => {
     expect(screen.getByText('Cloud sync not configured')).toBeInTheDocument()
     expect(steps().map((li) => [...li.children].map((part) => part.textContent))).toEqual(
       STEPS.map((step, i) => [`${String(i + 1)}.`, step]),
@@ -1340,11 +1340,11 @@ describe('a build with no relay settings: the setup steps (F-026, PR-4 §3.5)', 
     expect([...document.querySelectorAll('ol code')].map((name) => name.textContent)).toEqual([
       'supabase.com',
       'supabase/migrations',
-      'supabase db push',
-      'docs/brain/sync-runbook.md',
+      '.rollback',
       'VITE_SUPABASE_URL',
       'VITE_SUPABASE_ANON_KEY',
-      '.env.local',
+      'VITE_SYNC_RELAY=rpc',
+      'docs/SELF_HOST.md',
     ])
   })
 })

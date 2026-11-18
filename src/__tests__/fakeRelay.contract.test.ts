@@ -562,8 +562,8 @@ describe('table B after 005: every table call is refused (401 42501)', () => {
     expect(relay().rows.has(OTHER)).toBe(false)
   })
 
-  it('refuses row events (the table left the realtime publication)', () => {
-    expect(relay().rowEvents).toBe('rejected')
+  it('joins row events but delivers none (the table left the realtime publication)', () => {
+    expect(relay().rowEvents).toBe('silent')
   })
 })
 
@@ -579,7 +579,7 @@ describe('table C: the migration states', () => {
   })
   const before004 = { rpc: 'absent', lockdown: false, rowEvents: 'on' }
   const after004 = { rpc: 'present', lockdown: false, rowEvents: 'on' }
-  const after005 = { rpc: 'present', lockdown: true, rowEvents: 'rejected' }
+  const after005 = { rpc: 'present', lockdown: true, rowEvents: 'silent' }
 
   it('005 is refused (55000, nothing changed) unless 004 is applied', () => {
     expect(state()).toEqual(before004)

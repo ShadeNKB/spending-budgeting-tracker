@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { encodeSt5 } from '../../data/core/codes'
 import { deriveKeys, open, seal } from '../../data/core/e2e'
 import { isRecord } from '../../lib/backup'
+import { LOCKDOWN_PROBE_ROW } from '../../services/syncService'
 import type { CloudStatus } from '../useSyncStore'
 import {
   SYNC_CODE,
@@ -232,6 +233,22 @@ describe('a private bucket round-trips on ciphertext alone (AC-P1, AC-P2)', () =
     expect(text).not.toContain(`sync_id=eq.${ROW}`)
     expect(laptop.sync.useSyncStore.getState().view?.live).not.toBe('row-events')
     expect(TOPIC.startsWith('st:')).toBe(true)
+  })
+})
+
+describe('the lockdown on a private bucket (0.22.3)', () => {
+  it('the view says the lockdown is applied after the first cycle: the relay is asked, as for a plain sync', async () => {
+    migrate('005')
+    const laptop = await bootDevice({ expenses: [expense('e1')] })
+    expect(await start(laptop)).toMatchObject({ ok: true })
+    await until(() => laptop.sync.useSyncStore.getState().view?.lockedDown === true)
+    expect(laptop.sync.useSyncStore.getState().view?.lockedDown).toBe(true)
+    // one question, of the row no bucket can be: the private row is never named in it
+    const probes = requestsOf('head').filter((q) => JSON.stringify(q).includes(LOCKDOWN_PROBE_ROW))
+    expect(probes).toHaveLength(1)
+    expect(JSON.stringify(probes)).not.toContain(ROW)
+    await idle(MINUTE)
+    expect(laptop.sync.useSyncStore.getState().view?.lockedDown).toBe(true)
   })
 })
 

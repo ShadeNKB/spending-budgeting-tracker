@@ -164,6 +164,8 @@ const LOCK_WAIT_MS = 35_000
 const LOCK_NAME = 'st5:sync'
 /** An old writer's sighting is persisted at most this often (it costs an envelope write). */
 const LEGACY_SEEN_EVERY_MS = 60_000
+/** A lockdown this device knows is asked about again at most this often (a 005 rollback). */
+const LOCKDOWN_RECHECK_MS = 24 * 60 * 60_000
 /** The mass-removal toast stays this long, like every Undo for a bulk change (P2-12, P2-20). */
 const MASS_UNDO_MS = 30_000
 /** The conflict toast stays as long as the other toasts with a Review. */
@@ -243,8 +245,8 @@ let tableDenied = false
  * a sync made private on it (or joined anew) still knows; a build on another relay does not.
  */
 const RELAY_KEY = fnv36(SUPABASE_URL ?? '')
-/** This page load has asked the relay whether the table is locked (`confirmLockdown`). */
-let lockdownAsked = false
+/** When this page load last asked the relay whether the table is locked (null: not yet). */
+let lockdownAskedAt: number | null = null
 
 // Realtime: whether the channel is joined, and whether it carries row events.
 let joinedNow = false
@@ -1633,6 +1635,7 @@ async function runLoop(): Promise<void> {
         publishPending()
         publishView()
         schedulePoll()
+        if (result.ok) void checkLockdown()
       }
       if (moved) {
         // The move answers its own caller. Every other request that came in with it (a local
@@ -1785,15 +1788,40 @@ function scheduleRemote() {
  * Settings stops asking for it) or answered (open, a rollback included). Only the relay's own
  * answers count, never a guess from a failure that could have another cause.
  */
-function noteLockdown(locked: boolean): void {
+function noteLockdown(locked: boolean, asked = false): void {
   const port = getSyncPort()
   const next = locked ? RELAY_KEY : null
-  // Unchanged, or open with nothing ever seen: nothing to write. A change carries its time, so
-  // the later reading wins when two tabs' meta are joined.
+  // Unchanged, or open with nothing ever seen: nothing to write, except that the relay's own
+  // answer that it is still locked moves `at`, so the daily question starts its wait again. A
+  // change carries its time, so the later reading wins when two tabs' meta are joined.
   const was = port?.meta().lockdownSeen ?? null
-  if (port === null || (was?.relay ?? null) === next) return
+  if (port === null) return
+  if ((was?.relay ?? null) === next && !(asked && locked)) return
   port.setMeta({ lockdownSeen: { relay: next, at: Date.now() } })
   publishView()
+}
+
+/** This device knows the lockdown is applied on this build's relay. */
+const lockedKnown = (): boolean => getSyncPort()?.meta().lockdownSeen?.relay === RELAY_KEY
+
+/**
+ * After a cycle that reached the relay: ask it whether the table is locked. A joined change feed
+ * proves nothing (the Realtime server joins a subscription to a table that left its publication,
+ * and only delivers nothing), so the relay's answer to one HEAD is what counts. Not known yet:
+ * once per page load (and once a day while it stays open). Known: once a day, so a rollback of
+ * 005 is noticed. An answer it cannot give (offline, a server error) changes nothing.
+ */
+async function checkLockdown(): Promise<void> {
+  if (!configured() || hidden()) return
+  const seen = getSyncPort()?.meta().lockdownSeen ?? null
+  const now = Date.now()
+  const last = Math.max(
+    lockdownAskedAt ?? -Infinity,
+    seen?.relay === RELAY_KEY ? seen.at : -Infinity,
+  )
+  if (now - last < LOCKDOWN_RECHECK_MS) return
+  lockdownAskedAt = now
+  if ((await probeLockdown()) === 'locked') armBroadcastOnly()
 }
 
 /**
@@ -1803,15 +1831,15 @@ function noteLockdown(locked: boolean): void {
  */
 async function confirmLockdown(): Promise<void> {
   // A socket that drops reads as refused row events too: at most one question per page load.
-  if (lockdownAsked || getSyncPort()?.meta().lockdownSeen?.relay === RELAY_KEY) return
-  lockdownAsked = true
+  if (lockdownAskedAt !== null || lockedKnown()) return
+  lockdownAskedAt = Date.now()
   await probeLockdown()
 }
 
 /** Does the relay refuse the table (the move asks it too)? What it answers is remembered. */
 async function probeLockdown(): Promise<'locked' | 'open' | 'unknown'> {
   const seen = await askLockdown()
-  if (seen !== 'unknown') noteLockdown(seen === 'locked')
+  if (seen !== 'unknown') noteLockdown(seen === 'locked', true)
   return seen
 }
 
@@ -1820,6 +1848,11 @@ function refuseRowEvents(): void {
   noteLockdown(true)
   if (tableDenied) return
   tableDenied = true
+  armBroadcastOnly()
+}
+
+/** A subscription that asked for row events, which can no longer come, subscribes again without. */
+function armBroadcastOnly(): void {
   if (realtimeUnsub !== null && liveRowEvents) {
     stopRealtime()
     publishLive()
@@ -1831,8 +1864,12 @@ function onRealtimeStatus(status: 'joined' | 'dropped' | 'failed', gen: number):
   connecting = false
   if (status === 'joined') {
     joinedNow = true
-    // The change feed of the table let this device in: the table is not locked (005 rolled back).
-    if (liveRowEvents) noteLockdown(false)
+    // A join says nothing of the lockdown: the server joins row events it can no longer deliver.
+    // Learnt while this channel was opening: it subscribes again without them (and catches up).
+    if (liveRowEvents && lockedKnown()) {
+      armBroadcastOnly()
+      return
+    }
     publishLive()
     // Events are not replayed after a drop, so every join catches up (a HEAD when nothing
     // changed); a failing streak catches up with its own backoff retry instead.
@@ -1873,8 +1910,8 @@ async function ensureSubscribed(gen: number): Promise<void> {
   try {
     const b = await bucketFor(code)
     // A private bucket hears Broadcast only (3.4): a row-event filter would carry its row id,
-    // and what it delivered would be an envelope.
-    const rowEvents = b.kind === 'plain' && !tableDenied && !rowEventsFailed
+    // and what it delivered would be an envelope. Under the lockdown no row event can come.
+    const rowEvents = b.kind === 'plain' && !tableDenied && !rowEventsFailed && !lockedKnown()
     const unsubscribe = await subscribeSync(
       { topic: await b.topic, row: b.rowId, rowEvents },
       {
@@ -1919,7 +1956,7 @@ function schedulePoll(restart = true): void {
     stopPolling()
     return
   }
-  const live = liveState === 'on' && (liveRowEvents || tableDenied)
+  const live = liveState === 'on' && (liveRowEvents || tableDenied || lockedKnown())
   const due = Date.now() + (live ? POLL_LIVE_MS : POLL_VISIBLE)
   // A change of pace never puts off a poll that is due sooner (a storm ending, a join).
   if (!restart && pollTimer !== null && pollDueAt <= due) return
