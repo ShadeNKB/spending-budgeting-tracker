@@ -62,6 +62,8 @@ async function pair(
 
 const TABLE_KINDS = new Set(['head', 'pull', 'push', 'insert', 'update'])
 const isTable = (q: RelayRequest) => TABLE_KINDS.has(q.kind)
+/** The row id the lockdown question asks about (`LOCKDOWN_PROBE_ROW` in syncService.ts). */
+const LOCKDOWN_PROBE_ROW = '00000000-0000-0000-0000-000000000000'
 const landedOn = (r: Relay, item: string) =>
   expect.poll(() => relayNames(r), { timeout: 30_000 }).toContain(item)
 const arrives = (d: Device, item: string) =>
@@ -114,7 +116,21 @@ test('after 004: a new session probes the relay functions and then speaks only R
   await arrives(b, 'over rpc')
   for (const d of [a, b]) {
     const mine = r.log.filter((q) => q.origin === d.origin)
-    expect(mine.filter(isTable), `${d.origin} made no table call`).toEqual([])
+    // The one table call allowed: the lockdown question (0.22.3), a HEAD of a row id no sync can
+    // be, at most once per page load. Nothing of the device's own sync goes to the table.
+    const probes = mine.filter((q) => isTable(q) && q.syncId === LOCKDOWN_PROBE_ROW)
+    expect(
+      probes.length,
+      `${d.origin} asked the lockdown question at most once`,
+    ).toBeLessThanOrEqual(1)
+    expect(
+      probes.every((q) => q.kind === 'head'),
+      'the lockdown question is a HEAD',
+    ).toBe(true)
+    expect(
+      mine.filter((q) => isTable(q) && q.syncId !== LOCKDOWN_PROBE_ROW),
+      `${d.origin} made no table call for its sync`,
+    ).toEqual([])
     expect(mine.find((q) => q.kind === 'rpc')?.fn).toBe('st_sync_head') // the probe comes first
   }
   const pushes = r.requests('rpc', a.origin).filter((q) => q.fn === 'st_sync_push')
