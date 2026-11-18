@@ -23,7 +23,7 @@
   &nbsp;·&nbsp;
   <a href="#highlights">Highlights</a>
   &nbsp;·&nbsp;
-  <a href="#quick-start">Quick start</a>
+  <a href="#run-your-own">Run your own</a>
   &nbsp;·&nbsp;
   <a href="#architecture">Architecture</a>
   &nbsp;·&nbsp;
@@ -35,6 +35,14 @@
 <p align="center">
   <img src="docs/screenshots/pulse-full.png" alt="SpendTrack — Pulse dashboard with monthly pace, top categories, activity heatmap, and budget vs actual" width="100%" />
 </p>
+
+---
+
+## Run your own
+
+SpendTrack is yours to run: clone it, `npm ci`, `npm run dev`, and everything but sync works with no server and no settings. Deploy the `dist/` folder to any static host. For sync between your devices, set up a free Supabase project of your own: run six SQL files in order, set three build settings, redeploy, then Generate a code on one device and Join on the other. Every new sync is private (encrypted on the device).
+
+**[Run your own SpendTrack →](docs/SELF_HOST.md)** (step by step, with what each step should show, the limits, and troubleshooting)
 
 ---
 
@@ -80,7 +88,7 @@ Most personal-finance apps are built around syncing, subscriptions, and dashboar
 | **▶ Demo**           | [spendtrack-demo.vercel.app](https://spendtrack-demo.vercel.app) | Pre-loaded with realistic data — your changes stay on your device  |
 | **📱 Install**       | Open the demo on your phone → Share → **Add to Home Screen**     | Behaves exactly like a native app, fully offline                   |
 | **🧹 Make it yours** | Settings → Backup → **Clear sample data**                        | Removes the sample entries for good; they never come back          |
-| **💻 Self-host**     | [Quick start ↓](#quick-start)                                    | Clone & run in under a minute — full ownership, zero third-parties |
+| **💻 Self-host**     | [Run your own](docs/SELF_HOST.md)                                | Clone & run in under a minute — full ownership, zero third-parties |
 
 ---
 
@@ -114,15 +122,14 @@ npm run dev
 
 Open [http://localhost:5173](http://localhost:5173). No environment variables needed.
 
-To enable cross-device sync (optional):
+To enable cross-device sync (optional), follow [`docs/SELF_HOST.md`](docs/SELF_HOST.md): it sets up your own Supabase project from empty, then:
 
 ```bash
 cp .env.example .env.local
-# fill VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY,
-# then apply supabase/migrations in your Supabase SQL editor (see supabase/README.md).
+# fill VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY and VITE_SYNC_RELAY=rpc
 ```
 
-See [`.env.example`](.env.example) for the setup.
+[`.env.example`](.env.example) lists every build setting.
 
 ---
 
@@ -182,7 +189,7 @@ When sync is configured (Supabase env vars + a sync code paired between devices)
 - **Backoff** on push failure (2 s × 2ⁿ⁻¹, cap 60 s, ±20 % jitter), paused while hidden or offline; resets on success, `online` and coming back to the app.
 - **Payload guard** pauses sync before a push passes 1 MB (Supabase row limit), with a clear message and a size meter from 70 %.
 - **Private sync** (0.21.0, where `VITE_SYNC_RELAY=auto` or `rpc`, or `VITE_SYNC_CAS=on`): **Generate** makes an `ST5-` code; each device encrypts what it sends (AES-GCM-256, key derived from the code with HKDF-SHA256, both built into the browser), and the relay row sits under an id derived from the code, never the code. A sync made before that, or on a build without those settings, is a plain sync and is not encrypted.
-- **No accounts.** For a plain sync, the anon key is public and this table grants broad anon access, so anyone with the key can read the relay copy; the 122-bit UUID is what a device needs to change it. Do not treat this model as hardened multi-user SaaS security. The relay functions and the table lockdown (migrations 004/005, `VITE_SYNC_RELAY`) close that gap once you apply them ([`supabase/README.md`](supabase/README.md)).
+- **No accounts.** The anon key is public. After the table lockdown (migration 005) it can only call the relay's three sync functions, which need a row id; on a relay without it, the table grants broad anon access and anyone with the key can read a plain sync's copy. A new project set up with [the guide](docs/SELF_HOST.md) is locked down from the start. Do not treat this model as hardened multi-user SaaS security ([`supabase/README.md`](supabase/README.md) lists its known limits).
 
 See [`src/data/core`](src/data/core) for the merge logic and [`src/stores/syncEngine.ts`](src/stores/syncEngine.ts) for the cycle.
 
@@ -216,27 +223,28 @@ If you do want phone ↔ laptop sync, here's the full flow:
 
 ### 0 · One-time setup (do this once, on any device)
 
-You need your own free Supabase project. This is what stores the synced data — no third-party sees it. Plan ~5 minutes.
+You need your own free Supabase project. This is what stores the synced data — no third-party sees it. Plan ~20 minutes. [`docs/SELF_HOST.md`](docs/SELF_HOST.md) has every step and what it should show; in short:
 
 1. Sign up at [supabase.com](https://supabase.com) and create a project.
-2. In the project's **SQL Editor**, run [`supabase/migrations/001_sync.sql`](supabase/migrations/001_sync.sql), then [`002_sync_indexes.sql`](supabase/migrations/002_sync_indexes.sql) (index + retention helper), [`003_harden_prune_search_path.sql`](supabase/migrations/003_harden_prune_search_path.sql) (pins `search_path` on the prune function) and [`004_sync_rpc.sql`](supabase/migrations/004_sync_rpc.sql) (the relay's sync functions; it also takes delete and prune away from the public key). The helper only creates a manual pruning function; schedule it yourself if you want automatic 90-day cleanup. [`005_sync_lockdown.sql`](supabase/migrations/005_sync_lockdown.sql) comes later, once every device runs 0.11.0 or later on the sync functions and Settings → Sync says "Ready for the database lockdown." [`supabase/README.md`](supabase/README.md) says what each file does (apply them by hand, never with `supabase db push`), and [the runbook](docs/brain/sync-runbook.md) walks through 004 and 005 with checks and rollback.
-3. From **Project Settings → API**, copy the **Project URL** and the **anon public** key.
-4. Add them as env vars on Vercel (or in `.env.local` if you self-host). The last two switch the app to the sync functions and compare-and-set; add them after 004 and once `scripts/verify-cas.mjs` passes:
+2. In the project's **SQL Editor**, run `001` to `006` from [`supabase/migrations`](supabase/migrations) by hand, in order, each followed by the check the guide names (never `supabase db push`). On a new project they all go in at one sitting: no waiting between them.
+3. From **Project Settings**, copy the **Project URL** and the **anon public** (or publishable) key.
+4. Set the build settings on your host (or in `.env.local`):
    ```bash
-   VITE_SUPABASE_URL=https://your-project.supabase.co
-   VITE_SUPABASE_ANON_KEY=eyJhbGc...
-   VITE_SYNC_RELAY=auto
-   VITE_SYNC_CAS=on
+   VITE_SUPABASE_URL=https://your-project-ref.supabase.co
+   VITE_SUPABASE_ANON_KEY=your-anon-or-publishable-key
+   VITE_SYNC_RELAY=rpc
    ```
 5. Redeploy. The app now offers sync in Settings.
 
+Already syncing through a relay set up before migration 004? Upgrade it step by step with [the runbook](docs/brain/sync-runbook.md) instead.
+
 ### 1 · Generate a sync code (Device A — typically your laptop)
 
-Settings → **Sync** → **Generate sync code for this device**. The code shows masked: tap **Copy**, or **Show** to read it. On a build with the relay's sync functions it is a private `ST5-` code; update every device to 0.21.0 or later before joining it, since older versions refuse it.
+Settings → **Sync** → **Generate sync code for this device**. The code shows masked: tap **Copy**, or **Show** to read it. On a build with the relay's sync functions (`VITE_SYNC_RELAY=rpc` or `auto`) it is a private `ST5-` code; SpendTrack older than 0.21.0 refuses it.
 
 ### 2 · Join from Device B (your phone)
 
-Open the same site on your phone. Settings → **Sync** → paste the code under **or join an existing one** → **Join**. SpendTrack reads the synced copy and shows what joining does ("This device: 0 entries · Synced: 641 entries · After joining: about 641 entries"); tap **Join** again and your laptop's data appears on your phone. A mistyped code says "No synced data found for this code" and creates nothing.
+Open the same site on your phone. Settings → **Sync** → paste the code under **or join an existing one** → **Join**. SpendTrack reads the synced copy and shows what joining does ("This device: 0 entries · Synced: 120 entries · After joining: about 120 entries"); tap **Join** again and your laptop's data appears on your phone. A mistyped code says "No synced data found for this code" and creates nothing.
 
 ### 3 · Use either device
 
@@ -246,7 +254,7 @@ Add an expense on Device A. It appears on Device B within a second via Supabase 
 
 Tablet, work browser, another browser profile — join the same code in Settings → Sync. There's no device limit, and Settings → Sync → **Devices** lists every device with its version.
 
-> **Share the code only with your own devices.** Anyone with it can change your synced data. A private sync's relay copy is encrypted and only a device with the code can read it; a plain sync's copy is not, so until the database lockdown (migration 005) anyone with the app's public key could read it. **Disconnect** keeps the code on that device for 30 days (**Reconnect** is one tap); if you lose it, copy it from another linked device. Generating a new code starts a separate sync; old buckets are pruned after 90 days if you schedule `prune_stale_sync_buckets()`.
+> **Share the code only with your own devices.** Anyone with it can change your synced data. A private sync's relay copy is encrypted and only a device with the code can read it; a plain sync's copy is not, and on a relay without the database lockdown (migration 005) anyone with the app's public key could read it. **Disconnect** keeps the code on that device for 30 days (**Reconnect** is one tap); if you lose it, copy it from another linked device. Generating a new code starts a separate sync; old buckets are pruned after 90 days if you schedule `prune_stale_sync_buckets()`.
 
 ### How sync actually works
 
@@ -276,7 +284,7 @@ Device A                                    Device B
 - **Backoff** on push failure (2 s → 60 s with jitter), paused in the background, and a check every minute while the app is open if Realtime is unavailable.
 - **Realtime auto-reconnect** on `CLOSED / CHANNEL_ERROR / TIMED_OUT`, on a hashed topic.
 - **Payload guard** pauses sync before a push passes 1 MB (Supabase row limit).
-- **No accounts.** For a plain sync, until migration 005 is applied, the relay copy is readable with the public anon key; the 122-bit UUID is what it takes to change it. A private sync's copy is ciphertext. Fine for a personal Supabase relay, not a hardened multi-user SaaS boundary.
+- **No accounts.** A private sync's copy is ciphertext. For a plain sync on a relay without migration 005, the copy is readable with the public anon key; the 122-bit UUID is what it takes to change it. Fine for a personal Supabase relay, not a hardened multi-user SaaS boundary.
 
 Full architecture: [`docs/USER_GUIDE.md`](docs/USER_GUIDE.md) · [`src/services/syncService.ts`](src/services/syncService.ts).
 
@@ -341,7 +349,7 @@ Yes. Settings → <b>Appearance</b> offers <b>Light</b>, <b>Dark</b>, and <b>Sys
 <details>
 <summary><b>Is my data encrypted?</b></summary>
 <br/>
-In transit (HTTPS to Supabase): yes. In <code>localStorage</code>: no, it's plain JSON. On the relay: a private sync (0.21.0, on the relay's sync functions) is encrypted on the device and only a device with the code can read it; a plain sync is plain JSON, and until migration 005 is applied anyone with this app's public key could read it. Your sync code is what it takes to change it, so share it only with your own devices.
+In transit (HTTPS to Supabase): yes. In <code>localStorage</code>: no, it's plain JSON. On the relay: a private sync (0.21.0, on the relay's sync functions) is encrypted on the device and only a device with the code can read it; a plain sync is plain JSON, and on a relay without migration 005 anyone with this app's public key could read it. Your sync code is what it takes to change it, so share it only with your own devices.
 </details>
 
 ---
@@ -358,8 +366,8 @@ The pill in the top bar is tappable when sync fails. Tap it to retry. Local data
 <summary><b>I generated a sync code but my phone says "Could not reach sync server"</b></summary>
 <br/>
 
-1. Confirm both devices have <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code> set (env vars must match on both deployments).
-2. Confirm the files in <code>supabase/migrations</code> ran without errors, in order (see <a href="supabase/README.md"><code>supabase/README.md</code></a>). <i>Important:</i> 001 leaves RLS off so devices can write the table directly. <code>005_sync_lockdown.sql</code> turns RLS on with no policies and leaves only the relay's sync functions, so after it a build without <code>VITE_SYNC_RELAY=auto</code> (and any SpendTrack older than 0.11.0) is refused: "The sync server refused access." Apply 005 only once Settings → Sync says "Ready for the database lockdown.", and never turn RLS on by hand. <a href="docs/brain/sync-runbook.md">The runbook</a> has the checks and the rollback.
+1. Confirm both devices run a build with <code>VITE_SUPABASE_URL</code>, <code>VITE_SUPABASE_ANON_KEY</code> and <code>VITE_SYNC_RELAY</code> set, with the same values (they are read at build time: redeploy after a change).
+2. Run <code>supabase/checks/000_preflight_readonly.sql</code> in the SQL editor: its verdict must be <code>GO</code> and its <code>stage</code> <code>005 applied</code> (or <code>004 applied</code>). After 005 the table refuses the public key, so a build without <code>VITE_SYNC_RELAY</code> (and any SpendTrack older than 0.11.0) says "The sync server refused access." Never turn RLS on by hand. <a href="docs/SELF_HOST.md#5-troubleshooting">The guide's troubleshooting</a> explains each message.
 3. Reload both devices. The Supabase JS SDK is lazy-loaded only when sync is configured, so an offline cold start looks like silent failure — a refresh re-triggers the load.
 </details>
 

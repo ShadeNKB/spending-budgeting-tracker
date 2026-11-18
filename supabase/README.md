@@ -4,7 +4,9 @@ The relay for SpendTrack's optional cross-device sync: one table, `public.sync_b
 
 > **Do not point `supabase db push` (or any other migration runner) at this folder.** The `*.rollback.sql` files sit beside the migrations and carry the same numbers, so a runner would take them for migrations and run them too. Nothing here is recorded in Supabase's migration history either: a runner would try to apply everything again.
 
-Step by step, with the expected output of every step, STOP points and rollback: [`docs/brain/sync-runbook.md`](../docs/brain/sync-runbook.md).
+**A new, empty project:** apply 001 to 006 in one sitting, with a check after each stage, as [`docs/SELF_HOST.md`](../docs/SELF_HOST.md) lists them (a test replays that list on an empty database). The "When" column below describes upgrading a relay that older app versions already write to.
+
+**Upgrading an existing relay** (set up before 004, with devices syncing on it): step by step, with the expected output of every step, STOP points and rollback: [`docs/brain/sync-runbook.md`](../docs/brain/sync-runbook.md).
 
 ## `migrations/`
 
@@ -45,4 +47,4 @@ What that cannot show stays a check in the runbook:
 - **The creation caps are global.** After 005, anyone with the public key can still create rows through `st_sync_push` with random ids, up to the caps (20 an hour, 500 rows). At 500, every new sync code is refused (53400) until rows are removed; existing codes keep syncing. Nothing prunes yet: see the runbook's "Later, optional".
 - **The database can still be filled (F-068's size impact is narrowed, not closed).** 004 closes F-068's delete, truncate and prune holes and refuses bad ids, shapes and oversized writes; it does not bound the relay's total size. Until 005, `anon` keeps table INSERT, which the creation caps don't see, so any number of rows of up to 2 MiB of jsonb text can be written. After 005 the caps count rows, not bytes: 500 rows × 1,258,291 bytes is about 600 MiB of jsonb text (random text doesn't compress), over the free plan's 500 MB, reachable in about 25 hours at 20 creates an hour. Forced and compare-and-set writes to rows an attacker created have no rate limit either, and each leaves a dead TOAST value behind until vacuum. Over 500 MB, Supabase makes the project read-only and sync stops; no data is lost (every device keeps its full copy). A firmer bound (a byte budget under the create lock, a lower row cap, or sync behind sign-in) is a later change; the runbook tells the owner what to watch.
 - **A table write refused by `sync_buckets_payload_bounded` (23514)** is retried as a server error by 0.11.0 instead of pausing as "too large". Only a build on the table path can meet it (between 004 and the `VITE_SYNC_RELAY=auto` redeploy, or an older build), and only with more than 2 MiB of jsonb text: about 2.3 bytes per character on average under the app's 900,000-character limit, so mostly CJK text.
-- **The app's own setup steps** (Settings › Sync when no relay is configured) still name only `001_sync.sql`. Apply 001 to 004 in order, as above.
+- **The app's own setup steps** (Settings › Sync when no relay is configured) name migrations 001 to 004 and the runbook, but not 005, 006 or `VITE_SYNC_RELAY`. Follow [`docs/SELF_HOST.md`](../docs/SELF_HOST.md) instead.
